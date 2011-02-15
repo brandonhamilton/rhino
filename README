@@ -1,8 +1,29 @@
-   __         _____    __  ___ 
-  /__\  /\  /\\_   \/\ \ \/___\
- / \// / /_/ / / /\/  \/ //  //
-/ _  \/ __  /\/ /_/ /\  / \_// 
-\/ \_/\/ /_/\____/\_\ \/\___/  
+     __         _____    __  ___ 
+    /__\  /\  /\\_   \/\ \ \/___\
+   / \// / /_/ / / /\/  \/ //  //
+  / _  \/ __  /\/ /_/ /\  / \_// 
+  \/ \_/\/ /_/\____/\_\ \/\___/  
                                
 Reconfigurable Hardware Interface for computatioN and radiO
+===========================================================
 
+Prerequisites
+-------------
+
+This guide assumes that a cross-compilation toolchain is available in the current path.
+The free CodeSourcery G++ LITE toolchain (ARM GNU/Linux 2009q1) can be downloaded from the following URL: http://www.codesourcery.com/sgpp/lite/arm/portal/release858
+
+1. Building u-boot
+------------------
+
+$ cd u-boot
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm distclean
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_config
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm
+
+2. Building borph
+-----------------
+
+$ cd borph
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_defconfig
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm uImage modules
