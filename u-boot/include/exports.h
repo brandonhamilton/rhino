@@ -37,6 +37,16 @@ int i2c_read (uchar, uint, int , uchar* , int);
 
 void app_startup(char **);
 
+#ifdef CONFIG_RHINO
+int omap_request_gpio(int gpio);
+void omap_free_gpio(int gpio);
+void omap_set_gpio_direction(int gpio, int is_input);
+void omap_set_gpio_dataout(int gpio, int enable);
+int omap_get_gpio_datain(int gpio);
+unsigned int i2c_get_bus_num(void);
+int i2c_set_bus_num(unsigned int bus);
+#endif
+
 #endif    /* ifndef __ASSEMBLY__ */
 
 enum {
@@ -47,7 +57,7 @@ enum {
 	XF_MAX
 };
 
-#define XF_VERSION	6
+#define XF_VERSION	7
 
 #if defined(CONFIG_I386)
 extern gd_t *global_data;

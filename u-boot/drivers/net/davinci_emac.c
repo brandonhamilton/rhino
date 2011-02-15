@@ -301,7 +301,7 @@ static int davinci_eth_open(struct eth_device *dev, bd_t *bis)
 	adap_emac->SOFTRESET = 1;
 	while (adap_emac->SOFTRESET != 0) {;}
 
-#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM)
+#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
 	adap_ewrap->SOFTRST = 1;
 	while (adap_ewrap->SOFTRST != 0) {;}
 #else
@@ -324,7 +324,7 @@ static int davinci_eth_open(struct eth_device *dev, bd_t *bis)
 		(davinci_eth_mac_addr[2] << 16) |
 		(davinci_eth_mac_addr[1] << 8)  |
 		(davinci_eth_mac_addr[0]);
-#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM)
+#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
 	adap_emac->MACADDRLO =
 		(davinci_eth_mac_addr[5] << 8) |
 		(davinci_eth_mac_addr[4]| (1 << 19) | (1 << 20));
@@ -477,7 +477,7 @@ static void davinci_eth_close(struct eth_device *dev)
 	/* Reset EMAC module and disable interrupts in wrapper */
 	adap_emac->SOFTRESET = 1;
 
-#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM)
+#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
 	adap_ewrap->SOFTRST = 1;
 #else
 	adap_ewrap->EWCTL = 0;

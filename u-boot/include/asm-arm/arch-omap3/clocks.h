@@ -31,9 +31,13 @@
 #define S38_4M		38400000
 
 #define FCK_IVA2_ON	0x00000001
-#ifdef CONFIG_OMAP3_AM3517EVM
+#if defined(CONFIG_OMAP3_AM3517EVM)
 #define FCK_CORE1_ON    0x037ffe00
 #define ICK_CORE1_ON    0x037ffe42
+#define ICK_CORE2_ON    0x00000000
+#elif defined(CONFIG_RHINO)
+#define FCK_CORE1_ON    0x033ffe00
+#define ICK_CORE1_ON    0x033ffe42
 #define ICK_CORE2_ON    0x00000000
 #else
 #define FCK_CORE1_ON	0x03fffe29

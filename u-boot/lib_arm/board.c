@@ -166,6 +166,7 @@ static int display_dram_config (void)
 	for(i=0; i<CONFIG_NR_DRAM_BANKS; i++) {
 		printf ("Bank #%d: %08lx ", i, gd->bd->bi_dram[i].start);
 		print_size (gd->bd->bi_dram[i].size, "\n");
+		print_size (256<<20, "\n");
 	}
 #else
 	ulong size = 0;

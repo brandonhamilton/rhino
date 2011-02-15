@@ -46,4 +46,13 @@ void jumptable_init (void)
 	gd->jt[XF_spi_release_bus] = (void *) spi_release_bus;
 	gd->jt[XF_spi_xfer] = (void *) spi_xfer;
 #endif
+#ifdef CONFIG_RHINO
+    gd->jt[XF_omap_request_gpio] = (void *) omap_request_gpio;
+    gd->jt[XF_omap_free_gpio] = (void *) omap_free_gpio;
+    gd->jt[XF_omap_set_gpio_direction] = (void *) omap_set_gpio_direction;
+    gd->jt[XF_omap_set_gpio_dataout] = (void *) omap_set_gpio_dataout;
+    gd->jt[XF_omap_get_gpio_datain] = (void *) omap_get_gpio_datain;
+    gd->jt[XF_i2c_get_bus_num]= (void *) i2c_get_bus_num;
+    gd->jt[XF_i2c_set_bus_num]= (void *) i2c_set_bus_num;
+#endif
 }

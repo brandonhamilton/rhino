@@ -685,7 +685,7 @@ void per_clocks_enable(void)
 	sr32(&prcm_base->fclken1_core, 25, 1, 1);
 	sr32(&prcm_base->iclken_wkup, 25, 1, 1);
 
-#ifndef CONFIG_OMAP3_AM3517EVM
+#if !defined(CONFIG_OMAP3_AM3517EVM) && !defined(CONFIG_RHINO)
 	sr32(&prcm_base->fclken_iva2, 0, 32, FCK_IVA2_ON);
 #endif
 
@@ -697,7 +697,7 @@ void per_clocks_enable(void)
 	sr32(&prcm_base->fclken_dss, 0, 32, FCK_DSS_ON);
 	sr32(&prcm_base->iclken_dss, 0, 32, ICK_DSS_ON);
 
-#ifndef CONFIG_OMAP3_AM3517EVM
+#if !defined(CONFIG_OMAP3_AM3517EVM) && !defined(CONFIG_RHINO)
 	sr32(&prcm_base->fclken_cam, 0, 32, FCK_CAM_ON);
 	sr32(&prcm_base->iclken_cam, 0, 32, ICK_CAM_ON);
 #endif

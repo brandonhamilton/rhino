@@ -23,7 +23,11 @@
 #ifndef _I2C_H_
 #define _I2C_H_
 
-#define I2C_DEFAULT_BASE	I2C_BASE1
+#if defined(CONFIG_I2C_MULTI_BUS)
+	#define I2C_DEFAULT_BASE	i2c_base_addr
+#else
+	#define I2C_DEFAULT_BASE	I2C_BASE1
+#endif
 
 #define I2C_REV		(I2C_DEFAULT_BASE + 0x00)
 #define I2C_IE 		(I2C_DEFAULT_BASE + 0x04)

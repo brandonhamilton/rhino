@@ -142,7 +142,7 @@ void write_fifo(u8 ep, u32 length, void *fifo_data)
 void read_fifo(u8 ep, u32 length, void *fifo_data)
 {
 	u8  *data = (u8 *)fifo_data;
-#ifdef CONFIG_OMAP3_AM3517EVM
+#if defined(CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
 	int i;
 	u32 val;
 #endif
@@ -151,7 +151,7 @@ void read_fifo(u8 ep, u32 length, void *fifo_data)
 	writeb(ep, &musbr->index);
 
 	/* read the data to the fifo */
-#ifdef CONFIG_OMAP3_AM3517EVM
+#if defined(CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
 	/* AM3517 FIFO should be read double word wise as bytewise
 	 * FIFO read corrupts the FIFO
 	 */
