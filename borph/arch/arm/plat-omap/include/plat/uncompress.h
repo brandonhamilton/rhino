@@ -141,6 +141,7 @@ static inline void __arch_decomp_setup(unsigned long arch_id)
 		DEBUG_LL_OMAP3(1, omap_3630sdp);
 		DEBUG_LL_OMAP3(1, omap3530_lv_som);
 		DEBUG_LL_OMAP3(1, omap3_torpedo);
+		DEBUG_LL_OMAP3(1, rhino);
 
 		/* omap3 based boards using UART3 */
 		DEBUG_LL_OMAP3(3, cm_t35);

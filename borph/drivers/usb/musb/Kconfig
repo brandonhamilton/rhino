@@ -10,7 +10,7 @@ comment "Enable Host or Gadget support to see Inventra options"
 config USB_MUSB_HDRC
 	depends on (USB || USB_GADGET)
 	depends on (ARM || (BF54x && !BF544) || (BF52x && !BF522 && !BF523))
-	select NOP_USB_XCEIV if (ARCH_DAVINCI || MACH_OMAP3EVM || BLACKFIN)
+	select NOP_USB_XCEIV if (ARCH_DAVINCI || MACH_OMAP3EVM || MACH_ROACH || BLACKFIN)
 	select TWL4030_USB if MACH_OMAP_3430SDP
 	select USB_OTG_UTILS
 	tristate 'Inventra Highspeed Dual Role Controller (TI, ADI, ...)'
@@ -64,7 +64,7 @@ config USB_MUSB_AM35X
 	bool
 	depends on USB_MUSB_HDRC && !ARCH_OMAP2430 && !ARCH_OMAP4
 	select NOP_USB_XCEIV
-	default MACH_OMAP3517EVM
+	default MACH_ROACH
 	help
 	  Select this option if your platform is based on AM35x. As
 	  AM35x has an updated MUSB with CPPI4.1 DMA so this config
