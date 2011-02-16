@@ -123,7 +123,7 @@ struct lm_lockops {
 	int (*lm_mount) (struct gfs2_sbd *sdp, const char *fsname);
  	void (*lm_unmount) (struct gfs2_sbd *sdp);
 	void (*lm_withdraw) (struct gfs2_sbd *sdp);
-	void (*lm_put_lock) (struct kmem_cache *cachep, void *gl);
+	void (*lm_put_lock) (struct kmem_cache *cachep, struct gfs2_glock *gl);
 	unsigned int (*lm_lock) (struct gfs2_glock *gl,
 				 unsigned int req_state, unsigned int flags);
 	void (*lm_cancel) (struct gfs2_glock *gl);
@@ -180,6 +180,13 @@ static inline int gfs2_glock_is_held_shrd(struct gfs2_glock *gl)
 	return gl->gl_state == LM_ST_SHARED;
 }
 
+static inline struct address_space *gfs2_glock2aspace(struct gfs2_glock *gl)
+{
+	if (gl->gl_ops->go_flags & GLOF_ASPACE)
+		return (struct address_space *)(gl + 1);
+	return NULL;
+}
+
 int gfs2_glock_get(struct gfs2_sbd *sdp,
 		   u64 number, const struct gfs2_glock_operations *glops,
 		   int create, struct gfs2_glock **glp);
@@ -208,7 +215,7 @@ void gfs2_glock_dq_uninit_m(unsigned int num_gh, struct gfs2_holder *ghs);
 void gfs2_print_dbg(struct seq_file *seq, const char *fmt, ...);
 
 /**
- * gfs2_glock_nq_init - intialize a holder and enqueue it on a glock
+ * gfs2_glock_nq_init - initialize a holder and enqueue it on a glock
  * @gl: the glock
  * @state: the state we're requesting
  * @flags: the modifier flags

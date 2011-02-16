@@ -2,7 +2,7 @@
  * include/net/tipc/tipc.h: Main include file for TIPC users
  * 
  * Copyright (c) 2003-2006, Ericsson AB
- * Copyright (c) 2005, Wind River Systems
+ * Copyright (c) 2005,2010 Wind River Systems
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -50,8 +50,6 @@
  * TIPC operating mode routines
  */
 
-u32 tipc_get_addr(void);
-
 #define TIPC_NOT_RUNNING  0
 #define TIPC_NODE_MODE    1
 #define TIPC_NET_MODE     2
@@ -61,8 +59,6 @@ typedef void (*tipc_mode_event)(void *usr_handle, int mode, u32 addr);
 int tipc_attach(unsigned int *userref, tipc_mode_event, void *usr_handle);
 
 void tipc_detach(unsigned int userref);
-
-int tipc_get_mode(void);
 
 /*
  * TIPC port manipulation routines
@@ -126,7 +122,7 @@ int tipc_createport(unsigned int tipc_user,
 		    tipc_msg_event message_cb, 
 		    tipc_named_msg_event named_message_cb, 
 		    tipc_conn_msg_event conn_message_cb, 
-		    tipc_continue_event continue_event_cb,/* May be zero */
+		    tipc_continue_event continue_event_cb,
 		    u32 *portref);
 
 int tipc_deleteport(u32 portref);
@@ -145,19 +141,13 @@ int tipc_set_portunreturnable(u32 portref, unsigned int isunreturnable);
 int tipc_publish(u32 portref, unsigned int scope, 
 		 struct tipc_name_seq const *name_seq);
 int tipc_withdraw(u32 portref, unsigned int scope,
-		  struct tipc_name_seq const *name_seq); /* 0: all */
+		  struct tipc_name_seq const *name_seq);
 
 int tipc_connect2port(u32 portref, struct tipc_portid const *port);
 
 int tipc_disconnect(u32 portref);
 
-int tipc_shutdown(u32 ref); /* Sends SHUTDOWN msg */
-
-int tipc_isconnected(u32 portref, int *isconnected);
-
-int tipc_peer(u32 portref, struct tipc_portid *peer);
-
-int tipc_ref_valid(u32 portref); 
+int tipc_shutdown(u32 ref);
 
 /*
  * TIPC messaging routines
@@ -170,37 +160,11 @@ int tipc_send(u32 portref,
 	      unsigned int num_sect,
 	      struct iovec const *msg_sect);
 
-int tipc_send_buf(u32 portref,
-		  struct sk_buff *buf,
-		  unsigned int dsz);
-
 int tipc_send2name(u32 portref, 
 		   struct tipc_name const *name, 
-		   u32 domain,	/* 0:own zone */
+		   u32 domain,
 		   unsigned int num_sect,
 		   struct iovec const *msg_sect);
-
-int tipc_send_buf2name(u32 portref,
-		       struct tipc_name const *name,
-		       u32 domain,
-		       struct sk_buff *buf,
-		       unsigned int dsz);
-
-int tipc_forward2name(u32 portref, 
-		      struct tipc_name const *name, 
-		      u32 domain,   /*0: own zone */
-		      unsigned int section_count,
-		      struct iovec const *msg_sect,
-		      struct tipc_portid const *origin,
-		      unsigned int importance);
-
-int tipc_forward_buf2name(u32 portref,
-			  struct tipc_name const *name,
-			  u32 domain,
-			  struct sk_buff *buf,
-			  unsigned int dsz,
-			  struct tipc_portid const *orig,
-			  unsigned int importance);
 
 int tipc_send2port(u32 portref,
 		   struct tipc_portid const *dest,
@@ -212,46 +176,11 @@ int tipc_send_buf2port(u32 portref,
 		       struct sk_buff *buf,
 		       unsigned int dsz);
 
-int tipc_forward2port(u32 portref,
-		      struct tipc_portid const *dest,
-		      unsigned int num_sect,
-		      struct iovec const *msg_sect,
-		      struct tipc_portid const *origin,
-		      unsigned int importance);
-
-int tipc_forward_buf2port(u32 portref,
-			  struct tipc_portid const *dest,
-			  struct sk_buff *buf,
-			  unsigned int dsz,
-			  struct tipc_portid const *orig,
-			  unsigned int importance);
-
 int tipc_multicast(u32 portref, 
 		   struct tipc_name_seq const *seq, 
-		   u32 domain,	/* 0:own zone */
+		   u32 domain,	/* currently unused */
 		   unsigned int section_count,
 		   struct iovec const *msg);
-
-#if 0
-int tipc_multicast_buf(u32 portref, 
-		       struct tipc_name_seq const *seq, 
-		       u32 domain,	/* 0:own zone */
-		       void *buf,
-		       unsigned int size);
-#endif
-
-/*
- * TIPC subscription routines
- */
-
-int tipc_ispublished(struct tipc_name const *name);
-
-/*
- * Get number of available nodes within specified domain (excluding own node)
- */
-
-unsigned int tipc_available_nodes(const u32 domain);
-
 #endif
 
 #endif

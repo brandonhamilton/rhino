@@ -11,6 +11,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/slab.h>
 
 #include "hdpvr.h"
 
@@ -126,7 +127,6 @@ int hdpvr_register_i2c_adapter(struct hdpvr_device *dev)
 	strlcpy(i2c_adap->name, "Hauppauge HD PVR I2C",
 		sizeof(i2c_adap->name));
 	i2c_adap->algo  = &hdpvr_algo;
-	i2c_adap->class = I2C_CLASS_TV_ANALOG;
 	i2c_adap->owner = THIS_MODULE;
 	i2c_adap->dev.parent = &dev->udev->dev;
 

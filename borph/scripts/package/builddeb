@@ -18,6 +18,8 @@ create_package() {
 	cp debian/copyright "$pdir/usr/share/doc/$pname/"
 	cp debian/changelog "$pdir/usr/share/doc/$pname/changelog.Debian"
 	gzip -9 "$pdir/usr/share/doc/$pname/changelog.Debian"
+	sh -c "cd '$pdir'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' \
+		| xargs -r0 md5sum > DEBIAN/md5sums"
 
 	# Fix ownership and permissions
 	chown -R root:root "$pdir"
@@ -64,7 +66,9 @@ else
 	cp System.map "$tmpdir/boot/System.map-$version"
 	cp .config "$tmpdir/boot/config-$version"
 	# Not all arches include the boot path in KBUILD_IMAGE
-	if ! cp $KBUILD_IMAGE "$tmpdir/boot/vmlinuz-$version"; then
+	if [ -e $KBUILD_IMAGE ]; then
+		cp $KBUILD_IMAGE "$tmpdir/boot/vmlinuz-$version"
+	else
 		cp arch/$ARCH/boot/$KBUILD_IMAGE "$tmpdir/boot/vmlinuz-$version"
 	fi
 fi
@@ -146,10 +150,11 @@ EOF
 # Generate a control file
 cat <<EOF > debian/control
 Source: linux-upstream
-Section: admin
+Section: kernel
 Priority: optional
 Maintainer: $maintainer
-Standards-Version: 3.8.1
+Standards-Version: 3.8.4
+Homepage: http://www.kernel.org/
 EOF
 
 if [ "$ARCH" = "um" ]; then

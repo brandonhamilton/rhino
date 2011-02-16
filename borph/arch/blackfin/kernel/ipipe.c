@@ -27,7 +27,6 @@
 #include <linux/interrupt.h>
 #include <linux/percpu.h>
 #include <linux/bitops.h>
-#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/kthread.h>
 #include <linux/unistd.h>
@@ -220,10 +219,10 @@ int __ipipe_syscall_root(struct pt_regs *regs)
 
 	ret = __ipipe_dispatch_event(IPIPE_EVENT_SYSCALL, regs);
 
-	local_irq_save_hw(flags);
+	flags = hard_local_irq_save();
 
 	if (!__ipipe_root_domain_p) {
-		local_irq_restore_hw(flags);
+		hard_local_irq_restore(flags);
 		return 1;
 	}
 
@@ -231,7 +230,7 @@ int __ipipe_syscall_root(struct pt_regs *regs)
 	if ((p->irqpend_himask & IPIPE_IRQMASK_VIRT) != 0)
 		__ipipe_sync_pipeline(IPIPE_IRQMASK_VIRT);
 
-	local_irq_restore_hw(flags);
+	hard_local_irq_restore(flags);
 
 	return -ret;
 }
@@ -240,14 +239,14 @@ unsigned long ipipe_critical_enter(void (*syncfn) (void))
 {
 	unsigned long flags;
 
-	local_irq_save_hw(flags);
+	flags = hard_local_irq_save();
 
 	return flags;
 }
 
 void ipipe_critical_exit(unsigned long flags)
 {
-	local_irq_restore_hw(flags);
+	hard_local_irq_restore(flags);
 }
 
 static void __ipipe_no_irqtail(void)
@@ -280,9 +279,9 @@ int ipipe_trigger_irq(unsigned irq)
 		return -EINVAL;
 #endif
 
-	local_irq_save_hw(flags);
+	flags = hard_local_irq_save();
 	__ipipe_handle_irq(irq, NULL);
-	local_irq_restore_hw(flags);
+	hard_local_irq_restore(flags);
 
 	return 1;
 }
@@ -294,7 +293,7 @@ asmlinkage void __ipipe_sync_root(void)
 
 	BUG_ON(irqs_disabled());
 
-	local_irq_save_hw(flags);
+	flags = hard_local_irq_save();
 
 	if (irq_tail_hook)
 		irq_tail_hook();
@@ -304,7 +303,7 @@ asmlinkage void __ipipe_sync_root(void)
 	if (ipipe_root_cpudom_var(irqpend_himask) != 0)
 		__ipipe_sync_pipeline(IPIPE_IRQMASK_ANY);
 
-	local_irq_restore_hw(flags);
+	hard_local_irq_restore(flags);
 }
 
 void ___ipipe_sync_pipeline(unsigned long syncmask)
@@ -335,3 +334,70 @@ void __ipipe_enable_root_irqs_hw(void)
 	__clear_bit(IPIPE_STALL_FLAG, &ipipe_root_cpudom_var(status));
 	bfin_sti(bfin_irq_flags);
 }
+
+/*
+ * We could use standard atomic bitops in the following root status
+ * manipulation routines, but let's prepare for SMP support in the
+ * same move, preventing CPU migration as required.
+ */
+void __ipipe_stall_root(void)
+{
+	unsigned long *p, flags;
+
+	flags = hard_local_irq_save();
+	p = &__ipipe_root_status;
+	__set_bit(IPIPE_STALL_FLAG, p);
+	hard_local_irq_restore(flags);
+}
+EXPORT_SYMBOL(__ipipe_stall_root);
+
+unsigned long __ipipe_test_and_stall_root(void)
+{
+	unsigned long *p, flags;
+	int x;
+
+	flags = hard_local_irq_save();
+	p = &__ipipe_root_status;
+	x = __test_and_set_bit(IPIPE_STALL_FLAG, p);
+	hard_local_irq_restore(flags);
+
+	return x;
+}
+EXPORT_SYMBOL(__ipipe_test_and_stall_root);
+
+unsigned long __ipipe_test_root(void)
+{
+	const unsigned long *p;
+	unsigned long flags;
+	int x;
+
+	flags = hard_local_irq_save_smp();
+	p = &__ipipe_root_status;
+	x = test_bit(IPIPE_STALL_FLAG, p);
+	hard_local_irq_restore_smp(flags);
+
+	return x;
+}
+EXPORT_SYMBOL(__ipipe_test_root);
+
+void __ipipe_lock_root(void)
+{
+	unsigned long *p, flags;
+
+	flags = hard_local_irq_save();
+	p = &__ipipe_root_status;
+	__set_bit(IPIPE_SYNCDEFER_FLAG, p);
+	hard_local_irq_restore(flags);
+}
+EXPORT_SYMBOL(__ipipe_lock_root);
+
+void __ipipe_unlock_root(void)
+{
+	unsigned long *p, flags;
+
+	flags = hard_local_irq_save();
+	p = &__ipipe_root_status;
+	__clear_bit(IPIPE_SYNCDEFER_FLAG, p);
+	hard_local_irq_restore(flags);
+}
+EXPORT_SYMBOL(__ipipe_unlock_root);

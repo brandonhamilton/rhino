@@ -30,6 +30,7 @@
 #include <linux/irq.h>
 #include <linux/time.h>
 #include <linux/gpio.h>
+#include <linux/console.h>
 
 #include <asm/mach/time.h>
 #include <asm/mach/irq.h>
@@ -38,8 +39,6 @@
 #include <mach/irqs.h>
 #include <plat/clock.h>
 #include <plat/sram.h>
-#include <plat/control.h>
-#include <plat/mux.h>
 #include <plat/dma.h>
 #include <plat/board.h>
 
@@ -49,19 +48,30 @@
 #include "cm-regbits-24xx.h"
 #include "sdrc.h"
 #include "pm.h"
+#include "control.h"
 
 #include <plat/powerdomain.h>
 #include <plat/clockdomain.h>
+
+#ifdef CONFIG_SUSPEND
+static suspend_state_t suspend_state = PM_SUSPEND_ON;
+static inline bool is_suspending(void)
+{
+	return (suspend_state != PM_SUSPEND_ON);
+}
+#else
+static inline bool is_suspending(void)
+{
+	return false;
+}
+#endif
 
 static void (*omap2_sram_idle)(void);
 static void (*omap2_sram_suspend)(u32 dllctrl, void __iomem *sdrc_dlla_ctrl,
 				  void __iomem *sdrc_power);
 
-static struct powerdomain *mpu_pwrdm;
-static struct powerdomain *core_pwrdm;
-
-static struct clockdomain *dsp_clkdm;
-static struct clockdomain *gfx_clkdm;
+static struct powerdomain *mpu_pwrdm, *core_pwrdm;
+static struct clockdomain *dsp_clkdm, *mpu_clkdm, *wkup_clkdm, *gfx_clkdm;
 
 static struct clk *osc_ck, *emul_ck;
 
@@ -73,8 +83,8 @@ static int omap2_fclks_active(void)
 	f2 = cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
 
 	/* Ignore UART clocks.  These are handled by UART core (serial.c) */
-	f1 &= ~(OMAP24XX_EN_UART1 | OMAP24XX_EN_UART2);
-	f2 &= ~OMAP24XX_EN_UART3;
+	f1 &= ~(OMAP24XX_EN_UART1_MASK | OMAP24XX_EN_UART2_MASK);
+	f2 &= ~OMAP24XX_EN_UART3_MASK;
 
 	if (f1 | f2)
 		return 1;
@@ -122,6 +132,11 @@ static void omap2_enter_full_retention(void)
 	if (omap_irq_pending())
 		goto no_sleep;
 
+	/* Block console output in case it is on one of the OMAP UARTs */
+	if (!is_suspending())
+		if (try_acquire_console_sem())
+			goto no_sleep;
+
 	omap_uart_prepare_idle(0);
 	omap_uart_prepare_idle(1);
 	omap_uart_prepare_idle(2);
@@ -134,6 +149,9 @@ static void omap2_enter_full_retention(void)
 	omap_uart_resume_idle(2);
 	omap_uart_resume_idle(1);
 	omap_uart_resume_idle(0);
+
+	if (!is_suspending())
+		release_console_sem();
 
 no_sleep:
 	if (omap2_pm_debug) {
@@ -173,7 +191,7 @@ static int omap2_i2c_active(void)
 	u32 l;
 
 	l = cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
-	return l & (OMAP2420_EN_I2C2 | OMAP2420_EN_I2C1);
+	return l & (OMAP2420_EN_I2C2_MASK | OMAP2420_EN_I2C1_MASK);
 }
 
 static int sti_console_enabled;
@@ -184,13 +202,13 @@ static int omap2_allow_mpu_retention(void)
 
 	/* Check for MMC, UART2, UART1, McSPI2, McSPI1 and DSS1. */
 	l = cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
-	if (l & (OMAP2420_EN_MMC | OMAP24XX_EN_UART2 |
-		 OMAP24XX_EN_UART1 | OMAP24XX_EN_MCSPI2 |
-		 OMAP24XX_EN_MCSPI1 | OMAP24XX_EN_DSS1))
+	if (l & (OMAP2420_EN_MMC_MASK | OMAP24XX_EN_UART2_MASK |
+		 OMAP24XX_EN_UART1_MASK | OMAP24XX_EN_MCSPI2_MASK |
+		 OMAP24XX_EN_MCSPI1_MASK | OMAP24XX_EN_DSS1_MASK))
 		return 0;
 	/* Check for UART3. */
 	l = cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
-	if (l & OMAP24XX_EN_UART3)
+	if (l & OMAP24XX_EN_UART3_MASK)
 		return 0;
 	if (sti_console_enabled)
 		return 0;
@@ -218,12 +236,13 @@ static void omap2_enter_mpu_retention(void)
 
 		/* Try to enter MPU retention */
 		prm_write_mod_reg((0x01 << OMAP_POWERSTATE_SHIFT) |
-				  OMAP_LOGICRETSTATE,
-				  MPU_MOD, PM_PWSTCTRL);
+				  OMAP_LOGICRETSTATE_MASK,
+				  MPU_MOD, OMAP2_PM_PWSTCTRL);
 	} else {
 		/* Block MPU retention */
 
-		prm_write_mod_reg(OMAP_LOGICRETSTATE, MPU_MOD, PM_PWSTCTRL);
+		prm_write_mod_reg(OMAP_LOGICRETSTATE_MASK, MPU_MOD,
+						 OMAP2_PM_PWSTCTRL);
 		only_idle = 1;
 	}
 
@@ -247,6 +266,8 @@ static void omap2_enter_mpu_retention(void)
 static int omap2_can_sleep(void)
 {
 	if (omap2_fclks_active())
+		return 0;
+	if (!omap_uart_can_sleep())
 		return 0;
 	if (osc_ck->usecount > 1)
 		return 0;
@@ -278,6 +299,12 @@ out:
 	local_irq_enable();
 }
 
+static int omap2_pm_begin(suspend_state_t state)
+{
+	suspend_state = state;
+	return 0;
+}
+
 static int omap2_pm_prepare(void)
 {
 	/* We cannot sleep in idle until we have resumed */
@@ -290,7 +317,8 @@ static int omap2_pm_suspend(void)
 	u32 wken_wkup, mir1;
 
 	wken_wkup = prm_read_mod_reg(WKUP_MOD, PM_WKEN);
-	prm_write_mod_reg(wken_wkup & ~OMAP24XX_EN_GPT1, WKUP_MOD, PM_WKEN);
+	wken_wkup &= ~OMAP24XX_EN_GPT1_MASK;
+	prm_write_mod_reg(wken_wkup, WKUP_MOD, PM_WKEN);
 
 	/* Mask GPT1 */
 	mir1 = omap_readl(0x480fe0a4);
@@ -326,16 +354,31 @@ static void omap2_pm_finish(void)
 	enable_hlt();
 }
 
+static void omap2_pm_end(void)
+{
+	suspend_state = PM_SUSPEND_ON;
+}
+
 static struct platform_suspend_ops omap_pm_ops = {
+	.begin		= omap2_pm_begin,
 	.prepare	= omap2_pm_prepare,
 	.enter		= omap2_pm_enter,
 	.finish		= omap2_pm_finish,
+	.end		= omap2_pm_end,
 	.valid		= suspend_valid_only_mem,
 };
 
-static int _pm_clkdm_enable_hwsup(struct clockdomain *clkdm, void *unused)
+/* XXX This function should be shareable between OMAP2xxx and OMAP3 */
+static int __init clkdms_setup(struct clockdomain *clkdm, void *unused)
 {
-	omap2_clkdm_allow_idle(clkdm);
+	clkdm_clear_all_wkdeps(clkdm);
+	clkdm_clear_all_sleepdeps(clkdm);
+
+	if (clkdm->flags & CLKDM_CAN_ENABLE_AUTO)
+		omap2_clkdm_allow_idle(clkdm);
+	else if (clkdm->flags & CLKDM_CAN_FORCE_SLEEP &&
+		 atomic_read(&clkdm->usecount) == 0)
+		omap2_clkdm_sleep(clkdm);
 	return 0;
 }
 
@@ -345,16 +388,8 @@ static void __init prcm_setup_regs(void)
 	struct powerdomain *pwrdm;
 
 	/* Enable autoidle */
-	prm_write_mod_reg(OMAP24XX_AUTOIDLE, OCP_MOD,
+	prm_write_mod_reg(OMAP24XX_AUTOIDLE_MASK, OCP_MOD,
 			  OMAP2_PRCM_SYSCONFIG_OFFSET);
-
-	/* Set all domain wakeup dependencies */
-	prm_write_mod_reg(OMAP_EN_WKUP_MASK, MPU_MOD, PM_WKDEP);
-	prm_write_mod_reg(0, OMAP24XX_DSP_MOD, PM_WKDEP);
-	prm_write_mod_reg(0, GFX_MOD, PM_WKDEP);
-	prm_write_mod_reg(0, CORE_MOD, PM_WKDEP);
-	if (cpu_is_omap2430())
-		prm_write_mod_reg(0, OMAP2430_MDM_MOD, PM_WKDEP);
 
 	/*
 	 * Set CORE powerdomain memory banks to retain their contents
@@ -384,57 +419,62 @@ static void __init prcm_setup_regs(void)
 	pwrdm_set_next_pwrst(pwrdm, PWRDM_POWER_OFF);
 	omap2_clkdm_sleep(gfx_clkdm);
 
-	/* Enable clockdomain hardware-supervised control for all clkdms */
-	clkdm_for_each(_pm_clkdm_enable_hwsup, NULL);
+	/*
+	 * Clear clockdomain wakeup dependencies and enable
+	 * hardware-supervised idle for all clkdms
+	 */
+	clkdm_for_each(clkdms_setup, NULL);
+	clkdm_add_wkdep(mpu_clkdm, wkup_clkdm);
 
 	/* Enable clock autoidle for all domains */
-	cm_write_mod_reg(OMAP24XX_AUTO_CAM |
-			 OMAP24XX_AUTO_MAILBOXES |
-			 OMAP24XX_AUTO_WDT4 |
-			 OMAP2420_AUTO_WDT3 |
-			 OMAP24XX_AUTO_MSPRO |
-			 OMAP2420_AUTO_MMC |
-			 OMAP24XX_AUTO_FAC |
-			 OMAP2420_AUTO_EAC |
-			 OMAP24XX_AUTO_HDQ |
-			 OMAP24XX_AUTO_UART2 |
-			 OMAP24XX_AUTO_UART1 |
-			 OMAP24XX_AUTO_I2C2 |
-			 OMAP24XX_AUTO_I2C1 |
-			 OMAP24XX_AUTO_MCSPI2 |
-			 OMAP24XX_AUTO_MCSPI1 |
-			 OMAP24XX_AUTO_MCBSP2 |
-			 OMAP24XX_AUTO_MCBSP1 |
-			 OMAP24XX_AUTO_GPT12 |
-			 OMAP24XX_AUTO_GPT11 |
-			 OMAP24XX_AUTO_GPT10 |
-			 OMAP24XX_AUTO_GPT9 |
-			 OMAP24XX_AUTO_GPT8 |
-			 OMAP24XX_AUTO_GPT7 |
-			 OMAP24XX_AUTO_GPT6 |
-			 OMAP24XX_AUTO_GPT5 |
-			 OMAP24XX_AUTO_GPT4 |
-			 OMAP24XX_AUTO_GPT3 |
-			 OMAP24XX_AUTO_GPT2 |
-			 OMAP2420_AUTO_VLYNQ |
-			 OMAP24XX_AUTO_DSS,
+	cm_write_mod_reg(OMAP24XX_AUTO_CAM_MASK |
+			 OMAP24XX_AUTO_MAILBOXES_MASK |
+			 OMAP24XX_AUTO_WDT4_MASK |
+			 OMAP2420_AUTO_WDT3_MASK |
+			 OMAP24XX_AUTO_MSPRO_MASK |
+			 OMAP2420_AUTO_MMC_MASK |
+			 OMAP24XX_AUTO_FAC_MASK |
+			 OMAP2420_AUTO_EAC_MASK |
+			 OMAP24XX_AUTO_HDQ_MASK |
+			 OMAP24XX_AUTO_UART2_MASK |
+			 OMAP24XX_AUTO_UART1_MASK |
+			 OMAP24XX_AUTO_I2C2_MASK |
+			 OMAP24XX_AUTO_I2C1_MASK |
+			 OMAP24XX_AUTO_MCSPI2_MASK |
+			 OMAP24XX_AUTO_MCSPI1_MASK |
+			 OMAP24XX_AUTO_MCBSP2_MASK |
+			 OMAP24XX_AUTO_MCBSP1_MASK |
+			 OMAP24XX_AUTO_GPT12_MASK |
+			 OMAP24XX_AUTO_GPT11_MASK |
+			 OMAP24XX_AUTO_GPT10_MASK |
+			 OMAP24XX_AUTO_GPT9_MASK |
+			 OMAP24XX_AUTO_GPT8_MASK |
+			 OMAP24XX_AUTO_GPT7_MASK |
+			 OMAP24XX_AUTO_GPT6_MASK |
+			 OMAP24XX_AUTO_GPT5_MASK |
+			 OMAP24XX_AUTO_GPT4_MASK |
+			 OMAP24XX_AUTO_GPT3_MASK |
+			 OMAP24XX_AUTO_GPT2_MASK |
+			 OMAP2420_AUTO_VLYNQ_MASK |
+			 OMAP24XX_AUTO_DSS_MASK,
 			 CORE_MOD, CM_AUTOIDLE1);
-	cm_write_mod_reg(OMAP24XX_AUTO_UART3 |
-			 OMAP24XX_AUTO_SSI |
-			 OMAP24XX_AUTO_USB,
+	cm_write_mod_reg(OMAP24XX_AUTO_UART3_MASK |
+			 OMAP24XX_AUTO_SSI_MASK |
+			 OMAP24XX_AUTO_USB_MASK,
 			 CORE_MOD, CM_AUTOIDLE2);
-	cm_write_mod_reg(OMAP24XX_AUTO_SDRC |
-			 OMAP24XX_AUTO_GPMC |
-			 OMAP24XX_AUTO_SDMA,
+	cm_write_mod_reg(OMAP24XX_AUTO_SDRC_MASK |
+			 OMAP24XX_AUTO_GPMC_MASK |
+			 OMAP24XX_AUTO_SDMA_MASK,
 			 CORE_MOD, CM_AUTOIDLE3);
-	cm_write_mod_reg(OMAP24XX_AUTO_PKA |
-			 OMAP24XX_AUTO_AES |
-			 OMAP24XX_AUTO_RNG |
-			 OMAP24XX_AUTO_SHA |
-			 OMAP24XX_AUTO_DES,
+	cm_write_mod_reg(OMAP24XX_AUTO_PKA_MASK |
+			 OMAP24XX_AUTO_AES_MASK |
+			 OMAP24XX_AUTO_RNG_MASK |
+			 OMAP24XX_AUTO_SHA_MASK |
+			 OMAP24XX_AUTO_DES_MASK,
 			 CORE_MOD, OMAP24XX_CM_AUTOIDLE4);
 
-	cm_write_mod_reg(OMAP2420_AUTO_DSP_IPI, OMAP24XX_DSP_MOD, CM_AUTOIDLE);
+	cm_write_mod_reg(OMAP2420_AUTO_DSP_IPI_MASK, OMAP24XX_DSP_MOD,
+			 CM_AUTOIDLE);
 
 	/* Put DPLL and both APLLs into autoidle mode */
 	cm_write_mod_reg((0x03 << OMAP24XX_AUTO_DPLL_SHIFT) |
@@ -442,12 +482,12 @@ static void __init prcm_setup_regs(void)
 			 (0x03 << OMAP24XX_AUTO_54M_SHIFT),
 			 PLL_MOD, CM_AUTOIDLE);
 
-	cm_write_mod_reg(OMAP24XX_AUTO_OMAPCTRL |
-			 OMAP24XX_AUTO_WDT1 |
-			 OMAP24XX_AUTO_MPU_WDT |
-			 OMAP24XX_AUTO_GPIOS |
-			 OMAP24XX_AUTO_32KSYNC |
-			 OMAP24XX_AUTO_GPT1,
+	cm_write_mod_reg(OMAP24XX_AUTO_OMAPCTRL_MASK |
+			 OMAP24XX_AUTO_WDT1_MASK |
+			 OMAP24XX_AUTO_MPU_WDT_MASK |
+			 OMAP24XX_AUTO_GPIOS_MASK |
+			 OMAP24XX_AUTO_32KSYNC_MASK |
+			 OMAP24XX_AUTO_GPT1_MASK,
 			 WKUP_MOD, CM_AUTOIDLE);
 
 	/* REVISIT: Configure number of 32 kHz clock cycles for sys_clk
@@ -458,15 +498,15 @@ static void __init prcm_setup_regs(void)
 	/* Configure automatic voltage transition */
 	prm_write_mod_reg(2 << OMAP_SETUP_TIME_SHIFT, OMAP24XX_GR_MOD,
 			  OMAP2_PRCM_VOLTSETUP_OFFSET);
-	prm_write_mod_reg(OMAP24XX_AUTO_EXTVOLT |
+	prm_write_mod_reg(OMAP24XX_AUTO_EXTVOLT_MASK |
 			  (0x1 << OMAP24XX_SETOFF_LEVEL_SHIFT) |
-			  OMAP24XX_MEMRETCTRL |
+			  OMAP24XX_MEMRETCTRL_MASK |
 			  (0x1 << OMAP24XX_SETRET_LEVEL_SHIFT) |
 			  (0x0 << OMAP24XX_VOLT_LEVEL_SHIFT),
 			  OMAP24XX_GR_MOD, OMAP2_PRCM_VOLTCTRL_OFFSET);
 
 	/* Enable wake-up events */
-	prm_write_mod_reg(OMAP24XX_EN_GPIOS | OMAP24XX_EN_GPT1,
+	prm_write_mod_reg(OMAP24XX_EN_GPIOS_MASK | OMAP24XX_EN_GPT1_MASK,
 			  WKUP_MOD, PM_WKEN);
 }
 
@@ -481,7 +521,7 @@ static int __init omap2_pm_init(void)
 	l = prm_read_mod_reg(OCP_MOD, OMAP2_PRCM_REVISION_OFFSET);
 	printk(KERN_INFO "PRCM revision %d.%d\n", (l >> 4) & 0x0f, l & 0x0f);
 
-	/* Look up important powerdomains, clockdomains */
+	/* Look up important powerdomains */
 
 	mpu_pwrdm = pwrdm_lookup("mpu_pwrdm");
 	if (!mpu_pwrdm)
@@ -491,9 +531,19 @@ static int __init omap2_pm_init(void)
 	if (!core_pwrdm)
 		pr_err("PM: core_pwrdm not found\n");
 
+	/* Look up important clockdomains */
+
+	mpu_clkdm = clkdm_lookup("mpu_clkdm");
+	if (!mpu_clkdm)
+		pr_err("PM: mpu_clkdm not found\n");
+
+	wkup_clkdm = clkdm_lookup("wkup_clkdm");
+	if (!wkup_clkdm)
+		pr_err("PM: wkup_clkdm not found\n");
+
 	dsp_clkdm = clkdm_lookup("dsp_clkdm");
 	if (!dsp_clkdm)
-		pr_err("PM: mpu_clkdm not found\n");
+		pr_err("PM: dsp_clkdm not found\n");
 
 	gfx_clkdm = clkdm_lookup("gfx_clkdm");
 	if (!gfx_clkdm)

@@ -13,15 +13,11 @@
 
 #include <plat/powerdomain.h>
 
-extern u32 enable_off_mode;
-extern u32 sleep_while_idle;
-extern u32 voltage_off_while_idle;
-
 extern void *omap3_secure_ram_storage;
 extern void omap3_pm_off_mode_enable(int);
 extern void omap_sram_idle(void);
 extern int omap3_can_sleep(void);
-extern int set_pwrdm_state(struct powerdomain *pwrdm, u32 state);
+extern int omap_set_pwrdm_state(struct powerdomain *pwrdm, u32 state);
 extern int omap3_idle_init(void);
 
 struct cpuidle_params {
@@ -33,35 +29,9 @@ struct cpuidle_params {
 
 #if defined(CONFIG_PM) && defined(CONFIG_CPU_IDLE)
 extern void omap3_pm_init_cpuidle(struct cpuidle_params *cpuidle_board_params);
-extern void omap3_cpuidle_update_states(void);
 #else
-static 
+static
 inline void omap3_pm_init_cpuidle(struct cpuidle_params *cpuidle_board_params)
-{
-}
-#endif
-
-struct prm_setup_vc {
-	u16 clksetup;
-	u16 voltsetup_time1;
-	u16 voltsetup_time2;
-	u16 voltoffset;
-	u16 voltsetup2;
-/* PRM_VC_CMD_VAL_0 specific bits */
-	u16 vdd0_on;
-	u16 vdd0_onlp;
-	u16 vdd0_ret;
-	u16 vdd0_off;
-/* PRM_VC_CMD_VAL_1 specific bits */
-	u16 vdd1_on;
-	u16 vdd1_onlp;
-	u16 vdd1_ret;
-	u16 vdd1_off;
-};
-#ifdef CONFIG_PM
-extern void omap3_pm_init_vc(struct prm_setup_vc *setup_vc);
-#else
-static inline void omap3_pm_init_vc(struct prm_setup_vc *setup_vc)
 {
 }
 #endif
@@ -70,14 +40,25 @@ extern int omap3_pm_get_suspend_state(struct powerdomain *pwrdm);
 extern int omap3_pm_set_suspend_state(struct powerdomain *pwrdm, int state);
 
 extern u32 wakeup_timer_seconds;
+extern u32 wakeup_timer_milliseconds;
 extern struct omap_dm_timer *gptimer_wakeup;
 
 #ifdef CONFIG_PM_DEBUG
 extern void omap2_pm_dump(int mode, int resume, unsigned int us);
+extern void omap2_pm_wakeup_on_timer(u32 seconds, u32 milliseconds);
 extern int omap2_pm_debug;
+extern u32 enable_off_mode;
+extern u32 sleep_while_idle;
 #else
 #define omap2_pm_dump(mode, resume, us)		do {} while (0);
+#define omap2_pm_wakeup_on_timer(seconds, milliseconds)	do {} while (0);
 #define omap2_pm_debug				0
+#define enable_off_mode 0
+#define sleep_while_idle 0
+#endif
+
+#if defined(CONFIG_CPU_IDLE)
+extern void omap3_cpuidle_update_states(void);
 #endif
 
 #if defined(CONFIG_PM_DEBUG) && defined(CONFIG_DEBUG_FS)

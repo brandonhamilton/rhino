@@ -342,10 +342,10 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 	printk(" %s, IRQ %d, shared memory at %#lx-%#lx.\n",
 		   model_name, dev->irq, dev->mem_start, dev->mem_end-1);
 
-	ei_status.reset_8390 = &wd_reset_8390;
-	ei_status.block_input = &wd_block_input;
-	ei_status.block_output = &wd_block_output;
-	ei_status.get_8390_hdr = &wd_get_8390_hdr;
+	ei_status.reset_8390 = wd_reset_8390;
+	ei_status.block_input = wd_block_input;
+	ei_status.block_output = wd_block_output;
+	ei_status.get_8390_hdr = wd_get_8390_hdr;
 
 	dev->netdev_ops = &wd_netdev_ops;
 	NS8390_init(dev, 0);
@@ -358,8 +358,10 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 #endif
 
 	err = register_netdev(dev);
-	if (err)
+	if (err) {
 		free_irq(dev->irq, dev);
+		iounmap(ei_status.mem);
+	}
 	return err;
 }
 
@@ -395,7 +397,6 @@ wd_reset_8390(struct net_device *dev)
 		outb(NIC16 | ((dev->mem_start>>19) & 0x1f), wd_cmd_port+WD_CMDREG5);
 
 	if (ei_debug > 1) printk("reset done\n");
-	return;
 }
 
 /* Grab the 8390 specific header. Similar to the block_input routine, but

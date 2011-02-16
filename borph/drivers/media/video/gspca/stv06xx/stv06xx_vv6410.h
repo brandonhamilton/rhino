@@ -157,8 +157,8 @@
 /* Audio Amplifier Setup Register */
 #define VV6410_AT1			0x79
 
-#define VV6410_HFLIP 			(1 << 3)
-#define VV6410_VFLIP 			(1 << 4)
+#define VV6410_HFLIP			(1 << 3)
+#define VV6410_VFLIP			(1 << 4)
 
 #define VV6410_LOW_POWER_MODE		(1 << 0)
 #define VV6410_SOFT_RESET		(1 << 2)
@@ -228,6 +228,7 @@ static const struct stv_init stv_bridge_init[] = {
 	/* This reg is written twice. Some kind of reset? */
 	{NULL,  0x1620, 0x80},
 	{NULL,  0x1620, 0x00},
+	{NULL,  0x1443, 0x00},
 	{NULL,  0x1423, 0x04},
 	{x1500, 0x1500, ARRAY_SIZE(x1500)},
 	{x1536, 0x1536, ARRAY_SIZE(x1536)},

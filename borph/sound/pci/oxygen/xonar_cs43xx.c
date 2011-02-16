@@ -56,6 +56,7 @@
 #include <sound/pcm_params.h>
 #include <sound/tlv.h>
 #include "xonar.h"
+#include "cm9780.h"
 #include "cs4398.h"
 #include "cs4362a.h"
 
@@ -171,6 +172,8 @@ static void xonar_d1_init(struct oxygen *chip)
 			  GPIO_D1_FRONT_PANEL | GPIO_D1_INPUT_ROUTE);
 	oxygen_clear_bits16(chip, OXYGEN_GPIO_DATA,
 			    GPIO_D1_FRONT_PANEL | GPIO_D1_INPUT_ROUTE);
+
+	oxygen_ac97_set_bits(chip, 0, CM9780_JACK, CM9780_FMIC2MIC);
 
 	xonar_init_cs53x1(chip);
 	xonar_enable_output(chip);
@@ -364,13 +367,6 @@ static void xonar_d1_line_mic_ac97_switch(struct oxygen *chip,
 
 static const DECLARE_TLV_DB_SCALE(cs4362a_db_scale, -6000, 100, 0);
 
-static int xonar_d1_control_filter(struct snd_kcontrol_new *template)
-{
-	if (!strncmp(template->name, "CD Capture ", 11))
-		return 1; /* no CD input */
-	return 0;
-}
-
 static int xonar_d1_mixer_init(struct oxygen *chip)
 {
 	int err;
@@ -388,7 +384,6 @@ static const struct oxygen_model model_xonar_d1 = {
 	.longname = "Asus Virtuoso 100",
 	.chip = "AV200",
 	.init = xonar_d1_init,
-	.control_filter = xonar_d1_control_filter,
 	.mixer_init = xonar_d1_mixer_init,
 	.cleanup = xonar_d1_cleanup,
 	.suspend = xonar_d1_suspend,

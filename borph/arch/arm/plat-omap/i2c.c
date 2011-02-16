@@ -30,6 +30,7 @@
 
 #include <mach/irqs.h>
 #include <plat/mux.h>
+#include <plat/i2c.h>
 #include <plat/omap-pm.h>
 
 #define OMAP_I2C_SIZE		0x3f
@@ -37,6 +38,7 @@
 #define OMAP2_I2C_BASE1		0x48070000
 #define OMAP2_I2C_BASE2		0x48072000
 #define OMAP2_I2C_BASE3		0x48060000
+#define OMAP4_I2C_BASE4		0x48350000
 
 static const char name[] = "i2c_omap";
 
@@ -53,11 +55,14 @@ static const char name[] = "i2c_omap";
 
 static struct resource i2c_resources[][2] = {
 	{ I2C_RESOURCE_BUILDER(0, 0) },
-#if	defined(CONFIG_ARCH_OMAP24XX) || defined(CONFIG_ARCH_OMAP34XX)
-	{ I2C_RESOURCE_BUILDER(OMAP2_I2C_BASE2, INT_24XX_I2C2_IRQ) },
+#if	defined(CONFIG_ARCH_OMAP2PLUS)
+	{ I2C_RESOURCE_BUILDER(OMAP2_I2C_BASE2, 0) },
 #endif
-#if	defined(CONFIG_ARCH_OMAP34XX)
-	{ I2C_RESOURCE_BUILDER(OMAP2_I2C_BASE3, INT_34XX_I2C3_IRQ) },
+#if	defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
+	{ I2C_RESOURCE_BUILDER(OMAP2_I2C_BASE3, 0) },
+#endif
+#if	defined(CONFIG_ARCH_OMAP4)
+	{ I2C_RESOURCE_BUILDER(OMAP4_I2C_BASE4, 0) },
 #endif
 };
 
@@ -75,40 +80,18 @@ static struct resource i2c_resources[][2] = {
 static struct omap_i2c_bus_platform_data i2c_pdata[ARRAY_SIZE(i2c_resources)];
 static struct platform_device omap_i2c_devices[] = {
 	I2C_DEV_BUILDER(1, i2c_resources[0], &i2c_pdata[0]),
-#if	defined(CONFIG_ARCH_OMAP24XX) || defined(CONFIG_ARCH_OMAP34XX)
+#if	defined(CONFIG_ARCH_OMAP2PLUS)
 	I2C_DEV_BUILDER(2, i2c_resources[1], &i2c_pdata[1]),
 #endif
-#if	defined(CONFIG_ARCH_OMAP34XX)
+#if	defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
 	I2C_DEV_BUILDER(3, i2c_resources[2], &i2c_pdata[2]),
+#endif
+#if	defined(CONFIG_ARCH_OMAP4)
+	I2C_DEV_BUILDER(4, i2c_resources[3], &i2c_pdata[3]),
 #endif
 };
 
 #define OMAP_I2C_CMDLINE_SETUP	(BIT(31))
-
-#ifdef CONFIG_ARCH_OMAP34XX
-/*
- * omap_i2c_set_wfc_mpu_wkup_lat - sets mpu wake up constraint
- * @dev:	i2c bus device pointer
- * @val:	latency constraint to set, -1 to disable constraint
- *
- * When waiting for completion of a i2c transfer, we need to set a wake up
- * latency constraint for the MPU. This is to ensure quick enough wakeup from
- * idle, when transfer completes.
- */
-static void omap_i2c_set_wfc_mpu_wkup_lat(struct device *dev, int val)
-{
-	omap_pm_set_max_mpu_wakeup_lat(dev, val);
-}
-#endif
-
-static void __init omap_set_i2c_constraint_func(
-				struct omap_i2c_bus_platform_data *pd)
-{
-	if (cpu_is_omap34xx())
-		pd->set_mpu_wkup_lat = omap_i2c_set_wfc_mpu_wkup_lat;
-	else
-		pd->set_mpu_wkup_lat = NULL;
-}
 
 static int __init omap_i2c_nr_ports(void)
 {
@@ -120,32 +103,97 @@ static int __init omap_i2c_nr_ports(void)
 		ports = 2;
 	else if (cpu_is_omap34xx())
 		ports = 3;
+	else if (cpu_is_omap44xx())
+		ports = 4;
 
 	return ports;
+}
+
+/* Shared between omap2 and 3 */
+static resource_size_t omap2_i2c_irq[3] __initdata = {
+	INT_24XX_I2C1_IRQ,
+	INT_24XX_I2C2_IRQ,
+	INT_34XX_I2C3_IRQ,
+};
+
+static resource_size_t omap4_i2c_irq[4] __initdata = {
+	OMAP44XX_IRQ_I2C1,
+	OMAP44XX_IRQ_I2C2,
+	OMAP44XX_IRQ_I2C3,
+	OMAP44XX_IRQ_I2C4,
+};
+
+static inline int omap1_i2c_add_bus(struct platform_device *pdev, int bus_id)
+{
+	struct omap_i2c_bus_platform_data *pd;
+	struct resource *res;
+
+	pd = pdev->dev.platform_data;
+	res = pdev->resource;
+	res[0].start = OMAP1_I2C_BASE;
+	res[0].end = res[0].start + OMAP_I2C_SIZE;
+	res[1].start = INT_I2C;
+	omap1_i2c_mux_pins(bus_id);
+
+	return platform_device_register(pdev);
+}
+
+/*
+ * XXX This function is a temporary compatibility wrapper - only
+ * needed until the I2C driver can be converted to call
+ * omap_pm_set_max_dev_wakeup_lat() and handle a return code.
+ */
+static void omap_pm_set_max_mpu_wakeup_lat_compat(struct device *dev, long t)
+{
+	omap_pm_set_max_mpu_wakeup_lat(dev, t);
+}
+
+static inline int omap2_i2c_add_bus(struct platform_device *pdev, int bus_id)
+{
+	struct resource *res;
+	resource_size_t *irq;
+
+	res = pdev->resource;
+
+	if (!cpu_is_omap44xx())
+		irq = omap2_i2c_irq;
+	else
+		irq = omap4_i2c_irq;
+
+	if (bus_id == 1) {
+		res[0].start = OMAP2_I2C_BASE1;
+		res[0].end = res[0].start + OMAP_I2C_SIZE;
+	}
+
+	res[1].start = irq[bus_id - 1];
+	omap2_i2c_mux_pins(bus_id);
+
+	/*
+	 * When waiting for completion of a i2c transfer, we need to
+	 * set a wake up latency constraint for the MPU. This is to
+	 * ensure quick enough wakeup from idle, when transfer
+	 * completes.
+	 */
+	if (cpu_is_omap34xx()) {
+		struct omap_i2c_bus_platform_data *pd;
+
+		pd = pdev->dev.platform_data;
+		pd->set_mpu_wkup_lat = omap_pm_set_max_mpu_wakeup_lat_compat;
+	}
+
+	return platform_device_register(pdev);
 }
 
 static int __init omap_i2c_add_bus(int bus_id)
 {
 	struct platform_device *pdev;
-	struct resource *res;
-	resource_size_t base, irq;
 
 	pdev = &omap_i2c_devices[bus_id - 1];
-	if (bus_id == 1) {
-		res = pdev->resource;
-		if (cpu_class_is_omap1()) {
-			base = OMAP1_I2C_BASE;
-			irq = INT_I2C;
-		} else {
-			base = OMAP2_I2C_BASE1;
-			irq = INT_24XX_I2C1_IRQ;
-		}
-		res[0].start = base;
-		res[0].end = base + OMAP_I2C_SIZE;
-		res[1].start = irq;
-	}
 
-	return platform_device_register(pdev);
+	if (cpu_class_is_omap1())
+		return omap1_i2c_add_bus(pdev, bus_id);
+	else
+		return omap2_i2c_add_bus(pdev, bus_id);
 }
 
 /**
@@ -186,7 +234,6 @@ static int __init omap_register_i2c_bus_cmdline(void)
 	for (i = 0; i < ARRAY_SIZE(i2c_pdata); i++)
 		if (i2c_pdata[i].clkrate & OMAP_I2C_CMDLINE_SETUP) {
 			i2c_pdata[i].clkrate &= ~OMAP_I2C_CMDLINE_SETUP;
-			omap_set_i2c_constraint_func(&i2c_pdata[i]);
 			err = omap_i2c_add_bus(i + 1);
 			if (err)
 				goto out;
@@ -198,7 +245,7 @@ out:
 subsys_initcall(omap_register_i2c_bus_cmdline);
 
 /**
- * omap_plat_register_i2c_bus - register I2C bus with device descriptors
+ * omap_register_i2c_bus - register I2C bus with device descriptors
  * @bus_id: bus id counting from number 1
  * @clkrate: clock rate of the bus in kHz
  * @info: pointer into I2C device descriptor table or NULL
@@ -206,7 +253,7 @@ subsys_initcall(omap_register_i2c_bus_cmdline);
  *
  * Returns 0 on success or an error code.
  */
-int __init omap_plat_register_i2c_bus(int bus_id, u32 clkrate,
+int __init omap_register_i2c_bus(int bus_id, u32 clkrate,
 			  struct i2c_board_info const *info,
 			  unsigned len)
 {
@@ -223,7 +270,6 @@ int __init omap_plat_register_i2c_bus(int bus_id, u32 clkrate,
 	if (!i2c_pdata[bus_id - 1].clkrate)
 		i2c_pdata[bus_id - 1].clkrate = clkrate;
 
-	omap_set_i2c_constraint_func(&i2c_pdata[bus_id - 1]);
 	i2c_pdata[bus_id - 1].clkrate &= ~OMAP_I2C_CMDLINE_SETUP;
 
 	return omap_i2c_add_bus(bus_id);

@@ -39,6 +39,7 @@
 #include <linux/list.h>
 #include <linux/interrupt.h>
 #include <linux/errno.h>
+#include <linux/timer.h>
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/usb/ch9.h>
@@ -51,6 +52,15 @@ struct musb;
 struct musb_hw_ep;
 struct musb_ep;
 
+/* Helper defines for struct musb->hwvers */
+#define MUSB_HWVERS_MAJOR(x)	((x >> 10) & 0x1f)
+#define MUSB_HWVERS_MINOR(x)	(x & 0x3ff)
+#define MUSB_HWVERS_RC		0x8000
+#define MUSB_HWVERS_1300	0x52C
+#define MUSB_HWVERS_1400	0x590
+#define MUSB_HWVERS_1800	0x720
+#define MUSB_HWVERS_1900	0x784
+#define MUSB_HWVERS_2000	0x800
 
 #include "musb_debug.h"
 #include "musb_dma.h"
@@ -59,7 +69,7 @@ struct musb_ep;
 #include "musb_regs.h"
 
 #include "musb_gadget.h"
-#include "../core/hcd.h"
+#include <linux/usb/hcd.h>
 #include "musb_host.h"
 
 
@@ -186,10 +196,15 @@ enum musb_g_ep0_state {
 	MUSB_EP0_STAGE_ACKWAIT,		/* after zlp, before statusin */
 } __attribute__ ((packed));
 
-/* OTG protocol constants */
+/*
+ * OTG protocol constants.  See USB OTG 1.3 spec,
+ * sections 5.5 "Device Timings" and 6.6.5 "Timers".
+ */
 #define OTG_TIME_A_WAIT_VRISE	100		/* msec (max) */
-#define OTG_TIME_A_WAIT_BCON	0		/* 0=infinite; min 1000 msec */
-#define OTG_TIME_A_IDLE_BDIS	200		/* msec (min) */
+#define OTG_TIME_A_WAIT_BCON	1100		/* min 1 second */
+#define OTG_TIME_A_AIDL_BDIS	200		/* min 200 msec */
+#define OTG_TIME_B_ASE0_BRST	100		/* min 3.125 ms */
+
 
 /*************************** REGISTER ACCESS ********************************/
 
@@ -198,7 +213,8 @@ enum musb_g_ep0_state {
  */
 
 #if defined(CONFIG_ARCH_DAVINCI) || defined(CONFIG_ARCH_OMAP2430) \
-		|| defined(CONFIG_ARCH_OMAP3430) || defined(CONFIG_BLACKFIN)
+		|| defined(CONFIG_ARCH_OMAP3430) || defined(CONFIG_BLACKFIN) \
+		|| defined(CONFIG_ARCH_OMAP4)
 /* REVISIT indexed access seemed to
  * misbehave (on DaVinci) for at least peripheral IN ...
  */
@@ -307,16 +323,6 @@ static inline struct usb_request *next_out_request(struct musb_hw_ep *hw_ep)
 #endif
 }
 
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
-/*
- * struct queue - Queue data structure
- */
-struct queue {
-	struct urb *urb;
-	struct queue *next;
-};
-#endif
-
 /*
  * struct musb - Driver instance data.
  */
@@ -324,15 +330,9 @@ struct musb {
 	/* device lock */
 	spinlock_t		lock;
 	struct clk		*clock;
+	struct clk		*phy_clock;
 	irqreturn_t		(*isr)(int, void *);
 	struct work_struct	irq_work;
-#define MUSB_HWVERS_MAJOR(x)	((x >> 10) & 0x1f)
-#define MUSB_HWVERS_MINOR(x)	(x & 0x3ff)
-#define MUSB_HWVERS_RC		0x8000
-#define MUSB_HWVERS_1300	0x52C
-#define MUSB_HWVERS_1400	0x590
-#define MUSB_HWVERS_1800	0x720
-#define MUSB_HWVERS_2000	0x800
 	u16			hwvers;
 
 /* this hub status bit is reserved by USB 2.0 and not seen by usbcore */
@@ -357,10 +357,7 @@ struct musb {
 	struct list_head	in_bulk;	/* of musb_qh */
 	struct list_head	out_bulk;	/* of musb_qh */
 
-	struct workqueue_struct *gb_queue;
-	struct work_struct      gb_work;
-	spinlock_t		qlock;
-	struct queue		*qhead;
+	struct timer_list	otg_timer;
 #endif
 
 	/* called with IRQs blocked; ON/nonzero implies starting a session,
@@ -380,29 +377,6 @@ struct musb {
 	void __iomem		*sync_va;
 #endif
 
-#ifdef CONFIG_MACH_OMAP3517EVM
-/* Backup registers required for the workaround of AM3517 bytewise
- * read issue. FADDR, POWER, INTRTXE, INTRRXE and INTRUSBE register
- * read would actually clear the interrupt registers and would cause
- * missing interrupt event.
- * Only POWER register has a few read-only bits and other registers
- * are programmed by software so any read to them would get the last
- * written data dave in below registers.Even for POWER registers
- * we need to read actual registers only at few places where we want
- * to know the status of read-only bits.
- */
-#define AM3517_READ_ISSUE_FADDR		BIT(0)
-#define AM3517_READ_ISSUE_POWER		BIT(1)
-#define AM3517_READ_ISSUE_INTRTXE	BIT(2)
-#define AM3517_READ_ISSUE_INTRRXE	BIT(3)
-#define AM3517_READ_ISSUE_INTRUSBE	BIT(4)
-	u8			read_mask;
-	u8			faddr;
-	u8			power;
-	u16			intrtxe;
-	u16			intrrxe;
-	u8			intrusbe;
-#endif
 	/* passed down from chip/board specific irq handlers */
 	u8			int_usb;
 	u16			int_rx;
@@ -443,21 +417,13 @@ struct musb {
 	unsigned		hb_iso_tx:1;	/* high bandwidth iso tx? */
 	unsigned		dyn_fifo:1;	/* dynamic FIFO supported? */
 
-#ifdef C_MP_TX
-	unsigned bulk_split:1;
+	unsigned		bulk_split:1;
 #define	can_bulk_split(musb,type) \
-		(((type) == USB_ENDPOINT_XFER_BULK) && (musb)->bulk_split)
-#else
-#define	can_bulk_split(musb, type)	0
-#endif
+	(((type) == USB_ENDPOINT_XFER_BULK) && (musb)->bulk_split)
 
-#ifdef C_MP_RX
-	unsigned bulk_combine:1;
+	unsigned		bulk_combine:1;
 #define	can_bulk_combine(musb,type) \
-		(((type) == USB_ENDPOINT_XFER_BULK) && (musb)->bulk_combine)
-#else
-#define	can_bulk_combine(musb, type)	0
-#endif
+	(((type) == USB_ENDPOINT_XFER_BULK) && (musb)->bulk_combine)
 
 #ifdef CONFIG_USB_GADGET_MUSB_HDRC
 	/* is_suspended means USB B_PERIPHERAL suspend */
@@ -505,7 +471,8 @@ struct musb_csr_regs {
 
 struct musb_context_registers {
 
-#if defined(CONFIG_ARCH_OMAP34XX)
+#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3) || \
+    defined(CONFIG_ARCH_OMAP4)
 	u32 otg_sysconfig, otg_forcestandby;
 #endif
 	u8 power;
@@ -519,14 +486,15 @@ struct musb_context_registers {
 	struct musb_csr_regs index_regs[MUSB_C_NUM_EPS];
 };
 
-#if defined(CONFIG_ARCH_OMAP34XX) || defined(CONFIG_ARCH_OMAP2430)
-extern void musb_platform_save_context(struct musb_context_registers
-		*musb_context);
-extern void musb_platform_restore_context(struct musb_context_registers
-		*musb_context);
+#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3) || \
+    defined(CONFIG_ARCH_OMAP4) || defined(CONFIG_BLACKFIN)
+extern void musb_platform_save_context(struct musb *musb,
+		struct musb_context_registers *musb_context);
+extern void musb_platform_restore_context(struct musb *musb,
+		struct musb_context_registers *musb_context);
 #else
-#define musb_platform_save_context(x)		do {} while (0)
-#define musb_platform_restore_context(x)	do {} while (0)
+#define musb_platform_save_context(m, x)	do {} while (0)
+#define musb_platform_restore_context(m, x)	do {} while (0)
 #endif
 
 #endif
@@ -632,7 +600,9 @@ extern void musb_hnp_stop(struct musb *musb);
 extern int musb_platform_set_mode(struct musb *musb, u8 musb_mode);
 
 #if defined(CONFIG_USB_TUSB6010) || defined(CONFIG_BLACKFIN) || \
-	defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP34XX)
+	defined(CONFIG_ARCH_DAVINCI_DA8XX) || \
+	defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3) || \
+	defined(CONFIG_ARCH_OMAP4)
 extern void musb_platform_try_idle(struct musb *musb, unsigned long timeout);
 #else
 #define musb_platform_try_idle(x, y)		do {} while (0)
@@ -644,29 +614,7 @@ extern int musb_platform_get_vbus_status(struct musb *musb);
 #define musb_platform_get_vbus_status(x)	0
 #endif
 
-extern int __init musb_platform_init(struct musb *musb);
+extern int __init musb_platform_init(struct musb *musb, void *board_data);
 extern int musb_platform_exit(struct musb *musb);
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
-extern void musb_gb_work(struct work_struct *data);
-#endif
-
-/*-------------------------- ProcFS definitions ---------------------*/
-
-struct proc_dir_entry;
-
-#if defined(CONFIG_USB_MUSB_DEBUG) && defined(MUSB_CONFIG_PROC_FS)
-extern struct proc_dir_entry *musb_debug_create(char *name, struct musb *data);
-extern void musb_debug_delete(char *name, struct musb *data);
-
-#else
-static inline struct proc_dir_entry *
-musb_debug_create(char *name, struct musb *data)
-{
-	return NULL;
-}
-static inline void musb_debug_delete(char *name, struct musb *data)
-{
-}
-#endif
 
 #endif	/* __MUSB_CORE_H__ */

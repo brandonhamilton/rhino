@@ -25,18 +25,23 @@
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 
 #include <plat/clock.h>
 #include <plat/board.h>
 #include <plat/powerdomain.h>
 #include <plat/clockdomain.h>
+#include <plat/dmtimer.h>
 
 #include "prm.h"
 #include "cm.h"
 #include "pm.h"
-#include "prm-regbits-34xx.h"
 
 int omap2_pm_debug;
+u32 enable_off_mode;
+u32 sleep_while_idle;
+u32 wakeup_timer_seconds;
+u32 wakeup_timer_milliseconds;
 
 #define DUMP_PRM_MOD_REG(mod, reg)    \
 	regs[reg_count].name = #mod "." #reg; \
@@ -55,10 +60,6 @@ int omap2_pm_debug;
 	regs[reg_count++].val = \
 			 __raw_readl(OMAP2_L4_IO_ADDRESS(0x480fe000 + (off)))
 
-#ifdef CONFIG_DEBUG_FS
-static int __init pm_dbg_init(void);
-#endif
-
 void omap2_pm_dump(int mode, int resume, unsigned int us)
 {
 	struct reg {
@@ -72,9 +73,9 @@ void omap2_pm_dump(int mode, int resume, unsigned int us)
 #if 0
 		/* MPU */
 		DUMP_PRM_MOD_REG(OCP_MOD, OMAP2_PRM_IRQENABLE_MPU_OFFSET);
-		DUMP_CM_MOD_REG(MPU_MOD, CM_CLKSTCTRL);
-		DUMP_PRM_MOD_REG(MPU_MOD, PM_PWSTCTRL);
-		DUMP_PRM_MOD_REG(MPU_MOD, PM_PWSTST);
+		DUMP_CM_MOD_REG(MPU_MOD, OMAP2_CM_CLKSTCTRL);
+		DUMP_PRM_MOD_REG(MPU_MOD, OMAP2_PM_PWSTCTRL);
+		DUMP_PRM_MOD_REG(MPU_MOD, OMAP2_PM_PWSTST);
 		DUMP_PRM_MOD_REG(MPU_MOD, PM_WKDEP);
 #endif
 #if 0
@@ -98,7 +99,7 @@ void omap2_pm_dump(int mode, int resume, unsigned int us)
 		DUMP_CM_MOD_REG(WKUP_MOD, CM_ICLKEN);
 		DUMP_CM_MOD_REG(PLL_MOD, CM_CLKEN);
 		DUMP_CM_MOD_REG(PLL_MOD, CM_AUTOIDLE);
-		DUMP_PRM_MOD_REG(CORE_MOD, PM_PWSTST);
+		DUMP_PRM_MOD_REG(CORE_MOD, OMAP2_PM_PWSTST);
 #endif
 #if 0
 		/* DSP */
@@ -108,11 +109,11 @@ void omap2_pm_dump(int mode, int resume, unsigned int us)
 			DUMP_CM_MOD_REG(OMAP24XX_DSP_MOD, CM_IDLEST);
 			DUMP_CM_MOD_REG(OMAP24XX_DSP_MOD, CM_AUTOIDLE);
 			DUMP_CM_MOD_REG(OMAP24XX_DSP_MOD, CM_CLKSEL);
-			DUMP_CM_MOD_REG(OMAP24XX_DSP_MOD, CM_CLKSTCTRL);
-			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, RM_RSTCTRL);
-			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, RM_RSTST);
-			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, PM_PWSTCTRL);
-			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, PM_PWSTST);
+			DUMP_CM_MOD_REG(OMAP24XX_DSP_MOD, OMAP2_CM_CLKSTCTRL);
+			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, OMAP2_RM_RSTCTRL);
+			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, OMAP2_RM_RSTST);
+			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, OMAP2_PM_PWSTCTRL);
+			DUMP_PRM_MOD_REG(OMAP24XX_DSP_MOD, OMAP2_PM_PWSTST);
 		}
 #endif
 	} else {
@@ -160,15 +161,34 @@ void omap2_pm_dump(int mode, int resume, unsigned int us)
 		printk(KERN_INFO "%-20s: 0x%08x\n", regs[i].name, regs[i].val);
 }
 
+void omap2_pm_wakeup_on_timer(u32 seconds, u32 milliseconds)
+{
+	u32 tick_rate, cycles;
+
+	if (!seconds && !milliseconds)
+		return;
+
+	tick_rate = clk_get_rate(omap_dm_timer_get_fclk(gptimer_wakeup));
+	cycles = tick_rate * seconds + tick_rate * milliseconds / 1000;
+	omap_dm_timer_stop(gptimer_wakeup);
+	omap_dm_timer_set_load_start(gptimer_wakeup, 0, 0xffffffff - cycles);
+
+	pr_info("PM: Resume timer in %u.%03u secs"
+		" (%d ticks at %d ticks/sec.)\n",
+		seconds, milliseconds, cycles, tick_rate);
+}
+
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
 static void pm_dbg_regset_store(u32 *ptr);
 
-struct dentry *pm_dbg_dir;
+static struct dentry *pm_dbg_dir;
 
 static int pm_dbg_init_done;
+
+static int __init pm_dbg_init(void);
 
 enum {
 	DEBUG_FILE_COUNTERS = 0,
@@ -388,6 +408,11 @@ static int pwrdm_dbg_show_counter(struct powerdomain *pwrdm, void *user)
 		seq_printf(s, ",%s:%d", pwrdm_state_names[i],
 			pwrdm->state_counter[i]);
 
+	seq_printf(s, ",RET-LOGIC-OFF:%d", pwrdm->ret_logic_off_counter);
+	for (i = 0; i < pwrdm->banks; i++)
+		seq_printf(s, ",RET-MEMBANK%d-OFF:%d", i + 1,
+				pwrdm->ret_mem_off_counter[i]);
+
 	seq_printf(s, "\n");
 
 	return 0;
@@ -491,8 +516,10 @@ int pm_dbg_regset_init(int reg_set)
 
 static int pwrdm_suspend_get(void *data, u64 *val)
 {
-	int ret;
-	ret = omap3_pm_get_suspend_state((struct powerdomain *)data);
+	int ret = -EINVAL;
+
+	if (cpu_is_omap34xx())
+		ret = omap3_pm_get_suspend_state((struct powerdomain *)data);
 	*val = ret;
 
 	if (ret >= 0)
@@ -502,7 +529,10 @@ static int pwrdm_suspend_get(void *data, u64 *val)
 
 static int pwrdm_suspend_set(void *data, u64 val)
 {
-	return omap3_pm_set_suspend_state((struct powerdomain *)data, (int)val);
+	if (cpu_is_omap34xx())
+		return omap3_pm_set_suspend_state(
+			(struct powerdomain *)data, (int)val);
+	return -EINVAL;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(pwrdm_suspend_fops, pwrdm_suspend_get,
@@ -545,10 +575,16 @@ static int option_set(void *data, u64 val)
 {
 	u32 *option = data;
 
+	if (option == &wakeup_timer_milliseconds && val >= 1000)
+		return -EINVAL;
+
 	*option = val;
 
-	if (option == &enable_off_mode)
-		omap3_pm_off_mode_enable(val);
+	if (option == &enable_off_mode) {
+		if (cpu_is_omap34xx())
+			omap3_pm_off_mode_enable(val);
+	}
+
 	return 0;
 }
 
@@ -579,7 +615,7 @@ static int __init pm_dbg_init(void)
 	(void) debugfs_create_file("time", S_IRUGO,
 		d, (void *)DEBUG_FILE_TIMERS, &debug_fops);
 
-	pwrdm_for_each_nolock(pwrdms_setup, (void *)d);
+	pwrdm_for_each(pwrdms_setup, (void *)d);
 
 	pm_dbg_dir = debugfs_create_dir("registers", d);
 	if (IS_ERR(pm_dbg_dir))
@@ -602,15 +638,9 @@ static int __init pm_dbg_init(void)
 				   &sleep_while_idle, &pm_dbg_option_fops);
 	(void) debugfs_create_file("wakeup_timer_seconds", S_IRUGO | S_IWUGO, d,
 				   &wakeup_timer_seconds, &pm_dbg_option_fops);
-
-	/* Only enable for >= ES2.1 . Going to 0V on anything under
-	 * ES2.1 will eventually cause a crash */
-	if (omap_rev() > OMAP3430_REV_ES2_0)
-		(void) debugfs_create_file("voltage_off_while_idle",
-					   S_IRUGO | S_IWUGO, d,
-					   &voltage_off_while_idle,
-					   &pm_dbg_option_fops);
-
+	(void) debugfs_create_file("wakeup_timer_milliseconds",
+			S_IRUGO | S_IWUGO, d, &wakeup_timer_milliseconds,
+			&pm_dbg_option_fops);
 	pm_dbg_init_done = 1;
 
 	return 0;

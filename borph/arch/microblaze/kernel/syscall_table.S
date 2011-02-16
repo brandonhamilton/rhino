@@ -366,9 +366,12 @@ ENTRY(sys_call_table)
 	.long sys_shutdown
 	.long sys_sendmsg		/* 360 */
 	.long sys_recvmsg
-	.long sys_ni_syscall
+	.long sys_accept4
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_rt_tgsigqueueinfo	/* 365 */
 	.long sys_perf_event_open
 	.long sys_recvmmsg
+	.long sys_fanotify_init
+	.long sys_fanotify_mark
+	.long sys_prlimit64	/* 370 */

@@ -29,6 +29,7 @@
 #include <linux/delay.h>
 #include <linux/log2.h>
 #include <linux/kthread.h>
+#include <linux/slab.h>
 
 /* Addresses to scan */
 static const unsigned short normal_i2c[] = { 0x2C, 0x2E, 0x2F, I2C_CLIENT_END };
@@ -1285,8 +1286,10 @@ static int adt7470_probe(struct i2c_client *client,
 	init_completion(&data->auto_update_stop);
 	data->auto_update = kthread_run(adt7470_update_thread, client,
 					dev_name(data->hwmon_dev));
-	if (IS_ERR(data->auto_update))
+	if (IS_ERR(data->auto_update)) {
+		err = PTR_ERR(data->auto_update);
 		goto exit_unregister;
+	}
 
 	return 0;
 

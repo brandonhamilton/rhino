@@ -20,10 +20,12 @@
  *  Boston, MA  02111-1301  USA
  *
  */
+#include <linux/backing-dev.h>
 
 /**
  * enum p9_session_flags - option flags for each 9P session
- * @V9FS_EXTENDED: whether or not to use 9P2000.u extensions
+ * @V9FS_PROTO_2000U: whether or not to use 9P2000.u extensions
+ * @V9FS_PROTO_2000L: whether or not to use 9P2000.l extensions
  * @V9FS_ACCESS_SINGLE: only the mounting user can access the hierarchy
  * @V9FS_ACCESS_USER: a new attach will be issued for every user (default)
  * @V9FS_ACCESS_ANY: use a single attach for all users
@@ -31,12 +33,17 @@
  *
  * Session flags reflect options selected by users at mount time
  */
+#define	V9FS_ACCESS_ANY (V9FS_ACCESS_SINGLE | \
+			 V9FS_ACCESS_USER |   \
+			 V9FS_ACCESS_CLIENT)
+#define V9FS_ACCESS_MASK V9FS_ACCESS_ANY
+
 enum p9_session_flags {
-	V9FS_EXTENDED		= 0x01,
-	V9FS_ACCESS_SINGLE	= 0x02,
-	V9FS_ACCESS_USER	= 0x04,
-	V9FS_ACCESS_ANY		= 0x06,
-	V9FS_ACCESS_MASK	= 0x06,
+	V9FS_PROTO_2000U	= 0x01,
+	V9FS_PROTO_2000L	= 0x02,
+	V9FS_ACCESS_SINGLE	= 0x04,
+	V9FS_ACCESS_USER	= 0x08,
+	V9FS_ACCESS_CLIENT	= 0x10
 };
 
 /* possible values of ->cache */
@@ -100,14 +107,15 @@ struct v9fs_session_info {
 	u32 uid;		/* if ACCESS_SINGLE, the uid that has access */
 	struct p9_client *clnt;	/* 9p client */
 	struct list_head slist; /* list of sessions registered with v9fs */
+	struct backing_dev_info bdi;
+	struct rw_semaphore rename_sem;
 };
 
 struct p9_fid *v9fs_session_init(struct v9fs_session_info *, const char *,
 									char *);
 void v9fs_session_close(struct v9fs_session_info *v9ses);
 void v9fs_session_cancel(struct v9fs_session_info *v9ses);
-
-#define V9FS_MAGIC 0x01021997
+void v9fs_session_begin_cancel(struct v9fs_session_info *v9ses);
 
 /* other default globals */
 #define V9FS_PORT	564
@@ -121,7 +129,12 @@ static inline struct v9fs_session_info *v9fs_inode2v9ses(struct inode *inode)
 	return (inode->i_sb->s_fs_info);
 }
 
-static inline int v9fs_extended(struct v9fs_session_info *v9ses)
+static inline int v9fs_proto_dotu(struct v9fs_session_info *v9ses)
 {
-	return v9ses->flags & V9FS_EXTENDED;
+	return v9ses->flags & V9FS_PROTO_2000U;
+}
+
+static inline int v9fs_proto_dotl(struct v9fs_session_info *v9ses)
+{
+	return v9ses->flags & V9FS_PROTO_2000L;
 }

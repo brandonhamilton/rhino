@@ -56,7 +56,11 @@
 #include <linux/netdevice.h>
 #include <linux/in.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
+
+
+#define TIPC_MOD_VER "2.0.0"
 
 /*
  * TIPC sanity test macros
@@ -79,9 +83,7 @@
  * Note: TIPC_LOG is configured to echo its output to the system console;
  *       user-defined buffers can be configured to do the same thing.
  */
-
 extern struct print_buf *const TIPC_NULL;
-extern struct print_buf *const TIPC_CONS;
 extern struct print_buf *const TIPC_LOG;
 
 void tipc_printf(struct print_buf *, const char *fmt, ...);
@@ -200,10 +202,7 @@ extern atomic_t tipc_user_count;
  * Routines available to privileged subsystems
  */
 
-extern int  tipc_core_start(void);
-extern void tipc_core_stop(void);
-extern int  tipc_core_start_net(unsigned long addr);
-extern void tipc_core_stop_net(void);
+extern int tipc_core_start_net(unsigned long);
 extern int  tipc_handler_start(void);
 extern void tipc_handler_stop(void);
 extern int  tipc_netlink_start(void);
@@ -324,29 +323,7 @@ static inline struct tipc_msg *buf_msg(struct sk_buff *skb)
 	return (struct tipc_msg *)skb->data;
 }
 
-/**
- * buf_acquire - creates a TIPC message buffer
- * @size: message size (including TIPC header)
- *
- * Returns a new buffer with data pointers set to the specified size.
- *
- * NOTE: Headroom is reserved to allow prepending of a data link header.
- *       There may also be unrequested tailroom present at the buffer's end.
- */
-
-static inline struct sk_buff *buf_acquire(u32 size)
-{
-	struct sk_buff *skb;
-	unsigned int buf_size = (BUF_HEADROOM + size + 3) & ~3u;
-
-	skb = alloc_skb_fclone(buf_size, GFP_ATOMIC);
-	if (skb) {
-		skb_reserve(skb, BUF_HEADROOM);
-		skb_put(skb, size);
-		skb->next = NULL;
-	}
-	return skb;
-}
+extern struct sk_buff *tipc_buf_acquire(u32 size);
 
 /**
  * buf_discard - frees a TIPC message buffer

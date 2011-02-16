@@ -30,8 +30,6 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/input.h>
 #include <linux/backlight.h>
 #include <linux/thermal.h>
@@ -39,10 +37,13 @@
 #include <linux/sort.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
+#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <linux/dmi.h>
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
+#include <linux/suspend.h>
+#include <acpi/video.h>
 
 #define PREFIX "ACPI: "
 
@@ -63,11 +64,6 @@
 
 #define MAX_NAME_LEN	20
 
-#define ACPI_VIDEO_DISPLAY_CRT	1
-#define ACPI_VIDEO_DISPLAY_TV	2
-#define ACPI_VIDEO_DISPLAY_DVI	3
-#define ACPI_VIDEO_DISPLAY_LCD	4
-
 #define _COMPONENT		ACPI_VIDEO_COMPONENT
 ACPI_MODULE_NAME("video");
 
@@ -78,10 +74,16 @@ MODULE_LICENSE("GPL");
 static int brightness_switch_enabled = 1;
 module_param(brightness_switch_enabled, bool, 0644);
 
+/*
+ * By default, we don't allow duplicate ACPI video bus devices
+ * under the same VGA controller
+ */
+static int allow_duplicates;
+module_param(allow_duplicates, bool, 0644);
+
 static int register_count = 0;
 static int acpi_video_bus_add(struct acpi_device *device);
 static int acpi_video_bus_remove(struct acpi_device *device, int type);
-static int acpi_video_resume(struct acpi_device *device);
 static void acpi_video_bus_notify(struct acpi_device *device, u32 event);
 
 static const struct acpi_device_id video_device_ids[] = {
@@ -97,7 +99,6 @@ static struct acpi_driver acpi_video_bus = {
 	.ops = {
 		.add = acpi_video_bus_add,
 		.remove = acpi_video_bus_remove,
-		.resume = acpi_video_resume,
 		.notify = acpi_video_bus_notify,
 		},
 };
@@ -149,9 +150,9 @@ struct acpi_video_bus {
 	struct acpi_video_bus_flags flags;
 	struct list_head video_device_list;
 	struct mutex device_list_lock;	/* protects video_device_list */
-	struct proc_dir_entry *dir;
 	struct input_dev *input;
 	char phys[32];	/* for input device */
+	struct notifier_block pm_nb;
 };
 
 struct acpi_video_device_flags {
@@ -204,106 +205,6 @@ struct acpi_video_device {
 	struct output_device *output_dev;
 };
 
-/* bus */
-static int acpi_video_bus_info_open_fs(struct inode *inode, struct file *file);
-static const struct file_operations acpi_video_bus_info_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_bus_info_open_fs,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_bus_ROM_open_fs(struct inode *inode, struct file *file);
-static const struct file_operations acpi_video_bus_ROM_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_bus_ROM_open_fs,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_bus_POST_info_open_fs(struct inode *inode,
-					    struct file *file);
-static const struct file_operations acpi_video_bus_POST_info_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_bus_POST_info_open_fs,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_bus_POST_open_fs(struct inode *inode, struct file *file);
-static ssize_t acpi_video_bus_write_POST(struct file *file,
-	const char __user *buffer, size_t count, loff_t *data);
-static const struct file_operations acpi_video_bus_POST_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_bus_POST_open_fs,
-	.read = seq_read,
-	.write = acpi_video_bus_write_POST,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_bus_DOS_open_fs(struct inode *inode, struct file *file);
-static ssize_t acpi_video_bus_write_DOS(struct file *file,
-	const char __user *buffer, size_t count, loff_t *data);
-static const struct file_operations acpi_video_bus_DOS_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_bus_DOS_open_fs,
-	.read = seq_read,
-	.write = acpi_video_bus_write_DOS,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-/* device */
-static int acpi_video_device_info_open_fs(struct inode *inode,
-					  struct file *file);
-static const struct file_operations acpi_video_device_info_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_device_info_open_fs,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_device_state_open_fs(struct inode *inode,
-					   struct file *file);
-static ssize_t acpi_video_device_write_state(struct file *file,
-	const char __user *buffer, size_t count, loff_t *data);
-static const struct file_operations acpi_video_device_state_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_device_state_open_fs,
-	.read = seq_read,
-	.write = acpi_video_device_write_state,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_device_brightness_open_fs(struct inode *inode,
-						struct file *file);
-static ssize_t acpi_video_device_write_brightness(struct file *file,
-	const char __user *buffer, size_t count, loff_t *data);
-static const struct file_operations acpi_video_device_brightness_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_device_brightness_open_fs,
-	.read = seq_read,
-	.write = acpi_video_device_write_brightness,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static int acpi_video_device_EDID_open_fs(struct inode *inode,
-					  struct file *file);
-static const struct file_operations acpi_video_device_EDID_fops = {
-	.owner = THIS_MODULE,
-	.open = acpi_video_device_EDID_open_fs,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
 static const char device_decode[][30] = {
 	"motherboard VGA device",
 	"PCI VGA device",
@@ -320,7 +221,7 @@ static int acpi_video_device_lcd_set_level(struct acpi_video_device *device,
 			int level);
 static int acpi_video_device_lcd_get_level_current(
 			struct acpi_video_device *device,
-			unsigned long long *level);
+			unsigned long long *level, int init);
 static int acpi_video_get_next_level(struct acpi_video_device *device,
 				     u32 level_current, u32 event);
 static int acpi_video_switch_brightness(struct acpi_video_device *device,
@@ -338,7 +239,7 @@ static int acpi_video_get_brightness(struct backlight_device *bd)
 	struct acpi_video_device *vd =
 		(struct acpi_video_device *)bl_get_data(bd);
 
-	if (acpi_video_device_lcd_get_level_current(vd, &cur_level))
+	if (acpi_video_device_lcd_get_level_current(vd, &cur_level, 0))
 		return -EINVAL;
 	for (i = 2; i < vd->brightness->count; i++) {
 		if (vd->brightness->levels[i] == cur_level)
@@ -407,7 +308,7 @@ static int video_get_cur_state(struct thermal_cooling_device *cooling_dev, unsig
 	unsigned long long level;
 	int offset;
 
-	if (acpi_video_device_lcd_get_level_current(video, &level))
+	if (acpi_video_device_lcd_get_level_current(video, &level, 0))
 		return -EINVAL;
 	for (offset = 2; offset < video->brightness->count; offset++)
 		if (level == video->brightness->levels[offset]) {
@@ -444,16 +345,6 @@ static struct thermal_cooling_device_ops video_cooling_ops = {
    -------------------------------------------------------------------------- */
 
 /* device */
-
-static int
-acpi_video_device_query(struct acpi_video_device *device, unsigned long long *state)
-{
-	int status;
-
-	status = acpi_evaluate_integer(device->dev->handle, "_DGS", NULL, state);
-
-	return status;
-}
 
 static int
 acpi_video_device_get_state(struct acpi_video_device *device,
@@ -602,7 +493,7 @@ static struct dmi_system_id video_dmi_table[] __initdata = {
 
 static int
 acpi_video_device_lcd_get_level_current(struct acpi_video_device *device,
-					unsigned long long *level)
+					unsigned long long *level, int init)
 {
 	acpi_status status = AE_OK;
 	int i;
@@ -626,10 +517,16 @@ acpi_video_device_lcd_get_level_current(struct acpi_video_device *device,
 					device->brightness->curr = *level;
 					return 0;
 			}
-			/* BQC returned an invalid level. Stop using it.  */
-			ACPI_WARNING((AE_INFO, "%s returned an invalid level",
-						buf));
-			device->cap._BQC = device->cap._BCQ = 0;
+			if (!init) {
+				/*
+				 * BQC returned an invalid level.
+				 * Stop using it.
+				 */
+				ACPI_WARNING((AE_INFO,
+					      "%s returned an invalid level",
+					      buf));
+				device->cap._BQC = device->cap._BCQ = 0;
+			}
 		} else {
 			/* Fixme:
 			 * should we return an error or ignore this failure?
@@ -688,46 +585,6 @@ acpi_video_device_EDID(struct acpi_video_device *device,
 
 /* bus */
 
-static int
-acpi_video_bus_set_POST(struct acpi_video_bus *video, unsigned long option)
-{
-	int status;
-	unsigned long long tmp;
-	union acpi_object arg0 = { ACPI_TYPE_INTEGER };
-	struct acpi_object_list args = { 1, &arg0 };
-
-
-	arg0.integer.value = option;
-
-	status = acpi_evaluate_integer(video->device->handle, "_SPD", &args, &tmp);
-	if (ACPI_SUCCESS(status))
-		status = tmp ? (-EINVAL) : (AE_OK);
-
-	return status;
-}
-
-static int
-acpi_video_bus_get_POST(struct acpi_video_bus *video, unsigned long long *id)
-{
-	int status;
-
-	status = acpi_evaluate_integer(video->device->handle, "_GPD", NULL, id);
-
-	return status;
-}
-
-static int
-acpi_video_bus_POST_options(struct acpi_video_bus *video,
-			    unsigned long long *options)
-{
-	int status;
-
-	status = acpi_evaluate_integer(video->device->handle, "_VPO", NULL, options);
-	*options &= 3;
-
-	return status;
-}
-
 /*
  *  Arg:
  *  	video		: video bus device pointer
@@ -752,7 +609,7 @@ acpi_video_bus_POST_options(struct acpi_video_bus *video,
 static int
 acpi_video_bus_DOS(struct acpi_video_bus *video, int bios_flag, int lcd_flag)
 {
-	acpi_integer status = 0;
+	u64 status = 0;
 	union acpi_object arg0 = { ACPI_TYPE_INTEGER };
 	struct acpi_object_list args = { 1, &arg0 };
 
@@ -885,7 +742,7 @@ acpi_video_init_brightness(struct acpi_video_device *device)
 	if (!device->cap._BQC)
 		goto set_level;
 
-	result = acpi_video_device_lcd_get_level_current(device, &level_old);
+	result = acpi_video_device_lcd_get_level_current(device, &level_old, 1);
 	if (result)
 		goto out_free_levels;
 
@@ -896,7 +753,7 @@ acpi_video_init_brightness(struct acpi_video_device *device)
 	if (result)
 		goto out_free_levels;
 
-	result = acpi_video_device_lcd_get_level_current(device, &level);
+	result = acpi_video_device_lcd_get_level_current(device, &level, 0);
 	if (result)
 		goto out_free_levels;
 
@@ -985,6 +842,7 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 	}
 
 	if (acpi_video_backlight_support()) {
+		struct backlight_properties props;
 		int result;
 		static int count = 0;
 		char *name;
@@ -992,15 +850,26 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 		result = acpi_video_init_brightness(device);
 		if (result)
 			return;
-		name = kzalloc(MAX_NAME_LEN, GFP_KERNEL);
+		name = kasprintf(GFP_KERNEL, "acpi_video%d", count);
 		if (!name)
 			return;
+		count++;
 
-		sprintf(name, "acpi_video%d", count++);
-		device->backlight = backlight_device_register(name,
-			NULL, device, &acpi_backlight_ops);
-		device->backlight->props.max_brightness = device->brightness->count-3;
+		memset(&props, 0, sizeof(struct backlight_properties));
+		props.max_brightness = device->brightness->count - 3;
+		device->backlight = backlight_device_register(name, NULL, device,
+							      &acpi_backlight_ops,
+							      &props);
 		kfree(name);
+		if (IS_ERR(device->backlight))
+			return;
+
+		/*
+		 * Save current brightness level in case we have to restore it
+		 * before acpi_video_device_lcd_set_level() is called next time.
+		 */
+		device->backlight->props.brightness =
+				acpi_video_get_brightness(device->backlight);
 
 		result = sysfs_create_link(&device->backlight->dev.kobj,
 					   &device->dev->dev.kobj, "device");
@@ -1041,10 +910,10 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 		if (device->cap._DCS && device->cap._DSS) {
 			static int count;
 			char *name;
-			name = kzalloc(MAX_NAME_LEN, GFP_KERNEL);
+			name = kasprintf(GFP_KERNEL, "acpi_video%d", count);
 			if (!name)
 				return;
-			sprintf(name, "acpi_video%d", count++);
+			count++;
 			device->output_dev = video_output_register(name,
 					NULL, device, &acpi_output_properties);
 			kfree(name);
@@ -1135,573 +1004,6 @@ static int acpi_video_bus_check(struct acpi_video_bus *video)
 }
 
 /* --------------------------------------------------------------------------
-                              FS Interface (/proc)
-   -------------------------------------------------------------------------- */
-
-static struct proc_dir_entry *acpi_video_dir;
-
-/* video devices */
-
-static int acpi_video_device_info_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_device *dev = seq->private;
-
-
-	if (!dev)
-		goto end;
-
-	seq_printf(seq, "device_id:    0x%04x\n", (u32) dev->device_id);
-	seq_printf(seq, "type:         ");
-	if (dev->flags.crt)
-		seq_printf(seq, "CRT\n");
-	else if (dev->flags.lcd)
-		seq_printf(seq, "LCD\n");
-	else if (dev->flags.tvout)
-		seq_printf(seq, "TVOUT\n");
-	else if (dev->flags.dvi)
-		seq_printf(seq, "DVI\n");
-	else
-		seq_printf(seq, "UNKNOWN\n");
-
-	seq_printf(seq, "known by bios: %s\n", dev->flags.bios ? "yes" : "no");
-
-      end:
-	return 0;
-}
-
-static int
-acpi_video_device_info_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_device_info_seq_show,
-			   PDE(inode)->data);
-}
-
-static int acpi_video_device_state_seq_show(struct seq_file *seq, void *offset)
-{
-	int status;
-	struct acpi_video_device *dev = seq->private;
-	unsigned long long state;
-
-
-	if (!dev)
-		goto end;
-
-	status = acpi_video_device_get_state(dev, &state);
-	seq_printf(seq, "state:     ");
-	if (ACPI_SUCCESS(status))
-		seq_printf(seq, "0x%02llx\n", state);
-	else
-		seq_printf(seq, "<not supported>\n");
-
-	status = acpi_video_device_query(dev, &state);
-	seq_printf(seq, "query:     ");
-	if (ACPI_SUCCESS(status))
-		seq_printf(seq, "0x%02llx\n", state);
-	else
-		seq_printf(seq, "<not supported>\n");
-
-      end:
-	return 0;
-}
-
-static int
-acpi_video_device_state_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_device_state_seq_show,
-			   PDE(inode)->data);
-}
-
-static ssize_t
-acpi_video_device_write_state(struct file *file,
-			      const char __user * buffer,
-			      size_t count, loff_t * data)
-{
-	int status;
-	struct seq_file *m = file->private_data;
-	struct acpi_video_device *dev = m->private;
-	char str[12] = { 0 };
-	u32 state = 0;
-
-
-	if (!dev || count >= sizeof(str))
-		return -EINVAL;
-
-	if (copy_from_user(str, buffer, count))
-		return -EFAULT;
-
-	str[count] = 0;
-	state = simple_strtoul(str, NULL, 0);
-	state &= ((1ul << 31) | (1ul << 30) | (1ul << 0));
-
-	status = acpi_video_device_set_state(dev, state);
-
-	if (status)
-		return -EFAULT;
-
-	return count;
-}
-
-static int
-acpi_video_device_brightness_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_device *dev = seq->private;
-	int i;
-
-
-	if (!dev || !dev->brightness) {
-		seq_printf(seq, "<not supported>\n");
-		return 0;
-	}
-
-	seq_printf(seq, "levels: ");
-	for (i = 2; i < dev->brightness->count; i++)
-		seq_printf(seq, " %d", dev->brightness->levels[i]);
-	seq_printf(seq, "\ncurrent: %d\n", dev->brightness->curr);
-
-	return 0;
-}
-
-static int
-acpi_video_device_brightness_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_device_brightness_seq_show,
-			   PDE(inode)->data);
-}
-
-static ssize_t
-acpi_video_device_write_brightness(struct file *file,
-				   const char __user * buffer,
-				   size_t count, loff_t * data)
-{
-	struct seq_file *m = file->private_data;
-	struct acpi_video_device *dev = m->private;
-	char str[5] = { 0 };
-	unsigned int level = 0;
-	int i;
-
-
-	if (!dev || !dev->brightness || count >= sizeof(str))
-		return -EINVAL;
-
-	if (copy_from_user(str, buffer, count))
-		return -EFAULT;
-
-	str[count] = 0;
-	level = simple_strtoul(str, NULL, 0);
-
-	if (level > 100)
-		return -EFAULT;
-
-	/* validate through the list of available levels */
-	for (i = 2; i < dev->brightness->count; i++)
-		if (level == dev->brightness->levels[i]) {
-			if (!acpi_video_device_lcd_set_level(dev, level))
-				return count;
-			break;
-		}
-
-	return -EINVAL;
-}
-
-static int acpi_video_device_EDID_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_device *dev = seq->private;
-	int status;
-	int i;
-	union acpi_object *edid = NULL;
-
-
-	if (!dev)
-		goto out;
-
-	status = acpi_video_device_EDID(dev, &edid, 128);
-	if (ACPI_FAILURE(status)) {
-		status = acpi_video_device_EDID(dev, &edid, 256);
-	}
-
-	if (ACPI_FAILURE(status)) {
-		goto out;
-	}
-
-	if (edid && edid->type == ACPI_TYPE_BUFFER) {
-		for (i = 0; i < edid->buffer.length; i++)
-			seq_putc(seq, edid->buffer.pointer[i]);
-	}
-
-      out:
-	if (!edid)
-		seq_printf(seq, "<not supported>\n");
-	else
-		kfree(edid);
-
-	return 0;
-}
-
-static int
-acpi_video_device_EDID_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_device_EDID_seq_show,
-			   PDE(inode)->data);
-}
-
-static int acpi_video_device_add_fs(struct acpi_device *device)
-{
-	struct proc_dir_entry *entry, *device_dir;
-	struct acpi_video_device *vid_dev;
-
-	vid_dev = acpi_driver_data(device);
-	if (!vid_dev)
-		return -ENODEV;
-
-	device_dir = proc_mkdir(acpi_device_bid(device),
-				vid_dev->video->dir);
-	if (!device_dir)
-		return -ENOMEM;
-
-	/* 'info' [R] */
-	entry = proc_create_data("info", S_IRUGO, device_dir,
-			&acpi_video_device_info_fops, acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_dir;
-
-	/* 'state' [R/W] */
-	entry = proc_create_data("state", S_IFREG | S_IRUGO | S_IWUSR,
-				 device_dir,
-				 &acpi_video_device_state_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_info;
-
-	/* 'brightness' [R/W] */
-	entry = proc_create_data("brightness", S_IFREG | S_IRUGO | S_IWUSR,
-				 device_dir,
-				 &acpi_video_device_brightness_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_state;
-
-	/* 'EDID' [R] */
-	entry = proc_create_data("EDID", S_IRUGO, device_dir,
-				 &acpi_video_device_EDID_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_brightness;
-
-	acpi_device_dir(device) = device_dir;
-
-	return 0;
-
- err_remove_brightness:
-	remove_proc_entry("brightness", device_dir);
- err_remove_state:
-	remove_proc_entry("state", device_dir);
- err_remove_info:
-	remove_proc_entry("info", device_dir);
- err_remove_dir:
-	remove_proc_entry(acpi_device_bid(device), vid_dev->video->dir);
-	return -ENOMEM;
-}
-
-static int acpi_video_device_remove_fs(struct acpi_device *device)
-{
-	struct acpi_video_device *vid_dev;
-	struct proc_dir_entry *device_dir;
-
-	vid_dev = acpi_driver_data(device);
-	if (!vid_dev || !vid_dev->video || !vid_dev->video->dir)
-		return -ENODEV;
-
-	device_dir = acpi_device_dir(device);
-	if (device_dir) {
-		remove_proc_entry("info", device_dir);
-		remove_proc_entry("state", device_dir);
-		remove_proc_entry("brightness", device_dir);
-		remove_proc_entry("EDID", device_dir);
-		remove_proc_entry(acpi_device_bid(device), vid_dev->video->dir);
-		acpi_device_dir(device) = NULL;
-	}
-
-	return 0;
-}
-
-/* video bus */
-static int acpi_video_bus_info_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_bus *video = seq->private;
-
-
-	if (!video)
-		goto end;
-
-	seq_printf(seq, "Switching heads:              %s\n",
-		   video->flags.multihead ? "yes" : "no");
-	seq_printf(seq, "Video ROM:                    %s\n",
-		   video->flags.rom ? "yes" : "no");
-	seq_printf(seq, "Device to be POSTed on boot:  %s\n",
-		   video->flags.post ? "yes" : "no");
-
-      end:
-	return 0;
-}
-
-static int acpi_video_bus_info_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_bus_info_seq_show,
-			   PDE(inode)->data);
-}
-
-static int acpi_video_bus_ROM_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_bus *video = seq->private;
-
-
-	if (!video)
-		goto end;
-
-	printk(KERN_INFO PREFIX "Please implement %s\n", __func__);
-	seq_printf(seq, "<TODO>\n");
-
-      end:
-	return 0;
-}
-
-static int acpi_video_bus_ROM_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_bus_ROM_seq_show, PDE(inode)->data);
-}
-
-static int acpi_video_bus_POST_info_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_bus *video = seq->private;
-	unsigned long long options;
-	int status;
-
-
-	if (!video)
-		goto end;
-
-	status = acpi_video_bus_POST_options(video, &options);
-	if (ACPI_SUCCESS(status)) {
-		if (!(options & 1)) {
-			printk(KERN_WARNING PREFIX
-			       "The motherboard VGA device is not listed as a possible POST device.\n");
-			printk(KERN_WARNING PREFIX
-			       "This indicates a BIOS bug. Please contact the manufacturer.\n");
-		}
-		printk(KERN_WARNING "%llx\n", options);
-		seq_printf(seq, "can POST: <integrated video>");
-		if (options & 2)
-			seq_printf(seq, " <PCI video>");
-		if (options & 4)
-			seq_printf(seq, " <AGP video>");
-		seq_putc(seq, '\n');
-	} else
-		seq_printf(seq, "<not supported>\n");
-      end:
-	return 0;
-}
-
-static int
-acpi_video_bus_POST_info_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_bus_POST_info_seq_show,
-			   PDE(inode)->data);
-}
-
-static int acpi_video_bus_POST_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_bus *video = seq->private;
-	int status;
-	unsigned long long id;
-
-
-	if (!video)
-		goto end;
-
-	status = acpi_video_bus_get_POST(video, &id);
-	if (!ACPI_SUCCESS(status)) {
-		seq_printf(seq, "<not supported>\n");
-		goto end;
-	}
-	seq_printf(seq, "device POSTed is <%s>\n", device_decode[id & 3]);
-
-      end:
-	return 0;
-}
-
-static int acpi_video_bus_DOS_seq_show(struct seq_file *seq, void *offset)
-{
-	struct acpi_video_bus *video = seq->private;
-
-
-	seq_printf(seq, "DOS setting: <%d>\n", video->dos_setting);
-
-	return 0;
-}
-
-static int acpi_video_bus_POST_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_bus_POST_seq_show,
-			   PDE(inode)->data);
-}
-
-static int acpi_video_bus_DOS_open_fs(struct inode *inode, struct file *file)
-{
-	return single_open(file, acpi_video_bus_DOS_seq_show, PDE(inode)->data);
-}
-
-static ssize_t
-acpi_video_bus_write_POST(struct file *file,
-			  const char __user * buffer,
-			  size_t count, loff_t * data)
-{
-	int status;
-	struct seq_file *m = file->private_data;
-	struct acpi_video_bus *video = m->private;
-	char str[12] = { 0 };
-	unsigned long long opt, options;
-
-
-	if (!video || count >= sizeof(str))
-		return -EINVAL;
-
-	status = acpi_video_bus_POST_options(video, &options);
-	if (!ACPI_SUCCESS(status))
-		return -EINVAL;
-
-	if (copy_from_user(str, buffer, count))
-		return -EFAULT;
-
-	str[count] = 0;
-	opt = strtoul(str, NULL, 0);
-	if (opt > 3)
-		return -EFAULT;
-
-	/* just in case an OEM 'forgot' the motherboard... */
-	options |= 1;
-
-	if (options & (1ul << opt)) {
-		status = acpi_video_bus_set_POST(video, opt);
-		if (!ACPI_SUCCESS(status))
-			return -EFAULT;
-
-	}
-
-	return count;
-}
-
-static ssize_t
-acpi_video_bus_write_DOS(struct file *file,
-			 const char __user * buffer,
-			 size_t count, loff_t * data)
-{
-	int status;
-	struct seq_file *m = file->private_data;
-	struct acpi_video_bus *video = m->private;
-	char str[12] = { 0 };
-	unsigned long opt;
-
-
-	if (!video || count >= sizeof(str))
-		return -EINVAL;
-
-	if (copy_from_user(str, buffer, count))
-		return -EFAULT;
-
-	str[count] = 0;
-	opt = strtoul(str, NULL, 0);
-	if (opt > 7)
-		return -EFAULT;
-
-	status = acpi_video_bus_DOS(video, opt & 0x3, (opt & 0x4) >> 2);
-
-	if (!ACPI_SUCCESS(status))
-		return -EFAULT;
-
-	return count;
-}
-
-static int acpi_video_bus_add_fs(struct acpi_device *device)
-{
-	struct acpi_video_bus *video = acpi_driver_data(device);
-	struct proc_dir_entry *device_dir;
-	struct proc_dir_entry *entry;
-
-	device_dir = proc_mkdir(acpi_device_bid(device), acpi_video_dir);
-	if (!device_dir)
-		return -ENOMEM;
-
-	/* 'info' [R] */
-	entry = proc_create_data("info", S_IRUGO, device_dir,
-				 &acpi_video_bus_info_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_dir;
-
-	/* 'ROM' [R] */
-	entry = proc_create_data("ROM", S_IRUGO, device_dir,
-				 &acpi_video_bus_ROM_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_info;
-
-	/* 'POST_info' [R] */
-	entry = proc_create_data("POST_info", S_IRUGO, device_dir,
-				 &acpi_video_bus_POST_info_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_rom;
-
-	/* 'POST' [R/W] */
-	entry = proc_create_data("POST", S_IFREG | S_IRUGO | S_IWUSR,
-				 device_dir,
-				 &acpi_video_bus_POST_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_post_info;
-
-	/* 'DOS' [R/W] */
-	entry = proc_create_data("DOS", S_IFREG | S_IRUGO | S_IWUSR,
-				 device_dir,
-				 &acpi_video_bus_DOS_fops,
-				 acpi_driver_data(device));
-	if (!entry)
-		goto err_remove_post;
-
-	video->dir = acpi_device_dir(device) = device_dir;
-	return 0;
-
- err_remove_post:
-	remove_proc_entry("POST", device_dir);
- err_remove_post_info:
-	remove_proc_entry("POST_info", device_dir);
- err_remove_rom:
-	remove_proc_entry("ROM", device_dir);
- err_remove_info:
-	remove_proc_entry("info", device_dir);
- err_remove_dir:
-	remove_proc_entry(acpi_device_bid(device), acpi_video_dir);
-	return -ENOMEM;
-}
-
-static int acpi_video_bus_remove_fs(struct acpi_device *device)
-{
-	struct proc_dir_entry *device_dir = acpi_device_dir(device);
-
-	if (device_dir) {
-		remove_proc_entry("info", device_dir);
-		remove_proc_entry("ROM", device_dir);
-		remove_proc_entry("POST_info", device_dir);
-		remove_proc_entry("POST", device_dir);
-		remove_proc_entry("DOS", device_dir);
-		remove_proc_entry(acpi_device_bid(device), acpi_video_dir);
-		acpi_device_dir(device) = NULL;
-	}
-
-	return 0;
-}
-
-/* --------------------------------------------------------------------------
                                  Driver Interface
    -------------------------------------------------------------------------- */
 
@@ -1722,11 +1024,27 @@ acpi_video_get_device_attr(struct acpi_video_bus *video, unsigned long device_id
 }
 
 static int
+acpi_video_get_device_type(struct acpi_video_bus *video,
+			   unsigned long device_id)
+{
+	struct acpi_video_enumerated_device *ids;
+	int i;
+
+	for (i = 0; i < video->attached_count; i++) {
+		ids = &video->attached_array[i];
+		if ((ids->value.int_val & 0xffff) == device_id)
+			return ids->value.int_val;
+	}
+
+	return 0;
+}
+
+static int
 acpi_video_bus_get_one_device(struct acpi_device *device,
 			      struct acpi_video_bus *video)
 {
 	unsigned long long device_id;
-	int status;
+	int status, device_type;
 	struct acpi_video_device *data;
 	struct acpi_video_device_attrib* attribute;
 
@@ -1771,8 +1089,25 @@ acpi_video_bus_get_one_device(struct acpi_device *device,
 			}
 			if(attribute->bios_can_detect)
 				data->flags.bios = 1;
-		} else
-			data->flags.unknown = 1;
+		} else {
+			/* Check for legacy IDs */
+			device_type = acpi_video_get_device_type(video,
+								 device_id);
+			/* Ignore bits 16 and 18-20 */
+			switch (device_type & 0xffe2ffff) {
+			case ACPI_VIDEO_DISPLAY_LEGACY_MONITOR:
+				data->flags.crt = 1;
+				break;
+			case ACPI_VIDEO_DISPLAY_LEGACY_PANEL:
+				data->flags.lcd = 1;
+				break;
+			case ACPI_VIDEO_DISPLAY_LEGACY_TV:
+				data->flags.tvout = 1;
+				break;
+			default:
+				data->flags.unknown = 1;
+			}
+		}
 
 		acpi_video_device_bind(video, data);
 		acpi_video_device_find_cap(data);
@@ -1794,8 +1129,6 @@ acpi_video_bus_get_one_device(struct acpi_device *device,
 		mutex_lock(&video->device_list_lock);
 		list_add_tail(&data->entry, &video->video_device_list);
 		mutex_unlock(&video->device_list_lock);
-
-		acpi_video_device_add_fs(device);
 
 		return 0;
 	}
@@ -1979,11 +1312,15 @@ acpi_video_switch_brightness(struct acpi_video_device *device, int event)
 	unsigned long long level_current, level_next;
 	int result = -EINVAL;
 
+	/* no warning message if acpi_backlight=vendor is used */
+	if (!acpi_video_backlight_support())
+		return 0;
+
 	if (!device->brightness)
 		goto out;
 
 	result = acpi_video_device_lcd_get_level_current(device,
-							 &level_current);
+							 &level_current, 0);
 	if (result)
 		goto out;
 
@@ -2002,6 +1339,71 @@ out:
 	return result;
 }
 
+int acpi_video_get_edid(struct acpi_device *device, int type, int device_id,
+			void **edid)
+{
+	struct acpi_video_bus *video;
+	struct acpi_video_device *video_device;
+	union acpi_object *buffer = NULL;
+	acpi_status status;
+	int i, length;
+
+	if (!device || !acpi_driver_data(device))
+		return -EINVAL;
+
+	video = acpi_driver_data(device);
+
+	for (i = 0; i < video->attached_count; i++) {
+		video_device = video->attached_array[i].bind_info;
+		length = 256;
+
+		if (!video_device)
+			continue;
+
+		if (type) {
+			switch (type) {
+			case ACPI_VIDEO_DISPLAY_CRT:
+				if (!video_device->flags.crt)
+					continue;
+				break;
+			case ACPI_VIDEO_DISPLAY_TV:
+				if (!video_device->flags.tvout)
+					continue;
+				break;
+			case ACPI_VIDEO_DISPLAY_DVI:
+				if (!video_device->flags.dvi)
+					continue;
+				break;
+			case ACPI_VIDEO_DISPLAY_LCD:
+				if (!video_device->flags.lcd)
+					continue;
+				break;
+			}
+		} else if (video_device->device_id != device_id) {
+			continue;
+		}
+
+		status = acpi_video_device_EDID(video_device, &buffer, length);
+
+		if (ACPI_FAILURE(status) || !buffer ||
+		    buffer->type != ACPI_TYPE_BUFFER) {
+			length = 128;
+			status = acpi_video_device_EDID(video_device, &buffer,
+							length);
+			if (ACPI_FAILURE(status) || !buffer ||
+			    buffer->type != ACPI_TYPE_BUFFER) {
+				continue;
+			}
+		}
+
+		*edid = buffer->buffer.pointer;
+		return length;
+	}
+
+	return -ENODEV;
+}
+EXPORT_SYMBOL(acpi_video_get_edid);
+
 static int
 acpi_video_bus_get_devices(struct acpi_video_bus *video,
 			   struct acpi_device *device)
@@ -2016,7 +1418,7 @@ acpi_video_bus_get_devices(struct acpi_video_bus *video,
 		status = acpi_video_bus_get_one_device(dev, video);
 		if (ACPI_FAILURE(status)) {
 			printk(KERN_WARNING PREFIX
-					"Cant attach device");
+					"Cant attach device\n");
 			continue;
 		}
 	}
@@ -2026,19 +1428,17 @@ acpi_video_bus_get_devices(struct acpi_video_bus *video,
 static int acpi_video_bus_put_one_device(struct acpi_video_device *device)
 {
 	acpi_status status;
-	struct acpi_video_bus *video;
-
 
 	if (!device || !device->video)
 		return -ENOENT;
 
-	video = device->video;
-
-	acpi_video_device_remove_fs(device->dev);
-
 	status = acpi_remove_notify_handler(device->dev->handle,
 					    ACPI_DEVICE_NOTIFY,
 					    acpi_video_device_notify);
+	if (ACPI_FAILURE(status)) {
+		printk(KERN_WARNING PREFIX
+		       "Cant remove video notify handler\n");
+	}
 	if (device->backlight) {
 		sysfs_remove_link(&device->backlight->dev.kobj, "device");
 		backlight_device_unregister(device->backlight);
@@ -2100,7 +1500,7 @@ static void acpi_video_bus_notify(struct acpi_device *device, u32 event)
 {
 	struct acpi_video_bus *video = acpi_driver_data(device);
 	struct input_dev *input;
-	int keycode;
+	int keycode = 0;
 
 	if (!video)
 		return;
@@ -2136,17 +1536,19 @@ static void acpi_video_bus_notify(struct acpi_device *device, u32 event)
 		break;
 
 	default:
-		keycode = KEY_UNKNOWN;
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				  "Unsupported event [0x%x]\n", event));
 		break;
 	}
 
 	acpi_notifier_call_chain(device, event, 0);
-	input_report_key(input, keycode, 1);
-	input_sync(input);
-	input_report_key(input, keycode, 0);
-	input_sync(input);
+
+	if (keycode) {
+		input_report_key(input, keycode, 1);
+		input_sync(input);
+		input_report_key(input, keycode, 0);
+		input_sync(input);
+	}
 
 	return;
 }
@@ -2157,7 +1559,7 @@ static void acpi_video_device_notify(acpi_handle handle, u32 event, void *data)
 	struct acpi_device *device = NULL;
 	struct acpi_video_bus *bus;
 	struct input_dev *input;
-	int keycode;
+	int keycode = 0;
 
 	if (!video_device)
 		return;
@@ -2198,46 +1600,93 @@ static void acpi_video_device_notify(acpi_handle handle, u32 event, void *data)
 		keycode = KEY_DISPLAY_OFF;
 		break;
 	default:
-		keycode = KEY_UNKNOWN;
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				  "Unsupported event [0x%x]\n", event));
 		break;
 	}
 
 	acpi_notifier_call_chain(device, event, 0);
-	input_report_key(input, keycode, 1);
-	input_sync(input);
-	input_report_key(input, keycode, 0);
-	input_sync(input);
+
+	if (keycode) {
+		input_report_key(input, keycode, 1);
+		input_sync(input);
+		input_report_key(input, keycode, 0);
+		input_sync(input);
+	}
 
 	return;
 }
 
-static int instance;
-static int acpi_video_resume(struct acpi_device *device)
+static int acpi_video_resume(struct notifier_block *nb,
+				unsigned long val, void *ign)
 {
 	struct acpi_video_bus *video;
 	struct acpi_video_device *video_device;
 	int i;
 
-	if (!device || !acpi_driver_data(device))
-		return -EINVAL;
+	switch (val) {
+	case PM_HIBERNATION_PREPARE:
+	case PM_SUSPEND_PREPARE:
+	case PM_RESTORE_PREPARE:
+		return NOTIFY_DONE;
+	}
 
-	video = acpi_driver_data(device);
+	video = container_of(nb, struct acpi_video_bus, pm_nb);
+
+	dev_info(&video->device->dev, "Restoring backlight state\n");
 
 	for (i = 0; i < video->attached_count; i++) {
 		video_device = video->attached_array[i].bind_info;
 		if (video_device && video_device->backlight)
 			acpi_video_set_brightness(video_device->backlight);
 	}
+
+	return NOTIFY_OK;
+}
+
+static acpi_status
+acpi_video_bus_match(acpi_handle handle, u32 level, void *context,
+			void **return_value)
+{
+	struct acpi_device *device = context;
+	struct acpi_device *sibling;
+	int result;
+
+	if (handle == device->handle)
+		return AE_CTRL_TERMINATE;
+
+	result = acpi_bus_get_device(handle, &sibling);
+	if (result)
+		return AE_OK;
+
+	if (!strcmp(acpi_device_name(sibling), ACPI_VIDEO_BUS_NAME))
+			return AE_ALREADY_EXISTS;
+
 	return AE_OK;
 }
+
+static int instance;
 
 static int acpi_video_bus_add(struct acpi_device *device)
 {
 	struct acpi_video_bus *video;
 	struct input_dev *input;
 	int error;
+	acpi_status status;
+
+	status = acpi_walk_namespace(ACPI_TYPE_DEVICE,
+				device->parent->handle, 1,
+				acpi_video_bus_match, NULL,
+				device, NULL);
+	if (status == AE_ALREADY_EXISTS) {
+		printk(KERN_WARNING FW_BUG
+			"Duplicate ACPI video bus devices for the"
+			" same VGA controller, please try module "
+			"parameter \"video.allow_duplicates=1\""
+			"if the current driver doesn't work.\n");
+		if (!allow_duplicates)
+			return -ENODEV;
+	}
 
 	video = kzalloc(sizeof(struct acpi_video_bus), GFP_KERNEL);
 	if (!video)
@@ -2263,10 +1712,6 @@ static int acpi_video_bus_add(struct acpi_device *device)
 
 	acpi_video_bus_find_cap(video);
 	error = acpi_video_bus_check(video);
-	if (error)
-		goto err_free_video;
-
-	error = acpi_video_bus_add_fs(device);
 	if (error)
 		goto err_free_video;
 
@@ -2299,7 +1744,6 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	set_bit(KEY_BRIGHTNESSDOWN, input->keybit);
 	set_bit(KEY_BRIGHTNESS_ZERO, input->keybit);
 	set_bit(KEY_DISPLAY_OFF, input->keybit);
-	set_bit(KEY_UNKNOWN, input->keybit);
 
 	error = input_register_device(input);
 	if (error)
@@ -2311,6 +1755,10 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	       video->flags.rom ? "yes" : "no",
 	       video->flags.post ? "yes" : "no");
 
+	video->pm_nb.notifier_call = acpi_video_resume;
+	video->pm_nb.priority = 0;
+	register_pm_notifier(&video->pm_nb);
+
 	return 0;
 
  err_free_input_dev:
@@ -2319,7 +1767,6 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	acpi_video_bus_stop_devices(video);
 	acpi_video_bus_put_devices(video);
 	kfree(video->attached_array);
-	acpi_video_bus_remove_fs(device);
  err_free_video:
 	kfree(video);
 	device->driver_data = NULL;
@@ -2337,9 +1784,10 @@ static int acpi_video_bus_remove(struct acpi_device *device, int type)
 
 	video = acpi_driver_data(device);
 
+	unregister_pm_notifier(&video->pm_nb);
+
 	acpi_video_bus_stop_devices(video);
 	acpi_video_bus_put_devices(video);
-	acpi_video_bus_remove_fs(device);
 
 	input_unregister_device(video->input);
 	kfree(video->attached_array);
@@ -2379,15 +1827,9 @@ int acpi_video_register(void)
 		return 0;
 	}
 
-	acpi_video_dir = proc_mkdir(ACPI_VIDEO_CLASS, acpi_root_dir);
-	if (!acpi_video_dir)
-		return -ENODEV;
-
 	result = acpi_bus_register_driver(&acpi_video_bus);
-	if (result < 0) {
-		remove_proc_entry(ACPI_VIDEO_CLASS, acpi_root_dir);
+	if (result < 0)
 		return -ENODEV;
-	}
 
 	/*
 	 * When the acpi_video_bus is loaded successfully, increase
@@ -2409,8 +1851,6 @@ void acpi_video_unregister(void)
 		return;
 	}
 	acpi_bus_unregister_driver(&acpi_video_bus);
-
-	remove_proc_entry(ACPI_VIDEO_CLASS, acpi_root_dir);
 
 	register_count = 0;
 

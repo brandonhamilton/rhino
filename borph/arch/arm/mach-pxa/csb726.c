@@ -125,18 +125,9 @@ static unsigned long csb726_pin_config[] = {
 	GPIO118_I2C_SDA,
 };
 
-static struct pxamci_platform_data csb726_mci_data;
-
-static int csb726_mci_init(struct device *dev,
-		irq_handler_t detect, void *data)
-{
-	csb726_mci_data.detect_delay = msecs_to_jiffies(500);
-	return 0;
-}
-
 static struct pxamci_platform_data csb726_mci = {
+	.detect_delay_ms	= 500,
 	.ocr_mask		= MMC_VDD_32_33|MMC_VDD_33_34,
-	.init			= csb726_mci_init,
 	/* FIXME setpower */
 	.gpio_card_detect	= CSB726_GPIO_MMC_DETECT,
 	.gpio_card_ro		= CSB726_GPIO_MMC_RO,
@@ -281,9 +272,7 @@ static void __init csb726_init(void)
 }
 
 MACHINE_START(CSB726, "Cogent CSB726")
-	.phys_io	= 0x40000000,
 	.boot_params	= 0xa0000100,
-	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.map_io         = pxa_map_io,
 	.init_irq       = pxa27x_init_irq,
 	.init_machine   = csb726_init,

@@ -27,7 +27,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
 #include <linux/ioport.h>
@@ -212,11 +211,14 @@ int usbvision_i2c_register(struct usb_usbvision *usbvision)
 		0x42 >> 1, 0x40 >> 1,	/* SAA7114, SAA7115 and SAA7118 */
 		I2C_CLIENT_END };
 
+	if (usbvision->registered_i2c)
+		return 0;
+
 	memcpy(&usbvision->i2c_adap, &i2c_adap_template,
 	       sizeof(struct i2c_adapter));
 
-	sprintf(usbvision->i2c_adap.name + strlen(usbvision->i2c_adap.name),
-		" #%d", usbvision->vdev->num);
+	sprintf(usbvision->i2c_adap.name, "%s-%d-%s", i2c_adap_template.name,
+		usbvision->dev->bus->busnum, usbvision->dev->devpath);
 	PDEBUG(DBG_I2C,"Adaptername: %s", usbvision->i2c_adap.name);
 	usbvision->i2c_adap.dev.parent = &usbvision->dev->dev;
 
@@ -245,8 +247,11 @@ int usbvision_i2c_register(struct usb_usbvision *usbvision)
 	switch (usbvision_device_data[usbvision->DevModel].Codec) {
 	case CODEC_SAA7113:
 	case CODEC_SAA7111:
+		/* Without this delay the detection of the saa711x is
+		   hit-and-miss. */
+		mdelay(10);
 		v4l2_i2c_new_subdev(&usbvision->v4l2_dev,
-				&usbvision->i2c_adap, "saa7115",
+				&usbvision->i2c_adap,
 				"saa7115_auto", 0, saa711x_addrs);
 		break;
 	}
@@ -256,16 +261,18 @@ int usbvision_i2c_register(struct usb_usbvision *usbvision)
 		struct tuner_setup tun_setup;
 
 		sd = v4l2_i2c_new_subdev(&usbvision->v4l2_dev,
-				&usbvision->i2c_adap, "tuner",
+				&usbvision->i2c_adap,
 				"tuner", 0, v4l2_i2c_tuner_addrs(ADDRS_DEMOD));
 		/* depending on whether we found a demod or not, select
 		   the tuner type. */
 		type = sd ? ADDRS_TV_WITH_DEMOD : ADDRS_TV;
 
 		sd = v4l2_i2c_new_subdev(&usbvision->v4l2_dev,
-				&usbvision->i2c_adap, "tuner",
+				&usbvision->i2c_adap,
 				"tuner", 0, v4l2_i2c_tuner_addrs(type));
 
+		if (sd == NULL)
+			return -ENODEV;
 		if (usbvision->tuner_type != -1) {
 			tun_setup.mode_mask = T_ANALOG_TV | T_RADIO;
 			tun_setup.type = usbvision->tuner_type;
@@ -273,14 +280,18 @@ int usbvision_i2c_register(struct usb_usbvision *usbvision)
 			call_all(usbvision, tuner, s_type_addr, &tun_setup);
 		}
 	}
+	usbvision->registered_i2c = 1;
 
 	return 0;
 }
 
 int usbvision_i2c_unregister(struct usb_usbvision *usbvision)
 {
+	if (!usbvision->registered_i2c)
+		return 0;
 
 	i2c_del_adapter(&(usbvision->i2c_adap));
+	usbvision->registered_i2c = 0;
 
 	PDEBUG(DBG_I2C,"i2c bus for %s unregistered", usbvision->i2c_adap.name);
 

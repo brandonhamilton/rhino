@@ -60,6 +60,11 @@
 #include "sis.h"
 #include "sis_main.h"
 
+#if !defined(CONFIG_FB_SIS_300) && !defined(CONFIG_FB_SIS_315)
+#warning Neither CONFIG_FB_SIS_300 nor CONFIG_FB_SIS_315 is set
+#warning sisfb will not work!
+#endif
+
 static void sisfb_handle_command(struct sis_video_info *ivideo,
 				 struct sisfb_cmd *sisfb_command);
 
@@ -1701,6 +1706,9 @@ static int	sisfb_ioctl(struct fb_info *info, unsigned int cmd,
 		break;
 
 	   case FBIOGET_VBLANK:
+
+		memset(&sisvbblank, 0, sizeof(struct fb_vblank));
+
 		sisvbblank.count = 0;
 		sisvbblank.flags = sisfb_setupvbblankflags(ivideo, &sisvbblank.vcount, &sisvbblank.hcount);
 
@@ -1845,7 +1853,7 @@ sisfb_get_fix(struct fb_fix_screeninfo *fix, int con, struct fb_info *info)
 
 	memset(fix, 0, sizeof(struct fb_fix_screeninfo));
 
-	strcpy(fix->id, ivideo->myid);
+	strlcpy(fix->id, ivideo->myid, sizeof(fix->id));
 
 	mutex_lock(&info->mm_lock);
 	fix->smem_start  = ivideo->video_base + ivideo->video_offset;
@@ -1891,9 +1899,6 @@ static struct fb_ops sisfb_ops = {
 	.fb_fillrect	= fbcon_sis_fillrect,
 	.fb_copyarea	= fbcon_sis_copyarea,
 	.fb_imageblit	= cfb_imageblit,
-#ifdef CONFIG_FB_SOFT_CURSOR
-	.fb_cursor	= soft_cursor,
-#endif
 	.fb_sync	= fbcon_sis_sync,
 #ifdef SIS_NEW_CONFIG_COMPAT
 	.fb_compat_ioctl= sisfb_ioctl,
@@ -2115,7 +2120,7 @@ sisfb_detect_VB_connect(struct sis_video_info *ivideo)
 	   if( (!(ivideo->vbflags2 & VB2_SISBRIDGE)) &&
 	       (!((ivideo->sisvga_engine == SIS_315_VGA) &&
 			(ivideo->vbflags2 & VB2_CHRONTEL))) ) {
-	      if(ivideo->sisfb_tvstd & (TV_PALN | TV_PALN | TV_NTSCJ)) {
+	      if(ivideo->sisfb_tvstd & (TV_PALM | TV_PALN | TV_NTSCJ)) {
 		 ivideo->sisfb_tvstd = -1;
 		 printk(KERN_ERR "sisfb: PALM/PALN/NTSCJ not supported\n");
 	      }
@@ -4114,14 +4119,6 @@ sisfb_find_rom(struct pci_dev *pdev)
 			if(sisfb_check_rom(rom_base, ivideo)) {
 
 				if((myrombase = vmalloc(65536))) {
-
-					/* Work around bug in pci/rom.c: Folks forgot to check
-					 * whether the size retrieved from the BIOS image eventually
-					 * is larger than the mapped size
-					 */
-					if(pci_resource_len(pdev, PCI_ROM_RESOURCE) < romsize)
-						romsize = pci_resource_len(pdev, PCI_ROM_RESOURCE);
-
 					memcpy_fromio(myrombase, rom_base,
 							(romsize > 65536) ? 65536 : romsize);
 				}
@@ -4155,23 +4152,6 @@ sisfb_find_rom(struct pci_dev *pdev)
 
         }
 
-#else
-
-	pci_read_config_dword(pdev, PCI_ROM_ADDRESS, &temp);
-	pci_write_config_dword(pdev, PCI_ROM_ADDRESS,
-			(ivideo->video_base & PCI_ROM_ADDRESS_MASK) | PCI_ROM_ADDRESS_ENABLE);
-
-	rom_base = ioremap(ivideo->video_base, 65536);
-	if(rom_base) {
-		if(sisfb_check_rom(rom_base, ivideo)) {
-			if((myrombase = vmalloc(65536)))
-				memcpy_fromio(myrombase, rom_base, 65536);
-		}
-		iounmap(rom_base);
-	}
-
-	pci_write_config_dword(pdev, PCI_ROM_ADDRESS, temp);
-
 #endif
 
 	return myrombase;
@@ -4181,6 +4161,9 @@ static void __devinit
 sisfb_post_map_vram(struct sis_video_info *ivideo, unsigned int *mapsize,
 			unsigned int min)
 {
+	if (*mapsize < (min << 20))
+		return;
+
 	ivideo->video_vbase = ioremap(ivideo->video_base, (*mapsize));
 
 	if(!ivideo->video_vbase) {
@@ -4514,7 +4497,7 @@ sisfb_post_sis300(struct pci_dev *pdev)
 	} else {
 #endif
 		/* Need to map max FB size for finding out about RAM size */
-		mapsize = 64 << 20;
+		mapsize = ivideo->video_size;
 		sisfb_post_map_vram(ivideo, &mapsize, 4);
 
 		if(ivideo->video_vbase) {
@@ -4680,7 +4663,7 @@ sisfb_post_xgi_ramsize(struct sis_video_info *ivideo)
 	orSISIDXREG(SISSR, 0x20, (0x80 | 0x04));
 
 	/* Need to map max FB size for finding out about RAM size */
-	mapsize = 256 << 20;
+	mapsize = ivideo->video_size;
 	sisfb_post_map_vram(ivideo, &mapsize, 32);
 
 	if(!ivideo->video_vbase) {
@@ -5936,6 +5919,7 @@ sisfb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	ivideo->video_base = pci_resource_start(pdev, 0);
+	ivideo->video_size = pci_resource_len(pdev, 0);
 	ivideo->mmio_base  = pci_resource_start(pdev, 1);
 	ivideo->mmio_size  = pci_resource_len(pdev, 1);
 	ivideo->SiS_Pr.RelIO = pci_resource_start(pdev, 2) + 0x30;

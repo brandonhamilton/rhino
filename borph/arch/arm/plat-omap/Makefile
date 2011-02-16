@@ -4,7 +4,7 @@
 
 # Common support
 obj-y := common.o sram.o clock.o devices.o dma.o mux.o gpio.o \
-	 usb.o fb.o io.o
+	 usb.o fb.o io.o counter_32k.o
 obj-m :=
 obj-n :=
 obj-  :=
@@ -15,6 +15,7 @@ obj-$(CONFIG_ARCH_OMAP16XX) += ocpi.o
 # omap_device support (OMAP2+ only at the moment)
 obj-$(CONFIG_ARCH_OMAP2) += omap_device.o
 obj-$(CONFIG_ARCH_OMAP3) += omap_device.o
+obj-$(CONFIG_ARCH_OMAP4) += omap_device.o
 
 obj-$(CONFIG_OMAP_MCBSP) += mcbsp.o
 obj-$(CONFIG_OMAP_IOMMU) += iommu.o iovmm.o
@@ -30,10 +31,4 @@ obj-y += $(i2c-omap-m) $(i2c-omap-y)
 # OMAP mailbox framework
 obj-$(CONFIG_OMAP_MBOX_FWK) += mailbox.o
 
-#PSP version information
-obj-$(CONFIG_MACH_OMAP3517EVM) += psp-version.o
-obj-$(CONFIG_MACH_OMAP3EVM) += psp-version.o
-
 obj-$(CONFIG_OMAP_PM_NOOP) += omap-pm-noop.o
-obj-$(CONFIG_OMAP_PM_SRF) += omap-pm-srf.o \
-				resource.o

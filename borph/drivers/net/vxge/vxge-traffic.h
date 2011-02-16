@@ -7,9 +7,9 @@
  * system is licensed under the GPL.
  * See the file COPYING in this distribution for more information.
  *
- * vxge-traffic.h: Driver for Neterion Inc's X3100 Series 10GbE PCIe I/O
+ * vxge-traffic.h: Driver for Exar Corp's X3100 Series 10GbE PCIe I/O
  *                 Virtualized Server Adapter.
- * Copyright(c) 2002-2009 Neterion Inc.
+ * Copyright(c) 2002-2010 Exar Corp.
  ******************************************************************************/
 #ifndef VXGE_TRAFFIC_H
 #define VXGE_TRAFFIC_H
@@ -1749,14 +1749,6 @@ vxge_hw_mrpcim_stats_access(
 	u64 *stat);
 
 enum vxge_hw_status
-vxge_hw_device_xmac_aggr_stats_get(struct __vxge_hw_device *devh, u32 port,
-				   struct vxge_hw_xmac_aggr_stats *aggr_stats);
-
-enum vxge_hw_status
-vxge_hw_device_xmac_port_stats_get(struct __vxge_hw_device *devh, u32 port,
-				   struct vxge_hw_xmac_port_stats *port_stats);
-
-enum vxge_hw_status
 vxge_hw_device_xmac_stats_get(struct __vxge_hw_device *devh,
 			      struct vxge_hw_xmac_stats *xmac_stats);
 
@@ -1866,6 +1858,51 @@ struct vxge_hw_ring_rxd_info {
 	u32	rth_hash_type;
 	u32	rth_value;
 };
+/**
+ * enum vxge_hw_ring_tcode - Transfer codes returned by adapter
+ * @VXGE_HW_RING_T_CODE_OK: Transfer ok.
+ * @VXGE_HW_RING_T_CODE_L3_CKSUM_MISMATCH: Layer 3 checksum presentation
+ *		configuration mismatch.
+ * @VXGE_HW_RING_T_CODE_L4_CKSUM_MISMATCH: Layer 4 checksum presentation
+ *		configuration mismatch.
+ * @VXGE_HW_RING_T_CODE_L3_L4_CKSUM_MISMATCH: Layer 3 and Layer 4 checksum
+ *		presentation configuration mismatch.
+ * @VXGE_HW_RING_T_CODE_L3_PKT_ERR: Layer 3 error unparseable packet,
+ *		such as unknown IPv6 header.
+ * @VXGE_HW_RING_T_CODE_L2_FRM_ERR: Layer 2 error frame integrity
+ *		error, such as FCS or ECC).
+ * @VXGE_HW_RING_T_CODE_BUF_SIZE_ERR: Buffer size error the RxD buffer(
+ *		s) were not appropriately sized and data loss occurred.
+ * @VXGE_HW_RING_T_CODE_INT_ECC_ERR: Internal ECC error RxD corrupted.
+ * @VXGE_HW_RING_T_CODE_BENIGN_OVFLOW: Benign overflow the contents of
+ *		Segment1 exceeded the capacity of Buffer1 and the remainder
+ *		was placed in Buffer2. Segment2 now starts in Buffer3.
+ *		No data loss or errors occurred.
+ * @VXGE_HW_RING_T_CODE_ZERO_LEN_BUFF: Buffer size 0 one of the RxDs
+ *		assigned buffers has a size of 0 bytes.
+ * @VXGE_HW_RING_T_CODE_FRM_DROP: Frame dropped either due to
+ *		VPath Reset or because of a VPIN mismatch.
+ * @VXGE_HW_RING_T_CODE_UNUSED: Unused
+ * @VXGE_HW_RING_T_CODE_MULTI_ERR: Multiple errors more than one
+ *		transfer code condition occurred.
+ *
+ * Transfer codes returned by adapter.
+ */
+enum vxge_hw_ring_tcode {
+	VXGE_HW_RING_T_CODE_OK				= 0x0,
+	VXGE_HW_RING_T_CODE_L3_CKSUM_MISMATCH		= 0x1,
+	VXGE_HW_RING_T_CODE_L4_CKSUM_MISMATCH		= 0x2,
+	VXGE_HW_RING_T_CODE_L3_L4_CKSUM_MISMATCH	= 0x3,
+	VXGE_HW_RING_T_CODE_L3_PKT_ERR			= 0x5,
+	VXGE_HW_RING_T_CODE_L2_FRM_ERR			= 0x6,
+	VXGE_HW_RING_T_CODE_BUF_SIZE_ERR		= 0x7,
+	VXGE_HW_RING_T_CODE_INT_ECC_ERR			= 0x8,
+	VXGE_HW_RING_T_CODE_BENIGN_OVFLOW		= 0x9,
+	VXGE_HW_RING_T_CODE_ZERO_LEN_BUFF		= 0xA,
+	VXGE_HW_RING_T_CODE_FRM_DROP			= 0xC,
+	VXGE_HW_RING_T_CODE_UNUSED			= 0xE,
+	VXGE_HW_RING_T_CODE_MULTI_ERR			= 0xF
+};
 
 /**
  * enum enum vxge_hw_ring_hash_type - RTH hash types
@@ -1910,7 +1947,7 @@ vxge_hw_ring_rxd_post_post(
 	void *rxdh);
 
 enum vxge_hw_status
-vxge_hw_ring_replenish(struct __vxge_hw_ring *ring_handle, u16 min_flag);
+vxge_hw_ring_replenish(struct __vxge_hw_ring *ring_handle);
 
 void
 vxge_hw_ring_rxd_post_post_wmb(
@@ -2042,7 +2079,6 @@ void vxge_hw_fifo_txdl_free(
 
 #define VXGE_HW_RING_NEXT_BLOCK_POINTER_OFFSET	(VXGE_HW_BLOCK_SIZE-8)
 #define VXGE_HW_RING_MEMBLOCK_IDX_OFFSET		(VXGE_HW_BLOCK_SIZE-16)
-#define VXGE_HW_RING_MIN_BUFF_ALLOCATION		64
 
 /*
  * struct __vxge_hw_ring_rxd_priv - Receive descriptor HW-private data.
@@ -2073,48 +2109,9 @@ struct __vxge_hw_ring_rxd_priv {
 #endif
 };
 
-/* ========================= RING PRIVATE API ============================= */
-u64
-__vxge_hw_ring_first_block_address_get(
-	struct __vxge_hw_ring *ringh);
-
-enum vxge_hw_status
-__vxge_hw_ring_create(
-	struct __vxge_hw_vpath_handle *vpath_handle,
-	struct vxge_hw_ring_attr *attr);
-
-enum vxge_hw_status
-__vxge_hw_ring_abort(
-	struct __vxge_hw_ring *ringh);
-
-enum vxge_hw_status
-__vxge_hw_ring_reset(
-	struct __vxge_hw_ring *ringh);
-
-enum vxge_hw_status
-__vxge_hw_ring_delete(
-	struct __vxge_hw_vpath_handle *vpath_handle);
-
 /* ========================= FIFO PRIVATE API ============================= */
 
 struct vxge_hw_fifo_attr;
-
-enum vxge_hw_status
-__vxge_hw_fifo_create(
-	struct __vxge_hw_vpath_handle *vpath_handle,
-	struct vxge_hw_fifo_attr *attr);
-
-enum vxge_hw_status
-__vxge_hw_fifo_abort(
-	struct __vxge_hw_fifo *fifoh);
-
-enum vxge_hw_status
-__vxge_hw_fifo_reset(
-	struct __vxge_hw_fifo *ringh);
-
-enum vxge_hw_status
-__vxge_hw_fifo_delete(
-	struct __vxge_hw_vpath_handle *vpath_handle);
 
 struct vxge_hw_mempool_cbs {
 	void (*item_func_alloc)(
@@ -2124,10 +2121,6 @@ struct vxge_hw_mempool_cbs {
 			u32			index,
 			u32			is_last);
 };
-
-void
-__vxge_hw_mempool_destroy(
-	struct vxge_hw_mempool *mempool);
 
 #define VXGE_HW_VIRTUAL_PATH_HANDLE(vpath)				\
 		((struct __vxge_hw_vpath_handle *)(vpath)->vpath_handles.next)
@@ -2151,60 +2144,9 @@ __vxge_hw_vpath_rts_table_set(
 	u64			data2);
 
 enum vxge_hw_status
-__vxge_hw_vpath_reset(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_sw_reset(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
 __vxge_hw_vpath_enable(
 	struct __vxge_hw_device *devh,
 	u32			vp_id);
-
-void
-__vxge_hw_vpath_prc_configure(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_kdfc_configure(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_mac_configure(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_tim_configure(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_initialize(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vp_initialize(
-	struct __vxge_hw_device *devh,
-	u32			vp_id,
-	struct vxge_hw_vp_config	*config);
-
-void
-__vxge_hw_vp_terminate(
-	struct __vxge_hw_device *devh,
-	u32			vp_id);
-
-enum vxge_hw_status
-__vxge_hw_vpath_alarm_process(
-	struct __vxge_hw_virtualpath	*vpath,
-	u32			skip_alarms);
 
 void vxge_hw_device_intr_enable(
 	struct __vxge_hw_device *devh);
@@ -2277,11 +2219,6 @@ vxge_hw_vpath_vid_get(
 	u64			*vid);
 
 enum vxge_hw_status
-vxge_hw_vpath_vid_get_next(
-	struct __vxge_hw_vpath_handle *vpath_handle,
-	u64			*vid);
-
-enum vxge_hw_status
 vxge_hw_vpath_vid_delete(
 	struct __vxge_hw_vpath_handle *vpath_handle,
 	u64			vid);
@@ -2332,7 +2269,7 @@ enum vxge_hw_status vxge_hw_vpath_alarm_process(
 	struct __vxge_hw_vpath_handle *vpath_handle,
 	u32 skip_alarms);
 
-enum vxge_hw_status
+void
 vxge_hw_vpath_msix_set(struct __vxge_hw_vpath_handle *vpath_handle,
 		       int *tim_msix_id, int alarm_msix_id);
 
@@ -2343,15 +2280,8 @@ vxge_hw_vpath_msix_mask(struct __vxge_hw_vpath_handle *vpath_handle,
 void vxge_hw_device_flush_io(struct __vxge_hw_device *devh);
 
 void
-vxge_hw_vpath_msix_clear(struct __vxge_hw_vpath_handle *vpath_handle,
-			 int msix_id);
-
-void
 vxge_hw_vpath_msix_unmask(struct __vxge_hw_vpath_handle *vpath_handle,
 			  int msix_id);
-
-void
-vxge_hw_vpath_msix_mask_all(struct __vxge_hw_vpath_handle *vpath_handle);
 
 enum vxge_hw_status vxge_hw_vpath_intr_enable(
 				struct __vxge_hw_vpath_handle *vpath_handle);
@@ -2371,12 +2301,6 @@ vxge_hw_channel_msix_mask(struct __vxge_hw_channel *channelh, int msix_id);
 void
 vxge_hw_channel_msix_unmask(struct __vxge_hw_channel *channelh, int msix_id);
 
-enum vxge_hw_status
-vxge_hw_channel_dtr_alloc(struct __vxge_hw_channel *channel, void **dtrh);
-
-void
-vxge_hw_channel_dtr_post(struct __vxge_hw_channel *channel, void *dtrh);
-
 void
 vxge_hw_channel_dtr_try_complete(struct __vxge_hw_channel *channel,
 				 void **dtrh);
@@ -2391,19 +2315,5 @@ int
 vxge_hw_channel_dtr_count(struct __vxge_hw_channel *channel);
 void
 vxge_hw_vpath_tti_ci_set(struct __vxge_hw_device *hldev, u32 vp_id);
-
-/* ========================== PRIVATE API ================================= */
-
-enum vxge_hw_status
-__vxge_hw_device_handle_link_up_ind(struct __vxge_hw_device *hldev);
-
-enum vxge_hw_status
-__vxge_hw_device_handle_link_down_ind(struct __vxge_hw_device *hldev);
-
-enum vxge_hw_status
-__vxge_hw_device_handle_error(
-		struct __vxge_hw_device *hldev,
-		u32 vp_id,
-		enum vxge_hw_event type);
 
 #endif

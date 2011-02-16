@@ -12,6 +12,7 @@
 
 #include <linux/dccp.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 
 #include <net/sock.h>
 
@@ -123,9 +124,9 @@ static int dccp_rcv_closereq(struct sock *sk, struct sk_buff *skb)
 	return queued;
 }
 
-static u8 dccp_reset_code_convert(const u8 code)
+static u16 dccp_reset_code_convert(const u8 code)
 {
-	const u8 error_code[] = {
+	const u16 error_code[] = {
 	[DCCP_RESET_CODE_CLOSED]	     = 0,	/* normal termination */
 	[DCCP_RESET_CODE_UNSPECIFIED]	     = 0,	/* nothing known */
 	[DCCP_RESET_CODE_ABORTED]	     = ECONNRESET,
@@ -147,7 +148,7 @@ static u8 dccp_reset_code_convert(const u8 code)
 
 static void dccp_rcv_reset(struct sock *sk, struct sk_buff *skb)
 {
-	u8 err = dccp_reset_code_convert(dccp_hdr_reset(skb)->dccph_reset_code);
+	u16 err = dccp_reset_code_convert(dccp_hdr_reset(skb)->dccph_reset_code);
 
 	sk->sk_err = err;
 
@@ -238,7 +239,8 @@ static int dccp_check_seqno(struct sock *sk, struct sk_buff *skb)
 		dccp_update_gsr(sk, seqno);
 
 		if (dh->dccph_type != DCCP_PKT_SYNC &&
-		    (ackno != DCCP_PKT_WITHOUT_ACK_SEQ))
+		    ackno != DCCP_PKT_WITHOUT_ACK_SEQ &&
+		    after48(ackno, dp->dccps_gar))
 			dp->dccps_gar = ackno;
 	} else {
 		unsigned long now = jiffies;
@@ -258,7 +260,7 @@ static int dccp_check_seqno(struct sock *sk, struct sk_buff *skb)
 				      sysctl_dccp_sync_ratelimit)))
 			return 0;
 
-		DCCP_WARN("DCCP: Step 6 failed for %s packet, "
+		DCCP_WARN("Step 6 failed for %s packet, "
 			  "(LSWL(%llu) <= P.seqno(%llu) <= S.SWH(%llu)) and "
 			  "(P.ackno %s or LAWL(%llu) <= P.ackno(%llu) <= S.AWH(%llu), "
 			  "sending SYNC...\n",  dccp_packet_name(dh->dccph_type),
@@ -414,7 +416,7 @@ static int dccp_rcv_request_sent_state_process(struct sock *sk,
 		if (!between48(DCCP_SKB_CB(skb)->dccpd_ack_seq,
 			       dp->dccps_awl, dp->dccps_awh)) {
 			dccp_pr_debug("invalid ackno: S.AWL=%llu, "
-				      "P.ackno=%llu, S.AWH=%llu \n",
+				      "P.ackno=%llu, S.AWH=%llu\n",
 				      (unsigned long long)dp->dccps_awl,
 			   (unsigned long long)DCCP_SKB_CB(skb)->dccpd_ack_seq,
 				      (unsigned long long)dp->dccps_awh);
@@ -429,7 +431,7 @@ static int dccp_rcv_request_sent_state_process(struct sock *sk,
 		if (dccp_parse_options(sk, NULL, skb))
 			return 1;
 
-		/* Obtain usec RTT sample from SYN exchange (used by CCID 3) */
+		/* Obtain usec RTT sample from SYN exchange (used by TFRC). */
 		if (likely(dp->dccps_options_received.dccpor_timestamp_echo))
 			dp->dccps_syn_rtt = dccp_sample_rtt(sk, 10 * (tstamp -
 			    dp->dccps_options_received.dccpor_timestamp_echo));
@@ -440,20 +442,14 @@ static int dccp_rcv_request_sent_state_process(struct sock *sk,
 		kfree_skb(sk->sk_send_head);
 		sk->sk_send_head = NULL;
 
-		dp->dccps_isr = DCCP_SKB_CB(skb)->dccpd_seq;
-		dccp_update_gsr(sk, dp->dccps_isr);
 		/*
-		 * SWL and AWL are initially adjusted so that they are not less than
-		 * the initial Sequence Numbers received and sent, respectively:
-		 *	SWL := max(GSR + 1 - floor(W/4), ISR),
-		 *	AWL := max(GSS - W' + 1, ISS).
-		 * These adjustments MUST be applied only at the beginning of the
-		 * connection.
-		 *
-		 * AWL was adjusted in dccp_v4_connect -acme
+		 * Set ISR, GSR from packet. ISS was set in dccp_v{4,6}_connect
+		 * and GSS in dccp_transmit_skb(). Setting AWL/AWH and SWL/SWH
+		 * is done as part of activating the feature values below, since
+		 * these settings depend on the local/remote Sequence Window
+		 * features, which were undefined or not confirmed until now.
 		 */
-		dccp_set_seqno(&dp->dccps_swl,
-			       max48(dp->dccps_swl, dp->dccps_isr));
+		dp->dccps_gsr = dp->dccps_isr = DCCP_SKB_CB(skb)->dccpd_seq;
 
 		dccp_sync_mss(sk, icsk->icsk_pmtu_cookie);
 
@@ -534,6 +530,8 @@ static int dccp_rcv_respond_partopen_state_process(struct sock *sk,
 						   const struct dccp_hdr *dh,
 						   const unsigned len)
 {
+	struct dccp_sock *dp = dccp_sk(sk);
+	u32 sample = dp->dccps_options_received.dccpor_timestamp_echo;
 	int queued = 0;
 
 	switch (dh->dccph_type) {
@@ -558,7 +556,14 @@ static int dccp_rcv_respond_partopen_state_process(struct sock *sk,
 		if (sk->sk_state == DCCP_PARTOPEN)
 			inet_csk_clear_xmit_timer(sk, ICSK_TIME_DACK);
 
-		dccp_sk(sk)->dccps_osr = DCCP_SKB_CB(skb)->dccpd_seq;
+		/* Obtain usec RTT sample from SYN exchange (used by TFRC). */
+		if (likely(sample)) {
+			long delta = dccp_timestamp() - sample;
+
+			dp->dccps_syn_rtt = dccp_sample_rtt(sk, 10 * delta);
+		}
+
+		dp->dccps_osr = DCCP_SKB_CB(skb)->dccpd_seq;
 		dccp_set_state(sk, DCCP_OPEN);
 
 		if (dh->dccph_type == DCCP_PKT_DATAACK ||

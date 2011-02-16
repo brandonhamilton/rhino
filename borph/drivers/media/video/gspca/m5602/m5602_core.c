@@ -81,7 +81,7 @@ int m5602_write_bridge(struct sd *sd, const u8 address, const u8 i2c_data)
 	return (err < 0) ? err : 0;
 }
 
-int m5602_wait_for_i2c(struct sd *sd)
+static int m5602_wait_for_i2c(struct sd *sd)
 {
 	int err;
 	u8 data;
@@ -305,30 +305,23 @@ static void m5602_urb_complete(struct gspca_dev *gspca_dev,
 		       sd->frame_count);
 
 	} else {
-		struct gspca_frame *frame;
 		int cur_frame_len;
 
-		frame = gspca_get_i_frame(gspca_dev);
-		if (frame == NULL) {
-			gspca_dev->last_packet_type = DISCARD_PACKET;
-			return;
-		}
-
-		cur_frame_len = frame->data_end - frame->data;
+		cur_frame_len = gspca_dev->image_len;
 		/* Remove urb header */
 		data += 4;
 		len -= 4;
 
-		if (cur_frame_len + len <= frame->v4l2_buf.length) {
+		if (cur_frame_len + len <= gspca_dev->frsz) {
 			PDEBUG(D_FRAM, "Continuing frame %d copying %d bytes",
 			       sd->frame_count, len);
 
 			gspca_frame_add(gspca_dev, INTER_PACKET,
 					data, len);
-		} else if (frame->v4l2_buf.length - cur_frame_len > 0) {
+		} else {
 			/* Add the remaining data up to frame size */
 			gspca_frame_add(gspca_dev, INTER_PACKET, data,
-				    frame->v4l2_buf.length - cur_frame_len);
+				    gspca_dev->frsz - cur_frame_len);
 		}
 	}
 }
@@ -388,7 +381,7 @@ static int m5602_probe(struct usb_interface *intf,
 			       THIS_MODULE);
 }
 
-void m5602_disconnect(struct usb_interface *intf)
+static void m5602_disconnect(struct usb_interface *intf)
 {
 	struct gspca_dev *gspca_dev = usb_get_intfdata(intf);
 	struct sd *sd = (struct sd *) gspca_dev;
@@ -413,18 +406,12 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init mod_m5602_init(void)
 {
-	int ret;
-	ret = usb_register(&sd_driver);
-	if (ret < 0)
-		return ret;
-	PDEBUG(D_PROBE, "registered");
-	return 0;
+	return usb_register(&sd_driver);
 }
 
 static void __exit mod_m5602_exit(void)
 {
 	usb_deregister(&sd_driver);
-	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(mod_m5602_init);

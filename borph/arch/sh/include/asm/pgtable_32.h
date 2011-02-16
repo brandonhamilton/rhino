@@ -71,6 +71,8 @@
 #define _PAGE_EXT_KERN_WRITE	0x1000	/* EPR4-bit: Kernel space writable */
 #define _PAGE_EXT_KERN_READ	0x2000	/* EPR5-bit: Kernel space readable */
 
+#define _PAGE_EXT_WIRED		0x4000	/* software: Wire TLB entry */
+
 /* Wrapper for extended mode pgprot twiddling */
 #define _PAGE_EXT(x)		((unsigned long long)(x) << 32)
 
@@ -141,12 +143,14 @@ static inline unsigned long copy_ptea_attributes(unsigned long x)
 # elif defined(CONFIG_HUGETLB_PAGE_SIZE_64MB)
 #  define _PAGE_SZHUGE	(_PAGE_EXT_ESZ2 | _PAGE_EXT_ESZ3)
 # endif
+# define _PAGE_WIRED	(_PAGE_EXT(_PAGE_EXT_WIRED))
 #else
 # if defined(CONFIG_HUGETLB_PAGE_SIZE_64K)
 #  define _PAGE_SZHUGE	(_PAGE_SZ1)
 # elif defined(CONFIG_HUGETLB_PAGE_SIZE_1MB)
 #  define _PAGE_SZHUGE	(_PAGE_SZ0 | _PAGE_SZ1)
 # endif
+# define _PAGE_WIRED	(0)
 #endif
 
 /*
@@ -344,7 +348,8 @@ static inline void set_pte(pte_t *ptep, pte_t pte)
 #define pte_special(pte)	((pte).pte_low & _PAGE_SPECIAL)
 
 #ifdef CONFIG_X2TLB
-#define pte_write(pte)		((pte).pte_high & _PAGE_EXT_USER_WRITE)
+#define pte_write(pte) \
+	((pte).pte_high & (_PAGE_EXT_USER_WRITE | _PAGE_EXT_KERN_WRITE))
 #else
 #define pte_write(pte)		((pte).pte_low & _PAGE_RW)
 #endif
@@ -358,7 +363,7 @@ static inline pte_t pte_##fn(pte_t pte) { pte.pte_##h op; return pte; }
  * individually toggled (and user permissions are entirely decoupled from
  * kernel permissions), we attempt to couple them a bit more sanely here.
  */
-PTE_BIT_FUNC(high, wrprotect, &= ~_PAGE_EXT_USER_WRITE);
+PTE_BIT_FUNC(high, wrprotect, &= ~(_PAGE_EXT_USER_WRITE | _PAGE_EXT_KERN_WRITE));
 PTE_BIT_FUNC(high, mkwrite, |= _PAGE_EXT_USER_WRITE | _PAGE_EXT_KERN_WRITE);
 PTE_BIT_FUNC(high, mkhuge, |= _PAGE_SZHUGE);
 #else
@@ -372,8 +377,6 @@ PTE_BIT_FUNC(low, mkdirty, |= _PAGE_DIRTY);
 PTE_BIT_FUNC(low, mkold, &= ~_PAGE_ACCESSED);
 PTE_BIT_FUNC(low, mkyoung, |= _PAGE_ACCESSED);
 PTE_BIT_FUNC(low, mkspecial, |= _PAGE_SPECIAL);
-
-#define __HAVE_ARCH_PTE_SPECIAL
 
 /*
  * Macro and implementation to make a page protection as uncachable.
@@ -424,10 +427,7 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 #define pte_offset_kernel(dir, address) \
 	((pte_t *) pmd_page_vaddr(*(dir)) + pte_index(address))
 #define pte_offset_map(dir, address)		pte_offset_kernel(dir, address)
-#define pte_offset_map_nested(dir, address)	pte_offset_kernel(dir, address)
-
 #define pte_unmap(pte)		do { } while (0)
-#define pte_unmap_nested(pte)	do { } while (0)
 
 #ifdef CONFIG_X2TLB
 #define pte_ERROR(e) \

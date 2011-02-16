@@ -1,3 +1,10 @@
+#ifndef __MACH_MX31_H__
+#define __MACH_MX31_H__
+
+#ifndef __ASSEMBLER__
+#include <linux/io.h>
+#endif
+
 /*
  * IRAM
  */
@@ -16,7 +23,7 @@
 #define MX31_ETB_SLOT4_BASE_ADDR		(MX31_AIPS1_BASE_ADDR + 0x10000)
 #define MX31_ETB_SLOT5_BASE_ADDR		(MX31_AIPS1_BASE_ADDR + 0x14000)
 #define MX31_ECT_CTIO_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x18000)
-#define MX31_I2C_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x80000)
+#define MX31_I2C1_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x80000)
 #define MX31_I2C3_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x84000)
 #define MX31_OTG_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x88000)
 #define MX31_ATA_BASE_ADDR			(MX31_AIPS1_BASE_ADDR + 0x8c000)
@@ -107,7 +114,29 @@
 #define MX31_EMI_CTL_BASE_ADDR			(MX31_X_MEMC_BASE_ADDR + 0x4000)
 #define MX31_PCMCIA_CTL_BASE_ADDR		MX31_EMI_CTL_BASE_ADDR
 
+#define MX31_WEIM_CSCRx_BASE_ADDR(cs)	(MX31_WEIM_BASE_ADDR + (cs) * 0x10)
+#define MX31_WEIM_CSCRxU(cs)			(MX31_WEIM_CSCRx_BASE_ADDR(cs))
+#define MX31_WEIM_CSCRxL(cs)			(MX31_WEIM_CSCRx_BASE_ADDR(cs) + 0x4)
+#define MX31_WEIM_CSCRxA(cs)			(MX31_WEIM_CSCRx_BASE_ADDR(cs) + 0x8)
+
 #define MX31_PCMCIA_MEM_BASE_ADDR	0xbc000000
+
+#define MX31_IO_ADDRESS(x) (						\
+	IMX_IO_ADDRESS(x, MX31_AIPS1) ?:				\
+	IMX_IO_ADDRESS(x, MX31_AIPS2) ?:				\
+	IMX_IO_ADDRESS(x, MX31_AVIC) ?:					\
+	IMX_IO_ADDRESS(x, MX31_X_MEMC) ?:				\
+	IMX_IO_ADDRESS(x, MX31_SPBA0))
+
+#ifndef __ASSEMBLER__
+static inline void mx31_setup_weimcs(size_t cs,
+		unsigned upper, unsigned lower, unsigned addional)
+{
+	__raw_writel(upper, MX31_IO_ADDRESS(MX31_WEIM_CSCRxU(cs)));
+	__raw_writel(lower, MX31_IO_ADDRESS(MX31_WEIM_CSCRxL(cs)));
+	__raw_writel(addional, MX31_IO_ADDRESS(MX31_WEIM_CSCRxA(cs)));
+}
+#endif
 
 #define MX31_INT_I2C3		3
 #define MX31_INT_I2C2		4
@@ -116,7 +145,7 @@
 #define MX31_INT_FIRI		7
 #define MX31_INT_MMC_SDHC2	8
 #define MX31_INT_MMC_SDHC1	9
-#define MX31_INT_I2C		10
+#define MX31_INT_I2C1		10
 #define MX31_INT_SSI2		11
 #define MX31_INT_SSI1		12
 #define MX31_INT_CSPI2		13
@@ -139,7 +168,7 @@
 #define MX31_INT_POWER_FAIL	30
 #define MX31_INT_CCM_DVFS	31
 #define MX31_INT_UART2		32
-#define MX31_INT_NANDFC		33
+#define MX31_INT_NFC		33
 #define MX31_INT_SDMA		34
 #define MX31_INT_USB1		35
 #define MX31_INT_USB2		36
@@ -168,6 +197,15 @@
 #define MX31_INT_EXT_WDOG	62
 #define MX31_INT_EXT_TV		63
 
+#define MX31_DMA_REQ_SSI2_RX1	22
+#define MX31_DMA_REQ_SSI2_TX1	23
+#define MX31_DMA_REQ_SSI2_RX0	24
+#define MX31_DMA_REQ_SSI2_TX0	25
+#define MX31_DMA_REQ_SSI1_RX1	26
+#define MX31_DMA_REQ_SSI1_TX1	27
+#define MX31_DMA_REQ_SSI1_RX0	28
+#define MX31_DMA_REQ_SSI1_TX0	29
+
 #define MX31_PROD_SIGNATURE		0x1	/* For MX31 */
 
 /* silicon revisions specific to i.MX31 */
@@ -186,6 +224,7 @@
 #define MX31_SYSTEM_REV_MIN		MX31_CHIP_REV_1_0
 #define MX31_SYSTEM_REV_NUM		3
 
+#ifdef IMX_NEEDS_DEPRECATED_SYMBOLS
 /* these should go away */
 #define ATA_BASE_ADDR MX31_ATA_BASE_ADDR
 #define UART4_BASE_ADDR MX31_UART4_BASE_ADDR
@@ -201,7 +240,6 @@
 #define MPEG4_ENC_BASE_ADDR MX31_MPEG4_ENC_BASE_ADDR
 #define MXC_INT_MPEG4_ENCODER MX31_INT_MPEG4_ENCODER
 #define MXC_INT_FIRI MX31_INT_FIRI
-#define MXC_INT_MMC_SDHC1 MX31_INT_MMC_SDHC1
 #define MXC_INT_MBX MX31_INT_MBX
 #define MXC_INT_CSPI3 MX31_INT_CSPI3
 #define MXC_INT_SIM2 MX31_INT_SIM2
@@ -216,3 +254,6 @@
 #define MXC_INT_UART5 MX31_INT_UART5
 #define MXC_INT_CCM MX31_INT_CCM
 #define MXC_INT_PCMCIA MX31_INT_PCMCIA
+#endif
+
+#endif /* ifndef __MACH_MX31_H__ */

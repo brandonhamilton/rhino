@@ -19,6 +19,7 @@
 
 #include "../ath.h"
 #include <net/cfg80211.h>
+#include "ar9003_eeprom.h"
 
 #define AH_USE_EEPROM   0x1
 
@@ -61,7 +62,7 @@
 
 #define SD_NO_CTL               0xE0
 #define NO_CTL                  0xff
-#define CTL_MODE_M              7
+#define CTL_MODE_M              0xf
 #define CTL_11A                 0
 #define CTL_11B                 1
 #define CTL_11G                 2
@@ -93,7 +94,6 @@
  */
 #define AR9285_RDEXT_DEFAULT    0x1F
 
-#define AR_EEPROM_MAC(i)	(0x1d+(i))
 #define ATH9K_POW_SM(_r, _s)	(((_r) & 0x3f) << (_s))
 #define FREQ2FBIN(x, y)		((y) ? ((x) - 2300) : (((x) - 4800) / 5))
 #define ath9k_hw_use_flash(_ah)	(!(_ah->ah_flags & AH_USE_EEPROM))
@@ -101,7 +101,7 @@
 #define AR5416_VER_MASK (eep->baseEepHeader.version & AR5416_EEP_VER_MINOR_MASK)
 #define OLC_FOR_AR9280_20_LATER (AR_SREV_9280_20_OR_LATER(ah) && \
 				 ah->eep_ops->get_eeprom(ah, EEP_OL_PWRCTRL))
-#define OLC_FOR_AR9287_10_LATER (AR_SREV_9287_10_OR_LATER(ah) && \
+#define OLC_FOR_AR9287_10_LATER (AR_SREV_9287_11_OR_LATER(ah) && \
 				 ah->eep_ops->get_eeprom(ah, EEP_OL_PWRCTRL))
 
 #define AR_EEPROM_RFSILENT_GPIO_SEL     0x001c
@@ -155,6 +155,7 @@
 #define AR5416_BCHAN_UNUSED             0xFF
 #define AR5416_MAX_PWR_RANGE_IN_HALF_DB 64
 #define AR5416_MAX_CHAINS               3
+#define AR9300_MAX_CHAINS		3
 #define AR5416_PWR_TABLE_OFFSET_DB     -5
 
 /* Rx gain type values */
@@ -190,6 +191,7 @@
 #define AR9287_EEP_NO_BACK_VER       AR9287_EEP_MINOR_VER_1
 
 #define AR9287_EEP_START_LOC            128
+#define AR9287_HTC_EEP_START_LOC        256
 #define AR9287_NUM_2G_CAL_PIERS         3
 #define AR9287_NUM_2G_CCK_TARGET_POWERS 3
 #define AR9287_NUM_2G_20_TARGET_POWERS  3
@@ -231,6 +233,18 @@
 
 #define AR9287_CHECKSUM_LOCATION (AR9287_EEP_START_LOC + 1)
 
+#define CTL_EDGE_TPOWER(_ctl) ((_ctl) & 0x3f)
+#define CTL_EDGE_FLAGS(_ctl) (((_ctl) >> 6) & 0x03)
+
+#define LNA_CTL_BUF_MODE	BIT(0)
+#define LNA_CTL_ISEL_LO		BIT(1)
+#define LNA_CTL_ISEL_HI		BIT(2)
+#define LNA_CTL_BUF_IN		BIT(3)
+#define LNA_CTL_FEM_BAND	BIT(4)
+#define LNA_CTL_LOCAL_BIAS	BIT(5)
+#define LNA_CTL_FORCE_XPA	BIT(6)
+#define LNA_CTL_USE_ANT1	BIT(7)
+
 enum eeprom_param {
 	EEP_NFTHRESH_5,
 	EEP_NFTHRESH_2,
@@ -249,16 +263,23 @@ enum eeprom_param {
 	EEP_MINOR_REV,
 	EEP_TX_MASK,
 	EEP_RX_MASK,
+	EEP_FSTCLK_5G,
 	EEP_RXGAIN_TYPE,
-	EEP_TXGAIN_TYPE,
 	EEP_OL_PWRCTRL,
+	EEP_TXGAIN_TYPE,
 	EEP_RC_CHAIN_MASK,
 	EEP_DAC_HPWR_5G,
 	EEP_FRAC_N_5G,
 	EEP_DEV_TYPE,
 	EEP_TEMPSENSE_SLOPE,
 	EEP_TEMPSENSE_SLOPE_PAL_ON,
-	EEP_PWR_TABLE_OFFSET
+	EEP_PWR_TABLE_OFFSET,
+	EEP_DRIVE_STRENGTH,
+	EEP_INTERNAL_REGULATOR,
+	EEP_SWREG,
+	EEP_PAPRD,
+	EEP_MODAL_VER,
+	EEP_ANT_DIV_CTL1,
 };
 
 enum ar5416_rates {
@@ -295,7 +316,8 @@ struct base_eep_header {
 	u32 binBuildNumber;
 	u8 deviceType;
 	u8 pwdclkind;
-	u8 futureBase_1[2];
+	u8 fastClk5g;
+	u8 divChain;
 	u8 rxGainType;
 	u8 dacHiPwrMode_5G;
 	u8 openLoopPwrCntl;
@@ -368,10 +390,7 @@ struct modal_eep_header {
 	u8 xatten2Margin[AR5416_MAX_CHAINS];
 	u8 ob_ch1;
 	u8 db_ch1;
-	u8 useAnt1:1,
-	    force_xpaon:1,
-	    local_bias:1,
-	    femBandSelectUsed:1, xlnabufin:1, xlnaisel:2, xlnabufmode:1;
+	u8 lna_ctl;
 	u8 miscBits;
 	u16 xpaBiasLvlFreq[3];
 	u8 futureModal[6];
@@ -525,18 +544,10 @@ struct cal_target_power_ht {
 	u8 tPow2x[8];
 } __packed;
 
-
-#ifdef __BIG_ENDIAN_BITFIELD
 struct cal_ctl_edges {
 	u8 bChannel;
-	u8 flag:2, tPower:6;
+	u8 ctl;
 } __packed;
-#else
-struct cal_ctl_edges {
-	u8 bChannel;
-	u8 tPower:6, flag:2;
-} __packed;
-#endif
 
 struct cal_data_op_loop_ar9287 {
 	u8 pwrPdg[2][5];
@@ -656,21 +667,15 @@ struct ath9k_country_entry {
 	u8 iso[3];
 };
 
-enum ath9k_eep_map {
-	EEP_MAP_DEFAULT = 0x0,
-	EEP_MAP_4KBITS,
-	EEP_MAP_AR9287,
-	EEP_MAP_MAX
-};
-
 struct eeprom_ops {
 	int (*check_eeprom)(struct ath_hw *hw);
 	u32 (*get_eeprom)(struct ath_hw *hw, enum eeprom_param param);
 	bool (*fill_eeprom)(struct ath_hw *hw);
 	int (*get_eeprom_ver)(struct ath_hw *hw);
 	int (*get_eeprom_rev)(struct ath_hw *hw);
-	u8 (*get_num_ant_config)(struct ath_hw *hw, enum ieee80211_band band);
-	u16 (*get_eeprom_antenna_cfg)(struct ath_hw *hw,
+	u8 (*get_num_ant_config)(struct ath_hw *hw,
+				 enum ath9k_hal_freq_band band);
+	u32 (*get_eeprom_antenna_cfg)(struct ath_hw *hw,
 				      struct ath9k_channel *chan);
 	void (*set_board_values)(struct ath_hw *hw, struct ath9k_channel *chan);
 	void (*set_addac)(struct ath_hw *hw, struct ath9k_channel *chan);
@@ -680,6 +685,7 @@ struct eeprom_ops {
 	u16 (*get_spur_channel)(struct ath_hw *ah, u16 i, bool is2GHz);
 };
 
+void ath9k_hw_analog_shift_regwrite(struct ath_hw *ah, u32 reg, u32 val);
 void ath9k_hw_analog_shift_rmw(struct ath_hw *ah, u32 reg, u32 mask,
 			       u32 shift, u32 val);
 int16_t ath9k_hw_interpolate(u16 target, u16 srcLeft, u16 srcRight,
@@ -705,6 +711,7 @@ void ath9k_hw_get_target_powers(struct ath_hw *ah,
 				u16 numRates, bool isHt40Target);
 u16 ath9k_hw_get_max_edge_power(u16 freq, struct cal_ctl_edges *pRdEdgesPower,
 				bool is2GHz, int num_band_edges);
+void ath9k_hw_update_regulatory_maxpower(struct ath_hw *ah);
 int ath9k_hw_eeprom_init(struct ath_hw *ah);
 
 #define ar5416_get_ntxchains(_txchainmask)			\
@@ -713,6 +720,8 @@ int ath9k_hw_eeprom_init(struct ath_hw *ah);
 
 extern const struct eeprom_ops eep_def_ops;
 extern const struct eeprom_ops eep_4k_ops;
-extern const struct eeprom_ops eep_AR9287_ops;
+extern const struct eeprom_ops eep_ar9287_ops;
+extern const struct eeprom_ops eep_ar9287_ops;
+extern const struct eeprom_ops eep_ar9300_ops;
 
 #endif /* EEPROM_H */

@@ -17,20 +17,27 @@ static struct list_head adapter_list = LIST_HEAD_INIT(adapter_list);
 static u32 adapter_count;
 
 #define DRV_MODULE_NAME		"bnx2i"
-#define DRV_MODULE_VERSION	"2.0.1e"
-#define DRV_MODULE_RELDATE	"June 22, 2009"
+#define DRV_MODULE_VERSION	"2.1.3"
+#define DRV_MODULE_RELDATE	"Aug 10, 2010"
 
 static char version[] __devinitdata =
 		"Broadcom NetXtreme II iSCSI Driver " DRV_MODULE_NAME \
 		" v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
 
 
-MODULE_AUTHOR("Anil Veerabhadrappa <anilgv@broadcom.com>");
-MODULE_DESCRIPTION("Broadcom NetXtreme II BCM5706/5708/5709 iSCSI Driver");
+MODULE_AUTHOR("Anil Veerabhadrappa <anilgv@broadcom.com> and "
+	      "Eddie Wai <eddie.wai@broadcom.com>");
+
+MODULE_DESCRIPTION("Broadcom NetXtreme II BCM5706/5708/5709/57710/57711"
+		   " iSCSI Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_MODULE_VERSION);
 
 static DEFINE_MUTEX(bnx2i_dev_lock);
+
+unsigned int event_coal_min = 24;
+module_param(event_coal_min, int, 0664);
+MODULE_PARM_DESC(event_coal_min, "Event Coalescing Minimum Commands");
 
 unsigned int event_coal_div = 1;
 module_param(event_coal_div, int, 0664);
@@ -83,8 +90,12 @@ void bnx2i_identify_device(struct bnx2i_hba *hba)
 		set_bit(BNX2I_NX2_DEV_5709, &hba->cnic_dev_type);
 		hba->mail_queue_access = BNX2I_MQ_BIN_MODE;
 	} else if (hba->pci_did == PCI_DEVICE_ID_NX2_57710 ||
-		   hba->pci_did == PCI_DEVICE_ID_NX2_57711)
+		   hba->pci_did == PCI_DEVICE_ID_NX2_57711 ||
+		   hba->pci_did == PCI_DEVICE_ID_NX2_57711E)
 		set_bit(BNX2I_NX2_DEV_57710, &hba->cnic_dev_type);
+	else
+		printk(KERN_ALERT "bnx2i: unknown device, 0x%x\n",
+				  hba->pci_did);
 }
 
 
@@ -158,6 +169,38 @@ void bnx2i_start(void *handle)
 
 
 /**
+ * bnx2i_chip_cleanup - local routine to handle chip cleanup
+ * @hba:	Adapter instance to register
+ *
+ * Driver checks if adapter still has any active connections before
+ *	executing the cleanup process
+ */
+static void bnx2i_chip_cleanup(struct bnx2i_hba *hba)
+{
+	struct bnx2i_endpoint *bnx2i_ep;
+	struct list_head *pos, *tmp;
+
+	if (hba->ofld_conns_active) {
+		/* Stage to force the disconnection
+		 * This is the case where the daemon is either slow or
+		 * not present
+		 */
+		printk(KERN_ALERT "bnx2i: (%s) chip cleanup for %d active "
+			"connections\n", hba->netdev->name,
+			hba->ofld_conns_active);
+		mutex_lock(&hba->net_dev_lock);
+		list_for_each_safe(pos, tmp, &hba->ep_active_list) {
+			bnx2i_ep = list_entry(pos, struct bnx2i_endpoint, link);
+			/* Clean up the chip only */
+			bnx2i_hw_ep_disconnect(bnx2i_ep);
+			bnx2i_ep->cm_sk = NULL;
+		}
+		mutex_unlock(&hba->net_dev_lock);
+	}
+}
+
+
+/**
  * bnx2i_stop - cnic callback to shutdown adapter instance
  * @handle:	transparent handle pointing to adapter structure
  *
@@ -167,13 +210,32 @@ void bnx2i_start(void *handle)
 void bnx2i_stop(void *handle)
 {
 	struct bnx2i_hba *hba = handle;
+	int conns_active;
 
 	/* check if cleanup happened in GOING_DOWN context */
-	clear_bit(ADAPTER_STATE_UP, &hba->adapter_state);
 	if (!test_and_clear_bit(ADAPTER_STATE_GOING_DOWN,
 				&hba->adapter_state))
 		iscsi_host_for_each_session(hba->shost,
 					    bnx2i_drop_session);
+
+	/* Wait for all endpoints to be torn down, Chip will be reset once
+	 *  control returns to network driver. So it is required to cleanup and
+	 * release all connection resources before returning from this routine.
+	 */
+	while (hba->ofld_conns_active) {
+		conns_active = hba->ofld_conns_active;
+		wait_event_interruptible_timeout(hba->eh_wait,
+				(hba->ofld_conns_active != conns_active),
+				hba->hba_shutdown_tmo);
+		if (hba->ofld_conns_active == conns_active)
+			break;
+	}
+	bnx2i_chip_cleanup(hba);
+
+	/* This flag should be cleared last so that ep_disconnect() gracefully
+	 * cleans up connection context
+	 */
+	clear_bit(ADAPTER_STATE_UP, &hba->adapter_state);
 }
 
 /**
@@ -270,6 +332,7 @@ static int bnx2i_init_one(struct bnx2i_hba *hba, struct cnic_dev *cnic)
 	int rc;
 
 	mutex_lock(&bnx2i_dev_lock);
+	hba->cnic = cnic;
 	rc = cnic->register_device(cnic, CNIC_ULP_ISCSI, hba);
 	if (!rc) {
 		hba->age++;
@@ -316,8 +379,7 @@ void bnx2i_ulp_init(struct cnic_dev *dev)
 	if (bnx2i_init_one(hba, dev)) {
 		printk(KERN_ERR "bnx2i - hba %p init failed\n", hba);
 		bnx2i_free_hba(hba);
-	} else
-		hba->cnic = dev;
+	}
 }
 
 
@@ -363,7 +425,7 @@ static int __init bnx2i_mod_init(void)
 
 	printk(KERN_INFO "%s", version);
 
-	if (!is_power_of_2(sq_size))
+	if (sq_size && !is_power_of_2(sq_size))
 		sq_size = roundup_pow_of_two(sq_size);
 
 	mutex_init(&bnx2i_dev_lock);
@@ -410,6 +472,7 @@ static void __exit bnx2i_mod_exit(void)
 		adapter_count--;
 
 		if (test_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic)) {
+			bnx2i_chip_cleanup(hba);
 			hba->cnic->unregister_device(hba->cnic, CNIC_ULP_ISCSI);
 			clear_bit(BNX2I_CNIC_REGISTERED, &hba->reg_with_cnic);
 		}

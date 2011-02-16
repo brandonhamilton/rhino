@@ -147,8 +147,6 @@ struct hfs_sb_info {
 	u16 blockoffset;
 
 	int fs_div;
-
-	struct hlist_head rsrc_inodes;
 };
 
 #define HFS_FLG_BITMAP_DIRTY	0
@@ -188,12 +186,12 @@ extern const struct address_space_operations hfs_btree_aops;
 
 extern struct inode *hfs_new_inode(struct inode *, struct qstr *, int);
 extern void hfs_inode_write_fork(struct inode *, struct hfs_extent *, __be32 *, __be32 *);
-extern int hfs_write_inode(struct inode *, int);
+extern int hfs_write_inode(struct inode *, struct writeback_control *);
 extern int hfs_inode_setattr(struct dentry *, struct iattr *);
 extern void hfs_inode_read_fork(struct inode *inode, struct hfs_extent *ext,
 			__be32 log_size, __be32 phys_size, u32 clump_size);
 extern struct inode *hfs_iget(struct super_block *, struct hfs_cat_key *, hfs_cat_rec *);
-extern void hfs_clear_inode(struct inode *);
+extern void hfs_evict_inode(struct inode *);
 extern void hfs_delete_inode(struct inode *);
 
 /* attr.c */
@@ -252,17 +250,6 @@ static inline void hfs_bitmap_dirty(struct super_block *sb)
 {
 	set_bit(HFS_FLG_BITMAP_DIRTY, &HFS_SB(sb)->flags);
 	sb->s_dirt = 1;
-}
-
-static inline void hfs_buffer_sync(struct buffer_head *bh)
-{
-	while (buffer_locked(bh)) {
-		wait_on_buffer(bh);
-	}
-	if (buffer_dirty(bh)) {
-		ll_rw_block(WRITE, 1, &bh);
-		wait_on_buffer(bh);
-	}
 }
 
 #define sb_bread512(sb, sec, data) ({			\

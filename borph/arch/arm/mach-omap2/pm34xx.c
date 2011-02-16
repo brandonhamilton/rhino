@@ -27,22 +27,17 @@
 #include <linux/gpio.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
-#include <linux/usb/musb.h>
+#include <linux/slab.h>
+#include <linux/console.h>
 
-#include <plat/cpu.h>
 #include <plat/sram.h>
 #include <plat/clockdomain.h>
 #include <plat/powerdomain.h>
-#include <plat/control.h>
 #include <plat/serial.h>
 #include <plat/sdrc.h>
 #include <plat/prcm.h>
 #include <plat/gpmc.h>
 #include <plat/dma.h>
-#include <plat/dmtimer.h>
-#include <plat/usb.h>
-
-#include <plat/resource.h>
 
 #include <asm/tlbflush.h>
 
@@ -50,11 +45,10 @@
 #include "cm-regbits-34xx.h"
 #include "prm-regbits-34xx.h"
 
-#include "omap3-opp.h"
-#include "smartreflex.h"
 #include "prm.h"
 #include "pm.h"
 #include "sdrc.h"
+#include "control.h"
 
 #ifdef CONFIG_SUSPEND
 static suspend_state_t suspend_state = PM_SUSPEND_ON;
@@ -70,14 +64,9 @@ static inline bool is_suspending(void)
 #endif
 
 /* Scratchpad offsets */
-#define OMAP343X_TABLE_ADDRESS_OFFSET	   0x31
-#define OMAP343X_TABLE_VALUE_OFFSET	   0x30
-#define OMAP343X_CONTROL_REG_VALUE_OFFSET  0x32
-
-u32 enable_off_mode;
-u32 sleep_while_idle;
-u32 wakeup_timer_seconds;
-u32 voltage_off_while_idle;
+#define OMAP343X_TABLE_ADDRESS_OFFSET	   0xc4
+#define OMAP343X_TABLE_VALUE_OFFSET	   0xc0
+#define OMAP343X_CONTROL_REG_VALUE_OFFSET  0xc8
 
 struct power_state {
 	struct powerdomain *pwrdm;
@@ -98,102 +87,6 @@ static struct powerdomain *mpu_pwrdm, *neon_pwrdm;
 static struct powerdomain *core_pwrdm, *per_pwrdm;
 static struct powerdomain *cam_pwrdm;
 
-static struct prm_setup_vc prm_setup = {
-	.clksetup = 0xff,
-	.voltsetup_time1 = 0xfff,
-	.voltsetup_time2 = 0xfff,
-	.voltoffset = 0xff,
-	.voltsetup2 = 0xff,
-	.vdd0_on = 0x30,	/* 1.2v */
-	.vdd0_onlp = 0x20,	/* 1.0v */
-	.vdd0_ret = 0x1e,	/* 0.975v */
-	.vdd0_off = 0x00,	/* 0.6v */
-	.vdd1_on = 0x2c,	/* 1.15v */
-	.vdd1_onlp = 0x20,	/* 1.0v */
-	.vdd1_ret = 0x1e,	/* .975v */
-	.vdd1_off = 0x00,	/* 0.6v */
-};
-
-/*
- * OPP tables for OMAP35x
- */
-struct omap_opp omap35x_mpu_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1*/
-	{S125M, VDD1_OPP1, 0x1E},
-	/*OPP2*/
-	{S250M, VDD1_OPP2, 0x26},
-	/*OPP3*/
-	{S500M, VDD1_OPP3, 0x30},
-	/*OPP4*/
-	{S550M, VDD1_OPP4, 0x36},
-	/*OPP5*/
-	{S600M, VDD1_OPP5, 0x3C},
-	/*OPP6*/
-	{S720M, VDD1_OPP6, 0x3C},
-};
-
-struct omap_opp omap35x_dsp_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1*/
-	{S90M, VDD1_OPP1, 0x1E},
-	/*OPP2*/
-	{S180M, VDD1_OPP2, 0x26},
-	/*OPP3*/
-	{S360M, VDD1_OPP3, 0x30},
-	/*OPP4*/
-	{S400M, VDD1_OPP4, 0x36},
-	/*OPP5*/
-	{S430M, VDD1_OPP5, 0x3C},
-	/*OPP5*/
-	{S520M, VDD1_OPP6, 0x3C},
-};
-
-struct omap_opp omap35x_l3_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1*/
-	{0, VDD2_OPP1, 0x1E},
-	/*OPP2*/
-	{S83M, VDD2_OPP2, 0x24},
-	/*OPP3*/
-	{S166M, VDD2_OPP3, 0x2C},
-};
-
-/*
- * OPP tables for OMAP37x
- */
-struct omap_opp omap37x_mpu_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1 (OPP50)*/
-	{S300M, VDD1_OPP1, 0x1B},
-	/*OPP2 (OPP100)*/
-	{S600M, VDD1_OPP2, 0x28},
-	/*OPP3 (OPP120)*/
-	{S800M, VDD1_OPP3, 0x35},
-	/*OPP4 (OPPTM)*/
-	{S1000M, VDD1_OPP4, 0x3C},
-};
-
-struct omap_opp omap37x_dsp_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1 (OPP50) */
-	{S260M, VDD1_OPP1, 0x1B},
-	/*OPP2 (OPP100) */
-	{S520M, VDD1_OPP2, 0x28},
-	/*OPP3 (OPP120) */
-	{S660M, VDD1_OPP3, 0x35},
-	/*OPP4 (OPPTM) */
-	{S800M, VDD1_OPP4, 0x3C},
-};
-
-struct omap_opp omap37x_l3_rate_table[] = {
-	{0, 0, 0},
-	/*OPP1 (OPP50)  */
-	{S100M, VDD2_OPP1, 0x1B},
-	/*OPP2 (OPP100) */
-	{S200M, VDD2_OPP2, 0x2B},
-};
-
 static inline void omap3_per_save_context(void)
 {
 	omap_gpio_save_context();
@@ -208,33 +101,31 @@ static void omap3_enable_io_chain(void)
 {
 	int timeout = 0;
 
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_ge_3_1())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) {
-		prm_set_mod_reg_bits(OMAP3430_EN_IO_CHAIN, WKUP_MOD, PM_WKEN);
+	if (omap_rev() >= OMAP3430_REV_ES3_1) {
+		prm_set_mod_reg_bits(OMAP3430_EN_IO_CHAIN_MASK, WKUP_MOD,
+				     PM_WKEN);
 		/* Do a readback to assure write has been done */
 		prm_read_mod_reg(WKUP_MOD, PM_WKEN);
 
-		while (!(prm_read_mod_reg(WKUP_MOD, PM_WKST) &
-			 OMAP3430_ST_IO_CHAIN)) {
+		while (!(prm_read_mod_reg(WKUP_MOD, PM_WKEN) &
+			 OMAP3430_ST_IO_CHAIN_MASK)) {
 			timeout++;
 			if (timeout > 1000) {
 				printk(KERN_ERR "Wake up daisy chain "
 				       "activation failed.\n");
 				return;
 			}
-			prm_set_mod_reg_bits(OMAP3430_ST_IO_CHAIN,
-					     WKUP_MOD, PM_WKST);
+			prm_set_mod_reg_bits(OMAP3430_ST_IO_CHAIN_MASK,
+					     WKUP_MOD, PM_WKEN);
 		}
 	}
 }
 
 static void omap3_disable_io_chain(void)
 {
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_ge_3_1())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630())
-		prm_clear_mod_reg_bits(OMAP3430_EN_IO_CHAIN, WKUP_MOD, PM_WKEN);
+	if (omap_rev() >= OMAP3430_REV_ES3_1)
+		prm_clear_mod_reg_bits(OMAP3430_EN_IO_CHAIN_MASK, WKUP_MOD,
+				       PM_WKEN);
 }
 
 static void omap3_core_save_context(void)
@@ -264,10 +155,6 @@ static void omap3_core_save_context(void)
 	/* Save the system control module context, padconf already save above*/
 	omap3_control_save_context();
 	omap_dma_global_context_save();
-#ifndef CONFIG_USB_MUSB_HDRC_MODULE
-	/* Save the MUSB context */
-	musb_save_context();
-#endif
 }
 
 static void omap3_core_restore_context(void)
@@ -279,10 +166,6 @@ static void omap3_core_restore_context(void)
 	/* Restore the interrupt controller context */
 	omap_intc_restore_context();
 	omap_dma_global_context_restore();
-#ifndef CONFIG_USB_MUSB_HDRC_MODULE
-	/* Restore the MUSB context */
-	musb_restore_context();
-#endif
 }
 
 /*
@@ -368,10 +251,7 @@ static int _prcm_int_handle_wakeup(void)
 	c = prcm_clear_mod_irqs(WKUP_MOD, 1);
 	c += prcm_clear_mod_irqs(CORE_MOD, 1);
 	c += prcm_clear_mod_irqs(OMAP3430_PER_MOD, 1);
-
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_gt_1_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) {
+	if (omap_rev() > OMAP3430_REV_ES1_0) {
 		c += prcm_clear_mod_irqs(CORE_MOD, 3);
 		c += prcm_clear_mod_irqs(OMAP3430ES2_USBHOST_MOD, 1);
 	}
@@ -398,14 +278,18 @@ static int _prcm_int_handle_wakeup(void)
  */
 static irqreturn_t prcm_interrupt_handler (int irq, void *dev_id)
 {
-	u32 irqstatus_mpu;
+	u32 irqenable_mpu, irqstatus_mpu;
 	int c = 0;
 
-	do {
-		irqstatus_mpu = prm_read_mod_reg(OCP_MOD,
-					OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
+	irqenable_mpu = prm_read_mod_reg(OCP_MOD,
+					 OMAP3_PRM_IRQENABLE_MPU_OFFSET);
+	irqstatus_mpu = prm_read_mod_reg(OCP_MOD,
+					 OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
+	irqstatus_mpu &= irqenable_mpu;
 
-		if (irqstatus_mpu & (OMAP3430_WKUP_ST | OMAP3430_IO_ST)) {
+	do {
+		if (irqstatus_mpu & (OMAP3430_WKUP_ST_MASK |
+				     OMAP3430_IO_ST_MASK)) {
 			c = _prcm_int_handle_wakeup();
 
 			/*
@@ -423,7 +307,11 @@ static irqreturn_t prcm_interrupt_handler (int irq, void *dev_id)
 		prm_write_mod_reg(irqstatus_mpu, OCP_MOD,
 					OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
 
-	} while (prm_read_mod_reg(OCP_MOD, OMAP3_PRM_IRQSTATUS_MPU_OFFSET));
+		irqstatus_mpu = prm_read_mod_reg(OCP_MOD,
+					OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
+		irqstatus_mpu &= irqenable_mpu;
+
+	} while (irqstatus_mpu);
 
 	return IRQ_HANDLED;
 }
@@ -436,7 +324,7 @@ static void restore_control_register(u32 val)
 /* Function to restore the table entry that was modified for enabling MMU */
 static void restore_table_entry(void)
 {
-	u32 *scratchpad_address;
+	void __iomem *scratchpad_address;
 	u32 previous_value, control_reg_value;
 	u32 *address;
 
@@ -471,7 +359,6 @@ void omap_sram_idle(void)
 	int core_next_state = PWRDM_POWER_ON;
 	int core_prev_state, per_prev_state;
 	u32 sdrc_pwr = 0;
-	int per_state_modified = 0;
 
 	if (!_omap_sram_idle)
 		return;
@@ -496,64 +383,48 @@ void omap_sram_idle(void)
 		printk(KERN_ERR "Invalid mpu state in sram_idle\n");
 		return;
 	}
-
 	pwrdm_pre_transition();
 
 	/* NEON control */
 	if (pwrdm_read_pwrst(neon_pwrdm) == PWRDM_POWER_ON)
 		pwrdm_set_next_pwrst(neon_pwrdm, mpu_next_state);
 
-	/* PER */
+	/* Enable IO-PAD and IO-CHAIN wakeups */
 	per_next_state = pwrdm_read_next_pwrst(per_pwrdm);
 	core_next_state = pwrdm_read_next_pwrst(core_pwrdm);
-	if (per_next_state < PWRDM_POWER_ON) {
-		omap_uart_prepare_idle(2);
-		omap2_gpio_prepare_for_idle(per_next_state);
-		if (per_next_state == PWRDM_POWER_OFF) {
-			if (core_next_state == PWRDM_POWER_ON) {
-				per_next_state = PWRDM_POWER_RET;
-				pwrdm_set_next_pwrst(per_pwrdm, per_next_state);
-				per_state_modified = 1;
-			} else
-				omap3_per_save_context();
-		}
+	if (omap3_has_io_wakeup() &&
+	    (per_next_state < PWRDM_POWER_ON ||
+	     core_next_state < PWRDM_POWER_ON)) {
+		prm_set_mod_reg_bits(OMAP3430_EN_IO_MASK, WKUP_MOD, PM_WKEN);
+		omap3_enable_io_chain();
 	}
 
-	if (pwrdm_read_pwrst(cam_pwrdm) == PWRDM_POWER_ON)
-		omap2_clkdm_deny_idle(mpu_pwrdm->pwrdm_clkdms[0]);
+	/* Block console output in case it is on one of the OMAP UARTs */
+	if (!is_suspending())
+		if (per_next_state < PWRDM_POWER_ON ||
+		    core_next_state < PWRDM_POWER_ON)
+			if (try_acquire_console_sem())
+				goto console_still_active;
 
-	/*
-	 * Disable smartreflex before entering WFI.
-	 * Only needed if we are going to enter retention or off.
-	 */
-	if (mpu_next_state <= PWRDM_POWER_RET)
-		disable_smartreflex(SR1);
-	if (core_next_state <= PWRDM_POWER_RET)
-		disable_smartreflex(SR2);
+	/* PER */
+	if (per_next_state < PWRDM_POWER_ON) {
+		omap_uart_prepare_idle(2);
+		omap_uart_prepare_idle(3);
+		omap2_gpio_prepare_for_idle(per_next_state);
+		if (per_next_state == PWRDM_POWER_OFF)
+				omap3_per_save_context();
+	}
 
 	/* CORE */
 	if (core_next_state < PWRDM_POWER_ON) {
 		omap_uart_prepare_idle(0);
 		omap_uart_prepare_idle(1);
 		if (core_next_state == PWRDM_POWER_OFF) {
-			u32 voltctrl = OMAP3430_AUTO_OFF;
-
-			if (voltage_off_while_idle)
-				voltctrl |= OMAP3430_SEL_OFF;
-			prm_set_mod_reg_bits(voltctrl,
-					     OMAP3430_GR_MOD,
-					     OMAP3_PRM_VOLTCTRL_OFFSET);
 			omap3_core_save_context();
 			omap3_prcm_save_context();
-		} else if (core_next_state == PWRDM_POWER_RET) {
-			prm_set_mod_reg_bits(OMAP3430_AUTO_RET,
-						OMAP3430_GR_MOD,
-						OMAP3_PRM_VOLTCTRL_OFFSET);
 		}
-		/* Enable IO-PAD and IO-CHAIN wakeups */
-		prm_set_mod_reg_bits(OMAP3430_EN_IO, WKUP_MOD, PM_WKEN);
-		omap3_enable_io_chain();
 	}
+
 	omap3_intc_prepare_idle();
 
 	/*
@@ -562,15 +433,10 @@ void omap_sram_idle(void)
 	* of AUTO_CNT = 1 enabled. This takes care of errata 1.142.
 	* Hence store/restore the SDRC_POWER register here.
 	*/
-	if (((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_ge_3_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) &&
+	if (omap_rev() >= OMAP3430_REV_ES3_0 &&
 	    omap_type() != OMAP2_DEVICE_TYPE_GP &&
 	    core_next_state == PWRDM_POWER_OFF)
 		sdrc_pwr = sdrc_read_reg(SDRC_POWER);
-
-	if (is_suspending())
-		pm_dbg_regset_save(1);
 
 	/*
 	 * omap3_arm_context is the location where ARM registers
@@ -580,13 +446,8 @@ void omap_sram_idle(void)
 	_omap_sram_idle(omap3_arm_context, save_state);
 	cpu_init();
 
-	if (is_suspending())
-		pm_dbg_regset_save(2);
-
 	/* Restore normal SDRC POWER settings */
-	if (((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_ge_3_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) &&
+	if (omap_rev() >= OMAP3430_REV_ES3_0 &&
 	    omap_type() != OMAP2_DEVICE_TYPE_GP &&
 	    core_next_state == PWRDM_POWER_OFF)
 		sdrc_write_reg(sdrc_pwr, SDRC_POWER);
@@ -603,65 +464,37 @@ void omap_sram_idle(void)
 			omap3_prcm_restore_context();
 			omap3_sram_restore_context();
 			omap2_sms_restore_context();
-			/*
-			 * Errata 1.164 fix : OTG autoidle can prevent
-			 * sleep
-			 */
-			usb_musb_disable_autoidle();
 		}
 		omap_uart_resume_idle(0);
 		omap_uart_resume_idle(1);
-		if (core_next_state == PWRDM_POWER_OFF) {
-			u32 voltctrl = OMAP3430_AUTO_OFF;
-
-			if (voltage_off_while_idle)
-				voltctrl |= OMAP3430_SEL_OFF;
-			prm_clear_mod_reg_bits(voltctrl,
+		if (core_next_state == PWRDM_POWER_OFF)
+			prm_clear_mod_reg_bits(OMAP3430_AUTO_OFF_MASK,
 					       OMAP3430_GR_MOD,
 					       OMAP3_PRM_VOLTCTRL_OFFSET);
-		} else if (core_next_state == PWRDM_POWER_RET)
-			prm_clear_mod_reg_bits(OMAP3430_AUTO_RET,
-						OMAP3430_GR_MOD,
-						OMAP3_PRM_VOLTCTRL_OFFSET);
 	}
 	omap3_intc_resume_idle();
 
-	/*
-	 * Enable smartreflex after WFI. Only needed if we entered
-	 * retention or off
-	 */
-	if (mpu_next_state <= PWRDM_POWER_RET)
-		enable_smartreflex(SR1);
-	if (core_next_state <= PWRDM_POWER_RET)
-		enable_smartreflex(SR2);
-
 	/* PER */
 	if (per_next_state < PWRDM_POWER_ON) {
-		if (per_next_state == PWRDM_POWER_OFF) {
-			/*
-			 * Reading the prev-state takes long time (11us@OPP2),
-			 * only do it, if we really tried to put PER in OFF
-			 */
-			per_prev_state = pwrdm_read_prev_pwrst(per_pwrdm);
-			if (per_prev_state == PWRDM_POWER_OFF) {
-				omap3_per_restore_context();
-				omap3_gpio_restore_pad_context(0);
-			} else if (per_next_state == PWRDM_POWER_OFF) {
-				omap3_gpio_restore_pad_context(1);
-			}
-		}
+		per_prev_state = pwrdm_read_prev_pwrst(per_pwrdm);
 		omap2_gpio_resume_after_idle();
+		if (per_prev_state == PWRDM_POWER_OFF)
+			omap3_per_restore_context();
 		omap_uart_resume_idle(2);
-		if (per_state_modified)
-			pwrdm_set_next_pwrst(per_pwrdm, PWRDM_POWER_OFF);
+		omap_uart_resume_idle(3);
 	}
 
+	if (!is_suspending())
+		release_console_sem();
+
+console_still_active:
 	/* Disable IO-PAD and IO-CHAIN wakeup */
-	if (core_next_state < PWRDM_POWER_ON) {
-		prm_clear_mod_reg_bits(OMAP3430_EN_IO, WKUP_MOD, PM_WKEN);
+	if (omap3_has_io_wakeup() &&
+	    (per_next_state < PWRDM_POWER_ON ||
+	     core_next_state < PWRDM_POWER_ON)) {
+		prm_clear_mod_reg_bits(OMAP3430_EN_IO_MASK, WKUP_MOD, PM_WKEN);
 		omap3_disable_io_chain();
 	}
-
 
 	pwrdm_post_transition();
 
@@ -670,58 +503,11 @@ void omap_sram_idle(void)
 
 int omap3_can_sleep(void)
 {
-	if (cpu_is_omap3505() || cpu_is_omap3517())
-		return 0;
 	if (!sleep_while_idle)
 		return 0;
 	if (!omap_uart_can_sleep())
 		return 0;
 	return 1;
-}
-
-/* This sets pwrdm state (other than mpu & core. Currently only ON &
- * RET are supported. Function is assuming that clkdm doesn't have
- * hw_sup mode enabled. */
-int set_pwrdm_state(struct powerdomain *pwrdm, u32 state)
-{
-	u32 cur_state;
-	int sleep_switch = 0;
-	int ret = 0;
-
-	if (pwrdm == NULL || IS_ERR(pwrdm))
-		return -EINVAL;
-
-	while (!(pwrdm->pwrsts & (1 << state))) {
-		if (state == PWRDM_POWER_OFF)
-			return ret;
-		state--;
-	}
-
-	cur_state = pwrdm_read_next_pwrst(pwrdm);
-	if (cur_state == state)
-		return ret;
-
-	if (pwrdm_read_pwrst(pwrdm) < PWRDM_POWER_ON) {
-		omap2_clkdm_wakeup(pwrdm->pwrdm_clkdms[0]);
-		sleep_switch = 1;
-		pwrdm_wait_transition(pwrdm);
-	}
-
-	ret = pwrdm_set_next_pwrst(pwrdm, state);
-	if (ret) {
-		printk(KERN_ERR "Unable to set state of powerdomain: %s\n",
-		       pwrdm->name);
-		goto err;
-	}
-
-	if (sleep_switch) {
-		omap2_clkdm_allow_idle(pwrdm->pwrdm_clkdms[0]);
-		pwrdm_wait_transition(pwrdm);
-		pwrdm_state_switch(pwrdm);
-	}
-
-err:
-	return ret;
 }
 
 static void omap3_pm_idle(void)
@@ -743,22 +529,6 @@ out:
 }
 
 #ifdef CONFIG_SUSPEND
-static void omap2_pm_wakeup_on_timer(u32 seconds)
-{
-	u32 tick_rate, cycles;
-
-	if (!seconds)
-		return;
-
-	tick_rate = clk_get_rate(omap_dm_timer_get_fclk(gptimer_wakeup));
-	cycles = tick_rate * seconds;
-	omap_dm_timer_stop(gptimer_wakeup);
-	omap_dm_timer_set_load_start(gptimer_wakeup, 0, 0xffffffff - cycles);
-
-	pr_info("PM: Resume timer in %d secs (%d ticks at %d ticks/sec.)\n",
-		seconds, cycles, tick_rate);
-}
-
 static int omap3_pm_prepare(void)
 {
 	disable_hlt();
@@ -770,15 +540,16 @@ static int omap3_pm_suspend(void)
 	struct power_state *pwrst;
 	int state, ret = 0;
 
-	if (wakeup_timer_seconds)
-		omap2_pm_wakeup_on_timer(wakeup_timer_seconds);
+	if (wakeup_timer_seconds || wakeup_timer_milliseconds)
+		omap2_pm_wakeup_on_timer(wakeup_timer_seconds,
+					 wakeup_timer_milliseconds);
 
 	/* Read current next_pwrsts */
 	list_for_each_entry(pwrst, &pwrst_list, node)
 		pwrst->saved_state = pwrdm_read_next_pwrst(pwrst->pwrdm);
 	/* Set ones wanted by suspend */
 	list_for_each_entry(pwrst, &pwrst_list, node) {
-		if (set_pwrdm_state(pwrst->pwrdm, pwrst->next_state))
+		if (omap_set_pwrdm_state(pwrst->pwrdm, pwrst->next_state))
 			goto restore;
 		if (pwrdm_clear_all_prev_pwrst(pwrst->pwrdm))
 			goto restore;
@@ -799,7 +570,7 @@ restore:
 			       pwrst->pwrdm->name, pwrst->next_state);
 			ret = -1;
 		}
-		set_pwrdm_state(pwrst->pwrdm, pwrst->saved_state);
+		omap_set_pwrdm_state(pwrst->pwrdm, pwrst->saved_state);
 	}
 	if (ret)
 		printk(KERN_ERR "Could not enter target state in pm_suspend\n");
@@ -867,7 +638,7 @@ static struct platform_suspend_ops omap_pm_ops = {
  * into retention/off and thus allow full-chip retention/off.
  *
  **/
-void __init omap3_iva_idle(void)
+static void __init omap3_iva_idle(void)
 {
 	/* ensure IVA2 clock is disabled */
 	cm_write_mod_reg(0, OMAP3430_IVA2_MOD, CM_FCLKEN);
@@ -878,13 +649,13 @@ void __init omap3_iva_idle(void)
 		return;
 
 	/* Reset IVA2 */
-	prm_write_mod_reg(OMAP3430_RST1_IVA2 |
-			  OMAP3430_RST2_IVA2 |
-			  OMAP3430_RST3_IVA2,
-			  OMAP3430_IVA2_MOD, RM_RSTCTRL);
+	prm_write_mod_reg(OMAP3430_RST1_IVA2_MASK |
+			  OMAP3430_RST2_IVA2_MASK |
+			  OMAP3430_RST3_IVA2_MASK,
+			  OMAP3430_IVA2_MOD, OMAP2_RM_RSTCTRL);
 
 	/* Enable IVA2 clock */
-	cm_write_mod_reg(OMAP3430_CM_FCLKEN_IVA2_EN_IVA2,
+	cm_write_mod_reg(OMAP3430_CM_FCLKEN_IVA2_EN_IVA2_MASK,
 			 OMAP3430_IVA2_MOD, CM_FCLKEN);
 
 	/* Set IVA2 boot mode to 'idle' */
@@ -892,16 +663,16 @@ void __init omap3_iva_idle(void)
 			 OMAP343X_CONTROL_IVA2_BOOTMOD);
 
 	/* Un-reset IVA2 */
-	prm_write_mod_reg(0, OMAP3430_IVA2_MOD, RM_RSTCTRL);
+	prm_write_mod_reg(0, OMAP3430_IVA2_MOD, OMAP2_RM_RSTCTRL);
 
 	/* Disable IVA2 clock */
 	cm_write_mod_reg(0, OMAP3430_IVA2_MOD, CM_FCLKEN);
 
 	/* Reset IVA2 */
-	prm_write_mod_reg(OMAP3430_RST1_IVA2 |
-			  OMAP3430_RST2_IVA2 |
-			  OMAP3430_RST3_IVA2,
-			  OMAP3430_IVA2_MOD, RM_RSTCTRL);
+	prm_write_mod_reg(OMAP3430_RST1_IVA2_MASK |
+			  OMAP3430_RST2_IVA2_MASK |
+			  OMAP3430_RST3_IVA2_MASK,
+			  OMAP3430_IVA2_MOD, OMAP2_RM_RSTCTRL);
 }
 
 static void __init omap3_d2d_idle(void)
@@ -922,14 +693,22 @@ static void __init omap3_d2d_idle(void)
 	omap_ctrl_writew(padconf, OMAP3_PADCONF_SAD2D_IDLEACK);
 
 	/* reset modem */
-	prm_write_mod_reg(OMAP3430_RM_RSTCTRL_CORE_MODEM_SW_RSTPWRON |
-			  OMAP3430_RM_RSTCTRL_CORE_MODEM_SW_RST,
-			  CORE_MOD, RM_RSTCTRL);
-	prm_write_mod_reg(0, CORE_MOD, RM_RSTCTRL);
+	prm_write_mod_reg(OMAP3430_RM_RSTCTRL_CORE_MODEM_SW_RSTPWRON_MASK |
+			  OMAP3430_RM_RSTCTRL_CORE_MODEM_SW_RST_MASK,
+			  CORE_MOD, OMAP2_RM_RSTCTRL);
+	prm_write_mod_reg(0, CORE_MOD, OMAP2_RM_RSTCTRL);
 }
 
 static void __init prcm_setup_regs(void)
 {
+	u32 omap3630_auto_uart4_mask = cpu_is_omap3630() ?
+					OMAP3630_AUTO_UART4_MASK : 0;
+	u32 omap3630_en_uart4_mask = cpu_is_omap3630() ?
+					OMAP3630_EN_UART4_MASK : 0;
+	u32 omap3630_grpsel_uart4_mask = cpu_is_omap3630() ?
+					OMAP3630_GRPSEL_UART4_MASK : 0;
+
+
 	/* XXX Reset all wkdeps. This should be done when initializing
 	 * powerdomains */
 	prm_write_mod_reg(0, OMAP3430_IVA2_MOD, PM_WKDEP);
@@ -938,10 +717,7 @@ static void __init prcm_setup_regs(void)
 	prm_write_mod_reg(0, OMAP3430_NEON_MOD, PM_WKDEP);
 	prm_write_mod_reg(0, OMAP3430_CAM_MOD, PM_WKDEP);
 	prm_write_mod_reg(0, OMAP3430_PER_MOD, PM_WKDEP);
-
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_gt_1_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) {
+	if (omap_rev() > OMAP3430_REV_ES1_0) {
 		prm_write_mod_reg(0, OMAP3430ES2_SGX_MOD, PM_WKDEP);
 		prm_write_mod_reg(0, OMAP3430ES2_USBHOST_MOD, PM_WKDEP);
 	} else
@@ -952,110 +728,103 @@ static void __init prcm_setup_regs(void)
 	 * Note that in the long run this should be done by clockfw
 	 */
 	cm_write_mod_reg(
-		OMAP3430_AUTO_MODEM |
-		OMAP3430ES2_AUTO_MMC3 |
-		OMAP3430ES2_AUTO_ICR |
-		OMAP3430_AUTO_AES2 |
-		OMAP3430_AUTO_SHA12 |
-		OMAP3430_AUTO_DES2 |
-		OMAP3430_AUTO_MMC2 |
-		OMAP3430_AUTO_MMC1 |
-		OMAP3430_AUTO_MSPRO |
-		OMAP3430_AUTO_HDQ |
-		OMAP3430_AUTO_MCSPI4 |
-		OMAP3430_AUTO_MCSPI3 |
-		OMAP3430_AUTO_MCSPI2 |
-		OMAP3430_AUTO_MCSPI1 |
-		OMAP3430_AUTO_I2C3 |
-		OMAP3430_AUTO_I2C2 |
-		OMAP3430_AUTO_I2C1 |
-		OMAP3430_AUTO_UART2 |
-		OMAP3430_AUTO_UART1 |
-		OMAP3430_AUTO_GPT11 |
-		OMAP3430_AUTO_GPT10 |
-		OMAP3430_AUTO_MCBSP5 |
-		OMAP3430_AUTO_MCBSP1 |
-		OMAP3430ES1_AUTO_FAC | /* This is es1 only */
-		OMAP3430_AUTO_MAILBOXES |
-		OMAP3430_AUTO_OMAPCTRL |
-		OMAP3430ES1_AUTO_FSHOSTUSB |
-		OMAP3430_AUTO_HSOTGUSB |
-		OMAP3430_AUTO_SAD2D |
-		OMAP3430_AUTO_SSI,
+		OMAP3430_AUTO_MODEM_MASK |
+		OMAP3430ES2_AUTO_MMC3_MASK |
+		OMAP3430ES2_AUTO_ICR_MASK |
+		OMAP3430_AUTO_AES2_MASK |
+		OMAP3430_AUTO_SHA12_MASK |
+		OMAP3430_AUTO_DES2_MASK |
+		OMAP3430_AUTO_MMC2_MASK |
+		OMAP3430_AUTO_MMC1_MASK |
+		OMAP3430_AUTO_MSPRO_MASK |
+		OMAP3430_AUTO_HDQ_MASK |
+		OMAP3430_AUTO_MCSPI4_MASK |
+		OMAP3430_AUTO_MCSPI3_MASK |
+		OMAP3430_AUTO_MCSPI2_MASK |
+		OMAP3430_AUTO_MCSPI1_MASK |
+		OMAP3430_AUTO_I2C3_MASK |
+		OMAP3430_AUTO_I2C2_MASK |
+		OMAP3430_AUTO_I2C1_MASK |
+		OMAP3430_AUTO_UART2_MASK |
+		OMAP3430_AUTO_UART1_MASK |
+		OMAP3430_AUTO_GPT11_MASK |
+		OMAP3430_AUTO_GPT10_MASK |
+		OMAP3430_AUTO_MCBSP5_MASK |
+		OMAP3430_AUTO_MCBSP1_MASK |
+		OMAP3430ES1_AUTO_FAC_MASK | /* This is es1 only */
+		OMAP3430_AUTO_MAILBOXES_MASK |
+		OMAP3430_AUTO_OMAPCTRL_MASK |
+		OMAP3430ES1_AUTO_FSHOSTUSB_MASK |
+		OMAP3430_AUTO_HSOTGUSB_MASK |
+		OMAP3430_AUTO_SAD2D_MASK |
+		OMAP3430_AUTO_SSI_MASK,
 		CORE_MOD, CM_AUTOIDLE1);
 
 	cm_write_mod_reg(
-		OMAP3430_AUTO_PKA |
-		OMAP3430_AUTO_AES1 |
-		OMAP3430_AUTO_RNG |
-		OMAP3430_AUTO_SHA11 |
-		OMAP3430_AUTO_DES1,
+		OMAP3430_AUTO_PKA_MASK |
+		OMAP3430_AUTO_AES1_MASK |
+		OMAP3430_AUTO_RNG_MASK |
+		OMAP3430_AUTO_SHA11_MASK |
+		OMAP3430_AUTO_DES1_MASK,
 		CORE_MOD, CM_AUTOIDLE2);
 
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_gt_1_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) {
+	if (omap_rev() > OMAP3430_REV_ES1_0) {
 		cm_write_mod_reg(
-			OMAP3430_AUTO_MAD2D |
-			OMAP3430ES2_AUTO_USBTLL,
+			OMAP3430_AUTO_MAD2D_MASK |
+			OMAP3430ES2_AUTO_USBTLL_MASK,
 			CORE_MOD, CM_AUTOIDLE3);
 	}
 
 	cm_write_mod_reg(
-		OMAP3430_AUTO_WDT2 |
-		OMAP3430_AUTO_WDT1 |
-		OMAP3430_AUTO_GPIO1 |
-		OMAP3430_AUTO_32KSYNC |
-		OMAP3430_AUTO_GPT12 |
-		OMAP3430_AUTO_GPT1 ,
+		OMAP3430_AUTO_WDT2_MASK |
+		OMAP3430_AUTO_WDT1_MASK |
+		OMAP3430_AUTO_GPIO1_MASK |
+		OMAP3430_AUTO_32KSYNC_MASK |
+		OMAP3430_AUTO_GPT12_MASK |
+		OMAP3430_AUTO_GPT1_MASK,
 		WKUP_MOD, CM_AUTOIDLE);
 
 	cm_write_mod_reg(
-		OMAP3430_AUTO_DSS,
+		OMAP3430_AUTO_DSS_MASK,
 		OMAP3430_DSS_MOD,
 		CM_AUTOIDLE);
 
 	cm_write_mod_reg(
-		OMAP3430_AUTO_CAM,
+		OMAP3430_AUTO_CAM_MASK,
 		OMAP3430_CAM_MOD,
 		CM_AUTOIDLE);
 
 	cm_write_mod_reg(
-		OMAP3430_AUTO_GPIO6 |
-		OMAP3430_AUTO_GPIO5 |
-		OMAP3430_AUTO_GPIO4 |
-		OMAP3430_AUTO_GPIO3 |
-		OMAP3430_AUTO_GPIO2 |
-		OMAP3430_AUTO_WDT3 |
-		OMAP3430_AUTO_UART3 |
-		OMAP3430_AUTO_GPT9 |
-		OMAP3430_AUTO_GPT8 |
-		OMAP3430_AUTO_GPT7 |
-		OMAP3430_AUTO_GPT6 |
-		OMAP3430_AUTO_GPT5 |
-		OMAP3430_AUTO_GPT4 |
-		OMAP3430_AUTO_GPT3 |
-		OMAP3430_AUTO_GPT2 |
-		OMAP3430_AUTO_MCBSP4 |
-		OMAP3430_AUTO_MCBSP3 |
-		OMAP3430_AUTO_MCBSP2,
+		omap3630_auto_uart4_mask |
+		OMAP3430_AUTO_GPIO6_MASK |
+		OMAP3430_AUTO_GPIO5_MASK |
+		OMAP3430_AUTO_GPIO4_MASK |
+		OMAP3430_AUTO_GPIO3_MASK |
+		OMAP3430_AUTO_GPIO2_MASK |
+		OMAP3430_AUTO_WDT3_MASK |
+		OMAP3430_AUTO_UART3_MASK |
+		OMAP3430_AUTO_GPT9_MASK |
+		OMAP3430_AUTO_GPT8_MASK |
+		OMAP3430_AUTO_GPT7_MASK |
+		OMAP3430_AUTO_GPT6_MASK |
+		OMAP3430_AUTO_GPT5_MASK |
+		OMAP3430_AUTO_GPT4_MASK |
+		OMAP3430_AUTO_GPT3_MASK |
+		OMAP3430_AUTO_GPT2_MASK |
+		OMAP3430_AUTO_MCBSP4_MASK |
+		OMAP3430_AUTO_MCBSP3_MASK |
+		OMAP3430_AUTO_MCBSP2_MASK,
 		OMAP3430_PER_MOD,
 		CM_AUTOIDLE);
 
-	if ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_gt_1_0())
-		|| cpu_is_omap3505() || cpu_is_omap3517()
-		|| cpu_is_omap3630()) {
+	if (omap_rev() > OMAP3430_REV_ES1_0) {
 		cm_write_mod_reg(
-			OMAP3430ES2_AUTO_USBHOST,
+			OMAP3430ES2_AUTO_USBHOST_MASK,
 			OMAP3430ES2_USBHOST_MOD,
 			CM_AUTOIDLE);
 	}
 
-	/*
-	 * This causes MUSB failure on AM3517 so disable it.
-	 */
-	if (!cpu_is_omap3517() && !cpu_is_omap3505())
-		omap_ctrl_writel(OMAP3430_AUTOIDLE, OMAP2_CONTROL_SYSCONFIG);
+	omap_ctrl_writel(OMAP3430_AUTOIDLE_MASK, OMAP2_CONTROL_SYSCONFIG);
 
 	/*
 	 * Set all plls to autoidle. This is needed until autoidle is
@@ -1085,31 +854,42 @@ static void __init prcm_setup_regs(void)
 			     OMAP3_PRM_CLKSRC_CTRL_OFFSET);
 
 	/* setup wakup source */
-	prm_write_mod_reg(OMAP3430_EN_IO | OMAP3430_EN_GPIO1 |
-			  OMAP3430_EN_GPT1 | OMAP3430_EN_GPT12,
+	prm_write_mod_reg(OMAP3430_EN_IO_MASK | OMAP3430_EN_GPIO1_MASK |
+			  OMAP3430_EN_GPT1_MASK | OMAP3430_EN_GPT12_MASK,
 			  WKUP_MOD, PM_WKEN);
 	/* No need to write EN_IO, that is always enabled */
-	prm_write_mod_reg(OMAP3430_EN_GPIO1 | OMAP3430_EN_GPT1 |
-			  OMAP3430_EN_GPT12,
+	prm_write_mod_reg(OMAP3430_GRPSEL_GPIO1_MASK |
+			  OMAP3430_GRPSEL_GPT1_MASK |
+			  OMAP3430_GRPSEL_GPT12_MASK,
 			  WKUP_MOD, OMAP3430_PM_MPUGRPSEL);
 	/* For some reason IO doesn't generate wakeup event even if
 	 * it is selected to mpu wakeup goup */
-	prm_write_mod_reg(OMAP3430_IO_EN | OMAP3430_WKUP_EN,
+	prm_write_mod_reg(OMAP3430_IO_EN_MASK | OMAP3430_WKUP_EN_MASK,
 			  OCP_MOD, OMAP3_PRM_IRQENABLE_MPU_OFFSET);
 
+	/* Enable PM_WKEN to support DSS LPR */
+	prm_write_mod_reg(OMAP3430_PM_WKEN_DSS_EN_DSS_MASK,
+				OMAP3430_DSS_MOD, PM_WKEN);
+
 	/* Enable wakeups in PER */
-	prm_write_mod_reg(OMAP3430_EN_GPIO2 | OMAP3430_EN_GPIO3 |
-			  OMAP3430_EN_GPIO4 | OMAP3430_EN_GPIO5 |
-			  OMAP3430_EN_GPIO6 | OMAP3430_EN_UART3 |
-			  OMAP3430_EN_MCBSP2 | OMAP3430_EN_MCBSP3 |
-			  OMAP3430_EN_MCBSP4,
+	prm_write_mod_reg(omap3630_en_uart4_mask |
+			  OMAP3430_EN_GPIO2_MASK | OMAP3430_EN_GPIO3_MASK |
+			  OMAP3430_EN_GPIO4_MASK | OMAP3430_EN_GPIO5_MASK |
+			  OMAP3430_EN_GPIO6_MASK | OMAP3430_EN_UART3_MASK |
+			  OMAP3430_EN_MCBSP2_MASK | OMAP3430_EN_MCBSP3_MASK |
+			  OMAP3430_EN_MCBSP4_MASK,
 			  OMAP3430_PER_MOD, PM_WKEN);
 	/* and allow them to wake up MPU */
-	prm_write_mod_reg(OMAP3430_GRPSEL_GPIO2 | OMAP3430_EN_GPIO3 |
-			  OMAP3430_GRPSEL_GPIO4 | OMAP3430_EN_GPIO5 |
-			  OMAP3430_GRPSEL_GPIO6 | OMAP3430_EN_UART3 |
-			  OMAP3430_EN_MCBSP2 | OMAP3430_EN_MCBSP3 |
-			  OMAP3430_EN_MCBSP4,
+	prm_write_mod_reg(omap3630_grpsel_uart4_mask |
+			  OMAP3430_GRPSEL_GPIO2_MASK |
+			  OMAP3430_GRPSEL_GPIO3_MASK |
+			  OMAP3430_GRPSEL_GPIO4_MASK |
+			  OMAP3430_GRPSEL_GPIO5_MASK |
+			  OMAP3430_GRPSEL_GPIO6_MASK |
+			  OMAP3430_GRPSEL_UART3_MASK |
+			  OMAP3430_GRPSEL_MCBSP2_MASK |
+			  OMAP3430_GRPSEL_MCBSP3_MASK |
+			  OMAP3430_GRPSEL_MCBSP4_MASK,
 			  OMAP3430_PER_MOD, OMAP3430_PM_MPUGRPSEL);
 
 	/* Don't attach IVA interrupts */
@@ -1119,13 +899,13 @@ static void __init prcm_setup_regs(void)
 	prm_write_mod_reg(0, OMAP3430_PER_MOD, OMAP3430_PM_IVAGRPSEL);
 
 	/* Clear any pending 'reset' flags */
-	prm_write_mod_reg(0xffffffff, MPU_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, CORE_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, OMAP3430_PER_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, OMAP3430_EMU_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, OMAP3430_NEON_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, OMAP3430_DSS_MOD, RM_RSTST);
-	prm_write_mod_reg(0xffffffff, OMAP3430ES2_USBHOST_MOD, RM_RSTST);
+	prm_write_mod_reg(0xffffffff, MPU_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, OMAP3430_PER_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, OMAP3430_EMU_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, OMAP3430_NEON_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, OMAP3430_DSS_MOD, OMAP2_RM_RSTST);
+	prm_write_mod_reg(0xffffffff, OMAP3430ES2_USBHOST_MOD, OMAP2_RM_RSTST);
 
 	/* Clear any pending PRCM interrupts */
 	prm_write_mod_reg(0, OCP_MOD, OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
@@ -1148,17 +928,9 @@ void omap3_pm_off_mode_enable(int enable)
 	omap3_cpuidle_update_states();
 #endif
 
-#ifdef CONFIG_OMAP_PM_SRF
-	resource_lock_opp(VDD1_OPP);
-	resource_lock_opp(VDD2_OPP);
-	if (resource_refresh())
-		printk(KERN_ERR "Error: could not refresh resources\n");
-	resource_unlock_opp(VDD1_OPP);
-	resource_unlock_opp(VDD2_OPP);
-#endif
 	list_for_each_entry(pwrst, &pwrst_list, node) {
 		pwrst->next_state = state;
-		set_pwrdm_state(pwrst->pwrdm, state);
+		omap_set_pwrdm_state(pwrst->pwrdm, state);
 	}
 }
 
@@ -1186,26 +958,6 @@ int omap3_pm_set_suspend_state(struct powerdomain *pwrdm, int state)
 	return -EINVAL;
 }
 
-void omap3_pm_init_vc(struct prm_setup_vc *setup_vc)
-{
-	if (!setup_vc)
-		return;
-
-	prm_setup.clksetup = setup_vc->clksetup;
-	prm_setup.voltsetup_time1 = setup_vc->voltsetup_time1;
-	prm_setup.voltsetup_time2 = setup_vc->voltsetup_time2;
-	prm_setup.voltoffset = setup_vc->voltoffset;
-	prm_setup.voltsetup2 = setup_vc->voltsetup2;
-	prm_setup.vdd0_on = setup_vc->vdd0_on;
-	prm_setup.vdd0_onlp = setup_vc->vdd0_onlp;
-	prm_setup.vdd0_ret = setup_vc->vdd0_ret;
-	prm_setup.vdd0_off = setup_vc->vdd0_off;
-	prm_setup.vdd1_on = setup_vc->vdd1_on;
-	prm_setup.vdd1_onlp = setup_vc->vdd1_onlp;
-	prm_setup.vdd1_ret = setup_vc->vdd1_ret;
-	prm_setup.vdd1_off = setup_vc->vdd1_off;
-}
-
 static int __init pwrdms_setup(struct powerdomain *pwrdm, void *unused)
 {
 	struct power_state *pwrst;
@@ -1223,7 +975,7 @@ static int __init pwrdms_setup(struct powerdomain *pwrdm, void *unused)
 	if (pwrdm_has_hdwr_sar(pwrdm))
 		pwrdm_enable_hdwr_sar(pwrdm);
 
-	return set_pwrdm_state(pwrst->pwrdm, pwrst->next_state);
+	return omap_set_pwrdm_state(pwrst->pwrdm, pwrst->next_state);
 }
 
 /*
@@ -1253,6 +1005,7 @@ void omap_push_sram_idle(void)
 static int __init omap3_pm_init(void)
 {
 	struct power_state *pwrst, *tmp;
+	struct clockdomain *neon_clkdm, *per_clkdm, *mpu_clkdm, *core_clkdm;
 	int ret;
 
 	if (!cpu_is_omap34xx())
@@ -1292,6 +1045,11 @@ static int __init omap3_pm_init(void)
 	core_pwrdm = pwrdm_lookup("core_pwrdm");
 	cam_pwrdm = pwrdm_lookup("cam_pwrdm");
 
+	neon_clkdm = clkdm_lookup("neon_clkdm");
+	mpu_clkdm = clkdm_lookup("mpu_clkdm");
+	per_clkdm = clkdm_lookup("per_clkdm");
+	core_clkdm = clkdm_lookup("core_clkdm");
+
 	omap_push_sram_idle();
 #ifdef CONFIG_SUSPEND
 	suspend_set_ops(&omap_pm_ops);
@@ -1300,15 +1058,7 @@ static int __init omap3_pm_init(void)
 	pm_idle = omap3_pm_idle;
 	omap3_idle_init();
 
-	pwrdm_add_wkdep(neon_pwrdm, mpu_pwrdm);
-	/*
-	 * REVISIT: This wkdep is only necessary when GPIO2-6 are enabled for
-	 * IO-pad wakeup.  Otherwise it will unnecessarily waste power
-	 * waking up PER with every CORE wakeup - see
-	 * http://marc.info/?l=linux-omap&m=121852150710062&w=2
-	*/
-	pwrdm_add_wkdep(per_pwrdm, core_pwrdm);
-
+	clkdm_add_wkdep(neon_clkdm, mpu_clkdm);
 	if (omap_type() != OMAP2_DEVICE_TYPE_GP) {
 		omap3_secure_ram_storage =
 			kmalloc(0x803F, GFP_KERNEL);
@@ -1327,9 +1077,6 @@ static int __init omap3_pm_init(void)
 		local_fiq_enable();
 	}
 
-	pm_dbg_regset_init(1);
-	pm_dbg_regset_init(2);
-
 	omap3_save_scratchpad_contents();
 err1:
 	return ret;
@@ -1342,60 +1089,4 @@ err2:
 	return ret;
 }
 
-static void __init configure_vc(void)
-{
-
-	prm_write_mod_reg((R_SRI2C_SLAVE_ADDR << OMAP3430_SMPS_SA1_SHIFT) |
-			  (R_SRI2C_SLAVE_ADDR << OMAP3430_SMPS_SA0_SHIFT),
-			  OMAP3430_GR_MOD, OMAP3_PRM_VC_SMPS_SA_OFFSET);
-	prm_write_mod_reg((R_VDD2_SR_CONTROL << OMAP3430_VOLRA1_SHIFT) |
-			  (R_VDD1_SR_CONTROL << OMAP3430_VOLRA0_SHIFT),
-			  OMAP3430_GR_MOD, OMAP3_PRM_VC_SMPS_VOL_RA_OFFSET);
-
-	prm_write_mod_reg((prm_setup.vdd0_on << OMAP3430_VC_CMD_ON_SHIFT) |
-		(prm_setup.vdd0_onlp << OMAP3430_VC_CMD_ONLP_SHIFT) |
-		(prm_setup.vdd0_ret << OMAP3430_VC_CMD_RET_SHIFT) |
-		(prm_setup.vdd0_off << OMAP3430_VC_CMD_OFF_SHIFT),
-		OMAP3430_GR_MOD, OMAP3_PRM_VC_CMD_VAL_0_OFFSET);
-
-	prm_write_mod_reg((prm_setup.vdd1_on << OMAP3430_VC_CMD_ON_SHIFT) |
-		(prm_setup.vdd1_onlp << OMAP3430_VC_CMD_ONLP_SHIFT) |
-		(prm_setup.vdd1_ret << OMAP3430_VC_CMD_RET_SHIFT) |
-		(prm_setup.vdd1_off << OMAP3430_VC_CMD_OFF_SHIFT),
-		OMAP3430_GR_MOD, OMAP3_PRM_VC_CMD_VAL_1_OFFSET);
-
-	prm_write_mod_reg(OMAP3430_CMD1 | OMAP3430_RAV1, OMAP3430_GR_MOD,
-			  OMAP3_PRM_VC_CH_CONF_OFFSET);
-
-	prm_write_mod_reg(OMAP3430_MCODE_SHIFT | OMAP3430_HSEN,
-			  OMAP3430_GR_MOD,
-			  OMAP3_PRM_VC_I2C_CFG_OFFSET);
-
-	/* Write setup times */
-	prm_write_mod_reg(prm_setup.clksetup, OMAP3430_GR_MOD,
-			OMAP3_PRM_CLKSETUP_OFFSET);
-	prm_write_mod_reg((prm_setup.voltsetup_time2 <<
-			OMAP3430_SETUP_TIME2_SHIFT) |
-			(prm_setup.voltsetup_time1 <<
-			OMAP3430_SETUP_TIME1_SHIFT),
-			OMAP3430_GR_MOD, OMAP3_PRM_VOLTSETUP1_OFFSET);
-
-	prm_write_mod_reg(prm_setup.voltoffset, OMAP3430_GR_MOD,
-			OMAP3_PRM_VOLTOFFSET_OFFSET);
-	prm_write_mod_reg(prm_setup.voltsetup2, OMAP3430_GR_MOD,
-			OMAP3_PRM_VOLTSETUP2_OFFSET);
-}
-
-static int __init omap3_pm_early_init(void)
-{
-	prm_clear_mod_reg_bits(OMAP3430_OFFMODE_POL, OMAP3430_GR_MOD,
-				OMAP3_PRM_POLCTRL_OFFSET);
-
-	configure_vc();
-
-	return 0;
-}
-
-arch_initcall(omap3_pm_early_init);
 late_initcall(omap3_pm_init);
-

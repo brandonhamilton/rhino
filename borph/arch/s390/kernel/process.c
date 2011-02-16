@@ -16,9 +16,9 @@
 #include <linux/fs.h>
 #include <linux/smp.h>
 #include <linux/stddef.h>
+#include <linux/slab.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/user.h>
 #include <linux/interrupt.h>
@@ -76,17 +76,17 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 static void default_idle(void)
 {
 	/* CPU is going idle. */
-	local_irq_disable();
-	if (need_resched()) {
-		local_irq_enable();
-		return;
-	}
 #ifdef CONFIG_HOTPLUG_CPU
 	if (cpu_is_offline(smp_processor_id())) {
 		preempt_enable_no_resched();
 		cpu_die();
 	}
 #endif
+	local_irq_disable();
+	if (need_resched()) {
+		local_irq_enable();
+		return;
+	}
 	local_mcck_disable();
 	if (test_thread_flag(TIF_MCCK_PENDING)) {
 		local_mcck_enable();
@@ -153,8 +153,6 @@ void exit_thread(void)
 
 void flush_thread(void)
 {
-	clear_used_math();
-	clear_tsk_thread_flag(current, TIF_USEDFPU);
 }
 
 void release_thread(struct task_struct *dead_task)
@@ -217,6 +215,7 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 	p->thread.mm_segment = get_fs();
 	/* Don't copy debug registers */
 	memset(&p->thread.per_info, 0, sizeof(p->thread.per_info));
+	clear_tsk_thread_flag(p, TIF_SINGLE_STEP);
 	/* Initialize per thread user and system timer values */
 	ti = task_thread_info(p);
 	ti->user_timer = 0;
@@ -268,8 +267,9 @@ asmlinkage void execve_tail(void)
 /*
  * sys_execve() executes a new program.
  */
-SYSCALL_DEFINE3(execve, char __user *, name, char __user * __user *, argv,
-		char __user * __user *, envp)
+SYSCALL_DEFINE3(execve, const char __user *, name,
+		const char __user *const __user *, argv,
+		const char __user *const __user *, envp)
 {
 	struct pt_regs *regs = task_pt_regs(current);
 	char *filename;

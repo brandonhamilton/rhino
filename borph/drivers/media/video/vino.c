@@ -33,6 +33,7 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/time.h>
 #include <linux/version.h>
@@ -4068,7 +4069,6 @@ static struct video_device vdev_template = {
 	.fops		= &vino_fops,
 	.ioctl_ops 	= &vino_ioctl_ops,
 	.tvnorms 	= V4L2_STD_NTSC | V4L2_STD_PAL | V4L2_STD_SECAM,
-	.minor		= -1,
 };
 
 static void vino_module_cleanup(int stage)
@@ -4334,10 +4334,10 @@ static int __init vino_module_init(void)
 
 	vino_drvdata->decoder =
 		v4l2_i2c_new_subdev(&vino_drvdata->v4l2_dev, &vino_i2c_adapter,
-			       "saa7191", "saa7191", 0, I2C_ADDRS(0x45));
+			       "saa7191", 0, I2C_ADDRS(0x45));
 	vino_drvdata->camera =
 		v4l2_i2c_new_subdev(&vino_drvdata->v4l2_dev, &vino_i2c_adapter,
-			       "indycam", "indycam", 0, I2C_ADDRS(0x2b));
+			       "indycam", 0, I2C_ADDRS(0x2b));
 
 	dprintk("init complete!\n");
 

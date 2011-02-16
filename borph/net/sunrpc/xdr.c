@@ -7,6 +7,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
@@ -109,6 +110,23 @@ xdr_decode_string_inplace(__be32 *p, char **sp,
 	return p + XDR_QUADLEN(len);
 }
 EXPORT_SYMBOL_GPL(xdr_decode_string_inplace);
+
+/**
+ * xdr_terminate_string - '\0'-terminate a string residing in an xdr_buf
+ * @buf: XDR buffer where string resides
+ * @len: length of string, in bytes
+ *
+ */
+void
+xdr_terminate_string(struct xdr_buf *buf, const u32 len)
+{
+	char *kaddr;
+
+	kaddr = kmap_atomic(buf->pages[0], KM_USER0);
+	kaddr[buf->page_base + len] = '\0';
+	kunmap_atomic(kaddr, KM_USER0);
+}
+EXPORT_SYMBOL(xdr_terminate_string);
 
 void
 xdr_encode_pages(struct xdr_buf *xdr, struct page **pages, unsigned int base,
@@ -394,24 +412,29 @@ xdr_shrink_pagelen(struct xdr_buf *buf, size_t len)
 {
 	struct kvec *tail;
 	size_t copy;
-	char *p;
 	unsigned int pglen = buf->page_len;
+	unsigned int tailbuf_len;
 
 	tail = buf->tail;
 	BUG_ON (len > pglen);
 
+	tailbuf_len = buf->buflen - buf->head->iov_len - buf->page_len;
+
 	/* Shift the tail first */
-	if (tail->iov_len != 0) {
-		p = (char *)tail->iov_base + len;
-		if (tail->iov_len > len) {
-			copy = tail->iov_len - len;
-			memmove(p, tail->iov_base, copy);
-		} else
-			buf->buflen -= len;
-		/* Copy from the inlined pages into the tail */
+	if (tailbuf_len != 0) {
+		unsigned int free_space = tailbuf_len - tail->iov_len;
+
+		if (len < free_space)
+			free_space = len;
+		tail->iov_len += free_space;
+
 		copy = len;
-		if (copy > tail->iov_len)
+		if (tail->iov_len > len) {
+			char *p = (char *)tail->iov_base + len;
+			memmove(p, tail->iov_base, tail->iov_len - len);
+		} else
 			copy = tail->iov_len;
+		/* Copy from the inlined pages into the tail */
 		_copy_from_pages((char *)tail->iov_base,
 				buf->pages, buf->page_base + pglen - len,
 				copy);
@@ -548,6 +571,27 @@ void xdr_init_decode(struct xdr_stream *xdr, struct xdr_buf *buf, __be32 *p)
 	xdr->end = (__be32 *)((char *)iov->iov_base + len);
 }
 EXPORT_SYMBOL_GPL(xdr_init_decode);
+
+/**
+ * xdr_inline_peek - Allow read-ahead in the XDR data stream
+ * @xdr: pointer to xdr_stream struct
+ * @nbytes: number of bytes of data to decode
+ *
+ * Check if the input buffer is long enough to enable us to decode
+ * 'nbytes' more bytes of data starting at the current position.
+ * If so return the current pointer without updating the current
+ * pointer position.
+ */
+__be32 * xdr_inline_peek(struct xdr_stream *xdr, size_t nbytes)
+{
+	__be32 *p = xdr->p;
+	__be32 *q = p + XDR_QUADLEN(nbytes);
+
+	if (unlikely(q > xdr->end || q < p))
+		return NULL;
+	return p;
+}
+EXPORT_SYMBOL_GPL(xdr_inline_peek);
 
 /**
  * xdr_inline_decode - Retrieve non-page XDR data to decode
@@ -761,6 +805,7 @@ int write_bytes_to_xdr_buf(struct xdr_buf *buf, unsigned int base, void *obj, un
 	__write_bytes_to_xdr_buf(&subbuf, obj, len);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(write_bytes_to_xdr_buf);
 
 int
 xdr_decode_word(struct xdr_buf *buf, unsigned int base, u32 *obj)

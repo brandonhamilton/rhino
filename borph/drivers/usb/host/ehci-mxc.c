@@ -21,13 +21,11 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/usb/otg.h>
+#include <linux/slab.h>
 
 #include <mach/mxc_ehci.h>
 
 #define ULPI_VIEWPORT_OFFSET	0x170
-#define PORTSC_OFFSET		0x184
-#define USBMODE_OFFSET		0x1a8
-#define USBMODE_CM_HOST		3
 
 struct ehci_mxc_priv {
 	struct clk *usbclk, *ahbclk;
@@ -38,6 +36,8 @@ struct ehci_mxc_priv {
 static int ehci_mxc_setup(struct usb_hcd *hcd)
 {
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
+	struct device *dev = hcd->self.controller;
+	struct mxc_usbh_platform_data *pdata = dev_get_platdata(dev);
 	int retval;
 
 	/* EHCI registers start at offset 0x100 */
@@ -50,6 +50,8 @@ static int ehci_mxc_setup(struct usb_hcd *hcd)
 	/* cache this readonly data; minimize chip reads */
 	ehci->hcs_params = ehci_readl(ehci, &ehci->caps->hcs_params);
 
+	hcd->has_tt = 1;
+
 	retval = ehci_halt(ehci);
 	if (retval)
 		return retval;
@@ -59,11 +61,15 @@ static int ehci_mxc_setup(struct usb_hcd *hcd)
 	if (retval)
 		return retval;
 
-	hcd->has_tt = 1;
-
 	ehci->sbrn = 0x20;
 
 	ehci_reset(ehci);
+
+	/* set up the PORTSCx register */
+	ehci_writel(ehci, pdata->portsc, &ehci->regs->port_status[0]);
+
+	/* is this really needed? */
+	msleep(10);
 
 	ehci_port_power(ehci, 0);
 	return 0;
@@ -116,7 +122,7 @@ static int ehci_mxc_drv_probe(struct platform_device *pdev)
 	struct mxc_usbh_platform_data *pdata = pdev->dev.platform_data;
 	struct usb_hcd *hcd;
 	struct resource *res;
-	int irq, ret, temp;
+	int irq, ret;
 	struct ehci_mxc_priv *priv;
 	struct device *dev = &pdev->dev;
 
@@ -162,6 +168,17 @@ static int ehci_mxc_drv_probe(struct platform_device *pdev)
 		goto err_ioremap;
 	}
 
+	/* call platform specific init function */
+	if (pdata->init) {
+		ret = pdata->init(pdev);
+		if (ret) {
+			dev_err(dev, "platform init failed\n");
+			goto err_init;
+		}
+		/* platforms need some time to settle changed IO settings */
+		mdelay(10);
+	}
+
 	/* enable clocks */
 	priv->usbclk = clk_get(dev, "usb");
 	if (IS_ERR(priv->usbclk)) {
@@ -170,7 +187,7 @@ static int ehci_mxc_drv_probe(struct platform_device *pdev)
 	}
 	clk_enable(priv->usbclk);
 
-	if (!cpu_is_mx35()) {
+	if (!cpu_is_mx35() && !cpu_is_mx25()) {
 		priv->ahbclk = clk_get(dev, "usb_ahb");
 		if (IS_ERR(priv->ahbclk)) {
 			ret = PTR_ERR(priv->ahbclk);
@@ -179,38 +196,25 @@ static int ehci_mxc_drv_probe(struct platform_device *pdev)
 		clk_enable(priv->ahbclk);
 	}
 
-	/* set USBMODE to host mode */
-	temp = readl(hcd->regs + USBMODE_OFFSET);
-	writel(temp | USBMODE_CM_HOST, hcd->regs + USBMODE_OFFSET);
-
-	/* set up the PORTSCx register */
-	writel(pdata->portsc, hcd->regs + PORTSC_OFFSET);
-	mdelay(10);
-
-	/* setup USBCONTROL. */
-	ret = mxc_set_usbcontrol(pdev->id, pdata->flags);
+	/* setup specific usb hw */
+	ret = mxc_initialize_usb_hw(pdev->id, pdata->flags);
 	if (ret < 0)
 		goto err_init;
-
-	/* call platform specific init function */
-	if (pdata->init) {
-		ret = pdata->init(pdev);
-		if (ret) {
-			dev_err(dev, "platform init failed\n");
-			goto err_init;
-		}
-	}
-
-	/* most platforms need some time to settle changed IO settings */
-	mdelay(10);
 
 	/* Initialize the transceiver */
 	if (pdata->otg) {
 		pdata->otg->io_priv = hcd->regs + ULPI_VIEWPORT_OFFSET;
-		if (otg_init(pdata->otg) != 0)
-			dev_err(dev, "unable to init transceiver\n");
-		else if (otg_set_vbus(pdata->otg, 1) != 0)
+		ret = otg_init(pdata->otg);
+		if (ret) {
+			dev_err(dev, "unable to init transceiver, probably missing\n");
+			ret = -ENODEV;
+			goto err_add;
+		}
+		ret = otg_set_vbus(pdata->otg, 1);
+		if (ret) {
 			dev_err(dev, "unable to enable vbus on transceiver\n");
+			goto err_add;
+		}
 	}
 
 	priv->hcd = hcd;

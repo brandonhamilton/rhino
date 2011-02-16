@@ -32,6 +32,12 @@ struct scsi_cmnd;
 #endif
 
 /*
+ * DIX-capable adapters effectively support infinite chaining for the
+ * protection information scatterlist
+ */
+#define SCSI_MAX_PROT_SG_SEGMENTS	0xFFFF
+
+/*
  * Special value for scanning to specify scanning or rescanning of all
  * possible channels, (target) ids, or luns on a given shost.
  */
@@ -67,6 +73,7 @@ struct scsi_cmnd;
 #define SEND_DIAGNOSTIC       0x1d
 #define ALLOW_MEDIUM_REMOVAL  0x1e
 
+#define READ_FORMAT_CAPACITIES 0x23
 #define SET_WINDOW            0x24
 #define READ_CAPACITY         0x25
 #define READ_10               0x28
@@ -96,6 +103,7 @@ struct scsi_cmnd;
 #define WRITE_SAME            0x41
 #define UNMAP		      0x42
 #define READ_TOC              0x43
+#define READ_HEADER           0x44
 #define LOG_SELECT            0x4c
 #define LOG_SENSE             0x4d
 #define XDWRITEREAD_10        0x53
@@ -114,6 +122,7 @@ struct scsi_cmnd;
 #define READ_12               0xa8
 #define WRITE_12              0xaa
 #define WRITE_VERIFY_12       0xae
+#define VERIFY_12	      0xaf
 #define SEARCH_HIGH_12        0xb0
 #define SEARCH_EQUAL_12       0xb1
 #define SEARCH_LOW_12         0xb2
@@ -134,6 +143,7 @@ struct scsi_cmnd;
 #define MO_SET_TARGET_PGS     0x0a
 /* values for variable length command */
 #define READ_32		      0x09
+#define VERIFY_32	      0x0a
 #define WRITE_32	      0x0b
 #define WRITE_SAME_32	      0x0d
 
@@ -149,10 +159,10 @@ struct scsi_cmnd;
 
 /* defined in T10 SCSI Primary Commands-2 (SPC2) */
 struct scsi_varlen_cdb_hdr {
-	u8 opcode;        /* opcode always == VARIABLE_LENGTH_CMD */
-	u8 control;
-	u8 misc[5];
-	u8 additional_cdb_length;         /* total cdb length - 8 */
+	__u8 opcode;        /* opcode always == VARIABLE_LENGTH_CMD */
+	__u8 control;
+	__u8 misc[5];
+	__u8 additional_cdb_length;         /* total cdb length - 8 */
 	__be16 service_action;
 	/* service specific data follows */
 };
@@ -423,6 +433,7 @@ static inline int scsi_is_wlun(unsigned int lun)
 #define ADD_TO_MLQUEUE  0x2006
 #define TIMEOUT_ERROR   0x2007
 #define SCSI_RETURN_NOT_HANDLED   0x2008
+#define FAST_IO_FAIL	0x2009
 
 /*
  * Midlevel queue return values.

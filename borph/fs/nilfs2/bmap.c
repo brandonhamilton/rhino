@@ -26,6 +26,8 @@
 #include "nilfs.h"
 #include "bmap.h"
 #include "sb.h"
+#include "btree.h"
+#include "direct.h"
 #include "btnode.h"
 #include "mdt.h"
 #include "dat.h"
@@ -417,8 +419,8 @@ __u64 nilfs_bmap_data_get_key(const struct nilfs_bmap *bmap,
 
 	key = page_index(bh->b_page) << (PAGE_CACHE_SHIFT -
 					 bmap->b_inode->i_blkbits);
-	for (pbh = page_buffers(bh->b_page); pbh != bh;
-	     pbh = pbh->b_this_page, key++);
+	for (pbh = page_buffers(bh->b_page); pbh != bh; pbh = pbh->b_this_page)
+		key++;
 
 	return key;
 }
@@ -531,18 +533,20 @@ void nilfs_bmap_init_gc(struct nilfs_bmap *bmap)
 	nilfs_btree_init_gc(bmap);
 }
 
-void nilfs_bmap_init_gcdat(struct nilfs_bmap *gcbmap, struct nilfs_bmap *bmap)
+void nilfs_bmap_save(const struct nilfs_bmap *bmap,
+		     struct nilfs_bmap_store *store)
 {
-	memcpy(gcbmap, bmap, sizeof(union nilfs_bmap_union));
-	init_rwsem(&gcbmap->b_sem);
-	lockdep_set_class(&bmap->b_sem, &nilfs_bmap_dat_lock_key);
-	gcbmap->b_inode = &NILFS_BMAP_I(gcbmap)->vfs_inode;
+	memcpy(store->data, bmap->b_u.u_data, sizeof(store->data));
+	store->last_allocated_key = bmap->b_last_allocated_key;
+	store->last_allocated_ptr = bmap->b_last_allocated_ptr;
+	store->state = bmap->b_state;
 }
 
-void nilfs_bmap_commit_gcdat(struct nilfs_bmap *gcbmap, struct nilfs_bmap *bmap)
+void nilfs_bmap_restore(struct nilfs_bmap *bmap,
+			const struct nilfs_bmap_store *store)
 {
-	memcpy(bmap, gcbmap, sizeof(union nilfs_bmap_union));
-	init_rwsem(&bmap->b_sem);
-	lockdep_set_class(&bmap->b_sem, &nilfs_bmap_dat_lock_key);
-	bmap->b_inode = &NILFS_BMAP_I(bmap)->vfs_inode;
+	memcpy(bmap->b_u.u_data, store->data, sizeof(store->data));
+	bmap->b_last_allocated_key = store->last_allocated_key;
+	bmap->b_last_allocated_ptr = store->last_allocated_ptr;
+	bmap->b_state = store->state;
 }

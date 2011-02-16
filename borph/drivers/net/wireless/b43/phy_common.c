@@ -294,8 +294,10 @@ int b43_switch_channel(struct b43_wldev *dev, unsigned int new_channel)
 	 */
 	channelcookie = new_channel;
 	if (b43_current_band(dev->wl) == IEEE80211_BAND_5GHZ)
-		channelcookie |= 0x100;
-	//FIXME set 40Mhz flag if required
+		channelcookie |= B43_SHM_SH_CHAN_5GHZ;
+	/* FIXME: set 40Mhz flag if required */
+	if (0)
+		channelcookie |= B43_SHM_SH_CHAN_40MHZ;
 	savedcookie = b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_CHAN);
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CHAN, channelcookie);
 
@@ -420,4 +422,49 @@ int b43_phy_shm_tssi_read(struct b43_wldev *dev, u16 shm_offset)
 void b43_phyop_switch_analog_generic(struct b43_wldev *dev, bool on)
 {
 	b43_write16(dev, B43_MMIO_PHY0, on ? 0 : 0xF4);
+}
+
+/* http://bcm-v4.sipsolutions.net/802.11/PHY/Cordic */
+struct b43_c32 b43_cordic(int theta)
+{
+	u32 arctg[] = { 2949120, 1740967, 919879, 466945, 234379, 117304,
+		      58666, 29335, 14668, 7334, 3667, 1833, 917, 458,
+		      229, 115, 57, 29, };
+	u8 i;
+	s32 tmp;
+	s8 signx = 1;
+	u32 angle = 0;
+	struct b43_c32 ret = { .i = 39797, .q = 0, };
+
+	while (theta > (180 << 16))
+		theta -= (360 << 16);
+	while (theta < -(180 << 16))
+		theta += (360 << 16);
+
+	if (theta > (90 << 16)) {
+		theta -= (180 << 16);
+		signx = -1;
+	} else if (theta < -(90 << 16)) {
+		theta += (180 << 16);
+		signx = -1;
+	}
+
+	for (i = 0; i <= 17; i++) {
+		if (theta > angle) {
+			tmp = ret.i - (ret.q >> i);
+			ret.q += ret.i >> i;
+			ret.i = tmp;
+			angle += arctg[i];
+		} else {
+			tmp = ret.i + (ret.q >> i);
+			ret.q -= ret.i >> i;
+			ret.i = tmp;
+			angle -= arctg[i];
+		}
+	}
+
+	ret.i *= signx;
+	ret.q *= signx;
+
+	return ret;
 }

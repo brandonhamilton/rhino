@@ -7,7 +7,6 @@
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/interrupt.h>
@@ -115,7 +114,7 @@ void __init leon_init_timers(irq_handler_t counter_fn)
 	if (leon3_gptimer_regs && leon3_irqctrl_regs) {
 		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[0].val, 0);
 		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[0].rld,
-				      (((1000000 / 100) - 1)));
+				      (((1000000 / HZ) - 1)));
 		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[0].ctrl, 0);
 
 #ifdef CONFIG_SMP
@@ -124,12 +123,12 @@ void __init leon_init_timers(irq_handler_t counter_fn)
 
 		if (!(LEON3_BYPASS_LOAD_PA(&leon3_gptimer_regs->config) &
 		      (1<<LEON3_GPTIMER_SEPIRQ))) {
-			prom_printf("irq timer not configured with seperate irqs \n");
+			prom_printf("irq timer not configured with separate irqs\n");
 			BUG();
 		}
 
 		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[1].val, 0);
-		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[1].rld, (((1000000/100) - 1)));
+		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[1].rld, (((1000000/HZ) - 1)));
 		LEON3_BYPASS_STORE_PA(&leon3_gptimer_regs->e[1].ctrl, 0);
 # endif
 
@@ -283,5 +282,5 @@ void __init leon_init_IRQ(void)
 
 void __init leon_init(void)
 {
-	prom_build_more = &leon_node_init;
+	of_pdt_build_more = &leon_node_init;
 }

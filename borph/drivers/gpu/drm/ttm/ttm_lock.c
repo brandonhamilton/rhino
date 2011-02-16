@@ -204,7 +204,6 @@ static int __ttm_vt_unlock(struct ttm_lock *lock)
 	lock->flags &= ~TTM_VT_LOCK;
 	wake_up_all(&lock->queue);
 	spin_unlock(&lock->lock);
-	printk(KERN_INFO TTM_PFX "vt unlock.\n");
 
 	return ret;
 }
@@ -265,10 +264,8 @@ int ttm_vt_lock(struct ttm_lock *lock,
 				   ttm_lock_type, &ttm_vt_lock_remove, NULL);
 	if (ret)
 		(void)__ttm_vt_unlock(lock);
-	else {
+	else
 		lock->vt_holder = tfile;
-		printk(KERN_INFO TTM_PFX "vt lock.\n");
-	}
 
 	return ret;
 }
@@ -288,6 +285,7 @@ void ttm_suspend_unlock(struct ttm_lock *lock)
 	wake_up_all(&lock->queue);
 	spin_unlock(&lock->lock);
 }
+EXPORT_SYMBOL(ttm_suspend_unlock);
 
 static bool __ttm_suspend_lock(struct ttm_lock *lock)
 {
@@ -309,3 +307,4 @@ void ttm_suspend_lock(struct ttm_lock *lock)
 {
 	wait_event(lock->queue, __ttm_suspend_lock(lock));
 }
+EXPORT_SYMBOL(ttm_suspend_lock);

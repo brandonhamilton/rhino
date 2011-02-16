@@ -8,6 +8,19 @@
 #include <asm/memory.h>
 #include <asm/page.h>
 	
+#define PROC_INFO							\
+	VMLINUX_SYMBOL(__proc_info_begin) = .;				\
+	*(.proc.info.init)						\
+	VMLINUX_SYMBOL(__proc_info_end) = .;
+
+#ifdef CONFIG_HOTPLUG_CPU
+#define ARM_CPU_DISCARD(x)
+#define ARM_CPU_KEEP(x)		x
+#else
+#define ARM_CPU_DISCARD(x)	x
+#define ARM_CPU_KEEP(x)
+#endif
+
 OUTPUT_ARCH(arm)
 ENTRY(stext)
 
@@ -31,21 +44,20 @@ SECTIONS
 			HEAD_TEXT
 			INIT_TEXT
 		_einittext = .;
-		__proc_info_begin = .;
-			*(.proc.info.init)
-		__proc_info_end = .;
+		ARM_CPU_DISCARD(PROC_INFO)
 		__arch_info_begin = .;
 			*(.arch.info.init)
 		__arch_info_end = .;
 		__tagtable_begin = .;
 			*(.taglist.init)
 		__tagtable_end = .;
+#ifdef CONFIG_SMP_ON_UP
+		__smpalt_begin = .;
+			*(.alt.smp.init)
+		__smpalt_end = .;
+#endif
 
 		INIT_SETUP(16)
-
-		__early_begin = .;
-			*(.early_param.init)
-		__early_end = .;
 
 		INIT_CALLS
 		CON_INITCALL
@@ -65,17 +77,15 @@ SECTIONS
 	__init_end = .;
 #endif
 
-	/DISCARD/ : {			/* Exit code and data		*/
-		EXIT_TEXT
-		EXIT_DATA
-		*(.exitcall.exit)
-		*(.discard)
+	/*
+	 * unwind exit sections must be discarded before the rest of the
+	 * unwind sections get included.
+	 */
+	/DISCARD/ : {
 		*(.ARM.exidx.exit.text)
 		*(.ARM.extab.exit.text)
-#ifndef CONFIG_HOTPLUG_CPU
-		*(.ARM.exidx.cpuexit.text)
-		*(.ARM.extab.cpuexit.text)
-#endif
+		ARM_CPU_DISCARD(*(.ARM.exidx.cpuexit.text))
+		ARM_CPU_DISCARD(*(.ARM.extab.cpuexit.text))
 #ifndef CONFIG_HOTPLUG
 		*(.ARM.exidx.devexit.text)
 		*(.ARM.extab.devexit.text)
@@ -103,12 +113,12 @@ SECTIONS
 			*(.rodata.*)
 			*(.glue_7)
 			*(.glue_7t)
+		. = ALIGN(4);
 		*(.got)			/* Global offset table		*/
+			ARM_CPU_KEEP(PROC_INFO)
 	}
 
 	RO_DATA(PAGE_SIZE)
-
-	_etext = .;			/* End of text and rodata section */
 
 #ifdef CONFIG_ARM_UNWIND
 	/*
@@ -126,6 +136,8 @@ SECTIONS
 		__stop_unwind_tab = .;
 	}
 #endif
+
+	_etext = .;			/* End of text and rodata section */
 
 #ifdef CONFIG_XIP_KERNEL
 	__data_loc = ALIGN(4);		/* location in binary */
@@ -238,6 +250,15 @@ SECTIONS
 
 	STABS_DEBUG
 	.comment 0 : { *(.comment) }
+
+	/* Default discards */
+	DISCARDS
+
+#ifndef CONFIG_SMP_ON_UP
+	/DISCARD/ : {
+		*(.alt.smp.init)
+	}
+#endif
 }
 
 /*

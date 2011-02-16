@@ -32,7 +32,6 @@
 #include <linux/list.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
 #include <asm/atomic.h>
@@ -616,6 +615,7 @@ static int dabusb_open (struct inode *inode, struct file *file)
 {
 	int devnum = iminor(inode);
 	pdabusb_t s;
+	int r;
 
 	if (devnum < DABUSB_MINOR || devnum >= (DABUSB_MINOR + NRDABUSB))
 		return -EIO;
@@ -628,14 +628,12 @@ static int dabusb_open (struct inode *inode, struct file *file)
 	while (!s->usbdev || s->opened) {
 		mutex_unlock(&s->mutex);
 
-		if (file->f_flags & O_NONBLOCK) {
+		if (file->f_flags & O_NONBLOCK)
 			return -EBUSY;
-		}
 		msleep_interruptible(500);
 
-		if (signal_pending (current)) {
+		if (signal_pending (current))
 			return -EAGAIN;
-		}
 		mutex_lock(&s->mutex);
 	}
 	if (usb_set_interface (s->usbdev, _DABUSB_IF, 1) < 0) {
@@ -649,7 +647,8 @@ static int dabusb_open (struct inode *inode, struct file *file)
 	file->f_pos = 0;
 	file->private_data = s;
 
-	return nonseekable_open(inode, file);
+	r = nonseekable_open(inode, file);
+	return r;
 }
 
 static int dabusb_release (struct inode *inode, struct file *file)
@@ -683,33 +682,24 @@ static long dabusb_ioctl (struct file *file, unsigned int cmd, unsigned long arg
 
 	dbg("dabusb_ioctl");
 
-	lock_kernel();
-	if (s->remove_pending) {
-		unlock_kernel();
+	if (s->remove_pending)
 		return -EIO;
-	}
 
 	mutex_lock(&s->mutex);
 
 	if (!s->usbdev) {
 		mutex_unlock(&s->mutex);
-		unlock_kernel();
 		return -EIO;
 	}
 
 	switch (cmd) {
 
 	case IOCTL_DAB_BULK:
-		pbulk = kmalloc(sizeof (bulk_transfer_t), GFP_KERNEL);
+		pbulk = memdup_user((void __user *)arg,
+				    sizeof(bulk_transfer_t));
 
-		if (!pbulk) {
-			ret = -ENOMEM;
-			break;
-		}
-
-		if (copy_from_user (pbulk, (void __user *) arg, sizeof (bulk_transfer_t))) {
-			ret = -EFAULT;
-			kfree (pbulk);
+		if (IS_ERR(pbulk)) {
+			ret = PTR_ERR(pbulk);
 			break;
 		}
 
@@ -734,7 +724,6 @@ static long dabusb_ioctl (struct file *file, unsigned int cmd, unsigned long arg
 		break;
 	}
 	mutex_unlock(&s->mutex);
-	unlock_kernel();
 	return ret;
 }
 
@@ -913,6 +902,8 @@ static void __exit dabusb_cleanup (void)
 MODULE_AUTHOR( DRIVER_AUTHOR );
 MODULE_DESCRIPTION( DRIVER_DESC );
 MODULE_LICENSE("GPL");
+MODULE_FIRMWARE("dabusb/firmware.fw");
+MODULE_FIRMWARE("dabusb/bitstream.bin");
 
 module_param(buffers, int, 0);
 MODULE_PARM_DESC (buffers, "Number of buffers (default=256)");

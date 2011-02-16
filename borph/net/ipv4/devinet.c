@@ -50,6 +50,7 @@
 #include <linux/notifier.h>
 #include <linux/inetdevice.h>
 #include <linux/igmp.h>
+#include <linux/slab.h>
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
@@ -64,20 +65,20 @@
 
 static struct ipv4_devconf ipv4_devconf = {
 	.data = {
-		[NET_IPV4_CONF_ACCEPT_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SEND_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SECURE_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SHARED_MEDIA - 1] = 1,
+		[IPV4_DEVCONF_ACCEPT_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SEND_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SECURE_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SHARED_MEDIA - 1] = 1,
 	},
 };
 
 static struct ipv4_devconf ipv4_devconf_dflt = {
 	.data = {
-		[NET_IPV4_CONF_ACCEPT_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SEND_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SECURE_REDIRECTS - 1] = 1,
-		[NET_IPV4_CONF_SHARED_MEDIA - 1] = 1,
-		[NET_IPV4_CONF_ACCEPT_SOURCE_ROUTE - 1] = 1,
+		[IPV4_DEVCONF_ACCEPT_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SEND_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SECURE_REDIRECTS - 1] = 1,
+		[IPV4_DEVCONF_SHARED_MEDIA - 1] = 1,
+		[IPV4_DEVCONF_ACCEPT_SOURCE_ROUTE - 1] = 1,
 	},
 };
 
@@ -208,7 +209,7 @@ static void inetdev_destroy(struct in_device *in_dev)
 		inet_free_ifa(ifa);
 	}
 
-	dev->ip_ptr = NULL;
+	rcu_assign_pointer(dev->ip_ptr, NULL);
 
 	devinet_sysctl_unregister(in_dev);
 	neigh_parms_release(&arp_tbl, in_dev->arp_parms);
@@ -402,6 +403,9 @@ static int inet_set_ifa(struct net_device *dev, struct in_ifaddr *ifa)
 	return inet_insert_ifa(ifa);
 }
 
+/* Caller must hold RCU or RTNL :
+ * We dont take a reference on found in_device
+ */
 struct in_device *inetdev_by_index(struct net *net, int ifindex)
 {
 	struct net_device *dev;
@@ -410,7 +414,7 @@ struct in_device *inetdev_by_index(struct net *net, int ifindex)
 	rcu_read_lock();
 	dev = dev_get_by_index_rcu(net, ifindex);
 	if (dev)
-		in_dev = in_dev_get(dev);
+		in_dev = rcu_dereference_rtnl(dev->ip_ptr);
 	rcu_read_unlock();
 	return in_dev;
 }
@@ -451,8 +455,6 @@ static int inet_rtm_deladdr(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg
 		err = -ENODEV;
 		goto errout;
 	}
-
-	__in_dev_put(in_dev);
 
 	for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
 	     ifap = &ifa->ifa_next) {
@@ -1058,7 +1060,7 @@ static int inetdev_event(struct notifier_block *this, unsigned long event,
 	switch (event) {
 	case NETDEV_REGISTER:
 		printk(KERN_DEBUG "inetdev_event: bug\n");
-		dev->ip_ptr = NULL;
+		rcu_assign_pointer(dev->ip_ptr, NULL);
 		break;
 	case NETDEV_UP:
 		if (!inetdev_valid_mtu(dev->mtu))
@@ -1080,6 +1082,7 @@ static int inetdev_event(struct notifier_block *this, unsigned long event,
 		}
 		ip_mc_up(in_dev);
 		/* fall through */
+	case NETDEV_NOTIFY_PEERS:
 	case NETDEV_CHANGEADDR:
 		/* Send gratuitous ARP to notify of link change */
 		if (IN_DEV_ARP_NOTIFY(in_dev)) {
@@ -1095,10 +1098,10 @@ static int inetdev_event(struct notifier_block *this, unsigned long event,
 	case NETDEV_DOWN:
 		ip_mc_down(in_dev);
 		break;
-	case NETDEV_BONDING_OLDTYPE:
+	case NETDEV_PRE_TYPE_CHANGE:
 		ip_mc_unmap(in_dev);
 		break;
-	case NETDEV_BONDING_NEWTYPE:
+	case NETDEV_POST_TYPE_CHANGE:
 		ip_mc_remap(in_dev);
 		break;
 	case NETDEV_CHANGEMTU:
@@ -1194,7 +1197,7 @@ static int inet_dump_ifaddr(struct sk_buff *skb, struct netlink_callback *cb)
 		hlist_for_each_entry_rcu(dev, node, head, index_hlist) {
 			if (idx < s_idx)
 				goto cont;
-			if (idx > s_idx)
+			if (h > s_h || idx > s_idx)
 				s_ip_idx = 0;
 			in_dev = __in_dev_get_rcu(dev);
 			if (!in_dev)
@@ -1317,14 +1320,19 @@ static int devinet_sysctl_forward(ctl_table *ctl, int write,
 {
 	int *valp = ctl->data;
 	int val = *valp;
+	loff_t pos = *ppos;
 	int ret = proc_dointvec(ctl, write, buffer, lenp, ppos);
 
 	if (write && *valp != val) {
 		struct net *net = ctl->extra2;
 
 		if (valp != &IPV4_DEVCONF_DFLT(net, FORWARDING)) {
-			if (!rtnl_trylock())
+			if (!rtnl_trylock()) {
+				/* Restore the original values before restarting */
+				*valp = val;
+				*ppos = pos;
 				return restart_syscall();
+			}
 			if (valp == &IPV4_DEVCONF_ALL(net, FORWARDING)) {
 				inet_forward_change(net);
 			} else if (*valp) {
@@ -1360,7 +1368,7 @@ int ipv4_doint_and_flush(ctl_table *ctl, int write,
 	{ \
 		.procname	= name, \
 		.data		= ipv4_devconf.data + \
-				  NET_IPV4_CONF_ ## attr - 1, \
+				  IPV4_DEVCONF_ ## attr - 1, \
 		.maxlen		= sizeof(int), \
 		.mode		= mval, \
 		.proc_handler	= proc, \
@@ -1381,7 +1389,7 @@ int ipv4_doint_and_flush(ctl_table *ctl, int write,
 
 static struct devinet_sysctl_table {
 	struct ctl_table_header *sysctl_header;
-	struct ctl_table devinet_vars[__NET_IPV4_CONF_MAX];
+	struct ctl_table devinet_vars[__IPV4_DEVCONF_MAX];
 	char *dev_name;
 } devinet_sysctl = {
 	.devinet_vars = {
@@ -1397,6 +1405,7 @@ static struct devinet_sysctl_table {
 		DEVINET_SYSCTL_RW_ENTRY(ACCEPT_SOURCE_ROUTE,
 					"accept_source_route"),
 		DEVINET_SYSCTL_RW_ENTRY(ACCEPT_LOCAL, "accept_local"),
+		DEVINET_SYSCTL_RW_ENTRY(SRC_VMARK, "src_valid_mark"),
 		DEVINET_SYSCTL_RW_ENTRY(PROXY_ARP, "proxy_arp"),
 		DEVINET_SYSCTL_RW_ENTRY(MEDIUM_ID, "medium_id"),
 		DEVINET_SYSCTL_RW_ENTRY(BOOTP_RELAY, "bootp_relay"),
@@ -1407,6 +1416,7 @@ static struct devinet_sysctl_table {
 		DEVINET_SYSCTL_RW_ENTRY(ARP_IGNORE, "arp_ignore"),
 		DEVINET_SYSCTL_RW_ENTRY(ARP_ACCEPT, "arp_accept"),
 		DEVINET_SYSCTL_RW_ENTRY(ARP_NOTIFY, "arp_notify"),
+		DEVINET_SYSCTL_RW_ENTRY(PROXY_ARP_PVLAN, "proxy_arp_pvlan"),
 
 		DEVINET_SYSCTL_FLUSHING_ENTRY(NOXFRM, "disable_xfrm"),
 		DEVINET_SYSCTL_FLUSHING_ENTRY(NOPOLICY, "disable_policy"),
@@ -1485,8 +1495,7 @@ static void __devinet_sysctl_unregister(struct ipv4_devconf *cnf)
 
 static void devinet_sysctl_register(struct in_device *idev)
 {
-	neigh_sysctl_register(idev->dev, idev->arp_parms, NET_IPV4,
-			NET_IPV4_NEIGH, "ipv4", NULL);
+	neigh_sysctl_register(idev->dev, idev->arp_parms, "ipv4", NULL);
 	__devinet_sysctl_register(dev_net(idev->dev), idev->dev->name,
 					&idev->cnf);
 }
@@ -1501,7 +1510,7 @@ static struct ctl_table ctl_forward_entry[] = {
 	{
 		.procname	= "ip_forward",
 		.data		= &ipv4_devconf.data[
-					NET_IPV4_CONF_FORWARDING - 1],
+					IPV4_DEVCONF_FORWARDING - 1],
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= devinet_sysctl_forward,
@@ -1545,7 +1554,7 @@ static __net_init int devinet_init_net(struct net *net)
 		if (tbl == NULL)
 			goto err_alloc_ctl;
 
-		tbl[0].data = &all->data[NET_IPV4_CONF_FORWARDING - 1];
+		tbl[0].data = &all->data[IPV4_DEVCONF_FORWARDING - 1];
 		tbl[0].extra1 = all;
 		tbl[0].extra2 = net;
 #endif

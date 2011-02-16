@@ -31,9 +31,11 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/kthread.h>
+#include <linux/slab.h>
 
 #include <linux/i2c/twl.h>
 
+#include "twl-core.h"
 
 /*
  * TWL4030 IRQ handling has two stages in hardware, and thus in software.
@@ -77,7 +79,7 @@ struct sih {
 	u8	irq_lines;		/* number of supported irq lines */
 
 	/* SIR ignored -- set interrupt, for testing only */
-	struct irq_data {
+	struct sih_irq_data {
 		u8	isr_offset;
 		u8	imr_offset;
 	} mask[2];
@@ -143,6 +145,7 @@ static const struct sih sih_modules_twl4030[6] = {
 		.name		= "bci",
 		.module		= TWL4030_MODULE_INTERRUPTS,
 		.control_offset	= TWL4030_INTERRUPTS_BCISIHCTRL,
+		.set_cor	= true,
 		.bits		= 12,
 		.bytes_ixr	= 2,
 		.edr_offset	= TWL4030_INTERRUPTS_BCIEDR1,
@@ -231,10 +234,11 @@ static const struct sih sih_modules_twl5031[8] = {
 	},
 	[6] = {
 		/*
-		 * ACI doesn't use the same SIH organization.
-		 * For example, it supports only one interrupt line
+		 * ECI/DBI doesn't use the same SIH organization.
+		 * For example, it supports only one interrupt output line.
+		 * That is, the interrupts are seen on both INT1 and INT2 lines.
 		 */
-		.name		= "aci",
+		.name		= "eci_dbi",
 		.module		= TWL5031_MODULE_ACCESSORY,
 		.bits		= 9,
 		.bytes_ixr	= 2,
@@ -246,8 +250,8 @@ static const struct sih sih_modules_twl5031[8] = {
 
 	},
 	[7] = {
-		/* Accessory */
-		.name		= "acc",
+		/* Audio accessory */
+		.name		= "audio",
 		.module		= TWL5031_MODULE_ACCESSORY,
 		.control_offset	= TWL5031_ACCSIHCTRL,
 		.bits		= 2,
@@ -406,7 +410,7 @@ static int twl4030_init_sih_modules(unsigned line)
 		 * set Clear-On-Read (COR) bit.
 		 *
 		 * NOTE that sometimes COR polarity is documented as being
-		 * inverted:  for MADC and BCI, COR=1 means "clear on write".
+		 * inverted:  for MADC, COR=1 means "clear on write".
 		 * And for PWR_INT it's not documented...
 		 */
 		if (sih->set_cor) {
@@ -568,12 +572,12 @@ static void twl4030_sih_do_edge(struct work_struct *work)
 
 		bytes[byte] &= ~(0x03 << off);
 
-		spin_lock_irq(&d->lock);
+		raw_spin_lock_irq(&d->lock);
 		if (d->status & IRQ_TYPE_EDGE_RISING)
 			bytes[byte] |= BIT(off + 1);
 		if (d->status & IRQ_TYPE_EDGE_FALLING)
 			bytes[byte] |= BIT(off + 0);
-		spin_unlock_irq(&d->lock);
+		raw_spin_unlock_irq(&d->lock);
 
 		edge_change &= ~BIT(i);
 	}
@@ -808,7 +812,7 @@ int twl4030_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
 	twl4030_irq_chip = dummy_irq_chip;
 	twl4030_irq_chip.name = "twl4030";
 
-	twl4030_sih_irq_chip.ack = dummy_irq_chip.ack;
+	twl4030_sih_irq_chip.irq_ack = dummy_irq_chip.irq_ack;
 
 	for (i = irq_base; i < irq_end; i++) {
 		set_irq_chip_and_handler(i, &twl4030_irq_chip,

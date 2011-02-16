@@ -26,74 +26,10 @@
 
 #include <linux/usb/musb.h>
 
-#include <asm/sizes.h>
-
 #include <mach/hardware.h>
 #include <mach/irqs.h>
 #include <mach/am35xx.h>
-#include <plat/mux.h>
 #include <plat/usb.h>
-
-#define OTG_SYSCONFIG	   0x404
-#define OTG_SYSC_SOFTRESET BIT(1)
-#define OTG_SYSSTATUS     0x408
-#define OTG_SYSS_RESETDONE BIT(0)
-
-static struct platform_device dummy_pdev = {
-	.dev = {
-		.bus = &platform_bus_type,
-	},
-};
-
-static void __iomem *otg_base;
-static struct clk *otg_clk;
-struct device *dev = &dummy_pdev.dev;
-
-static void __init usb_musb_pm_init(void)
-{
-	if (!cpu_is_omap34xx())
-		return;
-
-	otg_base = ioremap(OMAP34XX_HSUSB_OTG_BASE, SZ_4K);
-	if (WARN_ON(!otg_base))
-		return;
-
-	dev_set_name(dev, "musb_hdrc");
-	otg_clk = clk_get(dev, "ick");
-
-	if (otg_clk && clk_enable(otg_clk)) {
-		printk(KERN_WARNING
-			"%s: Unable to enable clocks for MUSB, "
-			"cannot reset.\n",  __func__);
-	} else {
-		/* Reset OTG controller. After reset, it will be in
-		 * force-idle, force-standby mode. */
-		__raw_writel(OTG_SYSC_SOFTRESET, otg_base + OTG_SYSCONFIG);
-
-		while (!(OTG_SYSS_RESETDONE &
-					__raw_readl(otg_base + OTG_SYSSTATUS)))
-			cpu_relax();
-	}
-
-	if (otg_clk)
-		clk_disable(otg_clk);
-}
-
-void usb_musb_disable_autoidle(void)
-{
-	dev_set_name(dev, "musb_hdrc");
-	otg_clk = clk_get(dev, "ick");
-
-	if (otg_clk && clk_enable(otg_clk)) {
-		printk(KERN_WARNING
-			"%s: Unable to enable clocks for MUSB, "
-			"cannot disable autoidle.\n",  __func__);
-	} else {
-		__raw_writel(0, otg_base + OTG_SYSCONFIG);
-	}
-	if (otg_clk)
-		clk_disable(otg_clk);
-}
 
 #ifdef CONFIG_USB_MUSB_SOC
 
@@ -111,70 +47,11 @@ static struct resource musb_resources[] = {
 	},
 };
 
-static int clk_on;
-
-static int musb_set_clock(struct clk *clk, int state)
-{
-	if (state) {
-		if (clk_on > 0)
-			return -ENODEV;
-
-		clk_enable(clk);
-		clk_on = 1;
-	} else {
-		if (clk_on == 0)
-			return -ENODEV;
-
-		clk_disable(clk);
-		clk_on = 0;
-	}
-
-	return 0;
-}
-
-static struct musb_hdrc_eps_bits musb_eps[] = {
-	{	"ep1_tx", 10,	},
-	{	"ep1_rx", 10,	},
-	{	"ep2_tx", 9,	},
-	{	"ep2_rx", 9,	},
-	{	"ep3_tx", 3,	},
-	{	"ep3_rx", 3,	},
-	{	"ep4_tx", 3,	},
-	{	"ep4_rx", 3,	},
-	{	"ep5_tx", 3,	},
-	{	"ep5_rx", 3,	},
-	{	"ep6_tx", 3,	},
-	{	"ep6_rx", 3,	},
-	{	"ep7_tx", 3,	},
-	{	"ep7_rx", 3,	},
-	{	"ep8_tx", 2,	},
-	{	"ep8_rx", 2,	},
-	{	"ep9_tx", 2,	},
-	{	"ep9_rx", 2,	},
-	{	"ep10_tx", 2,	},
-	{	"ep10_rx", 2,	},
-	{	"ep11_tx", 2,	},
-	{	"ep11_rx", 2,	},
-	{	"ep12_tx", 2,	},
-	{	"ep12_rx", 2,	},
-	{	"ep13_tx", 2,	},
-	{	"ep13_rx", 2,	},
-	{	"ep14_tx", 2,	},
-	{	"ep14_rx", 2,	},
-	{	"ep15_tx", 2,	},
-	{	"ep15_rx", 2,	},
-};
-
 static struct musb_hdrc_config musb_config = {
 	.multipoint	= 1,
 	.dyn_fifo	= 1,
-	.soft_con	= 1,
-	.dma		= 1,
 	.num_eps	= 16,
-	.dma_channels	= 7,
-	.dma_req_chan	= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3),
 	.ram_bits	= 12,
-	.eps_bits	= musb_eps,
 };
 
 static struct musb_hdrc_platform_data musb_plat = {
@@ -186,7 +63,6 @@ static struct musb_hdrc_platform_data musb_plat = {
 	.mode		= MUSB_PERIPHERAL,
 #endif
 	/* .clock is set dynamically */
-	.set_clock	= musb_set_clock,
 	.config		= &musb_config,
 
 	/* REVISIT charge pump on TWL4030 can supply up to
@@ -210,50 +86,38 @@ static struct platform_device musb_device = {
 	.resource	= musb_resources,
 };
 
-void __init usb_musb_init(void)
+void __init usb_musb_init(struct omap_musb_board_data *board_data)
 {
 	if (cpu_is_omap243x()) {
 		musb_resources[0].start = OMAP243X_HS_BASE;
-		musb_resources[0].end = musb_resources[0].start + SZ_8K - 1;
 	} else if (cpu_is_omap3517() || cpu_is_omap3505()) {
 		musb_resources[0].start = AM35XX_IPSS_USBOTGSS_BASE;
 		musb_resources[1].start = INT_35XX_USBOTG_IRQ;
-		/* AM3517 can provide max of 500mA */
-		musb_plat.power = 250;
-		/* AM3517 has to map for CPPI4.1 registers also */
-		musb_resources[0].end = musb_resources[0].start
-						+ (2 * SZ_16K) - 1;
-		/* AM3517 MUSB has 32K FIFO */
-		musb_config.ram_bits = 13; /* 2^(13+2) = 32K */
-	} else {
+	} else if (cpu_is_omap34xx()) {
 		musb_resources[0].start = OMAP34XX_HSUSB_OTG_BASE;
-		musb_resources[0].end = musb_resources[0].start + SZ_8K - 1;
-		/* OMAP3EVM Rev >= E can source 500mA */
-		if (get_omap3_evm_rev() >= OMAP3EVM_BOARD_GEN_2) {
-			musb_plat.power = 250;
-			musb_plat.extvbus = 1;
-		}
+	} else if (cpu_is_omap44xx()) {
+		musb_resources[0].start = OMAP44XX_HSUSB_OTG_BASE;
+		musb_resources[1].start = OMAP44XX_IRQ_HS_USB_MC_N;
+		musb_resources[2].start = OMAP44XX_IRQ_HS_USB_DMA_N;
 	}
+	musb_resources[0].end = musb_resources[0].start + SZ_4K - 1;
 
 	/*
 	 * REVISIT: This line can be removed once all the platforms using
 	 * musb_core.c have been converted to use use clkdev.
 	 */
 	musb_plat.clock = "ick";
+	musb_plat.board_data = board_data;
+	musb_plat.power = board_data->power >> 1;
+	musb_plat.mode = board_data->mode;
+	musb_plat.extvbus = board_data->extvbus;
 
-	if (platform_device_register(&musb_device) < 0) {
+	if (platform_device_register(&musb_device) < 0)
 		printk(KERN_ERR "Unable to register HS-USB (MUSB) device\n");
-		return;
-	}
-
-	if (!cpu_is_omap3517() && !cpu_is_omap3505())
-		usb_musb_pm_init();
 }
 
 #else
-void __init usb_musb_init(void)
+void __init usb_musb_init(struct omap_musb_board_data *board_data)
 {
-	if (!cpu_is_omap3517() && !cpu_is_omap3505())
-		usb_musb_pm_init();
 }
 #endif /* CONFIG_USB_MUSB_SOC */

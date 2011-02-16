@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2007 Freescale Semiconductor, Inc. All Rights Reserved.
+ * Copyright 2004-2007, 2010 Freescale Semiconductor, Inc. All Rights Reserved.
  * Copyright (C) 2008 Juergen Beisert (kernel@pengutronix.de)
  *
  * This program is free software; you can redistribute it and/or
@@ -20,6 +20,8 @@
 #ifndef __ASM_ARCH_MXC_H__
 #define __ASM_ARCH_MXC_H__
 
+#include <linux/types.h>
+
 #ifndef __ASM_ARCH_MXC_HARDWARE_H__
 #error "Do not include directly."
 #endif
@@ -30,6 +32,7 @@
 #define MXC_CPU_MX27		27
 #define MXC_CPU_MX31		31
 #define MXC_CPU_MX35		35
+#define MXC_CPU_MX51		51
 #define MXC_CPU_MXC91231	91231
 
 #ifndef __ASSEMBLY__
@@ -108,6 +111,18 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx35()		(0)
 #endif
 
+#ifdef CONFIG_ARCH_MX5
+# ifdef mxc_cpu_type
+#  undef mxc_cpu_type
+#  define mxc_cpu_type __mxc_cpu_type
+# else
+#  define mxc_cpu_type MXC_CPU_MX51
+# endif
+# define cpu_is_mx51()		(mxc_cpu_type == MXC_CPU_MX51)
+#else
+# define cpu_is_mx51()		(0)
+#endif
+
 #ifdef CONFIG_ARCH_MXC91231
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
@@ -120,10 +135,20 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mxc91231()	(0)
 #endif
 
+#ifndef __ASSEMBLY__
+
+struct cpu_op {
+	u32 cpu_rate;
+};
+
+extern struct cpu_op *(*get_cpu_op)(int *op);
+#endif
+
 #if defined(CONFIG_ARCH_MX3) || defined(CONFIG_ARCH_MX2)
-#define CSCR_U(n) (IO_ADDRESS(WEIM_BASE_ADDR) + n * 0x10)
-#define CSCR_L(n) (IO_ADDRESS(WEIM_BASE_ADDR) + n * 0x10 + 0x4)
-#define CSCR_A(n) (IO_ADDRESS(WEIM_BASE_ADDR) + n * 0x10 + 0x8)
+/* These are deprecated, use mx[23][157]_setup_weimcs instead. */
+#define CSCR_U(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10))
+#define CSCR_L(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10 + 0x4))
+#define CSCR_A(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10 + 0x8))
 #endif
 
 #define cpu_is_mx3()	(cpu_is_mx31() || cpu_is_mx35() || cpu_is_mxc91231())

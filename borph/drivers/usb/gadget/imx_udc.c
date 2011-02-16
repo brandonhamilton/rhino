@@ -29,6 +29,7 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/timer.h>
+#include <linux/slab.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -1318,14 +1319,15 @@ static struct imx_udc_struct controller = {
  * USB gadged driver functions
  *******************************************************************************
  */
-int usb_gadget_register_driver(struct usb_gadget_driver *driver)
+int usb_gadget_probe_driver(struct usb_gadget_driver *driver,
+		int (*bind)(struct usb_gadget *))
 {
 	struct imx_udc_struct *imx_usb = &controller;
 	int retval;
 
 	if (!driver
 		|| driver->speed < USB_SPEED_FULL
-		|| !driver->bind
+		|| !bind
 		|| !driver->disconnect
 		|| !driver->setup)
 			return -EINVAL;
@@ -1341,7 +1343,7 @@ int usb_gadget_register_driver(struct usb_gadget_driver *driver)
 	retval = device_add(&imx_usb->gadget.dev);
 	if (retval)
 		goto fail;
-	retval = driver->bind(&imx_usb->gadget);
+	retval = bind(&imx_usb->gadget);
 	if (retval) {
 		D_ERR(imx_usb->dev, "<%s> bind to driver %s --> error %d\n",
 			__func__, driver->driver.name, retval);
@@ -1361,7 +1363,7 @@ fail:
 	imx_usb->gadget.dev.driver = NULL;
 	return retval;
 }
-EXPORT_SYMBOL(usb_gadget_register_driver);
+EXPORT_SYMBOL(usb_gadget_probe_driver);
 
 int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 {

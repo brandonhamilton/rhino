@@ -17,6 +17,7 @@
 #include "isdnl1.h"
 #include <linux/interrupt.h>
 #include <linux/isapnp.h>
+#include <linux/slab.h>
 
 static const char *hfcsx_revision = "$Revision: 1.12.2.5 $";
 
@@ -233,13 +234,14 @@ read_fifo(struct IsdnCardState *cs, u_char fifo, int trans_max)
 	  count++;
 	  if (count > trans_max) 
 	    count = trans_max; /* limit length */
-	    if ((skb = dev_alloc_skb(count))) {
-	      dst = skb_put(skb, count);
-	      while (count--) 
+	  skb = dev_alloc_skb(count);
+	  if (skb) {
+	    dst = skb_put(skb, count);
+	    while (count--)
 		*dst++ = Read_hfc(cs, HFCSX_FIF_DRD);
-	      return(skb);
-	    }
-	    else return(NULL); /* no memory */
+	    return skb;
+	  } else
+		return NULL; /* no memory */
 	}
 
 	do {

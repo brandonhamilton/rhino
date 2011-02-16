@@ -83,8 +83,6 @@ static inline struct musb_qh *first_qh(struct list_head *q)
 
 
 extern void musb_root_disconnect(struct musb *musb);
-extern void init_queue(struct musb *musb);
-extern void free_queue(struct musb *musb);
 
 struct usb_hcd;
 

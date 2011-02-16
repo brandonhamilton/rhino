@@ -134,6 +134,13 @@ static inline __must_check int tracehook_report_syscall_entry(
  */
 static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
 {
+	if (step) {
+		siginfo_t info;
+		user_single_step_siginfo(current, regs, &info);
+		force_sig_info(SIGTRAP, &info, current);
+		return;
+	}
+
 	ptrace_report_syscall(regs);
 }
 
@@ -143,7 +150,7 @@ static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
  *
  * Return %LSM_UNSAFE_* bits applied to an exec because of tracing.
  *
- * @task->cred_guard_mutex is held by the caller through the do_execve().
+ * @task->signal->cred_guard_mutex is held by the caller through the do_execve().
  */
 static inline int tracehook_unsafe_exec(struct task_struct *task)
 {

@@ -1,6 +1,6 @@
 /*
  * File:	drivers/pci/pcie/aspm.c
- * Enabling PCIE link L0s/L1 state and Clock Power Management
+ * Enabling PCIe link L0s/L1 state and Clock Power Management
  *
  * Copyright (C) 2007 Intel
  * Copyright (C) Zhang Yanmin (yanmin.zhang@intel.com)
@@ -499,7 +499,7 @@ static int pcie_aspm_sanity_check(struct pci_dev *pdev)
 	int pos;
 	u32 reg32;
 	/*
-	 * Some functions in a slot might not all be PCIE functions,
+	 * Some functions in a slot might not all be PCIe functions,
 	 * very strange. Disable ASPM for the whole slot
 	 */
 	list_for_each_entry(child, &pdev->subordinate->devices, bus_list) {
@@ -588,11 +588,23 @@ void pcie_aspm_init_link_state(struct pci_dev *pdev)
 	 * update through pcie_aspm_cap_init().
 	 */
 	pcie_aspm_cap_init(link, blacklist);
-	pcie_config_aspm_path(link);
 
 	/* Setup initial Clock PM state */
 	pcie_clkpm_cap_init(link, blacklist);
-	pcie_set_clkpm(link, policy_to_clkpm_state(link));
+
+	/*
+	 * At this stage drivers haven't had an opportunity to change the
+	 * link policy setting. Enabling ASPM on broken hardware can cripple
+	 * it even before the driver has had a chance to disable ASPM, so
+	 * default to a safe level right now. If we're enabling ASPM beyond
+	 * the BIOS's expectation, we'll do so once pci_enable_device() is
+	 * called.
+	 */
+	if (aspm_policy != POLICY_POWERSAVE) {
+		pcie_config_aspm_path(link);
+		pcie_set_clkpm(link, policy_to_clkpm_state(link));
+	}
+
 unlock:
 	mutex_unlock(&aspm_lock);
 out:

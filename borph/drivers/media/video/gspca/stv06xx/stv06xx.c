@@ -27,6 +27,7 @@
  * P/N 861040-0000: Sensor ST VV6410       ASIC STV0610   - QuickCam Web
  */
 
+#include <linux/input.h>
 #include "stv06xx_sensor.h"
 
 MODULE_AUTHOR("Erik Andrén");
@@ -188,7 +189,7 @@ int stv06xx_read_sensor(struct sd *sd, const u8 address, u16 *value)
 			      0x04, 0x40, 0x1400, 0, buf, I2C_BUFFER_LENGTH,
 			      STV06XX_URB_MSG_TIMEOUT);
 	if (err < 0) {
-		PDEBUG(D_ERR, "I2C: Read error writing address: %d", err);
+		err("I2C: Read error writing address: %d", err);
 		return err;
 	}
 
@@ -219,6 +220,7 @@ static void stv06xx_dump_bridge(struct sd *sd)
 		info("Read 0x%x from address 0x%x", data, i);
 	}
 
+	info("Testing stv06xx bridge registers for writability");
 	for (i = 0x1400; i < 0x160f; i++) {
 		stv06xx_read_bridge(sd, i, &data);
 		buf = data;
@@ -229,7 +231,7 @@ static void stv06xx_dump_bridge(struct sd *sd)
 			info("Register 0x%x is read/write", i);
 		else if (data != buf)
 			info("Register 0x%x is read/write,"
-			     "but only partially", i);
+			     " but only partially", i);
 		else
 			info("Register 0x%x is read-only", i);
 
@@ -426,6 +428,29 @@ frame_data:
 	}
 }
 
+#if defined(CONFIG_INPUT) || defined(CONFIG_INPUT_MODULE)
+static int sd_int_pkt_scan(struct gspca_dev *gspca_dev,
+			u8 *data,		/* interrupt packet data */
+			int len)		/* interrupt packet length */
+{
+	int ret = -EINVAL;
+
+	if (len == 1 && data[0] == 0x80) {
+		input_report_key(gspca_dev->input_dev, KEY_CAMERA, 1);
+		input_sync(gspca_dev->input_dev);
+		ret = 0;
+	}
+
+	if (len == 1 && data[0] == 0x88) {
+		input_report_key(gspca_dev->input_dev, KEY_CAMERA, 0);
+		input_sync(gspca_dev->input_dev);
+		ret = 0;
+	}
+
+	return ret;
+}
+#endif
+
 static int stv06xx_config(struct gspca_dev *gspca_dev,
 			  const struct usb_device_id *id);
 
@@ -436,7 +461,10 @@ static const struct sd_desc sd_desc = {
 	.init = stv06xx_init,
 	.start = stv06xx_start,
 	.stopN = stv06xx_stopN,
-	.pkt_scan = stv06xx_pkt_scan
+	.pkt_scan = stv06xx_pkt_scan,
+#if defined(CONFIG_INPUT) || defined(CONFIG_INPUT_MODULE)
+	.int_pkt_scan = sd_int_pkt_scan,
+#endif
 };
 
 /* This function is called at probe time */
@@ -496,8 +524,6 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x046D, 0x08F5), .driver_info = BRIDGE_ST6422 },
 	/* QuickCam Messenger (new) */
 	{USB_DEVICE(0x046D, 0x08F6), .driver_info = BRIDGE_ST6422 },
-	/* QuickCam Messenger (new) */
-	{USB_DEVICE(0x046D, 0x08DA), .driver_info = BRIDGE_ST6422 },
 	{}
 };
 MODULE_DEVICE_TABLE(usb, device_table);
@@ -536,17 +562,11 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init sd_mod_init(void)
 {
-	int ret;
-	ret = usb_register(&sd_driver);
-	if (ret < 0)
-		return ret;
-	PDEBUG(D_PROBE, "registered");
-	return 0;
+	return usb_register(&sd_driver);
 }
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
-	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(sd_mod_init);

@@ -58,6 +58,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/list.h>
 
@@ -914,15 +915,15 @@ int hil_mlc_register(hil_mlc *mlc)
 	mlc->ostarted = 0;
 
 	rwlock_init(&mlc->lock);
-	init_MUTEX(&mlc->osem);
+	sema_init(&mlc->osem, 1);
 
-	init_MUTEX(&mlc->isem);
+	sema_init(&mlc->isem, 1);
 	mlc->icount = -1;
 	mlc->imatch = 0;
 
 	mlc->opercnt = 0;
 
-	init_MUTEX_LOCKED(&(mlc->csem));
+	sema_init(&(mlc->csem), 0);
 
 	hil_mlc_clear_di_scratch(mlc);
 	hil_mlc_clear_di_map(mlc, 0);
@@ -993,10 +994,8 @@ int hil_mlc_unregister(hil_mlc *mlc)
 
 static int __init hil_mlc_init(void)
 {
-	init_timer(&hil_mlcs_kicker);
-	hil_mlcs_kicker.expires = jiffies + HZ;
-	hil_mlcs_kicker.function = &hil_mlcs_timer;
-	add_timer(&hil_mlcs_kicker);
+	setup_timer(&hil_mlcs_kicker, &hil_mlcs_timer, 0);
+	mod_timer(&hil_mlcs_kicker, jiffies + HZ);
 
 	tasklet_enable(&hil_mlcs_tasklet);
 
@@ -1005,7 +1004,7 @@ static int __init hil_mlc_init(void)
 
 static void __exit hil_mlc_exit(void)
 {
-	del_timer(&hil_mlcs_kicker);
+	del_timer_sync(&hil_mlcs_kicker);
 
 	tasklet_disable(&hil_mlcs_tasklet);
 	tasklet_kill(&hil_mlcs_tasklet);

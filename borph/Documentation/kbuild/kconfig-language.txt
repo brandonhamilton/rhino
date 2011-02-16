@@ -181,7 +181,7 @@ Expressions are listed in decreasing order of precedence.
 (7) Returns the result of max(/expr/, /expr/).
 
 An expression can have a value of 'n', 'm' or 'y' (or 0, 1, 2
-respectively for calculations). A menu entry becomes visible when it's
+respectively for calculations). A menu entry becomes visible when its
 expression evaluates to 'm' or 'y'.
 
 There are two types of symbols: constant and non-constant symbols.
@@ -322,7 +322,8 @@ mainmenu:
 	"mainmenu" <prompt>
 
 This sets the config program's title bar if the config program chooses
-to use it.
+to use it. It should be placed at the top of the configuration, before any
+other statement.
 
 
 Kconfig hints

@@ -408,20 +408,120 @@ done:
 /*
  * si470x_rds_on - switch on rds reception
  */
-int si470x_rds_on(struct si470x_device *radio)
+static int si470x_rds_on(struct si470x_device *radio)
 {
 	int retval;
 
 	/* sysconfig 1 */
-	mutex_lock(&radio->lock);
 	radio->registers[SYSCONFIG1] |= SYSCONFIG1_RDS;
 	retval = si470x_set_register(radio, SYSCONFIG1);
 	if (retval < 0)
 		radio->registers[SYSCONFIG1] &= ~SYSCONFIG1_RDS;
-	mutex_unlock(&radio->lock);
 
 	return retval;
 }
+
+
+
+/**************************************************************************
+ * File Operations Interface
+ **************************************************************************/
+
+/*
+ * si470x_fops_read - read RDS data
+ */
+static ssize_t si470x_fops_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	struct si470x_device *radio = video_drvdata(file);
+	int retval = 0;
+	unsigned int block_count = 0;
+
+	/* switch on rds reception */
+	mutex_lock(&radio->lock);
+	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
+		si470x_rds_on(radio);
+
+	/* block if no new data available */
+	while (radio->wr_index == radio->rd_index) {
+		if (file->f_flags & O_NONBLOCK) {
+			retval = -EWOULDBLOCK;
+			goto done;
+		}
+		if (wait_event_interruptible(radio->read_queue,
+			radio->wr_index != radio->rd_index) < 0) {
+			retval = -EINTR;
+			goto done;
+		}
+	}
+
+	/* calculate block count from byte count */
+	count /= 3;
+
+	/* copy RDS block out of internal buffer and to user buffer */
+	mutex_lock(&radio->lock);
+	while (block_count < count) {
+		if (radio->rd_index == radio->wr_index)
+			break;
+
+		/* always transfer rds complete blocks */
+		if (copy_to_user(buf, &radio->buffer[radio->rd_index], 3))
+			/* retval = -EFAULT; */
+			break;
+
+		/* increment and wrap read pointer */
+		radio->rd_index += 3;
+		if (radio->rd_index >= radio->buf_size)
+			radio->rd_index = 0;
+
+		/* increment counters */
+		block_count++;
+		buf += 3;
+		retval += 3;
+	}
+
+done:
+	mutex_unlock(&radio->lock);
+	return retval;
+}
+
+
+/*
+ * si470x_fops_poll - poll RDS data
+ */
+static unsigned int si470x_fops_poll(struct file *file,
+		struct poll_table_struct *pts)
+{
+	struct si470x_device *radio = video_drvdata(file);
+	int retval = 0;
+
+	/* switch on rds reception */
+
+	mutex_lock(&radio->lock);
+	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
+		si470x_rds_on(radio);
+	mutex_unlock(&radio->lock);
+
+	poll_wait(file, &radio->read_queue, pts);
+
+	if (radio->rd_index != radio->wr_index)
+		retval = POLLIN | POLLRDNORM;
+
+	return retval;
+}
+
+
+/*
+ * si470x_fops - file operations interface
+ */
+static const struct v4l2_file_operations si470x_fops = {
+	.owner			= THIS_MODULE,
+	.read			= si470x_fops_read,
+	.poll			= si470x_fops_poll,
+	.unlocked_ioctl		= video_ioctl2,
+	.open			= si470x_fops_open,
+	.release		= si470x_fops_release,
+};
 
 
 
@@ -474,6 +574,7 @@ static int si470x_vidioc_g_ctrl(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -496,6 +597,8 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get control failed with %d\n", retval);
+
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -509,6 +612,7 @@ static int si470x_vidioc_s_ctrl(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -535,6 +639,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set control failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -564,6 +669,7 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -583,7 +689,7 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 	tuner->type = V4L2_TUNER_RADIO;
 #if defined(CONFIG_USB_SI470X) || defined(CONFIG_USB_SI470X_MODULE)
 	tuner->capability = V4L2_TUNER_CAP_LOW | V4L2_TUNER_CAP_STEREO |
-			    V4L2_TUNER_CAP_RDS;
+			    V4L2_TUNER_CAP_RDS | V4L2_TUNER_CAP_RDS_BLOCK_IO;
 #else
 	tuner->capability = V4L2_TUNER_CAP_LOW | V4L2_TUNER_CAP_STEREO;
 #endif
@@ -626,7 +732,7 @@ static int si470x_vidioc_g_tuner(struct file *file, void *priv,
 		tuner->audmode = V4L2_TUNER_MODE_MONO;
 
 	/* min is worst, max is best; signal:0..0xffff; rssi: 0..0xff */
-	/* measured in units of db쨉V in 1 db increments (max at ~75 db쨉V) */
+	/* measured in units of dbµV in 1 db increments (max at ~75 dbµV) */
 	tuner->signal = (radio->registers[STATUSRSSI] & STATUSRSSI_RSSI);
 	/* the ideal factor is 0xffff/75 = 873,8 */
 	tuner->signal = (tuner->signal * 873) + (8 * tuner->signal / 10);
@@ -639,6 +745,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get tuner failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -650,8 +757,9 @@ static int si470x_vidioc_s_tuner(struct file *file, void *priv,
 		struct v4l2_tuner *tuner)
 {
 	struct si470x_device *radio = video_drvdata(file);
-	int retval = -EINVAL;
+	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -678,6 +786,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set tuner failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -692,6 +801,7 @@ static int si470x_vidioc_g_frequency(struct file *file, void *priv,
 	int retval = 0;
 
 	/* safety checks */
+	mutex_lock(&radio->lock);
 	retval = si470x_disconnect_check(radio);
 	if (retval)
 		goto done;
@@ -708,6 +818,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"get frequency failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -721,6 +832,7 @@ static int si470x_vidioc_s_frequency(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -737,6 +849,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set frequency failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 
@@ -750,6 +863,7 @@ static int si470x_vidioc_s_hw_freq_seek(struct file *file, void *priv,
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
 
+	mutex_lock(&radio->lock);
 	/* safety checks */
 	retval = si470x_disconnect_check(radio);
 	if (retval)
@@ -766,6 +880,7 @@ done:
 	if (retval < 0)
 		dev_warn(&radio->videodev->dev,
 			"set hardware frequency seek failed with %d\n", retval);
+	mutex_unlock(&radio->lock);
 	return retval;
 }
 

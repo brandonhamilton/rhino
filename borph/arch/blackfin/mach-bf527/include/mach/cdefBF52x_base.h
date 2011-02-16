@@ -279,14 +279,14 @@
 #define bfin_write_SPORT0_TX(val)		bfin_write32(SPORT0_TX, val)
 #define bfin_read_SPORT0_RX()			bfin_read32(SPORT0_RX)
 #define bfin_write_SPORT0_RX(val)		bfin_write32(SPORT0_RX, val)
-#define bfin_read_SPORT0_TX32()			bfin_read32(SPORT0_TX32)
-#define bfin_write_SPORT0_TX32(val)		bfin_write32(SPORT0_TX32, val)
-#define bfin_read_SPORT0_RX32()			bfin_read32(SPORT0_RX32)
-#define bfin_write_SPORT0_RX32(val)		bfin_write32(SPORT0_RX32, val)
-#define bfin_read_SPORT0_TX16()			bfin_read16(SPORT0_TX16)
-#define bfin_write_SPORT0_TX16(val)		bfin_write16(SPORT0_TX16, val)
-#define bfin_read_SPORT0_RX16()			bfin_read16(SPORT0_RX16)
-#define bfin_write_SPORT0_RX16(val)		bfin_write16(SPORT0_RX16, val)
+#define bfin_read_SPORT0_TX32()			bfin_read32(SPORT0_TX)
+#define bfin_write_SPORT0_TX32(val)		bfin_write32(SPORT0_TX, val)
+#define bfin_read_SPORT0_RX32()			bfin_read32(SPORT0_RX)
+#define bfin_write_SPORT0_RX32(val)		bfin_write32(SPORT0_RX, val)
+#define bfin_read_SPORT0_TX16()			bfin_read16(SPORT0_TX)
+#define bfin_write_SPORT0_TX16(val)		bfin_write16(SPORT0_TX, val)
+#define bfin_read_SPORT0_RX16()			bfin_read16(SPORT0_RX)
+#define bfin_write_SPORT0_RX16(val)		bfin_write16(SPORT0_RX, val)
 #define bfin_read_SPORT0_RCR1()			bfin_read16(SPORT0_RCR1)
 #define bfin_write_SPORT0_RCR1(val)		bfin_write16(SPORT0_RCR1, val)
 #define bfin_read_SPORT0_RCR2()			bfin_read16(SPORT0_RCR2)
@@ -334,14 +334,14 @@
 #define bfin_write_SPORT1_TX(val)		bfin_write32(SPORT1_TX, val)
 #define bfin_read_SPORT1_RX()			bfin_read32(SPORT1_RX)
 #define bfin_write_SPORT1_RX(val)		bfin_write32(SPORT1_RX, val)
-#define bfin_read_SPORT1_TX32()			bfin_read32(SPORT1_TX32)
-#define bfin_write_SPORT1_TX32(val)		bfin_write32(SPORT1_TX32, val)
-#define bfin_read_SPORT1_RX32()			bfin_read32(SPORT1_RX32)
-#define bfin_write_SPORT1_RX32(val)		bfin_write32(SPORT1_RX32, val)
-#define bfin_read_SPORT1_TX16()			bfin_read16(SPORT1_TX16)
-#define bfin_write_SPORT1_TX16(val)		bfin_write16(SPORT1_TX16, val)
-#define bfin_read_SPORT1_RX16()			bfin_read16(SPORT1_RX16)
-#define bfin_write_SPORT1_RX16(val)		bfin_write16(SPORT1_RX16, val)
+#define bfin_read_SPORT1_TX32()			bfin_read32(SPORT1_TX)
+#define bfin_write_SPORT1_TX32(val)		bfin_write32(SPORT1_TX, val)
+#define bfin_read_SPORT1_RX32()			bfin_read32(SPORT1_RX)
+#define bfin_write_SPORT1_RX32(val)		bfin_write32(SPORT1_RX, val)
+#define bfin_read_SPORT1_TX16()			bfin_read16(SPORT1_TX)
+#define bfin_write_SPORT1_TX16(val)		bfin_write16(SPORT1_TX, val)
+#define bfin_read_SPORT1_RX16()			bfin_read16(SPORT1_RX)
+#define bfin_write_SPORT1_RX16(val)		bfin_write16(SPORT1_RX, val)
 #define bfin_read_SPORT1_RCR1()			bfin_read16(SPORT1_RCR1)
 #define bfin_write_SPORT1_RCR1(val)		bfin_write16(SPORT1_RCR1, val)
 #define bfin_read_SPORT1_RCR2()			bfin_read16(SPORT1_RCR2)
@@ -844,6 +844,7 @@
 #define bfin_write_PPI_CONTROL(val)		bfin_write16(PPI_CONTROL, val)
 #define bfin_read_PPI_STATUS()			bfin_read16(PPI_STATUS)
 #define bfin_write_PPI_STATUS(val)		bfin_write16(PPI_STATUS, val)
+#define bfin_clear_PPI_STATUS()			bfin_write_PPI_STATUS(0xFFFF)
 #define bfin_read_PPI_DELAY()			bfin_read16(PPI_DELAY)
 #define bfin_write_PPI_DELAY(val)		bfin_write16(PPI_DELAY, val)
 #define bfin_read_PPI_COUNT()			bfin_read16(PPI_COUNT)
@@ -1062,17 +1063,6 @@
 #define bfin_read_CNT_MIN()			bfin_read32(CNT_MIN)
 #define bfin_write_CNT_MIN(val)			bfin_write32(CNT_MIN, val)
 
-/* OTP/FUSE Registers */
-
-#define bfin_read_OTP_CONTROL()			bfin_read16(OTP_CONTROL)
-#define bfin_write_OTP_CONTROL(val)		bfin_write16(OTP_CONTROL, val)
-#define bfin_read_OTP_BEN()			bfin_read16(OTP_BEN)
-#define bfin_write_OTP_BEN(val)			bfin_write16(OTP_BEN, val)
-#define bfin_read_OTP_STATUS()			bfin_read16(OTP_STATUS)
-#define bfin_write_OTP_STATUS(val)		bfin_write16(OTP_STATUS, val)
-#define bfin_read_OTP_TIMING()			bfin_read32(OTP_TIMING)
-#define bfin_write_OTP_TIMING(val)		bfin_write32(OTP_TIMING, val)
-
 /* Security Registers */
 
 #define bfin_read_SECURE_SYSSWT()		bfin_read32(SECURE_SYSSWT)
@@ -1081,17 +1071,6 @@
 #define bfin_write_SECURE_CONTROL(val)		bfin_write16(SECURE_CONTROL, val)
 #define bfin_read_SECURE_STATUS()		bfin_read16(SECURE_STATUS)
 #define bfin_write_SECURE_STATUS(val)		bfin_write16(SECURE_STATUS, val)
-
-/* OTP Read/Write Data Buffer Registers */
-
-#define bfin_read_OTP_DATA0()			bfin_read32(OTP_DATA0)
-#define bfin_write_OTP_DATA0(val)		bfin_write32(OTP_DATA0, val)
-#define bfin_read_OTP_DATA1()			bfin_read32(OTP_DATA1)
-#define bfin_write_OTP_DATA1(val)		bfin_write32(OTP_DATA1, val)
-#define bfin_read_OTP_DATA2()			bfin_read32(OTP_DATA2)
-#define bfin_write_OTP_DATA2(val)		bfin_write32(OTP_DATA2, val)
-#define bfin_read_OTP_DATA3()			bfin_read32(OTP_DATA3)
-#define bfin_write_OTP_DATA3(val)		bfin_write32(OTP_DATA3, val)
 
 /* NFC Registers */
 
@@ -1130,55 +1109,5 @@
 
 /* These need to be last due to the cdef/linux inter-dependencies */
 #include <asm/irq.h>
-
-/* Writing to PLL_CTL initiates a PLL relock sequence. */
-static __inline__ void bfin_write_PLL_CTL(unsigned int val)
-{
-	unsigned long flags, iwr0, iwr1;
-
-	if (val == bfin_read_PLL_CTL())
-		return;
-
-	local_irq_save_hw(flags);
-	/* Enable the PLL Wakeup bit in SIC IWR */
-	iwr0 = bfin_read32(SIC_IWR0);
-	iwr1 = bfin_read32(SIC_IWR1);
-	/* Only allow PPL Wakeup) */
-	bfin_write32(SIC_IWR0, IWR_ENABLE(0));
-	bfin_write32(SIC_IWR1, 0);
-
-	bfin_write16(PLL_CTL, val);
-	SSYNC();
-	asm("IDLE;");
-
-	bfin_write32(SIC_IWR0, iwr0);
-	bfin_write32(SIC_IWR1, iwr1);
-	local_irq_restore_hw(flags);
-}
-
-/* Writing to VR_CTL initiates a PLL relock sequence. */
-static __inline__ void bfin_write_VR_CTL(unsigned int val)
-{
-	unsigned long flags, iwr0, iwr1;
-
-	if (val == bfin_read_VR_CTL())
-		return;
-
-	local_irq_save_hw(flags);
-	/* Enable the PLL Wakeup bit in SIC IWR */
-	iwr0 = bfin_read32(SIC_IWR0);
-	iwr1 = bfin_read32(SIC_IWR1);
-	/* Only allow PPL Wakeup) */
-	bfin_write32(SIC_IWR0, IWR_ENABLE(0));
-	bfin_write32(SIC_IWR1, 0);
-
-	bfin_write16(VR_CTL, val);
-	SSYNC();
-	asm("IDLE;");
-
-	bfin_write32(SIC_IWR0, iwr0);
-	bfin_write32(SIC_IWR1, iwr1);
-	local_irq_restore_hw(flags);
-}
 
 #endif /* _CDEF_BF52X_H */

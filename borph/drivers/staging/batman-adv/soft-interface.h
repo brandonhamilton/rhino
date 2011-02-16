@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2009 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner
  *
@@ -19,15 +19,14 @@
  *
  */
 
-void set_main_if_addr(uint8_t *addr);
-int main_if_was_up(void);
-void interface_setup(struct net_device *dev);
-int interface_open(struct net_device *dev);
-int interface_release(struct net_device *dev);
-struct net_device_stats *interface_stats(struct net_device *dev);
-int interface_set_mac_addr(struct net_device *dev, void *addr);
-int interface_change_mtu(struct net_device *dev, int new_mtu);
-int interface_tx(struct sk_buff *skb, struct net_device *dev);
-void interface_rx(struct net_device *dev, void *packet, int packet_len);
+#ifndef _NET_BATMAN_ADV_SOFT_INTERFACE_H_
+#define _NET_BATMAN_ADV_SOFT_INTERFACE_H_
 
-extern unsigned char mainIfAddr[];
+int my_skb_head_push(struct sk_buff *skb, unsigned int len);
+int interface_tx(struct sk_buff *skb, struct net_device *soft_iface);
+void interface_rx(struct net_device *soft_iface,
+		  struct sk_buff *skb, int hdr_size);
+struct net_device *softif_create(char *name);
+void softif_destroy(struct net_device *soft_iface);
+
+#endif /* _NET_BATMAN_ADV_SOFT_INTERFACE_H_ */

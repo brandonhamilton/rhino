@@ -85,6 +85,14 @@ struct omap_usb_config {
 	 *  6 == 6 wire unidirectional (or TLL)
 	 */
 	u8		pins[3];
+
+	struct platform_device *udc_device;
+	struct platform_device *ohci_device;
+	struct platform_device *otg_device;
+
+	u32 (*usb0_init)(unsigned nwires, unsigned is_device);
+	u32 (*usb1_init)(unsigned nwires);
+	u32 (*usb2_init)(unsigned nwires, unsigned alt_pingroup);
 };
 
 struct omap_lcd_config {
@@ -99,7 +107,6 @@ struct fb_info;
 struct omap_backlight_config {
 	int default_intensity;
 	int (*set_power)(struct device *dev, int state);
-	int (*check_fb)(struct fb_info *fb);
 };
 
 struct omap_fbmem_config {

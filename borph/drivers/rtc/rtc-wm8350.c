@@ -307,10 +307,17 @@ static int wm8350_rtc_update_irq_enable(struct device *dev,
 {
 	struct wm8350 *wm8350 = dev_get_drvdata(dev);
 
+	/* Suppress duplicate changes since genirq nests enable and
+	 * disable calls. */
+	if (enabled == wm8350->rtc.update_enabled)
+		return 0;
+
 	if (enabled)
 		wm8350_unmask_irq(wm8350, WM8350_IRQ_RTC_SEC);
 	else
 		wm8350_mask_irq(wm8350, WM8350_IRQ_RTC_SEC);
+
+	wm8350->rtc.update_enabled = enabled;
 
 	return 0;
 }
@@ -354,8 +361,9 @@ static const struct rtc_class_ops wm8350_rtc_ops = {
 };
 
 #ifdef CONFIG_PM
-static int wm8350_rtc_suspend(struct platform_device *pdev, pm_message_t state)
+static int wm8350_rtc_suspend(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct wm8350 *wm8350 = dev_get_drvdata(&pdev->dev);
 	int ret = 0;
 	u16 reg;
@@ -373,8 +381,9 @@ static int wm8350_rtc_suspend(struct platform_device *pdev, pm_message_t state)
 	return ret;
 }
 
-static int wm8350_rtc_resume(struct platform_device *pdev)
+static int wm8350_rtc_resume(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct wm8350 *wm8350 = dev_get_drvdata(&pdev->dev);
 	int ret;
 
@@ -476,21 +485,25 @@ static int __devexit wm8350_rtc_remove(struct platform_device *pdev)
 	struct wm8350 *wm8350 = platform_get_drvdata(pdev);
 	struct wm8350_rtc *wm_rtc = &wm8350->rtc;
 
-	wm8350_free_irq(wm8350, WM8350_IRQ_RTC_SEC);
-	wm8350_free_irq(wm8350, WM8350_IRQ_RTC_ALM);
+	wm8350_free_irq(wm8350, WM8350_IRQ_RTC_SEC, wm8350);
+	wm8350_free_irq(wm8350, WM8350_IRQ_RTC_ALM, wm8350);
 
 	rtc_device_unregister(wm_rtc->rtc);
 
 	return 0;
 }
 
+static struct dev_pm_ops wm8350_rtc_pm_ops = {
+	.suspend = wm8350_rtc_suspend,
+	.resume = wm8350_rtc_resume,
+};
+
 static struct platform_driver wm8350_rtc_driver = {
 	.probe = wm8350_rtc_probe,
 	.remove = __devexit_p(wm8350_rtc_remove),
-	.suspend = wm8350_rtc_suspend,
-	.resume = wm8350_rtc_resume,
 	.driver = {
 		.name = "wm8350-rtc",
+		.pm = &wm8350_rtc_pm_ops,
 	},
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2009 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2006-2010 B.A.T.M.A.N. contributors:
  *
  * Simon Wunderlich, Marek Lindner
  *
@@ -23,7 +23,7 @@
 #include "hash.h"
 
 /* clears the hash */
-void hash_init(struct hashtable_t *hash)
+static void hash_init(struct hashtable_t *hash)
 {
 	int i;
 
@@ -36,7 +36,7 @@ void hash_init(struct hashtable_t *hash)
 /* remove the hash structure. if hashdata_free_cb != NULL, this function will be
  * called to remove the elements inside of the hash.  if you don't remove the
  * elements, memory might be leaked. */
-void hash_delete(struct hashtable_t *hash, hashdata_free_cb free_cb)
+void hash_delete(struct hashtable_t *hash, hashdata_free_cb free_cb, void *arg)
 {
 	struct element_t *bucket, *last_bucket;
 	int i;
@@ -46,7 +46,7 @@ void hash_delete(struct hashtable_t *hash, hashdata_free_cb free_cb)
 
 		while (bucket != NULL) {
 			if (free_cb != NULL)
-				free_cb(bucket->data);
+				free_cb(bucket->data, arg);
 
 			last_bucket = bucket;
 			bucket = bucket->next;
@@ -64,24 +64,18 @@ void hash_destroy(struct hashtable_t *hash)
 	kfree(hash);
 }
 
-/* iterate though the hash. first element is selected with iter_in NULL.  use
- * the returned iterator to access the elements until hash_it_t returns NULL. */
-struct hash_it_t *hash_iterate(struct hashtable_t *hash,
-			       struct hash_it_t *iter_in)
-{
-	struct hash_it_t *iter;
+/* iterate though the hash. First element is selected if an iterator
+ * initialized with HASHIT() is supplied as iter. Use the returned
+ * (or supplied) iterator to access the elements until hash_iterate returns
+ * NULL. */
 
+struct hash_it_t *hash_iterate(struct hashtable_t *hash,
+			       struct hash_it_t *iter)
+{
 	if (!hash)
 		return NULL;
-
-	if (iter_in == NULL) {
-		iter = kmalloc(sizeof(struct hash_it_t), GFP_ATOMIC);
-		iter->index = -1;
-		iter->bucket = NULL;
-		iter->prev_bucket = NULL;
-	} else {
-		iter = iter_in;
-	}
+	if (!iter)
+		return NULL;
 
 	/* sanity checks first (if our bucket got deleted in the last
 	 * iteration): */
@@ -139,7 +133,6 @@ struct hash_it_t *hash_iterate(struct hashtable_t *hash,
 	}
 
 	/* nothing to iterate over anymore */
-	kfree(iter);
 	return NULL;
 }
 
@@ -307,7 +300,7 @@ struct hashtable_t *hash_resize(struct hashtable_t *hash, int size)
 
 	/* remove hash and eventual overflow buckets but not the content
 	 * itself. */
-	hash_delete(hash, NULL);
+	hash_delete(hash, NULL, NULL);
 
 	return new_hash;
 }

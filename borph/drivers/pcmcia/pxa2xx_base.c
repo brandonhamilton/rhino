@@ -17,6 +17,7 @@
   ======================================================================*/
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/cpufreq.h>
 #include <linux/ioport.h>
@@ -31,7 +32,6 @@
 #include <mach/pxa2xx-regs.h>
 #include <asm/mach-types.h>
 
-#include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cistpl.h>
 
@@ -177,7 +177,6 @@ pxa2xx_pcmcia_frequency_change(struct soc_pcmcia_socket *skt,
 			       unsigned long val,
 			       struct cpufreq_freqs *freqs)
 {
-#warning "it's not clear if this is right since the core CPU (N) clock has no effect on the memory (L) clock"
 	switch (val) {
 	case CPUFREQ_PRECHANGE:
 		if (freqs->new > freqs->old) {
@@ -185,7 +184,7 @@ pxa2xx_pcmcia_frequency_change(struct soc_pcmcia_socket *skt,
 			       "pre-updating\n",
 			       freqs->new / 1000, (freqs->new / 100) % 10,
 			       freqs->old / 1000, (freqs->old / 100) % 10);
-			pxa2xx_pcmcia_set_mcxx(skt, freqs->new);
+			pxa2xx_pcmcia_set_timing(skt);
 		}
 		break;
 
@@ -195,7 +194,7 @@ pxa2xx_pcmcia_frequency_change(struct soc_pcmcia_socket *skt,
 			       "post-updating\n",
 			       freqs->new / 1000, (freqs->new / 100) % 10,
 			       freqs->old / 1000, (freqs->old / 100) % 10);
-			pxa2xx_pcmcia_set_mcxx(skt, freqs->new);
+			pxa2xx_pcmcia_set_timing(skt);
 		}
 		break;
 	}
@@ -291,7 +290,7 @@ static int pxa2xx_drv_pcmcia_probe(struct platform_device *dev)
 		skt->nr = ops->first + i;
 		skt->ops = ops;
 		skt->socket.owner = ops->owner;
-		skt->socket.dev.parent = dev;
+		skt->socket.dev.parent = &dev->dev;
 		skt->socket.pci_irq = NO_IRQ;
 
 		ret = pxa2xx_drv_pcmcia_add_one(skt);
@@ -304,8 +303,8 @@ static int pxa2xx_drv_pcmcia_probe(struct platform_device *dev)
 			soc_pcmcia_remove_one(&sinfo->skt[i]);
 		kfree(sinfo);
 	} else {
-		pxa2xx_configure_sockets(dev);
-		dev_set_drvdata(dev, sinfo);
+		pxa2xx_configure_sockets(&dev->dev);
+		dev_set_drvdata(&dev->dev, sinfo);
 	}
 
 	return ret;
@@ -325,19 +324,13 @@ static int pxa2xx_drv_pcmcia_remove(struct platform_device *dev)
 	return 0;
 }
 
-static int pxa2xx_drv_pcmcia_suspend(struct device *dev)
-{
-	return pcmcia_socket_dev_suspend(dev);
-}
-
 static int pxa2xx_drv_pcmcia_resume(struct device *dev)
 {
 	pxa2xx_configure_sockets(dev);
-	return pcmcia_socket_dev_resume(dev);
+	return 0;
 }
 
 static const struct dev_pm_ops pxa2xx_drv_pcmcia_pm_ops = {
-	.suspend	= pxa2xx_drv_pcmcia_suspend,
 	.resume		= pxa2xx_drv_pcmcia_resume,
 };
 

@@ -1,18 +1,16 @@
-//================================================================
+/* ================================================================
 // MLMETxRx.H --
 //
 //   Functions defined in MLMETxRx.c.
 //
 // Copyright (c) 2002 Winbond Electrics Corp. All Rights Reserved.
-//================================================================
+//================================================================ */
 #ifndef _MLMETXRX_H
 #define _MLMETXRX_H
 
 #include "core.h"
 
 void MLME_GetNextPacket(struct wbsoft_priv *adapter, struct wb35_descriptor *pDes);
-u8 MLMESendFrame(struct wbsoft_priv *adapter,
-		 u8 * pMMPDU, u16 len, u8 DataType);
 
 void
 MLME_SendComplete(struct wbsoft_priv *adapter, u8 PacketID,

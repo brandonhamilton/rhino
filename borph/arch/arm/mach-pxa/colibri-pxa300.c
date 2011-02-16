@@ -26,6 +26,7 @@
 #include <mach/colibri.h>
 #include <mach/ohci.h>
 #include <mach/pxafb.h>
+#include <mach/audio.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -145,7 +146,7 @@ static void __init colibri_pxa300_init_lcd(void)
 static inline void colibri_pxa300_init_lcd(void) {}
 #endif /* CONFIG_FB_PXA || CONFIG_FB_PXA_MODULE */
 
-#if defined(SND_AC97_CODEC) || defined(SND_AC97_CODEC_MODULE)
+#if defined(CONFIG_SND_AC97_CODEC) || defined(CONFIG_SND_AC97_CODEC_MODULE)
 static mfp_cfg_t colibri_pxa310_ac97_pin_config[] __initdata = {
 	GPIO24_AC97_SYSCLK,
 	GPIO23_AC97_nACRESET,
@@ -185,8 +186,6 @@ void __init colibri_pxa300_init(void)
 }
 
 MACHINE_START(COLIBRI300, "Toradex Colibri PXA300")
-	.phys_io	= 0x40000000,
-	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.boot_params	= COLIBRI_SDRAM_BASE + 0x100,
 	.init_machine	= colibri_pxa300_init,
 	.map_io		= pxa_map_io,

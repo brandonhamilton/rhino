@@ -48,6 +48,7 @@
 #include "umac.h"
 #include "lmac.h"
 #include "eeprom.h"
+#include "trace.h"
 
 #define IWM_COPYRIGHT "Copyright(c) 2009 Intel Corporation"
 #define IWM_AUTHOR "<ilw@linux.intel.com>"
@@ -161,7 +162,7 @@ struct iwm_umac_key_hdr {
 	u8 mac[ETH_ALEN];
 	u8 key_idx;
 	u8 multicast; /* BCast encrypt & BCast decrypt of frames FROM mac */
-} __attribute__ ((packed));
+} __packed;
 
 struct iwm_key {
 	struct iwm_umac_key_hdr hdr;
@@ -268,7 +269,9 @@ struct iwm_priv {
 
 	struct sk_buff_head rx_list;
 	struct list_head rx_tickets;
+	spinlock_t ticket_lock;
 	struct list_head rx_packets[IWM_RX_ID_HASH];
+	spinlock_t packet_lock[IWM_RX_ID_HASH];
 	struct workqueue_struct *rx_wq;
 	struct work_struct rx_worker;
 
@@ -349,7 +352,7 @@ int iwm_up(struct iwm_priv *iwm);
 int iwm_down(struct iwm_priv *iwm);
 
 /* TX API */
-u16 iwm_tid_to_queue(u16 tid);
+int iwm_tid_to_queue(u16 tid);
 void iwm_tx_credit_inc(struct iwm_priv *iwm, int id, int total_freed_pages);
 void iwm_tx_worker(struct work_struct *work);
 int iwm_xmit_frame(struct sk_buff *skb, struct net_device *netdev);

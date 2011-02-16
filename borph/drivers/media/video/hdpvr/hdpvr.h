@@ -30,13 +30,17 @@
 #define HD_PVR_PRODUCT_ID	0x4900
 #define HD_PVR_PRODUCT_ID1	0x4901
 #define HD_PVR_PRODUCT_ID2	0x4902
+#define HD_PVR_PRODUCT_ID4	0x4903
+#define HD_PVR_PRODUCT_ID3	0x4982
 
 #define UNSET    (-1U)
 
 #define NUM_BUFFERS 64
 
-#define HDPVR_FIRMWARE_VERSION		0x8
-#define HDPVR_FIRMWARE_VERSION_AC3	0xd
+#define HDPVR_FIRMWARE_VERSION		0x08
+#define HDPVR_FIRMWARE_VERSION_AC3	0x0d
+#define HDPVR_FIRMWARE_VERSION_0X12	0x12
+#define HDPVR_FIRMWARE_VERSION_0X15	0x15
 
 /* #define HDPVR_DEBUG */
 
@@ -109,6 +113,11 @@ struct hdpvr_device {
 	struct mutex		usbc_mutex;
 	u8			*usbc_buf;
 };
+
+static inline struct hdpvr_device *to_hdpvr_dev(struct v4l2_device *v4l2_dev)
+{
+	return container_of(v4l2_dev, struct hdpvr_device, v4l2_dev);
+}
 
 
 /* buffer one bulk urb of data */

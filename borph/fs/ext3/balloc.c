@@ -14,6 +14,7 @@
 #include <linux/time.h>
 #include <linux/capability.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/jbd.h>
 #include <linux/ext3_fs.h>
 #include <linux/ext3_jbd.h>
@@ -676,7 +677,7 @@ void ext3_free_blocks(handle_t *handle, struct inode *inode,
 	}
 	ext3_free_blocks_sb(handle, sb, block, count, &dquot_freed_blocks);
 	if (dquot_freed_blocks)
-		vfs_dq_free_block(inode, dquot_freed_blocks);
+		dquot_free_block(inode, dquot_freed_blocks);
 	return;
 }
 
@@ -791,9 +792,9 @@ find_next_usable_block(ext3_grpblk_t start, struct buffer_head *bh,
 	if (here < 0)
 		here = 0;
 
-	p = ((char *)bh->b_data) + (here >> 3);
+	p = bh->b_data + (here >> 3);
 	r = memscan(p, 0, ((maxblocks + 7) >> 3) - (here >> 3));
-	next = (r - ((char *)bh->b_data)) << 3;
+	next = (r - bh->b_data) << 3;
 
 	if (next < maxblocks && next >= start && ext3_test_allocatable(next, bh))
 		return next;
@@ -809,8 +810,9 @@ find_next_usable_block(ext3_grpblk_t start, struct buffer_head *bh,
 
 /**
  * claim_block()
+ * @lock:		the spin lock for this block group
  * @block:		the free block (group relative) to allocate
- * @bh:			the bufferhead containts the block group bitmap
+ * @bh:			the buffer_head contains the block group bitmap
  *
  * We think we can allocate this block in this bitmap.  Try to set the bit.
  * If that succeeds then check that nobody has allocated and then freed the
@@ -955,9 +957,11 @@ fail_access:
  *		but we will shift to the place where start_block is,
  *		then start from there, when looking for a reservable space.
  *
- *	@size: the target new reservation window size
+ *	@my_rsv: the reservation window
  *
- *	@group_first_block: the first block we consider to start
+ *	@sb: the super block
+ *
+ *	@start_block: the first block we consider to start
  *			the real search from
  *
  *	@last_block:
@@ -1083,7 +1087,7 @@ static int find_next_reservable_window(
  *
  *	failed: we failed to find a reservation window in this group
  *
- *	@rsv: the reservation
+ *	@my_rsv: the reservation window
  *
  *	@grp_goal: The goal (group-relative).  It is where the search for a
  *		free reservable space should start from.
@@ -1272,8 +1276,8 @@ static void try_to_extend_reservation(struct ext3_reserve_window_node *my_rsv,
  * @group:		given allocation block group
  * @bitmap_bh:		bufferhead holds the block bitmap
  * @grp_goal:		given target block within the group
- * @count:		target number of blocks to allocate
  * @my_rsv:		reservation window
+ * @count:		target number of blocks to allocate
  * @errp:		pointer to store the error code
  *
  * This is the main function used to allocate a new block and its reservation
@@ -1502,8 +1506,9 @@ ext3_fsblk_t ext3_new_blocks(handle_t *handle, struct inode *inode,
 	/*
 	 * Check quota for allocation of this block.
 	 */
-	if (vfs_dq_alloc_block(inode, num)) {
-		*errp = -EDQUOT;
+	err = dquot_alloc_block(inode, num);
+	if (err) {
+		*errp = err;
 		return 0;
 	}
 
@@ -1581,6 +1586,12 @@ retry_alloc:
 		if (!gdp)
 			goto io_error;
 		free_blocks = le16_to_cpu(gdp->bg_free_blocks_count);
+		/*
+		 * skip this group (and avoid loading bitmap) if there
+		 * are no free blocks
+		 */
+		if (!free_blocks)
+			continue;
 		/*
 		 * skip this group if the number of
 		 * free blocks is less than half of the reservation
@@ -1713,7 +1724,7 @@ allocated:
 
 	*errp = 0;
 	brelse(bitmap_bh);
-	vfs_dq_free_block(inode, *count-num);
+	dquot_free_block(inode, *count-num);
 	*count = num;
 	return ret_block;
 
@@ -1728,7 +1739,7 @@ out:
 	 * Undo the block allocation
 	 */
 	if (!performed_allocation)
-		vfs_dq_free_block(inode, *count);
+		dquot_free_block(inode, *count);
 	brelse(bitmap_bh);
 	return 0;
 }

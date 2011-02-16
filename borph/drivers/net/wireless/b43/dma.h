@@ -67,7 +67,7 @@
 struct b43_dmadesc32 {
 	__le32 control;
 	__le32 address;
-} __attribute__ ((__packed__));
+} __packed;
 #define B43_DMA32_DCTL_BYTECNT		0x00001FFF
 #define B43_DMA32_DCTL_ADDREXT_MASK		0x00030000
 #define B43_DMA32_DCTL_ADDREXT_SHIFT	16
@@ -140,7 +140,7 @@ struct b43_dmadesc64 {
 	__le32 control1;
 	__le32 address_low;
 	__le32 address_high;
-} __attribute__ ((__packed__));
+} __packed;
 #define B43_DMA64_DCTL0_DTABLEEND		0x10000000
 #define B43_DMA64_DCTL0_IRQ			0x20000000
 #define B43_DMA64_DCTL0_FRAMEEND		0x40000000
@@ -153,10 +153,11 @@ struct b43_dmadesc_generic {
 	union {
 		struct b43_dmadesc32 dma32;
 		struct b43_dmadesc64 dma64;
-	} __attribute__ ((__packed__));
-} __attribute__ ((__packed__));
+	} __packed;
+} __packed;
 
 /* Misc DMA constants */
+#define B43_DMA_RINGMEMSIZE		PAGE_SIZE
 #define B43_DMA0_RX_FRAMEOFFSET		30
 
 /* DMA engine tuning knobs */
@@ -227,8 +228,6 @@ struct b43_dmaring {
 	int used_slots;
 	/* Currently used slot in the ring. */
 	int current_slot;
-	/* Total number of packets sent. Statistics only. */
-	unsigned int nr_tx_packets;
 	/* Frameoffset in octets. */
 	u32 frameoffset;
 	/* Descriptor buffer size. */
@@ -246,12 +245,6 @@ struct b43_dmaring {
 	/* The QOS priority assigned to this ring. Only used for TX rings.
 	 * This is the mac80211 "queue" value. */
 	u8 queue_prio;
-	/* Pointers and size of the originally allocated and mapped memory
-	 * region for the descriptor ring. */
-	void *alloc_descbase;
-	dma_addr_t alloc_dmabase;
-	unsigned int alloc_descsize;
-	/* Pointer to our wireless device. */
 	struct b43_wldev *dev;
 #ifdef CONFIG_B43_DEBUG
 	/* Maximum number of used slots. */
@@ -282,9 +275,6 @@ void b43_dma_free(struct b43_wldev *dev);
 
 void b43_dma_tx_suspend(struct b43_wldev *dev);
 void b43_dma_tx_resume(struct b43_wldev *dev);
-
-void b43_dma_get_tx_stats(struct b43_wldev *dev,
-			  struct ieee80211_tx_queue_stats *stats);
 
 int b43_dma_tx(struct b43_wldev *dev,
 	       struct sk_buff *skb);
