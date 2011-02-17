@@ -22,6 +22,7 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/kernel_stat.h>
+#include <linux/slab.h>
 #include <linux/ptrace.h>
 #include <linux/random.h>	/* for rand_initialize_irq() */
 #include <linux/signal.h>
@@ -29,8 +30,6 @@
 #include <linux/threads.h>
 #include <linux/bitops.h>
 #include <linux/irq.h>
-#include <linux/ratelimit.h>
-#include <linux/acpi.h>
 
 #include <asm/delay.h>
 #include <asm/intrinsics.h>
@@ -261,6 +260,7 @@ void __setup_vector_irq(int cpu)
 }
 
 #if defined(CONFIG_SMP) && (defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_DIG))
+#define IA64_IRQ_MOVE_VECTOR	IA64_DEF_FIRST_DEVICE_VECTOR
 
 static enum vector_domain_type {
 	VECTOR_DOMAIN_NONE,
@@ -469,9 +469,13 @@ ia64_handle_irq (ia64_vector vector, struct pt_regs *regs)
 		sp = ia64_getreg(_IA64_REG_SP);
 
 		if ((sp - bsp) < 1024) {
-			static DEFINE_RATELIMIT_STATE(ratelimit, 5 * HZ, 5);
+			static unsigned char count;
+			static long last_time;
 
-			if (__ratelimit(&ratelimit)) {
+			if (time_after(jiffies, last_time + 5 * HZ))
+				count = 0;
+			if (++count < 5) {
+				last_time = jiffies;
 				printk("ia64_handle_irq: DANGER: less than "
 				       "1KB of free stack space!!\n"
 				       "(bsp=0x%lx, sp=%lx)\n", bsp, sp);
@@ -636,7 +640,6 @@ ia64_native_register_percpu_irq (ia64_vector vec, struct irqaction *action)
 	desc->chip = &irq_type_ia64_lsapic;
 	if (action)
 		setup_irq(irq, action);
-	set_irq_handler(irq, handle_percpu_irq);
 }
 
 void __init
@@ -652,15 +655,15 @@ ia64_native_register_ipi(void)
 void __init
 init_IRQ (void)
 {
-#ifdef CONFIG_ACPI
-	acpi_boot_init();
-#endif
 	ia64_register_ipi();
 	register_percpu_irq(IA64_SPURIOUS_INT_VECTOR, NULL);
 #ifdef CONFIG_SMP
 #if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_DIG)
-	if (vector_domain_type != VECTOR_DOMAIN_NONE)
+	if (vector_domain_type != VECTOR_DOMAIN_NONE) {
+		BUG_ON(IA64_FIRST_DEVICE_VECTOR != IA64_IRQ_MOVE_VECTOR);
+		IA64_FIRST_DEVICE_VECTOR++;
 		register_percpu_irq(IA64_IRQ_MOVE_VECTOR, &irq_move_irqaction);
+	}
 #endif
 #endif
 #ifdef CONFIG_PERFMON

@@ -33,7 +33,6 @@
 
 #include <linux/pci.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "ipath_kernel.h"

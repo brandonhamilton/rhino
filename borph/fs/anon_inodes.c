@@ -12,6 +12,7 @@
 #include <linux/file.h>
 #include <linux/poll.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/mount.h>
@@ -26,28 +27,31 @@ static struct vfsmount *anon_inode_mnt __read_mostly;
 static struct inode *anon_inode_inode;
 static const struct file_operations anon_inode_fops;
 
-static struct dentry *anon_inodefs_mount(struct file_system_type *fs_type,
-				int flags, const char *dev_name, void *data)
+static int anon_inodefs_get_sb(struct file_system_type *fs_type, int flags,
+			       const char *dev_name, void *data,
+			       struct vfsmount *mnt)
 {
-	return mount_pseudo(fs_type, "anon_inode:", NULL, ANON_INODE_FS_MAGIC);
+	return get_sb_pseudo(fs_type, "anon_inode:", NULL, ANON_INODE_FS_MAGIC,
+			     mnt);
 }
 
-/*
- * anon_inodefs_dname() is called from d_path().
- */
-static char *anon_inodefs_dname(struct dentry *dentry, char *buffer, int buflen)
+static int anon_inodefs_delete_dentry(struct dentry *dentry)
 {
-	return dynamic_dname(dentry, buffer, buflen, "anon_inode:%s",
-				dentry->d_name.name);
+	/*
+	 * We faked vfs to believe the dentry was hashed when we created it.
+	 * Now we restore the flag so that dput() will work correctly.
+	 */
+	dentry->d_flags |= DCACHE_UNHASHED;
+	return 1;
 }
 
 static struct file_system_type anon_inode_fs_type = {
 	.name		= "anon_inodefs",
-	.mount		= anon_inodefs_mount,
+	.get_sb		= anon_inodefs_get_sb,
 	.kill_sb	= kill_anon_super,
 };
 static const struct dentry_operations anon_inodefs_dentry_operations = {
-	.d_dname	= anon_inodefs_dname,
+	.d_delete	= anon_inodefs_delete_dentry,
 };
 
 /*
@@ -84,7 +88,7 @@ struct file *anon_inode_getfile(const char *name,
 				void *priv, int flags)
 {
 	struct qstr this;
-	struct path path;
+	struct dentry *dentry;
 	struct file *file;
 	int error;
 
@@ -102,35 +106,38 @@ struct file *anon_inode_getfile(const char *name,
 	this.name = name;
 	this.len = strlen(name);
 	this.hash = 0;
-	path.dentry = d_alloc(anon_inode_mnt->mnt_sb->s_root, &this);
-	if (!path.dentry)
+	dentry = d_alloc(anon_inode_mnt->mnt_sb->s_root, &this);
+	if (!dentry)
 		goto err_module;
 
-	path.mnt = mntget(anon_inode_mnt);
 	/*
 	 * We know the anon_inode inode count is always greater than zero,
-	 * so ihold() is safe.
+	 * so we can avoid doing an igrab() and we can use an open-coded
+	 * atomic_inc().
 	 */
-	ihold(anon_inode_inode);
+	atomic_inc(&anon_inode_inode->i_count);
 
-	path.dentry->d_op = &anon_inodefs_dentry_operations;
-	d_instantiate(path.dentry, anon_inode_inode);
+	dentry->d_op = &anon_inodefs_dentry_operations;
+	/* Do not publish this dentry inside the global dentry hash table */
+	dentry->d_flags &= ~DCACHE_UNHASHED;
+	d_instantiate(dentry, anon_inode_inode);
 
 	error = -ENFILE;
-	file = alloc_file(&path, OPEN_FMODE(flags), fops);
+	file = alloc_file(anon_inode_mnt, dentry,
+			  FMODE_READ | FMODE_WRITE, fops);
 	if (!file)
 		goto err_dput;
 	file->f_mapping = anon_inode_inode->i_mapping;
 
 	file->f_pos = 0;
-	file->f_flags = flags & (O_ACCMODE | O_NONBLOCK);
+	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
 	file->f_version = 0;
 	file->private_data = priv;
 
 	return file;
 
 err_dput:
-	path_put(&path);
+	dput(dentry);
 err_module:
 	module_put(fops->owner);
 	return ERR_PTR(error);
@@ -191,7 +198,6 @@ static struct inode *anon_inode_mkinode(void)
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
-	inode->i_ino = get_next_ino();
 	inode->i_fop = &anon_inode_fops;
 
 	inode->i_mapping->a_ops = &anon_aops;
@@ -206,7 +212,6 @@ static struct inode *anon_inode_mkinode(void)
 	inode->i_mode = S_IRUSR | S_IWUSR;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
-	inode->i_flags |= S_PRIVATE;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	return inode;
 }

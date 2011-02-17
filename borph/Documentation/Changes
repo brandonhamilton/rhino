@@ -49,8 +49,6 @@ o  oprofile               0.9                     # oprofiled --version
 o  udev                   081                     # udevinfo -V
 o  grub                   0.93                    # grub --version
 o  mcelog		  0.6
-o  iptables               1.4.2                   # iptables -V
-
 
 Kernel compilation
 ==================
@@ -331,7 +329,7 @@ o  <ftp://ftp.kernel.org/pub/linux/kernel/people/rusty/modules/>
 
 Mkinitrd
 --------
-o  <https://code.launchpad.net/initrd-tools/main>
+o  <ftp://rawhide.redhat.com/pub/rawhide/SRPMS/SRPMS/>
 
 E2fsprogs
 ---------
@@ -343,11 +341,11 @@ o  <http://jfs.sourceforge.net/>
 
 Reiserfsprogs
 -------------
-o  <http://www.kernel.org/pub/linux/utils/fs/reiserfs/>
+o  <http://www.namesys.com/pub/reiserfsprogs/reiserfsprogs-3.6.3.tar.gz>
 
 Xfsprogs
 --------
-o  <ftp://oss.sgi.com/projects/xfs/>
+o  <ftp://oss.sgi.com/projects/xfs/download/>
 
 Pcmciautils
 -----------
@@ -387,18 +385,18 @@ o <http://sourceforge.net/projects/fuse>
 
 mcelog
 ------
-o <ftp://ftp.kernel.org/pub/linux/utils/cpu/mce/>
+o <ftp://ftp.kernel.org/pub/linux/utils/cpu/mce/mcelog/>
 
 Networking
 **********
 
 PPP
 ---
-o  <ftp://ftp.samba.org/pub/ppp/>
+o  <ftp://ftp.samba.org/pub/ppp/ppp-2.4.0.tar.gz>
 
 Isdn4k-utils
 ------------
-o  <ftp://ftp.isdn4linux.de/pub/isdn4linux/utils/>
+o  <ftp://ftp.isdn4linux.de/pub/isdn4linux/utils/isdn4k-utils.v3.1pre1.tar.gz>
 
 NFS-utils
 ---------

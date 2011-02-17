@@ -12,7 +12,6 @@
 
 #include <linux/dccp.h>
 #include <linux/icmp.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/random.h>
@@ -105,7 +104,7 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		goto failure;
 
 	/* OK, now commit destination to socket.  */
-	sk_setup_caps(sk, &rt->dst);
+	sk_setup_caps(sk, &rt->u.dst);
 
 	dp->dccps_iss = secure_dccp_sequence_number(inet->inet_saddr,
 						    inet->inet_daddr,
@@ -349,7 +348,7 @@ static inline __sum16 dccp_v4_csum_finish(struct sk_buff *skb,
 	return csum_tcpudp_magic(src, dst, skb->len, IPPROTO_DCCP, skb->csum);
 }
 
-void dccp_v4_send_check(struct sock *sk, struct sk_buff *skb)
+void dccp_v4_send_check(struct sock *sk, int unused, struct sk_buff *skb)
 {
 	const struct inet_sock *inet = inet_sk(sk);
 	struct dccp_hdr *dh = dccp_hdr(skb);
@@ -392,7 +391,7 @@ struct sock *dccp_v4_request_recv_sock(struct sock *sk, struct sk_buff *skb,
 
 	newsk = dccp_create_openreq_child(sk, req, skb);
 	if (newsk == NULL)
-		goto exit_nonewsk;
+		goto exit;
 
 	sk_setup_caps(newsk, dst);
 
@@ -409,20 +408,16 @@ struct sock *dccp_v4_request_recv_sock(struct sock *sk, struct sk_buff *skb,
 
 	dccp_sync_mss(newsk, dst_mtu(dst));
 
-	if (__inet_inherit_port(sk, newsk) < 0) {
-		sock_put(newsk);
-		goto exit;
-	}
 	__inet_hash_nolisten(newsk, NULL);
+	__inet_inherit_port(sk, newsk);
 
 	return newsk;
 
 exit_overflow:
 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
-exit_nonewsk:
-	dst_release(dst);
 exit:
 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENDROPS);
+	dst_release(dst);
 	return NULL;
 }
 
@@ -479,7 +474,7 @@ static struct dst_entry* dccp_v4_route_skb(struct net *net, struct sock *sk,
 		return NULL;
 	}
 
-	return &rt->dst;
+	return &rt->u.dst;
 }
 
 static int dccp_v4_send_response(struct sock *sk, struct request_sock *req,
@@ -1001,16 +996,16 @@ static struct inet_protosw dccp_v4_protosw = {
 	.flags		= INET_PROTOSW_ICSK,
 };
 
-static int __net_init dccp_v4_init_net(struct net *net)
+static int dccp_v4_init_net(struct net *net)
 {
-	if (dccp_hashinfo.bhash == NULL)
-		return -ESOCKTNOSUPPORT;
+	int err;
 
-	return inet_ctl_sock_create(&net->dccp.v4_ctl_sk, PF_INET,
-				    SOCK_DCCP, IPPROTO_DCCP, net);
+	err = inet_ctl_sock_create(&net->dccp.v4_ctl_sk, PF_INET,
+				   SOCK_DCCP, IPPROTO_DCCP, net);
+	return err;
 }
 
-static void __net_exit dccp_v4_exit_net(struct net *net)
+static void dccp_v4_exit_net(struct net *net)
 {
 	inet_ctl_sock_destroy(net->dccp.v4_ctl_sk);
 }

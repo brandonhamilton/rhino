@@ -58,10 +58,10 @@ static int fwh_xxlock_oneblock(struct map_info *map, struct flchip *chip,
 	 * to flash memory - that means that we don't have to check status
 	 * and timeout.
 	 */
-	mutex_lock(&chip->mutex);
+	spin_lock(chip->mutex);
 	ret = get_chip(map, chip, adr, FL_LOCKING);
 	if (ret) {
-		mutex_unlock(&chip->mutex);
+		spin_unlock(chip->mutex);
 		return ret;
 	}
 
@@ -72,7 +72,7 @@ static int fwh_xxlock_oneblock(struct map_info *map, struct flchip *chip,
 	/* Done and happy. */
 	chip->state = chip->oldstate;
 	put_chip(map, chip, adr);
-	mutex_unlock(&chip->mutex);
+	spin_unlock(chip->mutex);
 	return 0;
 }
 

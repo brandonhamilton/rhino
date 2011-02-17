@@ -165,7 +165,7 @@ label##2:						\
 	.pushsection sect,"a";				\
 	.align 2;					\
 label##3:					       	\
-	FTR_ENTRY_OFFSET label##1b-label##3b;		\
+	.long label##1b-label##3b;			\
 	.popsection;
 
 #endif /* __ASM_POWERPC_FEATURE_FIXUPS_H */

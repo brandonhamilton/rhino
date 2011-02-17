@@ -25,8 +25,6 @@
 #include <linux/device.h>
 #include <linux/i2c.h>
 #include <linux/gpio.h>
-#include <linux/regulator/consumer.h>
-#include <linux/slab.h>
 #include <sound/tpa6130a2-plat.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
@@ -40,10 +38,8 @@ static struct i2c_client *tpa6130a2_client;
 struct tpa6130a2_data {
 	struct mutex mutex;
 	unsigned char regs[TPA6130A2_CACHEREGNUM];
-	struct regulator *supply;
 	int power_gpio;
 	unsigned char power_state;
-	enum tpa_model id;
 };
 
 static int tpa6130a2_i2c_read(int reg)
@@ -78,10 +74,8 @@ static int tpa6130a2_i2c_write(int reg, u8 value)
 
 	if (data->power_state) {
 		val = i2c_smbus_write_byte_data(tpa6130a2_client, reg, value);
-		if (val < 0) {
+		if (val < 0)
 			dev_err(&tpa6130a2_client->dev, "Write failed\n");
-			return val;
-		}
 	}
 
 	/* Either powered on or off, we save the context */
@@ -100,87 +94,53 @@ static u8 tpa6130a2_read(int reg)
 	return data->regs[reg];
 }
 
-static int tpa6130a2_initialize(void)
+static void tpa6130a2_initialize(void)
 {
 	struct tpa6130a2_data *data;
-	int i, ret = 0;
+	int i;
 
 	BUG_ON(tpa6130a2_client == NULL);
 	data = i2c_get_clientdata(tpa6130a2_client);
 
-	for (i = 1; i < TPA6130A2_REG_VERSION; i++) {
-		ret = tpa6130a2_i2c_write(i, data->regs[i]);
-		if (ret < 0)
-			break;
-	}
-
-	return ret;
+	for (i = 1; i < TPA6130A2_REG_VERSION; i++)
+		tpa6130a2_i2c_write(i, data->regs[i]);
 }
 
-static int tpa6130a2_power(int power)
+static void tpa6130a2_power(int power)
 {
 	struct	tpa6130a2_data *data;
 	u8	val;
-	int	ret = 0;
 
 	BUG_ON(tpa6130a2_client == NULL);
 	data = i2c_get_clientdata(tpa6130a2_client);
 
 	mutex_lock(&data->mutex);
-	if (power && !data->power_state) {
+	if (power) {
 		/* Power on */
-		if (data->power_gpio >= 0)
+		if (data->power_gpio >= 0) {
 			gpio_set_value(data->power_gpio, 1);
-
-		ret = regulator_enable(data->supply);
-		if (ret != 0) {
-			dev_err(&tpa6130a2_client->dev,
-				"Failed to enable supply: %d\n", ret);
-			goto exit;
+			data->power_state = 1;
+			tpa6130a2_initialize();
 		}
-
-		data->power_state = 1;
-		ret = tpa6130a2_initialize();
-		if (ret < 0) {
-			dev_err(&tpa6130a2_client->dev,
-				"Failed to initialize chip\n");
-			if (data->power_gpio >= 0)
-				gpio_set_value(data->power_gpio, 0);
-			regulator_disable(data->supply);
-			data->power_state = 0;
-			goto exit;
-		}
-
 		/* Clear SWS */
 		val = tpa6130a2_read(TPA6130A2_REG_CONTROL);
 		val &= ~TPA6130A2_SWS;
 		tpa6130a2_i2c_write(TPA6130A2_REG_CONTROL, val);
-	} else if (!power && data->power_state) {
+	} else {
 		/* set SWS */
 		val = tpa6130a2_read(TPA6130A2_REG_CONTROL);
 		val |= TPA6130A2_SWS;
 		tpa6130a2_i2c_write(TPA6130A2_REG_CONTROL, val);
-
 		/* Power off */
-		if (data->power_gpio >= 0)
+		if (data->power_gpio >= 0) {
 			gpio_set_value(data->power_gpio, 0);
-
-		ret = regulator_disable(data->supply);
-		if (ret != 0) {
-			dev_err(&tpa6130a2_client->dev,
-				"Failed to disable supply: %d\n", ret);
-			goto exit;
+			data->power_state = 0;
 		}
-
-		data->power_state = 0;
 	}
-
-exit:
 	mutex_unlock(&data->mutex);
-	return ret;
 }
 
-static int tpa6130a2_get_volsw(struct snd_kcontrol *kcontrol,
+static int tpa6130a2_get_reg(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
 	struct soc_mixer_control *mc =
@@ -188,8 +148,7 @@ static int tpa6130a2_get_volsw(struct snd_kcontrol *kcontrol,
 	struct tpa6130a2_data *data;
 	unsigned int reg = mc->reg;
 	unsigned int shift = mc->shift;
-	int max = mc->max;
-	unsigned int mask = (1 << fls(max)) - 1;
+	unsigned int mask = mc->max;
 	unsigned int invert = mc->invert;
 
 	BUG_ON(tpa6130a2_client == NULL);
@@ -202,13 +161,13 @@ static int tpa6130a2_get_volsw(struct snd_kcontrol *kcontrol,
 
 	if (invert)
 		ucontrol->value.integer.value[0] =
-			max - ucontrol->value.integer.value[0];
+			mask - ucontrol->value.integer.value[0];
 
 	mutex_unlock(&data->mutex);
 	return 0;
 }
 
-static int tpa6130a2_put_volsw(struct snd_kcontrol *kcontrol,
+static int tpa6130a2_set_reg(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {
 	struct soc_mixer_control *mc =
@@ -216,8 +175,7 @@ static int tpa6130a2_put_volsw(struct snd_kcontrol *kcontrol,
 	struct tpa6130a2_data *data;
 	unsigned int reg = mc->reg;
 	unsigned int shift = mc->shift;
-	int max = mc->max;
-	unsigned int mask = (1 << fls(max)) - 1;
+	unsigned int mask = mc->max;
 	unsigned int invert = mc->invert;
 	unsigned int val = (ucontrol->value.integer.value[0] & mask);
 	unsigned int val_reg;
@@ -226,7 +184,7 @@ static int tpa6130a2_put_volsw(struct snd_kcontrol *kcontrol,
 	data = i2c_get_clientdata(tpa6130a2_client);
 
 	if (invert)
-		val = max - val;
+		val = mask - val;
 
 	mutex_lock(&data->mutex);
 
@@ -266,22 +224,8 @@ static const unsigned int tpa6130_tlv[] = {
 static const struct snd_kcontrol_new tpa6130a2_controls[] = {
 	SOC_SINGLE_EXT_TLV("TPA6130A2 Headphone Playback Volume",
 		       TPA6130A2_REG_VOL_MUTE, 0, 0x3f, 0,
-		       tpa6130a2_get_volsw, tpa6130a2_put_volsw,
+		       tpa6130a2_get_reg, tpa6130a2_set_reg,
 		       tpa6130_tlv),
-};
-
-static const unsigned int tpa6140_tlv[] = {
-	TLV_DB_RANGE_HEAD(3),
-	0, 8, TLV_DB_SCALE_ITEM(-5900, 400, 0),
-	9, 16, TLV_DB_SCALE_ITEM(-2500, 200, 0),
-	17, 31, TLV_DB_SCALE_ITEM(-1000, 100, 0),
-};
-
-static const struct snd_kcontrol_new tpa6140a2_controls[] = {
-	SOC_SINGLE_EXT_TLV("TPA6140A2 Headphone Playback Volume",
-		       TPA6130A2_REG_VOL_MUTE, 1, 0x1f, 0,
-		       tpa6130a2_get_volsw, tpa6130a2_put_volsw,
-		       tpa6140_tlv),
 };
 
 /*
@@ -293,7 +237,11 @@ static const struct snd_kcontrol_new tpa6140a2_controls[] = {
  */
 static void tpa6130a2_channel_enable(u8 channel, int enable)
 {
+	struct	tpa6130a2_data *data;
 	u8	val;
+
+	BUG_ON(tpa6130a2_client == NULL);
+	data = i2c_get_clientdata(tpa6130a2_client);
 
 	if (enable) {
 		/* Enable channel */
@@ -351,17 +299,15 @@ static int tpa6130a2_right_event(struct snd_soc_dapm_widget *w,
 static int tpa6130a2_supply_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	int ret = 0;
-
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		ret = tpa6130a2_power(1);
+		tpa6130a2_power(1);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
-		ret = tpa6130a2_power(0);
+		tpa6130a2_power(0);
 		break;
 	}
-	return ret;
+	return 0;
 }
 
 static const struct snd_soc_dapm_widget tpa6130a2_dapm_widgets[] = {
@@ -375,8 +321,8 @@ static const struct snd_soc_dapm_widget tpa6130a2_dapm_widgets[] = {
 			0, 0, tpa6130a2_supply_event,
 			SND_SOC_DAPM_POST_PMU|SND_SOC_DAPM_POST_PMD),
 	/* Outputs */
-	SND_SOC_DAPM_OUTPUT("TPA6130A2 Headphone Left"),
-	SND_SOC_DAPM_OUTPUT("TPA6130A2 Headphone Right"),
+	SND_SOC_DAPM_HP("TPA6130A2 Headphone Left", NULL),
+	SND_SOC_DAPM_HP("TPA6130A2 Headphone Right", NULL),
 };
 
 static const struct snd_soc_dapm_route audio_map[] = {
@@ -389,35 +335,23 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 int tpa6130a2_add_controls(struct snd_soc_codec *codec)
 {
-	struct	tpa6130a2_data *data;
-
-	if (tpa6130a2_client == NULL)
-		return -ENODEV;
-
-	data = i2c_get_clientdata(tpa6130a2_client);
-
 	snd_soc_dapm_new_controls(codec, tpa6130a2_dapm_widgets,
 				ARRAY_SIZE(tpa6130a2_dapm_widgets));
 
 	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
-	if (data->id == TPA6140A2)
-		return snd_soc_add_controls(codec, tpa6140a2_controls,
-						ARRAY_SIZE(tpa6140a2_controls));
-	else
-		return snd_soc_add_controls(codec, tpa6130a2_controls,
-						ARRAY_SIZE(tpa6130a2_controls));
+	return snd_soc_add_controls(codec, tpa6130a2_controls,
+				ARRAY_SIZE(tpa6130a2_controls));
 
 }
 EXPORT_SYMBOL_GPL(tpa6130a2_add_controls);
 
-static int __devinit tpa6130a2_probe(struct i2c_client *client,
-				     const struct i2c_device_id *id)
+static int tpa6130a2_probe(struct i2c_client *client,
+			   const struct i2c_device_id *id)
 {
 	struct device *dev;
 	struct tpa6130a2_data *data;
 	struct tpa6130a2_platform_data *pdata;
-	const char *regulator;
 	int ret;
 
 	dev = &client->dev;
@@ -440,7 +374,6 @@ static int __devinit tpa6130a2_probe(struct i2c_client *client,
 
 	pdata = client->dev.platform_data;
 	data->power_gpio = pdata->power_gpio;
-	data->id = pdata->id;
 
 	mutex_init(&data->mutex);
 
@@ -454,34 +387,15 @@ static int __devinit tpa6130a2_probe(struct i2c_client *client,
 		if (ret < 0) {
 			dev_err(dev, "Failed to request power GPIO (%d)\n",
 				data->power_gpio);
-			goto err_gpio;
+			goto fail;
 		}
 		gpio_direction_output(data->power_gpio, 0);
+	} else {
+		data->power_state = 1;
+		tpa6130a2_initialize();
 	}
 
-	switch (data->id) {
-	default:
-		dev_warn(dev, "Unknown TPA model (%d). Assuming 6130A2\n",
-			 pdata->id);
-	case TPA6130A2:
-		regulator = "Vdd";
-		break;
-	case TPA6140A2:
-		regulator = "AVdd";
-		break;
-	}
-
-	data->supply = regulator_get(dev, regulator);
-	if (IS_ERR(data->supply)) {
-		ret = PTR_ERR(data->supply);
-		dev_err(dev, "Failed to request supply: %d\n", ret);
-		goto err_regulator;
-	}
-
-	ret = tpa6130a2_power(1);
-	if (ret != 0)
-		goto err_power;
-
+	tpa6130a2_power(1);
 
 	/* Read version */
 	ret = tpa6130a2_i2c_read(TPA6130A2_REG_VERSION) &
@@ -490,18 +404,10 @@ static int __devinit tpa6130a2_probe(struct i2c_client *client,
 		dev_warn(dev, "UNTESTED version detected (%d)\n", ret);
 
 	/* Disable the chip */
-	ret = tpa6130a2_power(0);
-	if (ret != 0)
-		goto err_power;
+	tpa6130a2_power(0);
 
 	return 0;
-
-err_power:
-	regulator_put(data->supply);
-err_regulator:
-	if (data->power_gpio >= 0)
-		gpio_free(data->power_gpio);
-err_gpio:
+fail:
 	kfree(data);
 	i2c_set_clientdata(tpa6130a2_client, NULL);
 	tpa6130a2_client = NULL;
@@ -509,7 +415,7 @@ err_gpio:
 	return ret;
 }
 
-static int __devexit tpa6130a2_remove(struct i2c_client *client)
+static int tpa6130a2_remove(struct i2c_client *client)
 {
 	struct tpa6130a2_data *data = i2c_get_clientdata(client);
 
@@ -517,9 +423,6 @@ static int __devexit tpa6130a2_remove(struct i2c_client *client)
 
 	if (data->power_gpio >= 0)
 		gpio_free(data->power_gpio);
-
-	regulator_put(data->supply);
-
 	kfree(data);
 	tpa6130a2_client = NULL;
 

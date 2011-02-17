@@ -1091,7 +1091,7 @@ err:
 	return -ENODEV;
 }
 
-int __init musb_platform_init(struct musb *musb, void *board_data)
+int __init musb_platform_init(struct musb *musb)
 {
 	struct platform_device	*pdev;
 	struct resource		*mem;
@@ -1118,7 +1118,7 @@ int __init musb_platform_init(struct musb *musb, void *board_data)
 	}
 	musb->sync = mem->start;
 
-	sync = ioremap(mem->start, resource_size(mem));
+	sync = ioremap(mem->start, mem->end - mem->start + 1);
 	if (!sync) {
 		pr_debug("ioremap for sync failed\n");
 		ret = -ENOMEM;
@@ -1152,8 +1152,6 @@ done:
 	if (ret < 0) {
 		if (sync)
 			iounmap(sync);
-
-		otg_put_transceiver(musb->xceiv);
 		usb_nop_xceiv_unregister();
 	}
 	return ret;
@@ -1168,8 +1166,6 @@ int musb_platform_exit(struct musb *musb)
 		musb->board_set_power(0);
 
 	iounmap(musb->sync_va);
-
-	otg_put_transceiver(musb->xceiv);
 	usb_nop_xceiv_unregister();
 	return 0;
 }

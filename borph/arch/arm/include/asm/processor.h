@@ -19,7 +19,6 @@
 
 #ifdef __KERNEL__
 
-#include <asm/hw_breakpoint.h>
 #include <asm/ptrace.h>
 #include <asm/types.h>
 
@@ -42,9 +41,6 @@ struct debug_entry {
 struct debug_info {
 	int			nsaved;
 	struct debug_entry	bp[2];
-#ifdef CONFIG_HAVE_HW_BREAKPOINT
-	struct perf_event	*hbp[ARM_MAX_HBP_SLOTS];
-#endif
 };
 
 struct thread_struct {
@@ -95,11 +91,7 @@ extern void release_thread(struct task_struct *);
 
 unsigned long get_wchan(struct task_struct *p);
 
-#if __LINUX_ARM_ARCH__ == 6
-#define cpu_relax()			smp_mb()
-#else
 #define cpu_relax()			barrier()
-#endif
 
 /*
  * Create a new kernel thread

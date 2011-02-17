@@ -35,7 +35,7 @@ struct zd_ctrlset {
 	__le16 current_length;
 	u8     service;
 	__le16  next_frame_length;
-} __packed;
+} __attribute__((packed));
 
 #define ZD_CS_RESERVED_SIZE	25
 
@@ -106,7 +106,7 @@ struct zd_ctrlset {
 struct rx_length_info {
 	__le16 length[3];
 	__le16 tag;
-} __packed;
+} __attribute__((packed));
 
 #define RX_LENGTH_INFO_TAG		0x697e
 
@@ -117,7 +117,7 @@ struct rx_status {
 	u8 signal_quality_ofdm;
 	u8 decryption_type;
 	u8 frame_status;
-} __packed;
+} __attribute__((packed));
 
 /* rx_status field decryption_type */
 #define ZD_RX_NO_WEP	0
@@ -153,7 +153,7 @@ struct tx_status {
 	u8 mac[ETH_ALEN];
 	u8 retry;
 	u8 failure;
-} __packed;
+} __attribute__((packed));
 
 enum mac_flags {
 	MAC_FIXED_CHANNEL = 0x01,
@@ -212,9 +212,8 @@ struct zd_mac {
 #define ZD_REGDOMAIN_ETSI	0x30
 #define ZD_REGDOMAIN_SPAIN	0x31
 #define ZD_REGDOMAIN_FRANCE	0x32
-#define ZD_REGDOMAIN_JAPAN_2	0x40
+#define ZD_REGDOMAIN_JAPAN_ADD	0x40
 #define ZD_REGDOMAIN_JAPAN	0x41
-#define ZD_REGDOMAIN_JAPAN_3	0x49
 
 enum {
 	MIN_CHANNEL24 = 1,
@@ -226,7 +225,7 @@ enum {
 struct ofdm_plcp_header {
 	u8 prefix[3];
 	__le16 service;
-} __packed;
+} __attribute__((packed));
 
 static inline u8 zd_ofdm_plcp_header_rate(const struct ofdm_plcp_header *header)
 {
@@ -253,7 +252,7 @@ struct cck_plcp_header {
 	u8 service;
 	__le16 length;
 	__le16 crc16;
-} __packed;
+} __attribute__((packed));
 
 static inline u8 zd_cck_plcp_header_signal(const struct cck_plcp_header *header)
 {

@@ -17,7 +17,6 @@
  */
 #include <linux/errno.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -617,7 +616,7 @@ void fnic_flush_tx(struct fnic *fnic)
 	struct sk_buff *skb;
 	struct fc_frame *fp;
 
-	while ((skb = skb_dequeue(&fnic->tx_queue))) {
+	while ((skb = skb_dequeue(&fnic->frame_queue))) {
 		fp = (struct fc_frame *)skb;
 		fnic_send_frame(fnic, fp);
 	}

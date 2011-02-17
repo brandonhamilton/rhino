@@ -29,7 +29,6 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/vmalloc.h>
 #include <linux/string.h>
@@ -117,7 +116,7 @@ static int proc_viopath_show(struct seq_file *m, void *v)
 	u16 vlanMap;
 	dma_addr_t handle;
 	HvLpEvent_Rc hvrc;
-	DECLARE_COMPLETION_ONSTACK(done);
+	DECLARE_COMPLETION(done);
 	struct device_node *node;
 	const char *sysid;
 

@@ -38,8 +38,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/slab.h>
-
 #include "ehca_tools.h"
 #include "ipz_pt_fn.h"
 #include "ehca_classes.h"

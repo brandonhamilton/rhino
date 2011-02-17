@@ -12,7 +12,6 @@
 #include <linux/io.h>
 #include <linux/rtc.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
@@ -83,6 +82,12 @@ struct rtc_plat_data {
 	void __iomem *ioaddr;
 	int irq;
 	struct clk *clk;
+	unsigned int irqen;
+	int alrm_sec;
+	int alrm_min;
+	int alrm_hour;
+	int alrm_mday;
+	struct timespec mxc_rtc_delta;
 	struct rtc_time g_rtc_alarm;
 };
 
@@ -373,27 +378,50 @@ static struct rtc_class_ops mxc_rtc_ops = {
 
 static int __init mxc_rtc_probe(struct platform_device *pdev)
 {
+	struct clk *clk;
 	struct resource *res;
 	struct rtc_device *rtc;
 	struct rtc_plat_data *pdata = NULL;
 	u32 reg;
-	unsigned long rate;
-	int ret;
+	int ret, rate;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		return -ENODEV;
 
-	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
+	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return -ENOMEM;
 
-	if (!devm_request_mem_region(&pdev->dev, res->start,
-				     resource_size(res), pdev->name))
-		return -EBUSY;
+	pdata->ioaddr = ioremap(res->start, resource_size(res));
 
-	pdata->ioaddr = devm_ioremap(&pdev->dev, res->start,
-				     resource_size(res));
+	clk = clk_get(&pdev->dev, "ckil");
+	if (IS_ERR(clk))
+		return PTR_ERR(clk);
+
+	rate = clk_get_rate(clk);
+	clk_put(clk);
+
+	if (rate == 32768)
+		reg = RTC_INPUT_CLK_32768HZ;
+	else if (rate == 32000)
+		reg = RTC_INPUT_CLK_32000HZ;
+	else if (rate == 38400)
+		reg = RTC_INPUT_CLK_38400HZ;
+	else {
+		dev_err(&pdev->dev, "rtc clock is not valid (%lu)\n",
+			clk_get_rate(clk));
+		ret = -EINVAL;
+		goto exit_free_pdata;
+	}
+
+	reg |= RTC_ENABLE_BIT;
+	writew(reg, (pdata->ioaddr + RTC_RTCCTL));
+	if (((readw(pdata->ioaddr + RTC_RTCCTL)) & RTC_ENABLE_BIT) == 0) {
+		dev_err(&pdev->dev, "hardware module can't be enabled!\n");
+		ret = -EIO;
+		goto exit_free_pdata;
+	}
 
 	pdata->clk = clk_get(&pdev->dev, "rtc");
 	if (IS_ERR(pdata->clk)) {
@@ -403,27 +431,6 @@ static int __init mxc_rtc_probe(struct platform_device *pdev)
 	}
 
 	clk_enable(pdata->clk);
-	rate = clk_get_rate(pdata->clk);
-
-	if (rate == 32768)
-		reg = RTC_INPUT_CLK_32768HZ;
-	else if (rate == 32000)
-		reg = RTC_INPUT_CLK_32000HZ;
-	else if (rate == 38400)
-		reg = RTC_INPUT_CLK_38400HZ;
-	else {
-		dev_err(&pdev->dev, "rtc clock is not valid (%lu)\n", rate);
-		ret = -EINVAL;
-		goto exit_put_clk;
-	}
-
-	reg |= RTC_ENABLE_BIT;
-	writew(reg, (pdata->ioaddr + RTC_RTCCTL));
-	if (((readw(pdata->ioaddr + RTC_RTCCTL)) & RTC_ENABLE_BIT) == 0) {
-		dev_err(&pdev->dev, "hardware module can't be enabled!\n");
-		ret = -EIO;
-		goto exit_put_clk;
-	}
 
 	rtc = rtc_device_register(pdev->name, &pdev->dev, &mxc_rtc_ops,
 				  THIS_MODULE);
@@ -439,8 +446,8 @@ static int __init mxc_rtc_probe(struct platform_device *pdev)
 	pdata->irq = platform_get_irq(pdev, 0);
 
 	if (pdata->irq >= 0 &&
-	    devm_request_irq(&pdev->dev, pdata->irq, mxc_rtc_interrupt,
-			     IRQF_SHARED, pdev->name, pdev) < 0) {
+	    request_irq(pdata->irq, mxc_rtc_interrupt, IRQF_SHARED,
+			pdev->name, pdev) < 0) {
 		dev_warn(&pdev->dev, "interrupt not available.\n");
 		pdata->irq = -1;
 	}
@@ -448,10 +455,10 @@ static int __init mxc_rtc_probe(struct platform_device *pdev)
 	return 0;
 
 exit_put_clk:
-	clk_disable(pdata->clk);
 	clk_put(pdata->clk);
 
 exit_free_pdata:
+	kfree(pdata);
 
 	return ret;
 }
@@ -462,8 +469,12 @@ static int __exit mxc_rtc_remove(struct platform_device *pdev)
 
 	rtc_device_unregister(pdata->rtc);
 
+	if (pdata->irq >= 0)
+		free_irq(pdata->irq, pdev);
+
 	clk_disable(pdata->clk);
 	clk_put(pdata->clk);
+	kfree(pdata);
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;

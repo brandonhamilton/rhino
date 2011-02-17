@@ -5,7 +5,6 @@
 #include <linux/errno.h>
 #include <linux/pagemap.h>
 #include <linux/xattr.h>
-#include <linux/slab.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/reiserfs_xattr.h>
 #include <linux/reiserfs_acl.h>
@@ -16,10 +15,8 @@ static int reiserfs_set_acl(struct reiserfs_transaction_handle *th,
 			    struct posix_acl *acl);
 
 static int
-posix_acl_set(struct dentry *dentry, const char *name, const void *value,
-		size_t size, int flags, int type)
+xattr_set_acl(struct inode *inode, int type, const void *value, size_t size)
 {
-	struct inode *inode = dentry->d_inode;
 	struct posix_acl *acl;
 	int error, error2;
 	struct reiserfs_transaction_handle th;
@@ -63,16 +60,15 @@ posix_acl_set(struct dentry *dentry, const char *name, const void *value,
 }
 
 static int
-posix_acl_get(struct dentry *dentry, const char *name, void *buffer,
-		size_t size, int type)
+xattr_get_acl(struct inode *inode, int type, void *buffer, size_t size)
 {
 	struct posix_acl *acl;
 	int error;
 
-	if (!reiserfs_posixacl(dentry->d_sb))
+	if (!reiserfs_posixacl(inode->i_sb))
 		return -EOPNOTSUPP;
 
-	acl = reiserfs_get_acl(dentry->d_inode, type);
+	acl = reiserfs_get_acl(inode, type);
 	if (IS_ERR(acl))
 		return PTR_ERR(acl);
 	if (acl == NULL)
@@ -456,9 +452,7 @@ int reiserfs_acl_chmod(struct inode *inode)
 		return 0;
 	}
 
-	reiserfs_write_unlock(inode->i_sb);
 	acl = reiserfs_get_acl(inode, ACL_TYPE_ACCESS);
-	reiserfs_write_lock(inode->i_sb);
 	if (!acl)
 		return 0;
 	if (IS_ERR(acl))
@@ -472,9 +466,7 @@ int reiserfs_acl_chmod(struct inode *inode)
 		struct reiserfs_transaction_handle th;
 		size_t size = reiserfs_xattr_nblocks(inode,
 					     reiserfs_acl_size(clone->a_count));
-		int depth;
-
-		depth = reiserfs_write_lock_once(inode->i_sb);
+		reiserfs_write_lock(inode->i_sb);
 		error = journal_begin(&th, inode->i_sb, size * 2);
 		if (!error) {
 			int error2;
@@ -484,48 +476,82 @@ int reiserfs_acl_chmod(struct inode *inode)
 			if (error2)
 				error = error2;
 		}
-		reiserfs_write_unlock_once(inode->i_sb, depth);
+		reiserfs_write_unlock(inode->i_sb);
 	}
 	posix_acl_release(clone);
 	return error;
 }
 
-static size_t posix_acl_access_list(struct dentry *dentry, char *list,
+static int
+posix_acl_access_get(struct inode *inode, const char *name,
+		     void *buffer, size_t size)
+{
+	if (strlen(name) != sizeof(POSIX_ACL_XATTR_ACCESS) - 1)
+		return -EINVAL;
+	return xattr_get_acl(inode, ACL_TYPE_ACCESS, buffer, size);
+}
+
+static int
+posix_acl_access_set(struct inode *inode, const char *name,
+		     const void *value, size_t size, int flags)
+{
+	if (strlen(name) != sizeof(POSIX_ACL_XATTR_ACCESS) - 1)
+		return -EINVAL;
+	return xattr_set_acl(inode, ACL_TYPE_ACCESS, value, size);
+}
+
+static size_t posix_acl_access_list(struct inode *inode, char *list,
 				    size_t list_size, const char *name,
-				    size_t name_len, int type)
+				    size_t name_len)
 {
 	const size_t size = sizeof(POSIX_ACL_XATTR_ACCESS);
-	if (!reiserfs_posixacl(dentry->d_sb))
+	if (!reiserfs_posixacl(inode->i_sb))
 		return 0;
 	if (list && size <= list_size)
 		memcpy(list, POSIX_ACL_XATTR_ACCESS, size);
 	return size;
 }
 
-const struct xattr_handler reiserfs_posix_acl_access_handler = {
+struct xattr_handler reiserfs_posix_acl_access_handler = {
 	.prefix = POSIX_ACL_XATTR_ACCESS,
-	.flags = ACL_TYPE_ACCESS,
-	.get = posix_acl_get,
-	.set = posix_acl_set,
+	.get = posix_acl_access_get,
+	.set = posix_acl_access_set,
 	.list = posix_acl_access_list,
 };
 
-static size_t posix_acl_default_list(struct dentry *dentry, char *list,
+static int
+posix_acl_default_get(struct inode *inode, const char *name,
+		      void *buffer, size_t size)
+{
+	if (strlen(name) != sizeof(POSIX_ACL_XATTR_DEFAULT) - 1)
+		return -EINVAL;
+	return xattr_get_acl(inode, ACL_TYPE_DEFAULT, buffer, size);
+}
+
+static int
+posix_acl_default_set(struct inode *inode, const char *name,
+		      const void *value, size_t size, int flags)
+{
+	if (strlen(name) != sizeof(POSIX_ACL_XATTR_DEFAULT) - 1)
+		return -EINVAL;
+	return xattr_set_acl(inode, ACL_TYPE_DEFAULT, value, size);
+}
+
+static size_t posix_acl_default_list(struct inode *inode, char *list,
 				     size_t list_size, const char *name,
-				     size_t name_len, int type)
+				     size_t name_len)
 {
 	const size_t size = sizeof(POSIX_ACL_XATTR_DEFAULT);
-	if (!reiserfs_posixacl(dentry->d_sb))
+	if (!reiserfs_posixacl(inode->i_sb))
 		return 0;
 	if (list && size <= list_size)
 		memcpy(list, POSIX_ACL_XATTR_DEFAULT, size);
 	return size;
 }
 
-const struct xattr_handler reiserfs_posix_acl_default_handler = {
+struct xattr_handler reiserfs_posix_acl_default_handler = {
 	.prefix = POSIX_ACL_XATTR_DEFAULT,
-	.flags = ACL_TYPE_DEFAULT,
-	.get = posix_acl_get,
-	.set = posix_acl_set,
+	.get = posix_acl_default_get,
+	.set = posix_acl_default_set,
 	.list = posix_acl_default_list,
 };

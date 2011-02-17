@@ -21,8 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/memory_hotplug.h>
-#include <linux/memblock.h>
-#include <linux/slab.h>
+#include <linux/lmb.h>
 
 #include <asm/cell-regs.h>
 #include <asm/firmware.h>
@@ -318,8 +317,8 @@ static int __init ps3_mm_add_memory(void)
 		return result;
 	}
 
-	memblock_add(start_addr, map.r1.size);
-	memblock_analyze();
+	lmb_add(start_addr, map.r1.size);
+	lmb_analyze();
 
 	result = online_pages(start_pfn, nr_pages);
 

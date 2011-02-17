@@ -58,9 +58,9 @@ cchhb2blk (struct vtoc_cchhb *ptr, struct hd_geometry *geo) {
 
 /*
  */
-int ibm_partition(struct parsed_partitions *state)
+int
+ibm_partition(struct parsed_partitions *state, struct block_device *bdev)
 {
-	struct block_device *bdev = state->bdev;
 	int blocksize, res;
 	loff_t i_size, offset, size, fmt_size;
 	dasd_information2_t *info;
@@ -74,8 +74,6 @@ int ibm_partition(struct parsed_partitions *state)
 	} *label;
 	unsigned char *data;
 	Sector sect;
-	sector_t labelsect;
-	char tmp[64];
 
 	res = 0;
 	blocksize = bdev_logical_block_size(bdev);
@@ -100,19 +98,9 @@ int ibm_partition(struct parsed_partitions *state)
 		goto out_freeall;
 
 	/*
-	 * Special case for FBA disks: label sector does not depend on
-	 * blocksize.
-	 */
-	if ((info->cu_type == 0x6310 && info->dev_type == 0x9336) ||
-	    (info->cu_type == 0x3880 && info->dev_type == 0x3370))
-		labelsect = info->label_block;
-	else
-		labelsect = info->label_block * (blocksize >> 9);
-
-	/*
 	 * Get volume label, extract name and type.
 	 */
-	data = read_part_sector(state, labelsect, &sect);
+	data = read_dev_sector(bdev, info->label_block*(blocksize/512), &sect);
 	if (data == NULL)
 		goto out_readerr;
 
@@ -145,15 +133,13 @@ int ibm_partition(struct parsed_partitions *state)
 			 */
 			blocksize = label->cms.block_size;
 			if (label->cms.disk_offset != 0) {
-				snprintf(tmp, sizeof(tmp), "CMS1/%8s(MDSK):", name);
-				strlcat(state->pp_buf, tmp, PAGE_SIZE);
+				printk("CMS1/%8s(MDSK):", name);
 				/* disk is reserved minidisk */
 				offset = label->cms.disk_offset;
 				size = (label->cms.block_count - 1)
 					* (blocksize >> 9);
 			} else {
-				snprintf(tmp, sizeof(tmp), "CMS1/%8s:", name);
-				strlcat(state->pp_buf, tmp, PAGE_SIZE);
+				printk("CMS1/%8s:", name);
 				offset = (info->label_block + 1);
 				size = label->cms.block_count
 					* (blocksize >> 9);
@@ -162,8 +148,7 @@ int ibm_partition(struct parsed_partitions *state)
 				      size-offset*(blocksize >> 9));
 		} else {
 			if (strncmp(type, "LNX1", 4) == 0) {
-				snprintf(tmp, sizeof(tmp), "LNX1/%8s:", name);
-				strlcat(state->pp_buf, tmp, PAGE_SIZE);
+				printk("LNX1/%8s:", name);
 				if (label->lnx.ldl_version == 0xf2) {
 					fmt_size = label->lnx.formatted_blocks
 						* (blocksize >> 9);
@@ -182,7 +167,7 @@ int ibm_partition(struct parsed_partitions *state)
 				offset = (info->label_block + 1);
 			} else {
 				/* unlabeled disk */
-				strlcat(state->pp_buf, "(nonl)", PAGE_SIZE);
+				printk("(nonl)");
 				size = i_size >> 9;
 				offset = (info->label_block + 1);
 			}
@@ -201,16 +186,15 @@ int ibm_partition(struct parsed_partitions *state)
 		 * if not, something is wrong, skipping partition detection
 		 */
 		if (strncmp(type, "VOL1",  4) == 0) {
-			snprintf(tmp, sizeof(tmp), "VOL1/%8s:", name);
-			strlcat(state->pp_buf, tmp, PAGE_SIZE);
+			printk("VOL1/%8s:", name);
 			/*
 			 * get block number and read then go through format1
 			 * labels
 			 */
 			blk = cchhb2blk(&label->vol.vtoc, geo) + 1;
 			counter = 0;
-			data = read_part_sector(state, blk * (blocksize/512),
-						&sect);
+			data = read_dev_sector(bdev, blk * (blocksize/512),
+					       &sect);
 			while (data != NULL) {
 				struct vtoc_format1_label f1;
 
@@ -224,8 +208,9 @@ int ibm_partition(struct parsed_partitions *state)
 				    || f1.DS1FMTID == _ascebc['7']
 				    || f1.DS1FMTID == _ascebc['9']) {
 					blk++;
-					data = read_part_sector(state,
-						blk * (blocksize/512), &sect);
+					data = read_dev_sector(bdev, blk *
+							       (blocksize/512),
+								&sect);
 					continue;
 				}
 
@@ -245,8 +230,9 @@ int ibm_partition(struct parsed_partitions *state)
 					      size * (blocksize >> 9));
 				counter++;
 				blk++;
-				data = read_part_sector(state,
-						blk * (blocksize/512), &sect);
+				data = read_dev_sector(bdev,
+						       blk * (blocksize/512),
+						       &sect);
 			}
 
 			if (!data)
@@ -258,7 +244,7 @@ int ibm_partition(struct parsed_partitions *state)
 
 	}
 
-	strlcat(state->pp_buf, "\n", PAGE_SIZE);
+	printk("\n");
 	goto out_freeall;
 
 

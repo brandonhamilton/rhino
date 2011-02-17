@@ -19,7 +19,6 @@
 #include <linux/completion.h>
 #include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 
 #define SMCR		0x00
 #define SMCR_START	(1 << 0)
@@ -282,6 +281,7 @@ static int highlander_i2c_smbus_xfer(struct i2c_adapter *adap, u16 addr,
 				  union i2c_smbus_data *data)
 {
 	struct highlander_i2c_dev *dev = i2c_get_adapdata(adap);
+	int read = read_write & I2C_SMBUS_READ;
 	u16 tmp;
 
 	init_completion(&dev->cmd_complete);
@@ -336,11 +336,11 @@ static int highlander_i2c_smbus_xfer(struct i2c_adapter *adap, u16 addr,
 	highlander_i2c_done(dev);
 
 	/* Set slave address */
-	iowrite16((addr << 1) | read_write, dev->base + SMSMADR);
+	iowrite16((addr << 1) | read, dev->base + SMSMADR);
 
 	highlander_i2c_command(dev, command, dev->buf_len);
 
-	if (read_write == I2C_SMBUS_READ)
+	if (read)
 		return highlander_i2c_read(dev);
 	else
 		return highlander_i2c_write(dev);

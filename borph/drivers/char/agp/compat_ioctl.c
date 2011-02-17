@@ -30,7 +30,6 @@
 #include <linux/pci.h>
 #include <linux/fs.h>
 #include <linux/agpgart.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include "agp.h"
 #include "compat_ioctl.h"

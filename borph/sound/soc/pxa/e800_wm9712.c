@@ -23,6 +23,7 @@
 #include <mach/eseries-gpio.h>
 
 #include "../codecs/wm9712.h"
+#include "pxa2xx-pcm.h"
 #include "pxa2xx-ac97.h"
 
 static int e800_spk_amp_event(struct snd_soc_dapm_widget *w,
@@ -72,10 +73,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"MIC2", NULL, "Mic (Internal2)"},
 };
 
-static int e800_ac97_init(struct snd_soc_pcm_runtime *rtd)
+static int e800_ac97_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
-
 	snd_soc_dapm_new_controls(codec, e800_dapm_widgets,
 					ARRAY_SIZE(e800_dapm_widgets));
 
@@ -89,26 +88,28 @@ static struct snd_soc_dai_link e800_dai[] = {
 	{
 		.name = "AC97",
 		.stream_name = "AC97 HiFi",
-		.cpu_dai_name = "pxa-ac97.0",
-		.codec_dai_name = "wm9712-hifi",
-		.platform_name = "pxa-pcm-audio",
-		.codec_name = "wm9712-codec",
+		.cpu_dai = &pxa_ac97_dai[PXA2XX_DAI_AC97_HIFI],
+		.codec_dai = &wm9712_dai[WM9712_DAI_AC97_HIFI],
 		.init = e800_ac97_init,
 	},
 	{
 		.name = "AC97 Aux",
 		.stream_name = "AC97 Aux",
-		.cpu_dai_name = "pxa-ac97.1",
-		.codec_dai_name ="wm9712-aux",
-		.platform_name = "pxa-pcm-audio",
-		.codec_name = "wm9712-codec",
+		.cpu_dai = &pxa_ac97_dai[PXA2XX_DAI_AC97_AUX],
+		.codec_dai = &wm9712_dai[WM9712_DAI_AC97_AUX],
 	},
 };
 
 static struct snd_soc_card e800 = {
 	.name = "Toshiba e800",
+	.platform = &pxa2xx_soc_platform,
 	.dai_link = e800_dai,
 	.num_links = ARRAY_SIZE(e800_dai),
+};
+
+static struct snd_soc_device e800_snd_devdata = {
+	.card = &e800,
+	.codec_dev = &soc_codec_dev_wm9712,
 };
 
 static struct platform_device *e800_snd_device;
@@ -140,7 +141,8 @@ static int __init e800_init(void)
 	if (!e800_snd_device)
 		return -ENOMEM;
 
-	platform_set_drvdata(e800_snd_device, &e800);
+	platform_set_drvdata(e800_snd_device, &e800_snd_devdata);
+	e800_snd_devdata.dev = &e800_snd_device->dev;
 	ret = platform_device_add(e800_snd_device);
 
 	if (!ret)

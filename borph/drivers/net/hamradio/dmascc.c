@@ -32,7 +32,6 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <linux/rtnetlink.h>
 #include <linux/sockios.h>
 #include <linux/workqueue.h>

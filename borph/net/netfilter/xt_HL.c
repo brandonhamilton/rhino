@@ -9,7 +9,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
@@ -26,7 +26,7 @@ MODULE_DESCRIPTION("Xtables: Hoplimit/TTL Limit field modification target");
 MODULE_LICENSE("GPL");
 
 static unsigned int
-ttl_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ttl_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	struct iphdr *iph;
 	const struct ipt_TTL_info *info = par->targinfo;
@@ -66,7 +66,7 @@ ttl_tg(struct sk_buff *skb, const struct xt_action_param *par)
 }
 
 static unsigned int
-hl_tg6(struct sk_buff *skb, const struct xt_action_param *par)
+hl_tg6(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	struct ipv6hdr *ip6h;
 	const struct ip6t_HL_info *info = par->targinfo;
@@ -101,33 +101,35 @@ hl_tg6(struct sk_buff *skb, const struct xt_action_param *par)
 	return XT_CONTINUE;
 }
 
-static int ttl_tg_check(const struct xt_tgchk_param *par)
+static bool ttl_tg_check(const struct xt_tgchk_param *par)
 {
 	const struct ipt_TTL_info *info = par->targinfo;
 
 	if (info->mode > IPT_TTL_MAXMODE) {
-		pr_info("TTL: invalid or unknown mode %u\n", info->mode);
-		return -EINVAL;
+		printk(KERN_WARNING "ipt_TTL: invalid or unknown Mode %u\n",
+			info->mode);
+		return false;
 	}
 	if (info->mode != IPT_TTL_SET && info->ttl == 0)
-		return -EINVAL;
-	return 0;
+		return false;
+	return true;
 }
 
-static int hl_tg6_check(const struct xt_tgchk_param *par)
+static bool hl_tg6_check(const struct xt_tgchk_param *par)
 {
 	const struct ip6t_HL_info *info = par->targinfo;
 
 	if (info->mode > IP6T_HL_MAXMODE) {
-		pr_info("invalid or unknown mode %u\n", info->mode);
-		return -EINVAL;
+		printk(KERN_WARNING "ip6t_HL: invalid or unknown Mode %u\n",
+			info->mode);
+		return false;
 	}
 	if (info->mode != IP6T_HL_SET && info->hop_limit == 0) {
-		pr_info("increment/decrement does not "
+		printk(KERN_WARNING "ip6t_HL: increment/decrement doesn't "
 			"make sense with value 0\n");
-		return -EINVAL;
+		return false;
 	}
-	return 0;
+	return true;
 }
 
 static struct xt_target hl_tg_reg[] __read_mostly = {

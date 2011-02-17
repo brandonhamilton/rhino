@@ -183,7 +183,9 @@ static struct device *rfcomm_get_device(struct rfcomm_dev *dev)
 static ssize_t show_address(struct device *tty_dev, struct device_attribute *attr, char *buf)
 {
 	struct rfcomm_dev *dev = dev_get_drvdata(tty_dev);
-	return sprintf(buf, "%s\n", batostr(&dev->dst));
+	bdaddr_t bdaddr;
+	baswap(&bdaddr, &dev->dst);
+	return sprintf(buf, "%s\n", batostr(&bdaddr));
 }
 
 static ssize_t show_channel(struct device *tty_dev, struct device_attribute *attr, char *buf)
@@ -842,6 +844,10 @@ static int rfcomm_tty_ioctl(struct tty_struct *tty, struct file *filp, unsigned 
 		BT_DBG("TIOCMIWAIT");
 		break;
 
+	case TIOCGICOUNT:
+		BT_DBG("TIOCGICOUNT");
+		break;
+
 	case TIOCGSERIAL:
 		BT_ERR("TIOCGSERIAL is not supported");
 		return -ENOIOCTLCMD;
@@ -1008,6 +1014,8 @@ static void rfcomm_tty_set_termios(struct tty_struct *tty, struct ktermios *old)
 		rfcomm_send_rpn(dev->dlc->session, 1, dev->dlc->dlci, baud,
 				data_bits, stop_bits, parity,
 				RFCOMM_RPN_FLOW_NONE, x_on, x_off, changes);
+
+	return;
 }
 
 static void rfcomm_tty_throttle(struct tty_struct *tty)
@@ -1147,7 +1155,7 @@ static const struct tty_operations rfcomm_ops = {
 	.tiocmset		= rfcomm_tty_tiocmset,
 };
 
-int __init rfcomm_init_ttys(void)
+int rfcomm_init_ttys(void)
 {
 	rfcomm_tty_driver = alloc_tty_driver(RFCOMM_TTY_PORTS);
 	if (!rfcomm_tty_driver)

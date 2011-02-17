@@ -75,6 +75,7 @@ struct user_port {
  * @wakeup: ptr to routine to call when port is no longer congested
  * @user_port: ptr to user port associated with port (if any)
  * @wait_list: adjacent ports in list of ports waiting on link congestion
+ * @congested_link: ptr to congested link port is waiting on
  * @waiting_pkts:
  * @sent:
  * @acked:
@@ -94,6 +95,7 @@ struct port {
 	void (*wakeup)(struct tipc_port *);
 	struct user_port *user_port;
 	struct list_head wait_list;
+	struct link *congested_link;
 	u32 waiting_pkts;
 	u32 sent;
 	u32 acked;
@@ -109,6 +111,8 @@ struct port {
 extern spinlock_t tipc_port_list_lock;
 struct port_list;
 
+int tipc_port_recv_sections(struct port *p_ptr, u32 num_sect,
+			    struct iovec const *msg_sect);
 int tipc_port_reject_sections(struct port *p_ptr, struct tipc_msg *hdr,
 			      struct iovec const *msg_sect, u32 num_sect,
 			      int err);
@@ -155,7 +159,7 @@ static inline u32 tipc_peer_node(struct port *p_ptr)
 
 static inline int tipc_port_congested(struct port *p_ptr)
 {
-	return (p_ptr->sent - p_ptr->acked) >= (TIPC_FLOW_CONTROL_WIN * 2);
+	return((p_ptr->sent - p_ptr->acked) >= (TIPC_FLOW_CONTROL_WIN * 2));
 }
 
 /**

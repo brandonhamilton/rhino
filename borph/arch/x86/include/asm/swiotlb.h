@@ -5,25 +5,12 @@
 
 #ifdef CONFIG_SWIOTLB
 extern int swiotlb;
-extern int __init pci_swiotlb_detect_override(void);
-extern int __init pci_swiotlb_detect_4gb(void);
-extern void __init pci_swiotlb_init(void);
-extern void __init pci_swiotlb_late_init(void);
+extern int pci_swiotlb_init(void);
 #else
 #define swiotlb 0
-static inline int pci_swiotlb_detect_override(void)
+static inline int pci_swiotlb_init(void)
 {
 	return 0;
-}
-static inline int pci_swiotlb_detect_4gb(void)
-{
-	return 0;
-}
-static inline void pci_swiotlb_init(void)
-{
-}
-static inline void pci_swiotlb_late_init(void)
-{
 }
 #endif
 

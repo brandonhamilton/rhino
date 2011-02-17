@@ -34,14 +34,21 @@ static DEFINE_SPINLOCK(v6_lock);
  * attack the kernel's existing mapping of these pages.
  */
 static void v6_copy_user_highpage_nonaliasing(struct page *to,
-	struct page *from, unsigned long vaddr, struct vm_area_struct *vma)
+	struct page *from, unsigned long vaddr)
 {
 	void *kto, *kfrom;
 
 	kfrom = kmap_atomic(from, KM_USER0);
 	kto = kmap_atomic(to, KM_USER1);
 	copy_page(kto, kfrom);
-	__cpuc_flush_dcache_area(kto, PAGE_SIZE);
+#ifdef CONFIG_HIGHMEM
+	/*
+	 * kmap_atomic() doesn't set the page virtual address, and
+	 * kunmap_atomic() takes care of cache flushing already.
+	 */
+	if (page_address(to) != NULL)
+#endif
+		__cpuc_flush_dcache_page(kto);
 	kunmap_atomic(kto, KM_USER1);
 	kunmap_atomic(kfrom, KM_USER0);
 }
@@ -74,12 +81,12 @@ static void discard_old_kernel_data(void *kto)
  * Copy the page, taking account of the cache colour.
  */
 static void v6_copy_user_highpage_aliasing(struct page *to,
-	struct page *from, unsigned long vaddr, struct vm_area_struct *vma)
+	struct page *from, unsigned long vaddr)
 {
 	unsigned int offset = CACHE_COLOUR(vaddr);
 	unsigned long kfrom, kto;
 
-	if (!test_and_set_bit(PG_dcache_clean, &from->flags))
+	if (test_and_clear_bit(PG_dcache_dirty, &from->flags))
 		__flush_dcache_page(page_mapping(from), from);
 
 	/* FIXME: not highmem safe */

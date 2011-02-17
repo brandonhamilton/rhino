@@ -32,5 +32,6 @@ extern void arch_unregister_cpu(int);
 
 DECLARE_PER_CPU(int, cpu_state);
 
+extern unsigned int boot_cpu_id;
 
 #endif /* _ASM_X86_CPU_H */

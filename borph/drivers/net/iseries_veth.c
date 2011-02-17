@@ -69,7 +69,6 @@
 #include <linux/mm.h>
 #include <linux/ethtool.h>
 #include <linux/if_ether.h>
-#include <linux/slab.h>
 
 #include <asm/abs_addr.h>
 #include <asm/iseries/mf.h>
@@ -385,7 +384,7 @@ static struct attribute *veth_cnx_default_attrs[] = {
 	NULL
 };
 
-static const struct sysfs_ops veth_cnx_sysfs_ops = {
+static struct sysfs_ops veth_cnx_sysfs_ops = {
 		.show = veth_cnx_attribute_show
 };
 
@@ -442,7 +441,7 @@ static struct attribute *veth_port_default_attrs[] = {
 	NULL
 };
 
-static const struct sysfs_ops veth_port_sysfs_ops = {
+static struct sysfs_ops veth_port_sysfs_ops = {
 	.show = veth_port_attribute_show
 };
 
@@ -959,18 +958,19 @@ static void veth_set_multicast_list(struct net_device *dev)
 	write_lock_irqsave(&port->mcast_gate, flags);
 
 	if ((dev->flags & IFF_PROMISC) || (dev->flags & IFF_ALLMULTI) ||
-			(netdev_mc_count(dev) > VETH_MAX_MCAST)) {
+			(dev->mc_count > VETH_MAX_MCAST)) {
 		port->promiscuous = 1;
 	} else {
-		struct netdev_hw_addr *ha;
+		struct dev_mc_list *dmi = dev->mc_list;
+		int i;
 
 		port->promiscuous = 0;
 
 		/* Update table */
 		port->num_mcast = 0;
 
-		netdev_for_each_mc_addr(ha, dev) {
-			u8 *addr = ha->addr;
+		for (i = 0; i < dev->mc_count; i++) {
+			u8 *addr = dmi->dmi_addr;
 			u64 xaddr = 0;
 
 			if (addr[0] & 0x01) {/* multicast address? */
@@ -978,6 +978,7 @@ static void veth_set_multicast_list(struct net_device *dev)
 				port->mcast_addr[port->num_mcast] = xaddr;
 				port->num_mcast++;
 			}
+			dmi = dmi->next;
 		}
 	}
 
@@ -1524,7 +1525,7 @@ static void veth_receive(struct veth_lpar_connection *cnx,
 
 		skb_put(skb, length);
 		skb->protocol = eth_type_trans(skb, dev);
-		skb_checksum_none_assert(skb);
+		skb->ip_summed = CHECKSUM_NONE;
 		netif_rx(skb);	/* send it up */
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += length;

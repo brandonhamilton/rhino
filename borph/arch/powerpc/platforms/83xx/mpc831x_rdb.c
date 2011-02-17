@@ -74,7 +74,6 @@ static int __init mpc831x_rdb_probe(void)
 static struct of_device_id __initdata of_bus_ids[] = {
 	{ .compatible = "simple-bus" },
 	{ .compatible = "gianfar" },
-	{ .compatible = "gpio-leds", },
 	{},
 };
 

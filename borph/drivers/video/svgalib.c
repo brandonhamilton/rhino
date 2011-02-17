@@ -15,6 +15,7 @@
 #include <linux/string.h>
 #include <linux/fb.h>
 #include <linux/svga.h>
+#include <linux/slab.h>
 #include <asm/types.h>
 #include <asm/io.h>
 

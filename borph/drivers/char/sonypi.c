@@ -50,7 +50,7 @@
 #include <linux/err.h>
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
-#include <linux/gfp.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -487,7 +487,7 @@ static struct sonypi_device {
 	int camera_power;
 	int bluetooth_power;
 	struct mutex lock;
-	struct kfifo fifo;
+	struct kfifo *fifo;
 	spinlock_t fifo_lock;
 	wait_queue_head_t fifo_proc_list;
 	struct fasync_struct *fifo_async;
@@ -496,7 +496,7 @@ static struct sonypi_device {
 	struct input_dev *input_jog_dev;
 	struct input_dev *input_key_dev;
 	struct work_struct input_work;
-	struct kfifo input_fifo;
+	struct kfifo *input_fifo;
 	spinlock_t input_fifo_lock;
 } sonypi_device;
 
@@ -777,9 +777,8 @@ static void input_keyrelease(struct work_struct *work)
 {
 	struct sonypi_keypress kp;
 
-	while (kfifo_out_locked(&sonypi_device.input_fifo, (unsigned char *)&kp,
-			 sizeof(kp), &sonypi_device.input_fifo_lock)
-			== sizeof(kp)) {
+	while (kfifo_get(sonypi_device.input_fifo, (unsigned char *)&kp,
+			 sizeof(kp)) == sizeof(kp)) {
 		msleep(10);
 		input_report_key(kp.dev, kp.key, 0);
 		input_sync(kp.dev);
@@ -828,9 +827,8 @@ static void sonypi_report_input_event(u8 event)
 	if (kp.dev) {
 		input_report_key(kp.dev, kp.key, 1);
 		input_sync(kp.dev);
-		kfifo_in_locked(&sonypi_device.input_fifo,
-			(unsigned char *)&kp, sizeof(kp),
-			&sonypi_device.input_fifo_lock);
+		kfifo_put(sonypi_device.input_fifo,
+			  (unsigned char *)&kp, sizeof(kp));
 		schedule_work(&sonypi_device.input_work);
 	}
 }
@@ -882,8 +880,7 @@ found:
 		acpi_bus_generate_proc_event(sonypi_acpi_device, 1, event);
 #endif
 
-	kfifo_in_locked(&sonypi_device.fifo, (unsigned char *)&event,
-			sizeof(event), &sonypi_device.fifo_lock);
+	kfifo_put(sonypi_device.fifo, (unsigned char *)&event, sizeof(event));
 	kill_fasync(&sonypi_device.fifo_async, SIGIO, POLL_IN);
 	wake_up_interruptible(&sonypi_device.fifo_proc_list);
 
@@ -905,13 +902,14 @@ static int sonypi_misc_release(struct inode *inode, struct file *file)
 
 static int sonypi_misc_open(struct inode *inode, struct file *file)
 {
+	lock_kernel();
 	mutex_lock(&sonypi_device.lock);
 	/* Flush input queue on first open */
 	if (!sonypi_device.open_count)
-		kfifo_reset(&sonypi_device.fifo);
+		kfifo_reset(sonypi_device.fifo);
 	sonypi_device.open_count++;
 	mutex_unlock(&sonypi_device.lock);
-
+	unlock_kernel();
 	return 0;
 }
 
@@ -921,18 +919,17 @@ static ssize_t sonypi_misc_read(struct file *file, char __user *buf,
 	ssize_t ret;
 	unsigned char c;
 
-	if ((kfifo_len(&sonypi_device.fifo) == 0) &&
+	if ((kfifo_len(sonypi_device.fifo) == 0) &&
 	    (file->f_flags & O_NONBLOCK))
 		return -EAGAIN;
 
 	ret = wait_event_interruptible(sonypi_device.fifo_proc_list,
-				       kfifo_len(&sonypi_device.fifo) != 0);
+				       kfifo_len(sonypi_device.fifo) != 0);
 	if (ret)
 		return ret;
 
 	while (ret < count &&
-	       (kfifo_out_locked(&sonypi_device.fifo, &c, sizeof(c),
-				 &sonypi_device.fifo_lock) == sizeof(c))) {
+	       (kfifo_get(sonypi_device.fifo, &c, sizeof(c)) == sizeof(c))) {
 		if (put_user(c, buf++))
 			return -EFAULT;
 		ret++;
@@ -949,15 +946,15 @@ static ssize_t sonypi_misc_read(struct file *file, char __user *buf,
 static unsigned int sonypi_misc_poll(struct file *file, poll_table *wait)
 {
 	poll_wait(file, &sonypi_device.fifo_proc_list, wait);
-	if (kfifo_len(&sonypi_device.fifo))
+	if (kfifo_len(sonypi_device.fifo))
 		return POLLIN | POLLRDNORM;
 	return 0;
 }
 
-static long sonypi_misc_ioctl(struct file *fp,
+static int sonypi_misc_ioctl(struct inode *ip, struct file *fp,
 			     unsigned int cmd, unsigned long arg)
 {
-	long ret = 0;
+	int ret = 0;
 	void __user *argp = (void __user *)arg;
 	u8 val8;
 	u16 val16;
@@ -1073,8 +1070,7 @@ static const struct file_operations sonypi_misc_fops = {
 	.open		= sonypi_misc_open,
 	.release	= sonypi_misc_release,
 	.fasync		= sonypi_misc_fasync,
-	.unlocked_ioctl	= sonypi_misc_ioctl,
-	.llseek		= no_llseek,
+	.ioctl		= sonypi_misc_ioctl,
 };
 
 static struct miscdevice sonypi_misc_device = {
@@ -1317,10 +1313,11 @@ static int __devinit sonypi_probe(struct platform_device *dev)
 			"http://www.linux.it/~malattia/wiki/index.php/Sony_drivers\n");
 
 	spin_lock_init(&sonypi_device.fifo_lock);
-	error = kfifo_alloc(&sonypi_device.fifo, SONYPI_BUF_SIZE, GFP_KERNEL);
-	if (error) {
+	sonypi_device.fifo = kfifo_alloc(SONYPI_BUF_SIZE, GFP_KERNEL,
+					 &sonypi_device.fifo_lock);
+	if (IS_ERR(sonypi_device.fifo)) {
 		printk(KERN_ERR "sonypi: kfifo_alloc failed\n");
-		return error;
+		return PTR_ERR(sonypi_device.fifo);
 	}
 
 	init_waitqueue_head(&sonypi_device.fifo_proc_list);
@@ -1396,10 +1393,12 @@ static int __devinit sonypi_probe(struct platform_device *dev)
 		}
 
 		spin_lock_init(&sonypi_device.input_fifo_lock);
-		error = kfifo_alloc(&sonypi_device.input_fifo, SONYPI_BUF_SIZE,
-				GFP_KERNEL);
-		if (error) {
+		sonypi_device.input_fifo =
+			kfifo_alloc(SONYPI_BUF_SIZE, GFP_KERNEL,
+				    &sonypi_device.input_fifo_lock);
+		if (IS_ERR(sonypi_device.input_fifo)) {
 			printk(KERN_ERR "sonypi: kfifo_alloc failed\n");
+			error = PTR_ERR(sonypi_device.input_fifo);
 			goto err_inpdev_unregister;
 		}
 
@@ -1424,7 +1423,7 @@ static int __devinit sonypi_probe(struct platform_device *dev)
 		pci_disable_device(pcidev);
  err_put_pcidev:
 	pci_dev_put(pcidev);
-	kfifo_free(&sonypi_device.fifo);
+	kfifo_free(sonypi_device.fifo);
 
 	return error;
 }
@@ -1439,7 +1438,7 @@ static int __devexit sonypi_remove(struct platform_device *dev)
 	if (useinput) {
 		input_unregister_device(sonypi_device.input_key_dev);
 		input_unregister_device(sonypi_device.input_jog_dev);
-		kfifo_free(&sonypi_device.input_fifo);
+		kfifo_free(sonypi_device.input_fifo);
 	}
 
 	misc_deregister(&sonypi_misc_device);
@@ -1452,7 +1451,7 @@ static int __devexit sonypi_remove(struct platform_device *dev)
 		pci_dev_put(sonypi_device.dev);
 	}
 
-	kfifo_free(&sonypi_device.fifo);
+	kfifo_free(sonypi_device.fifo);
 
 	return 0;
 }

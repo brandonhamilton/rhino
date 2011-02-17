@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2006-2009 B.A.T.M.A.N. contributors:
  *
  * Simon Wunderlich, Marek Lindner
  *
@@ -19,18 +19,12 @@
  *
  */
 
-#ifndef _NET_BATMAN_ADV_HASH_H_
-#define _NET_BATMAN_ADV_HASH_H_
-
-#define HASHIT(name) struct hash_it_t name = { \
-		.index = -1, .bucket = NULL, \
-		.prev_bucket = NULL, \
-		.first_bucket = NULL }
-
+#ifndef _BATMAN_HASH_H
+#define _BATMAN_HASH_H
 
 typedef int (*hashdata_compare_cb)(void *, void *);
 typedef int (*hashdata_choose_cb)(void *, int);
-typedef void (*hashdata_free_cb)(void *, void *);
+typedef void (*hashdata_free_cb)(void *);
 
 struct element_t {
 	void *data;		/* pointer to the data */
@@ -57,6 +51,9 @@ struct hashtable_t {
 				     * argument and the size the second */
 };
 
+/* clears the hash */
+void hash_init(struct hashtable_t *hash);
+
 /* allocates and clears the hash */
 struct hashtable_t *hash_new(int size, hashdata_compare_cb compare,
 			     hashdata_choose_cb choose);
@@ -70,7 +67,7 @@ void *hash_remove_bucket(struct hashtable_t *hash, struct hash_it_t *hash_it_t);
 /* remove the hash structure. if hashdata_free_cb != NULL, this function will be
  * called to remove the elements inside of the hash.  if you don't remove the
  * elements, memory might be leaked. */
-void hash_delete(struct hashtable_t *hash, hashdata_free_cb free_cb, void *arg);
+void hash_delete(struct hashtable_t *hash, hashdata_free_cb free_cb);
 
 /* free only the hashtable and the hash itself. */
 void hash_destroy(struct hashtable_t *hash);
@@ -97,4 +94,6 @@ struct hashtable_t *hash_resize(struct hashtable_t *hash, int size);
 struct hash_it_t *hash_iterate(struct hashtable_t *hash,
 			       struct hash_it_t *iter_in);
 
-#endif /* _NET_BATMAN_ADV_HASH_H_ */
+/* print the hash table for debugging */
+void hash_debug(struct hashtable_t *hash);
+#endif

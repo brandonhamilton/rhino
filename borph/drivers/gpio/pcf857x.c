@@ -190,6 +190,7 @@ static int pcf857x_probe(struct i2c_client *client,
 	pdata = client->dev.platform_data;
 	if (!pdata) {
 		dev_dbg(&client->dev, "no platform data\n");
+		return -EINVAL;
 	}
 
 	/* Allocate, initialize, and register this gpio_chip. */
@@ -199,7 +200,7 @@ static int pcf857x_probe(struct i2c_client *client,
 
 	mutex_init(&gpio->lock);
 
-	gpio->chip.base = pdata ? pdata->gpio_base : -1;
+	gpio->chip.base = pdata->gpio_base;
 	gpio->chip.can_sleep = 1;
 	gpio->chip.dev = &client->dev;
 	gpio->chip.owner = THIS_MODULE;
@@ -277,7 +278,7 @@ static int pcf857x_probe(struct i2c_client *client,
 	 * to zero, our software copy of the "latch" then matches the chip's
 	 * all-ones reset state.  Otherwise it flags pins to be driven low.
 	 */
-	gpio->out = pdata ? ~pdata->n_latch : ~0;
+	gpio->out = ~pdata->n_latch;
 
 	status = gpiochip_add(&gpio->chip);
 	if (status < 0)
@@ -298,7 +299,7 @@ static int pcf857x_probe(struct i2c_client *client,
 	/* Let platform code set up the GPIOs and their users.
 	 * Now is the first time anyone could use them.
 	 */
-	if (pdata && pdata->setup) {
+	if (pdata->setup) {
 		status = pdata->setup(client,
 				gpio->chip.base, gpio->chip.ngpio,
 				pdata->context);
@@ -321,7 +322,7 @@ static int pcf857x_remove(struct i2c_client *client)
 	struct pcf857x			*gpio = i2c_get_clientdata(client);
 	int				status = 0;
 
-	if (pdata && pdata->teardown) {
+	if (pdata->teardown) {
 		status = pdata->teardown(client,
 				gpio->chip.base, gpio->chip.ngpio,
 				pdata->context);

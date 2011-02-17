@@ -77,7 +77,6 @@ static struct node *read_fstree(const char *dirname)
 		free(tmpnam);
 	}
 
-	closedir(d);
 	return tree;
 }
 

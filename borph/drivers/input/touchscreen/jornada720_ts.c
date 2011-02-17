@@ -18,7 +18,6 @@
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 
 #include <mach/hardware.h>
 #include <mach/jornada720.h>

@@ -8,7 +8,6 @@
  *	published by the Free Software Foundation, version 2.
  */
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/i2c.h>
 
 #include "dvb_math.h"
@@ -259,9 +258,6 @@ static void dib7000p_set_adc_state(struct dib7000p_state *state, enum dibx000_ad
 	}
 
 //	dprintk( "908: %x, 909: %x\n", reg_908, reg_909);
-
-	reg_909 |= (state->cfg.disable_sample_and_hold & 1) << 4;
-	reg_908 |= (state->cfg.enable_current_mirror & 1) << 7;
 
 	dib7000p_write_word(state, 908, reg_908);
 	dib7000p_write_word(state, 909, reg_909);
@@ -781,10 +777,7 @@ static void dib7000p_set_channel(struct dib7000p_state *state, struct dvb_fronte
 		default:
 		case GUARD_INTERVAL_1_32: value *= 1; break;
 	}
-	if (state->cfg.diversity_delay == 0)
-		state->div_sync_wait = (value * 3) / 2 + 48; // add 50% SFN margin + compensate for one DVSY-fifo
-	else
-		state->div_sync_wait = (value * 3) / 2 + state->cfg.diversity_delay; // add 50% SFN margin + compensate for one DVSY-fifo
+	state->div_sync_wait = (value * 3) / 2 + 32; // add 50% SFN margin + compensate for one DVSY-fifo TODO
 
 	/* deactive the possibility of diversity reception if extended interleaver */
 	state->div_force_off = !1 && ch->u.ofdm.transmission_mode != TRANSMISSION_MODE_8K;
@@ -1330,54 +1323,46 @@ EXPORT_SYMBOL(dib7000p_pid_filter);
 
 int dib7000p_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods, u8 default_addr, struct dib7000p_config cfg[])
 {
-	struct dib7000p_state *dpst;
+	struct dib7000p_state st = { .i2c_adap = i2c };
 	int k = 0;
 	u8 new_addr = 0;
 
-	dpst = kzalloc(sizeof(struct dib7000p_state), GFP_KERNEL);
-	if (!dpst)
-		return -ENOMEM;
-
-	dpst->i2c_adap = i2c;
-
 	for (k = no_of_demods-1; k >= 0; k--) {
-		dpst->cfg = cfg[k];
+		st.cfg = cfg[k];
 
 		/* designated i2c address */
 		new_addr          = (0x40 + k) << 1;
-		dpst->i2c_addr = new_addr;
-		dib7000p_write_word(dpst, 1287, 0x0003); /* sram lead in, rdy */
-		if (dib7000p_identify(dpst) != 0) {
-			dpst->i2c_addr = default_addr;
-			dib7000p_write_word(dpst, 1287, 0x0003); /* sram lead in, rdy */
-			if (dib7000p_identify(dpst) != 0) {
+		st.i2c_addr = new_addr;
+		dib7000p_write_word(&st, 1287, 0x0003); /* sram lead in, rdy */
+		if (dib7000p_identify(&st) != 0) {
+			st.i2c_addr = default_addr;
+			dib7000p_write_word(&st, 1287, 0x0003); /* sram lead in, rdy */
+			if (dib7000p_identify(&st) != 0) {
 				dprintk("DiB7000P #%d: not identified\n", k);
-				kfree(dpst);
 				return -EIO;
 			}
 		}
 
 		/* start diversity to pull_down div_str - just for i2c-enumeration */
-		dib7000p_set_output_mode(dpst, OUTMODE_DIVERSITY);
+		dib7000p_set_output_mode(&st, OUTMODE_DIVERSITY);
 
 		/* set new i2c address and force divstart */
-		dib7000p_write_word(dpst, 1285, (new_addr << 2) | 0x2);
+		dib7000p_write_word(&st, 1285, (new_addr << 2) | 0x2);
 
 		dprintk("IC %d initialized (to i2c_address 0x%x)", k, new_addr);
 	}
 
 	for (k = 0; k < no_of_demods; k++) {
-		dpst->cfg = cfg[k];
-		dpst->i2c_addr = (0x40 + k) << 1;
+		st.cfg = cfg[k];
+		st.i2c_addr = (0x40 + k) << 1;
 
 		// unforce divstr
-		dib7000p_write_word(dpst, 1285, dpst->i2c_addr << 2);
+		dib7000p_write_word(&st, 1285, st.i2c_addr << 2);
 
 		/* deactivate div - it was just for i2c-enumeration */
-		dib7000p_set_output_mode(dpst, OUTMODE_HIGH_Z);
+		dib7000p_set_output_mode(&st, OUTMODE_HIGH_Z);
 	}
 
-	kfree(dpst);
 	return 0;
 }
 EXPORT_SYMBOL(dib7000p_i2c_enumeration);

@@ -100,7 +100,7 @@ const struct file_operations nvram_fops = {
 	.llseek		= nvram_llseek,
 	.read		= read_nvram,
 	.write		= write_nvram,
-	.unlocked_ioctl	= nvram_ioctl,
+	.ioctl		= nvram_ioctl,
 };
 
 static struct miscdevice nvram_dev = {

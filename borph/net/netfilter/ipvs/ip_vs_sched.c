@@ -35,7 +35,7 @@
 static LIST_HEAD(ip_vs_schedulers);
 
 /* lock for service table */
-static DEFINE_SPINLOCK(ip_vs_sched_lock);
+static DEFINE_RWLOCK(__ip_vs_sched_lock);
 
 
 /*
@@ -45,6 +45,15 @@ int ip_vs_bind_scheduler(struct ip_vs_service *svc,
 			 struct ip_vs_scheduler *scheduler)
 {
 	int ret;
+
+	if (svc == NULL) {
+		pr_err("%s(): svc arg NULL\n", __func__);
+		return -EINVAL;
+	}
+	if (scheduler == NULL) {
+		pr_err("%s(): scheduler arg NULL\n", __func__);
+		return -EINVAL;
+	}
 
 	svc->scheduler = scheduler;
 
@@ -65,10 +74,18 @@ int ip_vs_bind_scheduler(struct ip_vs_service *svc,
  */
 int ip_vs_unbind_scheduler(struct ip_vs_service *svc)
 {
-	struct ip_vs_scheduler *sched = svc->scheduler;
+	struct ip_vs_scheduler *sched;
 
-	if (!sched)
-		return 0;
+	if (svc == NULL) {
+		pr_err("%s(): svc arg NULL\n", __func__);
+		return -EINVAL;
+	}
+
+	sched = svc->scheduler;
+	if (sched == NULL) {
+		pr_err("%s(): svc isn't bound\n", __func__);
+		return -EINVAL;
+	}
 
 	if (sched->done_service) {
 		if (sched->done_service(svc) != 0) {
@@ -91,7 +108,7 @@ static struct ip_vs_scheduler *ip_vs_sched_getbyname(const char *sched_name)
 
 	IP_VS_DBG(2, "%s(): sched_name \"%s\"\n", __func__, sched_name);
 
-	spin_lock_bh(&ip_vs_sched_lock);
+	read_lock_bh(&__ip_vs_sched_lock);
 
 	list_for_each_entry(sched, &ip_vs_schedulers, n_list) {
 		/*
@@ -105,14 +122,14 @@ static struct ip_vs_scheduler *ip_vs_sched_getbyname(const char *sched_name)
 		}
 		if (strcmp(sched_name, sched->name)==0) {
 			/* HIT */
-			spin_unlock_bh(&ip_vs_sched_lock);
+			read_unlock_bh(&__ip_vs_sched_lock);
 			return sched;
 		}
 		if (sched->module)
 			module_put(sched->module);
 	}
 
-	spin_unlock_bh(&ip_vs_sched_lock);
+	read_unlock_bh(&__ip_vs_sched_lock);
 	return NULL;
 }
 
@@ -142,7 +159,7 @@ struct ip_vs_scheduler *ip_vs_scheduler_get(const char *sched_name)
 
 void ip_vs_scheduler_put(struct ip_vs_scheduler *scheduler)
 {
-	if (scheduler && scheduler->module)
+	if (scheduler->module)
 		module_put(scheduler->module);
 }
 
@@ -167,10 +184,10 @@ int register_ip_vs_scheduler(struct ip_vs_scheduler *scheduler)
 	/* increase the module use count */
 	ip_vs_use_count_inc();
 
-	spin_lock_bh(&ip_vs_sched_lock);
+	write_lock_bh(&__ip_vs_sched_lock);
 
 	if (!list_empty(&scheduler->n_list)) {
-		spin_unlock_bh(&ip_vs_sched_lock);
+		write_unlock_bh(&__ip_vs_sched_lock);
 		ip_vs_use_count_dec();
 		pr_err("%s(): [%s] scheduler already linked\n",
 		       __func__, scheduler->name);
@@ -183,7 +200,7 @@ int register_ip_vs_scheduler(struct ip_vs_scheduler *scheduler)
 	 */
 	list_for_each_entry(sched, &ip_vs_schedulers, n_list) {
 		if (strcmp(scheduler->name, sched->name) == 0) {
-			spin_unlock_bh(&ip_vs_sched_lock);
+			write_unlock_bh(&__ip_vs_sched_lock);
 			ip_vs_use_count_dec();
 			pr_err("%s(): [%s] scheduler already existed "
 			       "in the system\n", __func__, scheduler->name);
@@ -194,7 +211,7 @@ int register_ip_vs_scheduler(struct ip_vs_scheduler *scheduler)
 	 *	Add it into the d-linked scheduler list
 	 */
 	list_add(&scheduler->n_list, &ip_vs_schedulers);
-	spin_unlock_bh(&ip_vs_sched_lock);
+	write_unlock_bh(&__ip_vs_sched_lock);
 
 	pr_info("[%s] scheduler registered.\n", scheduler->name);
 
@@ -212,9 +229,9 @@ int unregister_ip_vs_scheduler(struct ip_vs_scheduler *scheduler)
 		return -EINVAL;
 	}
 
-	spin_lock_bh(&ip_vs_sched_lock);
+	write_lock_bh(&__ip_vs_sched_lock);
 	if (list_empty(&scheduler->n_list)) {
-		spin_unlock_bh(&ip_vs_sched_lock);
+		write_unlock_bh(&__ip_vs_sched_lock);
 		pr_err("%s(): [%s] scheduler is not in the list. failed\n",
 		       __func__, scheduler->name);
 		return -EINVAL;
@@ -224,7 +241,7 @@ int unregister_ip_vs_scheduler(struct ip_vs_scheduler *scheduler)
 	 *	Remove it from the d-linked scheduler list
 	 */
 	list_del(&scheduler->n_list);
-	spin_unlock_bh(&ip_vs_sched_lock);
+	write_unlock_bh(&__ip_vs_sched_lock);
 
 	/* decrease the module use count */
 	ip_vs_use_count_dec();

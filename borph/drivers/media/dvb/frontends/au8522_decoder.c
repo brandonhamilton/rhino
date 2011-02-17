@@ -36,6 +36,7 @@
 #include <linux/delay.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
+#include <media/v4l2-i2c-drv.h>
 #include <media/v4l2-device.h>
 #include "au8522.h"
 #include "au8522_priv.h"
@@ -61,7 +62,7 @@ struct au8522_register_config {
    The values are as follows from left to right
    0="ATV RF" 1="ATV RF13" 2="CVBS" 3="S-Video" 4="PAL" 5=CVBS13" 6="SVideo13"
 */
-static const struct au8522_register_config filter_coef[] = {
+struct au8522_register_config filter_coef[] = {
 	{AU8522_FILTER_COEF_R410, {0x25, 0x00, 0x25, 0x25, 0x00, 0x00, 0x00} },
 	{AU8522_FILTER_COEF_R411, {0x20, 0x00, 0x20, 0x20, 0x00, 0x00, 0x00} },
 	{AU8522_FILTER_COEF_R412, {0x03, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00} },
@@ -103,7 +104,7 @@ static const struct au8522_register_config filter_coef[] = {
    0="SIF" 1="ATVRF/ATVRF13"
    Note: the "ATVRF/ATVRF13" mode has never been tested
 */
-static const struct au8522_register_config lpfilter_coef[] = {
+struct au8522_register_config lpfilter_coef[] = {
 	{0x060b, {0x21, 0x0b} },
 	{0x060c, {0xad, 0xad} },
 	{0x060d, {0x70, 0xf0} },
@@ -566,6 +567,30 @@ static int au8522_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 
 /* ----------------------------------------------------------------------- */
 
+static int au8522_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+{
+	switch (fmt->type) {
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int au8522_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+{
+	switch (fmt->type) {
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+		/* Not yet implemented */
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/* ----------------------------------------------------------------------- */
+
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int au8522_g_register(struct v4l2_subdev *sd,
 			     struct v4l2_dbg_register *reg)
@@ -638,13 +663,6 @@ static int au8522_queryctrl(struct v4l2_subdev *sd, struct v4l2_queryctrl *qc)
 static int au8522_reset(struct v4l2_subdev *sd, u32 val)
 {
 	struct au8522_state *state = to_state(sd);
-
-	state->operational_mode = AU8522_ANALOG_MODE;
-
-	/* Clear out any state associated with the digital side of the
-	   chip, so that when it gets powered back up it won't think
-	   that it is already tuned */
-	state->current_frequency = 0;
 
 	au8522_writereg(state, 0xa4, 1 << 5);
 
@@ -747,6 +765,8 @@ static const struct v4l2_subdev_audio_ops au8522_audio_ops = {
 
 static const struct v4l2_subdev_video_ops au8522_video_ops = {
 	.s_routing = au8522_s_video_routing,
+	.g_fmt = au8522_g_fmt,
+	.s_fmt = au8522_s_fmt,
 	.s_stream = au8522_s_stream,
 };
 
@@ -830,25 +850,9 @@ static const struct i2c_device_id au8522_id[] = {
 
 MODULE_DEVICE_TABLE(i2c, au8522_id);
 
-static struct i2c_driver au8522_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "au8522",
-	},
-	.probe		= au8522_probe,
-	.remove		= au8522_remove,
-	.id_table	= au8522_id,
+static struct v4l2_i2c_driver_data v4l2_i2c_data = {
+	.name = "au8522",
+	.probe = au8522_probe,
+	.remove = au8522_remove,
+	.id_table = au8522_id,
 };
-
-static __init int init_au8522(void)
-{
-	return i2c_add_driver(&au8522_driver);
-}
-
-static __exit void exit_au8522(void)
-{
-	i2c_del_driver(&au8522_driver);
-}
-
-module_init(init_au8522);
-module_exit(exit_au8522);

@@ -20,7 +20,6 @@
 #include <linux/i2c.h>
 #include <linux/videodev2.h>
 #include <linux/ioctl.h>
-#include <linux/slab.h>
 
 #include "wis-i2c.h"
 
@@ -323,15 +322,15 @@ static int wis_tw2804_remove(struct i2c_client *client)
 {
 	struct wis_tw2804 *dec = i2c_get_clientdata(client);
 
+	i2c_set_clientdata(client, NULL);
 	kfree(dec);
 	return 0;
 }
 
-static const struct i2c_device_id wis_tw2804_id[] = {
+static struct i2c_device_id wis_tw2804_id[] = {
 	{ "wis_tw2804", 0 },
 	{ }
 };
-MODULE_DEVICE_TABLE(i2c, wis_tw2804_id);
 
 static struct i2c_driver wis_tw2804_driver = {
 	.driver = {

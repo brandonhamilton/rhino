@@ -21,7 +21,6 @@
 #include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/err.h>
-#include <linux/slab.h>
 
 #include <linux/amba/pl093.h>
 

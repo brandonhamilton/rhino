@@ -70,8 +70,7 @@ int dasd_gendisk_alloc(struct dasd_block *block)
 	}
 	len += sprintf(gdp->disk_name + len, "%c", 'a'+(base->devindex%26));
 
-	if (base->features & DASD_FEATURE_READONLY ||
-	    test_bit(DASD_FLAG_DEVICE_RO, &base->flags))
+	if (block->base->features & DASD_FEATURE_READONLY)
 		set_disk_ro(gdp, 1);
 	gdp->private_data = block;
 	gdp->queue = block->request_queue;
@@ -89,7 +88,6 @@ void dasd_gendisk_free(struct dasd_block *block)
 	if (block->gdp) {
 		del_gendisk(block->gdp);
 		block->gdp->queue = NULL;
-		block->gdp->private_data = NULL;
 		put_disk(block->gdp);
 		block->gdp = NULL;
 	}

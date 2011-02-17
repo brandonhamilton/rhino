@@ -7,4 +7,4 @@
  * (at your option) any later version.
  */
 
-#define VMALLOC_END	0xf0000000UL
+#define VMALLOC_END	0xF0000000

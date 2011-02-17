@@ -125,6 +125,8 @@ static void t1_set_rxmode(struct net_device *dev)
 	struct t1_rx_mode rm;
 
 	rm.dev = dev;
+	rm.idx = 0;
+	rm.list = dev->mc_list;
 	mac->ops->set_rx_mode(mac, &rm);
 }
 
@@ -974,7 +976,7 @@ void t1_fatal_err(struct adapter *adapter)
 		t1_sge_stop(adapter->sge);
 		t1_interrupts_disable(adapter);
 	}
-	pr_alert("%s: encountered fatal error, operation suspended\n",
+	CH_ALERT("%s: encountered fatal error, operation suspended\n",
 		 adapter->name);
 }
 
@@ -1018,7 +1020,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 		return err;
 
 	if (!(pci_resource_flags(pdev, 0) & IORESOURCE_MEM)) {
-		pr_err("%s: cannot find PCI device memory base address\n",
+		CH_ERR("%s: cannot find PCI device memory base address\n",
 		       pci_name(pdev));
 		err = -ENODEV;
 		goto out_disable_pdev;
@@ -1028,20 +1030,20 @@ static int __devinit init_one(struct pci_dev *pdev,
 		pci_using_dac = 1;
 
 		if (pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64))) {
-			pr_err("%s: unable to obtain 64-bit DMA for "
+			CH_ERR("%s: unable to obtain 64-bit DMA for "
 			       "consistent allocations\n", pci_name(pdev));
 			err = -ENODEV;
 			goto out_disable_pdev;
 		}
 
 	} else if ((err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) != 0) {
-		pr_err("%s: no usable DMA configuration\n", pci_name(pdev));
+		CH_ERR("%s: no usable DMA configuration\n", pci_name(pdev));
 		goto out_disable_pdev;
 	}
 
 	err = pci_request_regions(pdev, DRV_NAME);
 	if (err) {
-		pr_err("%s: cannot obtain PCI resources\n", pci_name(pdev));
+		CH_ERR("%s: cannot obtain PCI resources\n", pci_name(pdev));
 		goto out_disable_pdev;
 	}
 
@@ -1069,7 +1071,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 
 			adapter->regs = ioremap(mmio_start, mmio_len);
 			if (!adapter->regs) {
-				pr_err("%s: cannot map device registers\n",
+				CH_ERR("%s: cannot map device registers\n",
 				       pci_name(pdev));
 				err = -ENOMEM;
 				goto out_free_dev;
@@ -1148,8 +1150,8 @@ static int __devinit init_one(struct pci_dev *pdev,
 	for (i = 0; i < bi->port_number; ++i) {
 		err = register_netdev(adapter->port[i].dev);
 		if (err)
-			pr_warning("%s: cannot register net device %s, skipping\n",
-				   pci_name(pdev), adapter->port[i].dev->name);
+			CH_WARN("%s: cannot register net device %s, skipping\n",
+				pci_name(pdev), adapter->port[i].dev->name);
 		else {
 			/*
 			 * Change the name we use for messages to the name of
@@ -1162,7 +1164,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 		}
 	}
 	if (!adapter->registered_device_map) {
-		pr_err("%s: could not register any net devices\n",
+		CH_ERR("%s: could not register any net devices\n",
 		       pci_name(pdev));
 		goto out_release_adapter_res;
 	}

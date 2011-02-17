@@ -111,7 +111,6 @@
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <asm/io.h>
 #include <asm/mipsregs.h>
 #include <asm/txx9/generic.h>

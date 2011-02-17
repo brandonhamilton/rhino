@@ -15,7 +15,6 @@
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 #include <linux/sysdev.h>
-#include <linux/irq.h>
 
 #include <asm/i8259.h>
 #include <asm/io.h>
@@ -30,7 +29,7 @@
  */
 
 static int i8259A_auto_eoi = -1;
-DEFINE_RAW_SPINLOCK(i8259A_lock);
+DEFINE_SPINLOCK(i8259A_lock);
 static void disable_8259A_irq(unsigned int irq);
 static void enable_8259A_irq(unsigned int irq);
 static void mask_and_ack_8259A(unsigned int irq);
@@ -66,13 +65,13 @@ static void disable_8259A_irq(unsigned int irq)
 
 	irq -= I8259A_IRQ_BASE;
 	mask = 1 << irq;
-	raw_spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave(&i8259A_lock, flags);
 	cached_irq_mask |= mask;
 	if (irq & 8)
 		outb(cached_slave_mask, PIC_SLAVE_IMR);
 	else
 		outb(cached_master_mask, PIC_MASTER_IMR);
-	raw_spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
 
 static void enable_8259A_irq(unsigned int irq)
@@ -82,13 +81,13 @@ static void enable_8259A_irq(unsigned int irq)
 
 	irq -= I8259A_IRQ_BASE;
 	mask = ~(1 << irq);
-	raw_spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave(&i8259A_lock, flags);
 	cached_irq_mask &= mask;
 	if (irq & 8)
 		outb(cached_slave_mask, PIC_SLAVE_IMR);
 	else
 		outb(cached_master_mask, PIC_MASTER_IMR);
-	raw_spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
 
 int i8259A_irq_pending(unsigned int irq)
@@ -99,12 +98,12 @@ int i8259A_irq_pending(unsigned int irq)
 
 	irq -= I8259A_IRQ_BASE;
 	mask = 1 << irq;
-	raw_spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave(&i8259A_lock, flags);
 	if (irq < 8)
 		ret = inb(PIC_MASTER_CMD) & mask;
 	else
 		ret = inb(PIC_SLAVE_CMD) & (mask >> 8);
-	raw_spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore(&i8259A_lock, flags);
 
 	return ret;
 }
@@ -152,7 +151,7 @@ static void mask_and_ack_8259A(unsigned int irq)
 
 	irq -= I8259A_IRQ_BASE;
 	irqmask = 1 << irq;
-	raw_spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave(&i8259A_lock, flags);
 	/*
 	 * Lightweight spurious IRQ detection. We do not want
 	 * to overdo spurious IRQ handling - it's usually a sign
@@ -184,7 +183,7 @@ handle_real_irq:
 		outb(0x60+irq, PIC_MASTER_CMD);	/* 'Specific EOI to master */
 	}
 	smtc_im_ack_irq(irq);
-	raw_spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore(&i8259A_lock, flags);
 	return;
 
 spurious_8259A_irq:
@@ -265,7 +264,7 @@ static void init_8259A(int auto_eoi)
 
 	i8259A_auto_eoi = auto_eoi;
 
-	raw_spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave(&i8259A_lock, flags);
 
 	outb(0xff, PIC_MASTER_IMR);	/* mask all of 8259A-1 */
 	outb(0xff, PIC_SLAVE_IMR);	/* mask all of 8259A-2 */
@@ -299,7 +298,7 @@ static void init_8259A(int auto_eoi)
 	outb(cached_master_mask, PIC_MASTER_IMR); /* restore master IRQ mask */
 	outb(cached_slave_mask, PIC_SLAVE_IMR);	  /* restore slave IRQ mask */
 
-	raw_spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
 
 /*

@@ -21,7 +21,6 @@
  */
 
 #include <linux/usb.h>
-#include <linux/slab.h>
 
 #include "usb.h"
 #include "transport.h"

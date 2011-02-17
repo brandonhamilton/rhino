@@ -21,8 +21,11 @@
  *
  **************************************************************************
  *
- * The Intel Audio Codec '97 specification is available at:
- * http://download.intel.com/support/motherboards/desktop/sb/ac97_r23.pdf
+ * The Intel Audio Codec '97 specification is available at the Intel
+ * audio homepage: http://developer.intel.com/ial/scalableplatforms/audio/
+ *
+ * The specification itself is currently available at:
+ * ftp://download.intel.com/ial/scalableplatforms/ac97r22.pdf
  *
  **************************************************************************
  *

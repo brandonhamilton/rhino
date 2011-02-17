@@ -1,12 +1,13 @@
 #ifndef _PERF_LINUX_BITOPS_H_
 #define _PERF_LINUX_BITOPS_H_
 
-#include <linux/kernel.h>
-#include <asm/hweight.h>
+#define __KERNEL__
 
-#define BITS_PER_LONG __WORDSIZE
-#define BITS_PER_BYTE           8
-#define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
+#define CONFIG_GENERIC_FIND_NEXT_BIT
+#define CONFIG_GENERIC_FIND_FIRST_BIT
+#include "../../../../include/linux/bitops.h"
+
+#undef __KERNEL__
 
 static inline void set_bit(int nr, unsigned long *addr)
 {
@@ -19,9 +20,10 @@ static __always_inline int test_bit(unsigned int nr, const unsigned long *addr)
 		(((unsigned long *)addr)[nr / BITS_PER_LONG])) != 0;
 }
 
-static inline unsigned long hweight_long(unsigned long w)
-{
-	return sizeof(w) == 4 ? hweight32(w) : hweight64(w);
-}
+unsigned long generic_find_next_zero_le_bit(const unsigned long *addr, unsigned
+		long size, unsigned long offset);
+
+unsigned long generic_find_next_le_bit(const unsigned long *addr, unsigned
+		long size, unsigned long offset);
 
 #endif

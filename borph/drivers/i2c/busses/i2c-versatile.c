@@ -14,8 +14,8 @@
 #include <linux/i2c-algo-bit.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
-#include <linux/io.h>
+
+#include <asm/io.h>
 
 #define I2C_CONTROL	0x00
 #define I2C_CONTROLS	0x00

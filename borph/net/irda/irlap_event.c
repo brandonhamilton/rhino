@@ -29,7 +29,6 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 
 #include <net/irda/irda.h>
 #include <net/irda/irlap_event.h>

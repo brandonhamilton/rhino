@@ -44,6 +44,9 @@ static inline void copy_from_user_page(struct vm_area_struct *vma,
 	memcpy(dst, src, len);
 }
 
+#define PG_WC				PG_arch_1
+PAGEFLAG(WC, WC)
+
 #ifdef CONFIG_X86_PAT
 /*
  * X86 PAT uses page flags WC and Uncached together to keep track of
@@ -52,24 +55,16 @@ static inline void copy_from_user_page(struct vm_area_struct *vma,
  * _PAGE_CACHE_UC_MINUS and fourth state where page's memory type has not
  * been changed from its default (value of -1 used to denote this).
  * Note we do not support _PAGE_CACHE_UC here.
+ *
+ * Caller must hold memtype_lock for atomicity.
  */
-
-#define _PGMT_DEFAULT		0
-#define _PGMT_WC		(1UL << PG_arch_1)
-#define _PGMT_UC_MINUS		(1UL << PG_uncached)
-#define _PGMT_WB		(1UL << PG_uncached | 1UL << PG_arch_1)
-#define _PGMT_MASK		(1UL << PG_uncached | 1UL << PG_arch_1)
-#define _PGMT_CLEAR_MASK	(~_PGMT_MASK)
-
 static inline unsigned long get_page_memtype(struct page *pg)
 {
-	unsigned long pg_flags = pg->flags & _PGMT_MASK;
-
-	if (pg_flags == _PGMT_DEFAULT)
+	if (!PageUncached(pg) && !PageWC(pg))
 		return -1;
-	else if (pg_flags == _PGMT_WC)
+	else if (!PageUncached(pg) && PageWC(pg))
 		return _PAGE_CACHE_WC;
-	else if (pg_flags == _PGMT_UC_MINUS)
+	else if (PageUncached(pg) && !PageWC(pg))
 		return _PAGE_CACHE_UC_MINUS;
 	else
 		return _PAGE_CACHE_WB;
@@ -77,26 +72,25 @@ static inline unsigned long get_page_memtype(struct page *pg)
 
 static inline void set_page_memtype(struct page *pg, unsigned long memtype)
 {
-	unsigned long memtype_flags = _PGMT_DEFAULT;
-	unsigned long old_flags;
-	unsigned long new_flags;
-
 	switch (memtype) {
 	case _PAGE_CACHE_WC:
-		memtype_flags = _PGMT_WC;
+		ClearPageUncached(pg);
+		SetPageWC(pg);
 		break;
 	case _PAGE_CACHE_UC_MINUS:
-		memtype_flags = _PGMT_UC_MINUS;
+		SetPageUncached(pg);
+		ClearPageWC(pg);
 		break;
 	case _PAGE_CACHE_WB:
-		memtype_flags = _PGMT_WB;
+		SetPageUncached(pg);
+		SetPageWC(pg);
+		break;
+	default:
+	case -1:
+		ClearPageUncached(pg);
+		ClearPageWC(pg);
 		break;
 	}
-
-	do {
-		old_flags = pg->flags;
-		new_flags = (old_flags & _PGMT_CLEAR_MASK) | memtype_flags;
-	} while (cmpxchg(&pg->flags, old_flags, new_flags) != old_flags);
 }
 #else
 static inline unsigned long get_page_memtype(struct page *pg) { return -1; }
@@ -145,11 +139,9 @@ int set_memory_np(unsigned long addr, int numpages);
 int set_memory_4k(unsigned long addr, int numpages);
 
 int set_memory_array_uc(unsigned long *addr, int addrinarray);
-int set_memory_array_wc(unsigned long *addr, int addrinarray);
 int set_memory_array_wb(unsigned long *addr, int addrinarray);
 
 int set_pages_array_uc(struct page **pages, int addrinarray);
-int set_pages_array_wc(struct page **pages, int addrinarray);
 int set_pages_array_wb(struct page **pages, int addrinarray);
 
 /*

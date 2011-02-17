@@ -10,7 +10,6 @@
  */
 
 #include <linux/tifm.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/idr.h>
 

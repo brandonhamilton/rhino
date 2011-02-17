@@ -23,7 +23,6 @@
 #include <linux/icmp.h>
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/ip.h>
 #include <net/icmp.h>
@@ -238,68 +237,48 @@ int ip_cmsg_send(struct net *net, struct msghdr *msg, struct ipcm_cookie *ipc)
    but receiver should be enough clever f.e. to forward mtrace requests,
    sent to multicast group to reach destination designated router.
  */
-struct ip_ra_chain __rcu *ip_ra_chain;
-static DEFINE_SPINLOCK(ip_ra_lock);
-
-
-static void ip_ra_destroy_rcu(struct rcu_head *head)
-{
-	struct ip_ra_chain *ra = container_of(head, struct ip_ra_chain, rcu);
-
-	sock_put(ra->saved_sk);
-	kfree(ra);
-}
+struct ip_ra_chain *ip_ra_chain;
+DEFINE_RWLOCK(ip_ra_lock);
 
 int ip_ra_control(struct sock *sk, unsigned char on,
 		  void (*destructor)(struct sock *))
 {
-	struct ip_ra_chain *ra, *new_ra;
-	struct ip_ra_chain __rcu **rap;
+	struct ip_ra_chain *ra, *new_ra, **rap;
 
 	if (sk->sk_type != SOCK_RAW || inet_sk(sk)->inet_num == IPPROTO_RAW)
 		return -EINVAL;
 
 	new_ra = on ? kmalloc(sizeof(*new_ra), GFP_KERNEL) : NULL;
 
-	spin_lock_bh(&ip_ra_lock);
-	for (rap = &ip_ra_chain;
-	     (ra = rcu_dereference_protected(*rap,
-			lockdep_is_held(&ip_ra_lock))) != NULL;
-	     rap = &ra->next) {
+	write_lock_bh(&ip_ra_lock);
+	for (rap = &ip_ra_chain; (ra = *rap) != NULL; rap = &ra->next) {
 		if (ra->sk == sk) {
 			if (on) {
-				spin_unlock_bh(&ip_ra_lock);
+				write_unlock_bh(&ip_ra_lock);
 				kfree(new_ra);
 				return -EADDRINUSE;
 			}
-			/* dont let ip_call_ra_chain() use sk again */
-			ra->sk = NULL;
-			rcu_assign_pointer(*rap, ra->next);
-			spin_unlock_bh(&ip_ra_lock);
+			*rap = ra->next;
+			write_unlock_bh(&ip_ra_lock);
 
 			if (ra->destructor)
 				ra->destructor(sk);
-			/*
-			 * Delay sock_put(sk) and kfree(ra) after one rcu grace
-			 * period. This guarantee ip_call_ra_chain() dont need
-			 * to mess with socket refcounts.
-			 */
-			ra->saved_sk = sk;
-			call_rcu(&ra->rcu, ip_ra_destroy_rcu);
+			sock_put(sk);
+			kfree(ra);
 			return 0;
 		}
 	}
 	if (new_ra == NULL) {
-		spin_unlock_bh(&ip_ra_lock);
+		write_unlock_bh(&ip_ra_lock);
 		return -ENOBUFS;
 	}
 	new_ra->sk = sk;
 	new_ra->destructor = destructor;
 
 	new_ra->next = ra;
-	rcu_assign_pointer(*rap, new_ra);
+	*rap = new_ra;
 	sock_hold(sk);
-	spin_unlock_bh(&ip_ra_lock);
+	write_unlock_bh(&ip_ra_lock);
 
 	return 0;
 }
@@ -307,7 +286,11 @@ int ip_ra_control(struct sock *sk, unsigned char on,
 void ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err,
 		   __be16 port, u32 info, u8 *payload)
 {
+	struct inet_sock *inet = inet_sk(sk);
 	struct sock_exterr_skb *serr;
+
+	if (!inet->recverr)
+		return;
 
 	skb = skb_clone(skb, GFP_ATOMIC);
 	if (!skb)
@@ -468,8 +451,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			     (1<<IP_TTL) | (1<<IP_HDRINCL) |
 			     (1<<IP_MTU_DISCOVER) | (1<<IP_RECVERR) |
 			     (1<<IP_ROUTER_ALERT) | (1<<IP_FREEBIND) |
-			     (1<<IP_PASSSEC) | (1<<IP_TRANSPARENT) |
-			     (1<<IP_MINTTL) | (1<<IP_NODEFRAG))) ||
+			     (1<<IP_PASSSEC) | (1<<IP_TRANSPARENT))) ||
 	    optname == IP_MULTICAST_TTL ||
 	    optname == IP_MULTICAST_ALL ||
 	    optname == IP_MULTICAST_LOOP ||
@@ -591,13 +573,6 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			break;
 		}
 		inet->hdrincl = val ? 1 : 0;
-		break;
-	case IP_NODEFRAG:
-		if (sk->sk_type != SOCK_RAW) {
-			err = -ENOPROTOOPT;
-			break;
-		}
-		inet->nodefrag = val ? 1 : 0;
 		break;
 	case IP_MTU_DISCOVER:
 		if (val < IP_PMTUDISC_DONT || val > IP_PMTUDISC_PROBE)
@@ -961,14 +936,6 @@ mc_msf_out:
 		inet->transparent = !!val;
 		break;
 
-	case IP_MINTTL:
-		if (optlen < 1)
-			goto e_inval;
-		if (val < 0 || val > 255)
-			goto e_inval;
-		inet->min_ttl = val;
-		break;
-
 	default:
 		err = -ENOPROTOOPT;
 		break;
@@ -980,22 +947,6 @@ e_inval:
 	release_sock(sk);
 	return -EINVAL;
 }
-
-/**
- * ip_queue_rcv_skb - Queue an skb into sock receive queue
- * @sk: socket
- * @skb: buffer
- *
- * Queues an skb into socket receive queue. If IP_CMSG_PKTINFO option
- * is not set, we drop skb dst entry now, while dst cache line is hot.
- */
-int ip_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
-{
-	if (!(inet_sk(sk)->cmsg_flags & IP_CMSG_PKTINFO))
-		skb_dst_drop(skb);
-	return sock_queue_rcv_skb(sk, skb);
-}
-EXPORT_SYMBOL(ip_queue_rcv_skb);
 
 int ip_setsockopt(struct sock *sk, int level,
 		int optname, char __user *optval, unsigned int optlen)
@@ -1133,9 +1084,6 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	case IP_HDRINCL:
 		val = inet->hdrincl;
 		break;
-	case IP_NODEFRAG:
-		val = inet->nodefrag;
-		break;
 	case IP_MTU_DISCOVER:
 		val = inet->pmtudisc;
 		break;
@@ -1249,9 +1197,6 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		break;
 	case IP_TRANSPARENT:
 		val = inet->transparent;
-		break;
-	case IP_MINTTL:
-		val = inet->min_ttl;
 		break;
 	default:
 		release_sock(sk);

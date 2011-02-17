@@ -19,7 +19,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
-#include <linux/timer.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -100,7 +99,7 @@ static ssize_t ixp2000_wdt_write(struct file *file, const char *data,
 }
 
 
-static const struct watchdog_info ident = {
+static struct watchdog_info ident = {
 	.options	= WDIOF_MAGICCLOSE | WDIOF_SETTIMEOUT |
 				WDIOF_KEEPALIVEPING,
 	.identity	= "IXP2000 Watchdog",

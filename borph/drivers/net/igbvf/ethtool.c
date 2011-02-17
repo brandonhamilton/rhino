@@ -153,7 +153,7 @@ static int igbvf_set_rx_csum(struct net_device *netdev, u32 data)
 
 static u32 igbvf_get_tx_csum(struct net_device *netdev)
 {
-	return (netdev->features & NETIF_F_IP_CSUM) != 0;
+	return ((netdev->features & NETIF_F_IP_CSUM) != 0);
 }
 
 static int igbvf_set_tx_csum(struct net_device *netdev, u32 data)
@@ -390,6 +390,8 @@ static void igbvf_get_wol(struct net_device *netdev,
 {
 	wol->supported = 0;
 	wol->wolopts = 0;
+
+	return;
 }
 
 static int igbvf_set_wol(struct net_device *netdev,

@@ -19,12 +19,11 @@
 #include <linux/spinlock.h>
 #include <linux/idr.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
 
 #include <asm/mmu_context.h>
 
 static DEFINE_SPINLOCK(mmu_context_lock);
-static DEFINE_IDA(mmu_context_ida);
+static DEFINE_IDR(mmu_context_idr);
 
 /*
  * The proto-VSID space has 2^35 - 1 segments available for user mappings.
@@ -40,11 +39,11 @@ int __init_new_context(void)
 	int err;
 
 again:
-	if (!ida_pre_get(&mmu_context_ida, GFP_KERNEL))
+	if (!idr_pre_get(&mmu_context_idr, GFP_KERNEL))
 		return -ENOMEM;
 
 	spin_lock(&mmu_context_lock);
-	err = ida_get_new_above(&mmu_context_ida, 1, &index);
+	err = idr_get_new_above(&mmu_context_idr, NULL, 1, &index);
 	spin_unlock(&mmu_context_lock);
 
 	if (err == -EAGAIN)
@@ -54,7 +53,7 @@ again:
 
 	if (index > MAX_CONTEXT) {
 		spin_lock(&mmu_context_lock);
-		ida_remove(&mmu_context_ida, index);
+		idr_remove(&mmu_context_idr, index);
 		spin_unlock(&mmu_context_lock);
 		return -ENOMEM;
 	}
@@ -86,7 +85,7 @@ int init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 void __destroy_context(int context_id)
 {
 	spin_lock(&mmu_context_lock);
-	ida_remove(&mmu_context_ida, context_id);
+	idr_remove(&mmu_context_idr, context_id);
 	spin_unlock(&mmu_context_lock);
 }
 EXPORT_SYMBOL_GPL(__destroy_context);

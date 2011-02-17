@@ -29,7 +29,6 @@
 #include <linux/list.h>
 #include <linux/pci.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 
 #include <asm/iommu.h>
 #include <asm/vio.h>
@@ -184,7 +183,7 @@ static void pci_dma_dev_setup_iseries(struct pci_dev *pdev)
 
 	BUG_ON(lsn == NULL);
 
-	tbl = kzalloc(sizeof(struct iommu_table), GFP_KERNEL);
+	tbl = kmalloc(sizeof(struct iommu_table), GFP_KERNEL);
 
 	iommu_table_getparms_iSeries(pdn->busno, *lsn, 0, tbl);
 

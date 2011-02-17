@@ -149,30 +149,10 @@
 
 #define USER(x...)				\
 9999:	x;					\
-	.pushsection __ex_table,"a";		\
+	.section __ex_table,"a";		\
 	.align	3;				\
 	.long	9999b,9001f;			\
-	.popsection
-
-#ifdef CONFIG_SMP
-#define ALT_SMP(instr...)					\
-9998:	instr
-#define ALT_UP(instr...)					\
-	.pushsection ".alt.smp.init", "a"			;\
-	.long	9998b						;\
-	instr							;\
-	.popsection
-#define ALT_UP_B(label)					\
-	.equ	up_b_offset, label - 9998b			;\
-	.pushsection ".alt.smp.init", "a"			;\
-	.long	9998b						;\
-	b	. + up_b_offset					;\
-	.popsection
-#else
-#define ALT_SMP(instr...)
-#define ALT_UP(instr...) instr
-#define ALT_UP_B(label) b label
-#endif
+	.previous
 
 /*
  * SMP data memory barrier
@@ -180,13 +160,10 @@
 	.macro	smp_dmb
 #ifdef CONFIG_SMP
 #if __LINUX_ARM_ARCH__ >= 7
-	ALT_SMP(dmb)
+	dmb
 #elif __LINUX_ARM_ARCH__ == 6
-	ALT_SMP(mcr	p15, 0, r0, c7, c10, 5)	@ dmb
-#else
-#error Incompatible SMP platform
+	mcr	p15, 0, r0, c7, c10, 5	@ dmb
 #endif
-	ALT_UP(nop)
 #endif
 	.endm
 
@@ -216,10 +193,10 @@
 	.error	"Unsupported inc macro argument"
 	.endif
 
-	.pushsection __ex_table,"a"
+	.section __ex_table,"a"
 	.align	3
 	.long	9999b, \abort
-	.popsection
+	.previous
 	.endm
 
 	.macro	usracc, instr, reg, ptr, inc, cond, rept, abort
@@ -238,7 +215,7 @@
 	@ Slightly optimised to avoid incrementing the pointer twice
 	usraccoff \instr, \reg, \ptr, \inc, 0, \cond, \abort
 	.if	\rept == 2
-	usraccoff \instr, \reg, \ptr, \inc, \inc, \cond, \abort
+	usraccoff \instr, \reg, \ptr, \inc, 4, \cond, \abort
 	.endif
 
 	add\cond \ptr, #\rept * \inc
@@ -257,10 +234,10 @@
 	.error	"Unsupported inc macro argument"
 	.endif
 
-	.pushsection __ex_table,"a"
+	.section __ex_table,"a"
 	.align	3
 	.long	9999b, \abort
-	.popsection
+	.previous
 	.endr
 	.endm
 

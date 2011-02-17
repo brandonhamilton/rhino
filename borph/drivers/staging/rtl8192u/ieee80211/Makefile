@@ -5,22 +5,22 @@ MODDESTDIR := /lib/modules/$(KVER)/kernel/drivers/net/wireless/$(NIC_SELECT)
 
 CC = gcc
 ifneq ($(shell uname -r|cut -d. -f1,2), 2.4)
-ccflags-y := -I$(TOPDIR)/drivers/net/wireless
-ccflags-y += -O2
-ccflags-y += -DJACKSON_NEW_8187 -DJACKSON_NEW_RX
+EXTRA_CFLAGS += -I$(TOPDIR)/drivers/net/wireless
+EXTRA_CFLAGS += -O2
+EXTRA_CFLAGS += -DJACKSON_NEW_8187 -DJACKSON_NEW_RX
 
 #it will fail to compile in suse linux enterprise 10 sp2. This flag is to solve this problem.
 ifeq ($(shell uname -r | cut -d. -f1,2,3,4), 2.6.16.60-0)
-ccflags-y := -DOPENSUSE_SLED
+EXTRA_CFLAGS += -DOPENSUSE_SLED
 endif
 
 ifeq ($(NIC_SELECT),RTL8192U)
-#ccflags-y := -DUSB_TX_DRIVER_AGGREGATION_ENABLE
-#ccflags-y := -DUSB_RX_AGGREGATION_SUPPORT
+#EXTRA_CFLAGS += -DUSB_TX_DRIVER_AGGREGATION_ENABLE
+#EXTRA_CFLAGS += -DUSB_RX_AGGREGATION_SUPPORT
 endif
-#ccflags-y := -DJOHN_NOCPY
+#EXTRA_CFLAGS += -DJOHN_NOCPY
 #flags to enable or disble 80211D feature
-ccflags-y += -DENABLE_DOT11D
+EXTRA_CFLAGS += -DENABLE_DOT11D
 ieee80211-rsl-objs := ieee80211_rx.o \
 		      ieee80211_softmac.o \
 		      ieee80211_tx.o \

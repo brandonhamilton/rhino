@@ -39,7 +39,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/rtc.h>
 #include <linux/spi/spi.h>
 
@@ -316,7 +315,7 @@ kfree_exit:
 	return ret;
 }
 
-static int __devexit pcf2123_remove(struct spi_device *spi)
+static int pcf2123_remove(struct spi_device *spi)
 {
 	struct pcf2123_plat_data *pdata = spi->dev.platform_data;
 	int i;

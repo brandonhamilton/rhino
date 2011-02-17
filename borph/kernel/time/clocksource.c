@@ -343,19 +343,7 @@ static void clocksource_resume_watchdog(void)
 {
 	unsigned long flags;
 
-	/*
-	 * We use trylock here to avoid a potential dead lock when
-	 * kgdb calls this code after the kernel has been stopped with
-	 * watchdog_lock held. When watchdog_lock is held we just
-	 * return and accept, that the watchdog might trigger and mark
-	 * the monitored clock source (usually TSC) unstable.
-	 *
-	 * This does not affect the other caller clocksource_resume()
-	 * because at this point the kernel is UP, interrupts are
-	 * disabled and nothing can hold watchdog_lock.
-	 */
-	if (!spin_trylock_irqsave(&watchdog_lock, flags))
-		return;
+	spin_lock_irqsave(&watchdog_lock, flags);
 	clocksource_reset_watchdog();
 	spin_unlock_irqrestore(&watchdog_lock, flags);
 }
@@ -453,18 +441,6 @@ static inline int clocksource_watchdog_kthread(void *data) { return 0; }
 #endif /* CONFIG_CLOCKSOURCE_WATCHDOG */
 
 /**
- * clocksource_suspend - suspend the clocksource(s)
- */
-void clocksource_suspend(void)
-{
-	struct clocksource *cs;
-
-	list_for_each_entry_reverse(cs, &clocksource_list, list)
-		if (cs->suspend)
-			cs->suspend(cs);
-}
-
-/**
  * clocksource_resume - resume the clocksource(s)
  */
 void clocksource_resume(void)
@@ -473,7 +449,7 @@ void clocksource_resume(void)
 
 	list_for_each_entry(cs, &clocksource_list, list)
 		if (cs->resume)
-			cs->resume(cs);
+			cs->resume();
 
 	clocksource_resume_watchdog();
 }
@@ -482,8 +458,8 @@ void clocksource_resume(void)
  * clocksource_touch_watchdog - Update watchdog
  *
  * Update the watchdog after exception contexts such as kgdb so as not
- * to incorrectly trip the watchdog. This might fail when the kernel
- * was stopped in code which holds watchdog_lock.
+ * to incorrectly trip the watchdog.
+ *
  */
 void clocksource_touch_watchdog(void)
 {
@@ -531,7 +507,7 @@ static u64 clocksource_max_deferment(struct clocksource *cs)
 	return max_nsecs - (max_nsecs >> 5);
 }
 
-#ifndef CONFIG_ARCH_USES_GETTIMEOFFSET
+#ifdef CONFIG_GENERIC_TIME
 
 /**
  * clocksource_select - Select the best clocksource available
@@ -577,7 +553,7 @@ static void clocksource_select(void)
 	}
 }
 
-#else /* !CONFIG_ARCH_USES_GETTIMEOFFSET */
+#else /* CONFIG_GENERIC_TIME */
 
 static inline void clocksource_select(void) { }
 
@@ -592,10 +568,6 @@ static inline void clocksource_select(void) { }
  */
 static int __init clocksource_done_booting(void)
 {
-	mutex_lock(&clocksource_mutex);
-	curr_clocksource = clocksource_default_clock();
-	mutex_unlock(&clocksource_mutex);
-
 	finished_booting = 1;
 
 	/*
@@ -624,73 +596,6 @@ static void clocksource_enqueue(struct clocksource *cs)
 			entry = &tmp->list;
 	list_add(&cs->list, entry);
 }
-
-
-/*
- * Maximum time we expect to go between ticks. This includes idle
- * tickless time. It provides the trade off between selecting a
- * mult/shift pair that is very precise but can only handle a short
- * period of time, vs. a mult/shift pair that can handle long periods
- * of time but isn't as precise.
- *
- * This is a subsystem constant, and actual hardware limitations
- * may override it (ie: clocksources that wrap every 3 seconds).
- */
-#define MAX_UPDATE_LENGTH 5 /* Seconds */
-
-/**
- * __clocksource_updatefreq_scale - Used update clocksource with new freq
- * @t:		clocksource to be registered
- * @scale:	Scale factor multiplied against freq to get clocksource hz
- * @freq:	clocksource frequency (cycles per second) divided by scale
- *
- * This should only be called from the clocksource->enable() method.
- *
- * This *SHOULD NOT* be called directly! Please use the
- * clocksource_updatefreq_hz() or clocksource_updatefreq_khz helper functions.
- */
-void __clocksource_updatefreq_scale(struct clocksource *cs, u32 scale, u32 freq)
-{
-	/*
-	 * Ideally we want to use  some of the limits used in
-	 * clocksource_max_deferment, to provide a more informed
-	 * MAX_UPDATE_LENGTH. But for now this just gets the
-	 * register interface working properly.
-	 */
-	clocks_calc_mult_shift(&cs->mult, &cs->shift, freq,
-				      NSEC_PER_SEC/scale,
-				      MAX_UPDATE_LENGTH*scale);
-	cs->max_idle_ns = clocksource_max_deferment(cs);
-}
-EXPORT_SYMBOL_GPL(__clocksource_updatefreq_scale);
-
-/**
- * __clocksource_register_scale - Used to install new clocksources
- * @t:		clocksource to be registered
- * @scale:	Scale factor multiplied against freq to get clocksource hz
- * @freq:	clocksource frequency (cycles per second) divided by scale
- *
- * Returns -EBUSY if registration fails, zero otherwise.
- *
- * This *SHOULD NOT* be called directly! Please use the
- * clocksource_register_hz() or clocksource_register_khz helper functions.
- */
-int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
-{
-
-	/* Intialize mult/shift and max_idle_ns */
-	__clocksource_updatefreq_scale(cs, scale, freq);
-
-	/* Add clocksource to the clcoksource list */
-	mutex_lock(&clocksource_mutex);
-	clocksource_enqueue(cs);
-	clocksource_select();
-	clocksource_enqueue_watchdog(cs);
-	mutex_unlock(&clocksource_mutex);
-	return 0;
-}
-EXPORT_SYMBOL_GPL(__clocksource_register_scale);
-
 
 /**
  * clocksource_register - Used to install new clocksources

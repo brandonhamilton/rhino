@@ -23,10 +23,8 @@
  */
 
 #include "drmP.h"
-
 #include "nouveau_drv.h"
 #include "nouveau_i2c.h"
-#include "nouveau_connector.h"
 #include "nouveau_encoder.h"
 
 static int
@@ -189,7 +187,7 @@ nouveau_dp_link_train_adjust(struct drm_encoder *encoder, uint8_t *config)
 	if (ret)
 		return false;
 
-	NV_DEBUG_KMS(dev, "\t\tadjust 0x%02x 0x%02x\n", request[0], request[1]);
+	NV_DEBUG(dev, "\t\tadjust 0x%02x 0x%02x\n", request[0], request[1]);
 
 	/* Keep all lanes at the same level.. */
 	for (i = 0; i < nv_encoder->dp.link_nr; i++) {
@@ -230,7 +228,7 @@ nouveau_dp_link_train_commit(struct drm_encoder *encoder, uint8_t *config)
 	int or = nv_encoder->or, link = !(nv_encoder->dcb->sorconf.link & 1);
 	int dpe_headerlen, ret, i;
 
-	NV_DEBUG_KMS(dev, "\t\tconfig 0x%02x 0x%02x 0x%02x 0x%02x\n",
+	NV_DEBUG(dev, "\t\tconfig 0x%02x 0x%02x 0x%02x 0x%02x\n",
 		 config[0], config[1], config[2], config[3]);
 
 	dpe = nouveau_bios_dp_table(dev, nv_encoder->dcb, &dpe_headerlen);
@@ -272,44 +270,18 @@ bool
 nouveau_dp_link_train(struct drm_encoder *encoder)
 {
 	struct drm_device *dev = encoder->dev;
-	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	struct nouveau_gpio_engine *pgpio = &dev_priv->engine.gpio;
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
-	struct nouveau_connector *nv_connector;
-	struct bit_displayport_encoder_table *dpe;
-	int dpe_headerlen;
-	uint8_t config[4], status[3];
+	uint8_t config[4];
+	uint8_t status[3];
 	bool cr_done, cr_max_vs, eq_done;
 	int ret = 0, i, tries, voltage;
 
-	NV_DEBUG_KMS(dev, "link training!!\n");
-
-	nv_connector = nouveau_encoder_connector_get(nv_encoder);
-	if (!nv_connector)
-		return false;
-
-	dpe = nouveau_bios_dp_table(dev, nv_encoder->dcb, &dpe_headerlen);
-	if (!dpe) {
-		NV_ERROR(dev, "SOR-%d: no DP encoder table!\n", nv_encoder->or);
-		return false;
-	}
-
-	/* disable hotplug detect, this flips around on some panels during
-	 * link training.
-	 */
-	pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, false);
-
-	if (dpe->script0) {
-		NV_DEBUG_KMS(dev, "SOR-%d: running DP script 0\n", nv_encoder->or);
-		nouveau_bios_run_init_table(dev, le16_to_cpu(dpe->script0),
-					    nv_encoder->dcb);
-	}
-
+	NV_DEBUG(dev, "link training!!\n");
 train:
 	cr_done = eq_done = false;
 
 	/* set link configuration */
-	NV_DEBUG_KMS(dev, "\tbegin train: bw %d, lanes %d\n",
+	NV_DEBUG(dev, "\tbegin train: bw %d, lanes %d\n",
 		 nv_encoder->dp.link_bw, nv_encoder->dp.link_nr);
 
 	ret = nouveau_dp_link_bw_set(encoder, nv_encoder->dp.link_bw);
@@ -317,8 +289,7 @@ train:
 		return false;
 
 	config[0] = nv_encoder->dp.link_nr;
-	if (nv_encoder->dp.dpcd_version >= 0x11 &&
-	    nv_encoder->dp.enhanced_frame)
+	if (nv_encoder->dp.dpcd_version >= 0x11)
 		config[0] |= DP_LANE_COUNT_ENHANCED_FRAME_EN;
 
 	ret = nouveau_dp_lane_count_set(encoder, config[0]);
@@ -326,7 +297,7 @@ train:
 		return false;
 
 	/* clock recovery */
-	NV_DEBUG_KMS(dev, "\tbegin cr\n");
+	NV_DEBUG(dev, "\tbegin cr\n");
 	ret = nouveau_dp_link_train_set(encoder, DP_TRAINING_PATTERN_1);
 	if (ret)
 		goto stop;
@@ -343,7 +314,7 @@ train:
 		ret = auxch_rd(encoder, DP_LANE0_1_STATUS, status, 2);
 		if (ret)
 			break;
-		NV_DEBUG_KMS(dev, "\t\tstatus: 0x%02x 0x%02x\n",
+		NV_DEBUG(dev, "\t\tstatus: 0x%02x 0x%02x\n",
 			 status[0], status[1]);
 
 		cr_done = true;
@@ -375,7 +346,7 @@ train:
 		goto stop;
 
 	/* channel equalisation */
-	NV_DEBUG_KMS(dev, "\tbegin eq\n");
+	NV_DEBUG(dev, "\tbegin eq\n");
 	ret = nouveau_dp_link_train_set(encoder, DP_TRAINING_PATTERN_2);
 	if (ret)
 		goto stop;
@@ -386,7 +357,7 @@ train:
 		ret = auxch_rd(encoder, DP_LANE0_1_STATUS, status, 3);
 		if (ret)
 			break;
-		NV_DEBUG_KMS(dev, "\t\tstatus: 0x%02x 0x%02x\n",
+		NV_DEBUG(dev, "\t\tstatus: 0x%02x 0x%02x\n",
 			 status[0], status[1]);
 
 		eq_done = true;
@@ -424,22 +395,13 @@ stop:
 
 	/* retry at a lower setting, if possible */
 	if (!ret && !(eq_done && cr_done)) {
-		NV_DEBUG_KMS(dev, "\twe failed\n");
+		NV_DEBUG(dev, "\twe failed\n");
 		if (nv_encoder->dp.link_bw != DP_LINK_BW_1_62) {
-			NV_DEBUG_KMS(dev, "retry link training at low rate\n");
+			NV_DEBUG(dev, "retry link training at low rate\n");
 			nv_encoder->dp.link_bw = DP_LINK_BW_1_62;
 			goto train;
 		}
 	}
-
-	if (dpe->script1) {
-		NV_DEBUG_KMS(dev, "SOR-%d: running DP script 1\n", nv_encoder->or);
-		nouveau_bios_run_init_table(dev, le16_to_cpu(dpe->script1),
-					    nv_encoder->dcb);
-	}
-
-	/* re-enable hotplug detect */
-	pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, true);
 
 	return eq_done;
 }
@@ -456,7 +418,7 @@ nouveau_dp_detect(struct drm_encoder *encoder)
 	if (ret)
 		return false;
 
-	NV_DEBUG_KMS(dev, "encoder: link_bw %d, link_nr %d\n"
+	NV_DEBUG(dev, "encoder: link_bw %d, link_nr %d\n"
 		      "display: link_bw %d, link_nr %d version 0x%02x\n",
 		 nv_encoder->dcb->dpconf.link_bw,
 		 nv_encoder->dcb->dpconf.link_nr,
@@ -469,11 +431,9 @@ nouveau_dp_detect(struct drm_encoder *encoder)
 	    !nv_encoder->dcb->dpconf.link_bw)
 		nv_encoder->dp.link_bw = DP_LINK_BW_1_62;
 
-	nv_encoder->dp.link_nr = dpcd[2] & DP_MAX_LANE_COUNT_MASK;
+	nv_encoder->dp.link_nr = dpcd[2] & 0xf;
 	if (nv_encoder->dp.link_nr > nv_encoder->dcb->dpconf.link_nr)
 		nv_encoder->dp.link_nr = nv_encoder->dcb->dpconf.link_nr;
-
-	nv_encoder->dp.enhanced_frame = (dpcd[2] & DP_ENHANCED_FRAME_CAP);
 
 	return true;
 }
@@ -486,7 +446,7 @@ nouveau_dp_auxch(struct nouveau_i2c_chan *auxch, int cmd, int addr,
 	uint32_t tmp, ctrl, stat = 0, data32[4] = {};
 	int ret = 0, i, index = auxch->rd;
 
-	NV_DEBUG_KMS(dev, "ch %d cmd %d addr 0x%x len %d\n", index, cmd, addr, data_nr);
+	NV_DEBUG(dev, "ch %d cmd %d addr 0x%x len %d\n", index, cmd, addr, data_nr);
 
 	tmp = nv_rd32(dev, NV50_AUXCH_CTRL(auxch->rd));
 	nv_wr32(dev, NV50_AUXCH_CTRL(auxch->rd), tmp | 0x00100000);
@@ -512,7 +472,7 @@ nouveau_dp_auxch(struct nouveau_i2c_chan *auxch, int cmd, int addr,
 	if (!(cmd & 1)) {
 		memcpy(data32, data, data_nr);
 		for (i = 0; i < 4; i++) {
-			NV_DEBUG_KMS(dev, "wr %d: 0x%08x\n", i, data32[i]);
+			NV_DEBUG(dev, "wr %d: 0x%08x\n", i, data32[i]);
 			nv_wr32(dev, NV50_AUXCH_DATA_OUT(index, i), data32[i]);
 		}
 	}
@@ -523,16 +483,14 @@ nouveau_dp_auxch(struct nouveau_i2c_chan *auxch, int cmd, int addr,
 	ctrl |= (cmd << NV50_AUXCH_CTRL_CMD_SHIFT);
 	ctrl |= ((data_nr - 1) << NV50_AUXCH_CTRL_LEN_SHIFT);
 
-	for (i = 0; i < 16; i++) {
+	for (;;) {
 		nv_wr32(dev, NV50_AUXCH_CTRL(index), ctrl | 0x80000000);
 		nv_wr32(dev, NV50_AUXCH_CTRL(index), ctrl);
 		nv_wr32(dev, NV50_AUXCH_CTRL(index), ctrl | 0x00010000);
-		if (!nv_wait(dev, NV50_AUXCH_CTRL(index),
-			     0x00010000, 0x00000000)) {
+		if (!nv_wait(NV50_AUXCH_CTRL(index), 0x00010000, 0x00000000)) {
 			NV_ERROR(dev, "expected bit 16 == 0, got 0x%08x\n",
 				 nv_rd32(dev, NV50_AUXCH_CTRL(index)));
-			ret = -EBUSY;
-			goto out;
+			return -EBUSY;
 		}
 
 		udelay(400);
@@ -543,21 +501,10 @@ nouveau_dp_auxch(struct nouveau_i2c_chan *auxch, int cmd, int addr,
 			break;
 	}
 
-	if (i == 16) {
-		NV_ERROR(dev, "auxch DEFER too many times, bailing\n");
-		ret = -EREMOTEIO;
-		goto out;
-	}
-
 	if (cmd & 1) {
-		if ((stat & NV50_AUXCH_STAT_COUNT) != data_nr) {
-			ret = -EREMOTEIO;
-			goto out;
-		}
-
 		for (i = 0; i < 4; i++) {
 			data32[i] = nv_rd32(dev, NV50_AUXCH_DATA_IN(index, i));
-			NV_DEBUG_KMS(dev, "rd %d: 0x%08x\n", i, data32[i]);
+			NV_DEBUG(dev, "rd %d: 0x%08x\n", i, data32[i]);
 		}
 		memcpy(data, data32, data_nr);
 	}
@@ -576,64 +523,47 @@ out:
 	return ret ? ret : (stat & NV50_AUXCH_STAT_REPLY);
 }
 
-static int
-nouveau_dp_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+int
+nouveau_dp_i2c_aux_ch(struct i2c_adapter *adapter, int mode,
+		      uint8_t write_byte, uint8_t *read_byte)
 {
-	struct nouveau_i2c_chan *auxch = (struct nouveau_i2c_chan *)adap;
+	struct i2c_algo_dp_aux_data *algo_data = adapter->algo_data;
+	struct nouveau_i2c_chan *auxch = (struct nouveau_i2c_chan *)adapter;
 	struct drm_device *dev = auxch->dev;
-	struct i2c_msg *msg = msgs;
-	int ret, mcnt = num;
+	int ret = 0, cmd, addr = algo_data->address;
+	uint8_t *buf;
 
-	while (mcnt--) {
-		u8 remaining = msg->len;
-		u8 *ptr = msg->buf;
-
-		while (remaining) {
-			u8 cnt = (remaining > 16) ? 16 : remaining;
-			u8 cmd;
-
-			if (msg->flags & I2C_M_RD)
-				cmd = AUX_I2C_READ;
-			else
-				cmd = AUX_I2C_WRITE;
-
-			if (mcnt || remaining > 16)
-				cmd |= AUX_I2C_MOT;
-
-			ret = nouveau_dp_auxch(auxch, cmd, msg->addr, ptr, cnt);
-			if (ret < 0)
-				return ret;
-
-			switch (ret & NV50_AUXCH_STAT_REPLY_I2C) {
-			case NV50_AUXCH_STAT_REPLY_I2C_ACK:
-				break;
-			case NV50_AUXCH_STAT_REPLY_I2C_NACK:
-				return -EREMOTEIO;
-			case NV50_AUXCH_STAT_REPLY_I2C_DEFER:
-				udelay(100);
-				continue;
-			default:
-				NV_ERROR(dev, "bad auxch reply: 0x%08x\n", ret);
-				return -EREMOTEIO;
-			}
-
-			ptr += cnt;
-			remaining -= cnt;
-		}
-
-		msg++;
+	if (mode == MODE_I2C_READ) {
+		cmd = AUX_I2C_READ;
+		buf = read_byte;
+	} else {
+		cmd = (mode & MODE_I2C_READ) ? AUX_I2C_READ : AUX_I2C_WRITE;
+		buf = &write_byte;
 	}
 
-	return num;
+	if (!(mode & MODE_I2C_STOP))
+		cmd |= AUX_I2C_MOT;
+
+	if (mode & MODE_I2C_START)
+		return 1;
+
+	for (;;) {
+		ret = nouveau_dp_auxch(auxch, cmd, addr, buf, 1);
+		if (ret < 0)
+			return ret;
+
+		switch (ret & NV50_AUXCH_STAT_REPLY_I2C) {
+		case NV50_AUXCH_STAT_REPLY_I2C_ACK:
+			return 1;
+		case NV50_AUXCH_STAT_REPLY_I2C_NACK:
+			return -EREMOTEIO;
+		case NV50_AUXCH_STAT_REPLY_I2C_DEFER:
+			udelay(100);
+			break;
+		default:
+			NV_ERROR(dev, "invalid auxch status: 0x%08x\n", ret);
+			return -EREMOTEIO;
+		}
+	}
 }
 
-static u32
-nouveau_dp_i2c_func(struct i2c_adapter *adap)
-{
-	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
-}
-
-const struct i2c_algorithm nouveau_dp_i2c_algo = {
-	.master_xfer = nouveau_dp_i2c_xfer,
-	.functionality = nouveau_dp_i2c_func
-};

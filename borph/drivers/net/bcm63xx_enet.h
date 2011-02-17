@@ -274,6 +274,7 @@ struct bcm_enet_priv {
 	int pause_tx;
 
 	/* stats */
+	struct net_device_stats stats;
 	struct bcm_enet_mib_counters mib;
 
 	/* after mib interrupt, mib registers update is done in this

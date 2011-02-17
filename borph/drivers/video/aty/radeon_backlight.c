@@ -12,7 +12,6 @@
 
 #include "radeonfb.h"
 #include <linux/backlight.h>
-#include <linux/slab.h>
 
 #ifdef CONFIG_PMAC_BACKLIGHT
 #include <asm/backlight.h>
@@ -135,7 +134,6 @@ static struct backlight_ops radeon_bl_data = {
 
 void radeonfb_bl_init(struct radeonfb_info *rinfo)
 {
-	struct backlight_properties props;
 	struct backlight_device *bd;
 	struct radeon_bl_privdata *pdata;
 	char name[12];
@@ -157,10 +155,7 @@ void radeonfb_bl_init(struct radeonfb_info *rinfo)
 
 	snprintf(name, sizeof(name), "radeonbl%d", rinfo->info->node);
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
-	bd = backlight_device_register(name, rinfo->info->dev, pdata,
-				       &radeon_bl_data, &props);
+	bd = backlight_device_register(name, rinfo->info->dev, pdata, &radeon_bl_data);
 	if (IS_ERR(bd)) {
 		rinfo->info->bl_dev = NULL;
 		printk("radeonfb: Backlight registration failed\n");
@@ -180,9 +175,9 @@ void radeonfb_bl_init(struct radeonfb_info *rinfo)
 
 #ifdef CONFIG_PMAC_BACKLIGHT
 	pdata->negative = pdata->negative ||
-		of_machine_is_compatible("PowerBook4,3") ||
-		of_machine_is_compatible("PowerBook6,3") ||
-		of_machine_is_compatible("PowerBook6,5");
+		machine_is_compatible("PowerBook4,3") ||
+		machine_is_compatible("PowerBook6,3") ||
+		machine_is_compatible("PowerBook6,5");
 #endif
 
 	rinfo->info->bl_dev = bd;
@@ -190,6 +185,7 @@ void radeonfb_bl_init(struct radeonfb_info *rinfo)
 		 63 * FB_BACKLIGHT_MAX / MAX_RADEON_LEVEL,
 		217 * FB_BACKLIGHT_MAX / MAX_RADEON_LEVEL);
 
+	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
 	bd->props.brightness = bd->props.max_brightness;
 	bd->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(bd);

@@ -40,7 +40,7 @@
 
 static inline unsigned long mmap_base(void)
 {
-	unsigned long gap = rlimit(RLIMIT_STACK);
+	unsigned long gap = current->signal->rlim[RLIMIT_STACK].rlim_cur;
 
 	if (gap < MIN_GAP)
 		gap = MIN_GAP;
@@ -61,7 +61,7 @@ static inline int mmap_is_legacy(void)
 #endif
 	return sysctl_legacy_va_layout ||
 	    (current->personality & ADDR_COMPAT_LAYOUT) ||
-	    rlimit(RLIMIT_STACK) == RLIM_INFINITY;
+	    current->signal->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY;
 }
 
 #ifndef CONFIG_64BIT

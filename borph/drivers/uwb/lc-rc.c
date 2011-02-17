@@ -35,7 +35,6 @@
 #include <linux/kdev_t.h>
 #include <linux/etherdevice.h>
 #include <linux/usb.h>
-#include <linux/slab.h>
 
 #include "uwb-internal.h"
 

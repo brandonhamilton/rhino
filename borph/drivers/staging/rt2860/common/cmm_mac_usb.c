@@ -663,7 +663,10 @@ int RTUSBWriteHWMACAddress(struct rt_rtmp_adapter *pAd)
 	StaMacReg1.field.Byte5 = pAd->CurrentAddress[5];
 	StaMacReg1.field.U2MeMask = 0xff;
 	DBGPRINT_RAW(RT_DEBUG_TRACE,
-		("Local MAC = %pM\n", pAd->CurrentAddress));
+		     ("Local MAC = %02x:%02x:%02x:%02x:%02x:%02x\n",
+		      pAd->CurrentAddress[0], pAd->CurrentAddress[1],
+		      pAd->CurrentAddress[2], pAd->CurrentAddress[3],
+		      pAd->CurrentAddress[4], pAd->CurrentAddress[5]));
 
 	RTUSBWriteMACRegister(pAd, MAC_ADDR_DW0, StaMacReg0.word);
 	RTUSBWriteMACRegister(pAd, MAC_ADDR_DW1, StaMacReg1.word);
@@ -1084,7 +1087,7 @@ void RT28xxUsbMlmeRadioOFF(struct rt_rtmp_adapter *pAd)
 		if (INFRA_ON(pAd) || ADHOC_ON(pAd)) {
 			struct rt_mlme_disassoc_req DisReq;
 			struct rt_mlme_queue_elem *pMsgElem =
-			    kmalloc(sizeof(struct rt_mlme_queue_elem),
+			    (struct rt_mlme_queue_elem *)kmalloc(sizeof(struct rt_mlme_queue_elem),
 							MEM_ALLOC_FLAG);
 
 			if (pMsgElem) {

@@ -24,7 +24,7 @@
 #include <asm/localtimer.h>
 #include <asm/smp_scu.h>
 #include <mach/hardware.h>
-#include <mach/omap4-common.h>
+#include <plat/common.h>
 
 /* SCU base address */
 static void __iomem *scu_base;
@@ -73,10 +73,9 @@ int __cpuinit boot_secondary(unsigned int cpu, struct task_struct *idle)
 	 * the AuxCoreBoot1 register is updated with cpu state
 	 * A barrier is added to ensure that write buffer is drained
 	 */
-	omap_modify_auxcoreboot0(0x200, 0xfffffdff);
+	omap_modify_auxcoreboot0(0x200, 0x0);
 	flush_cache_all();
 	smp_wmb();
-	smp_cross_call(cpumask_of(cpu));
 
 	/*
 	 * Now the secondary core is starting up let it run its
@@ -102,7 +101,8 @@ static void __init wakeup_secondary(void)
 	 * Send a 'sev' to wake the secondary core from WFE.
 	 * Drain the outstanding writes to memory
 	 */
-	dsb_sev();
+	dsb();
+	set_event();
 	mb();
 }
 

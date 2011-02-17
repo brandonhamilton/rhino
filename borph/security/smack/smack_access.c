@@ -11,7 +11,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include "smack.h"

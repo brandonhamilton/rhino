@@ -268,8 +268,6 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct rtrack *rt = video_drvdata(file);
 
-	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
-		return -EINVAL;
 	rt_setfreq(rt, f->frequency);
 	return 0;
 }
@@ -279,8 +277,6 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct rtrack *rt = video_drvdata(file);
 
-	if (f->tuner != 0)
-		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = rt->curfreq;
 	return 0;
@@ -361,7 +357,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations rtrack_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= video_ioctl2,
+	.ioctl		= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops rtrack_ioctl_ops = {
@@ -412,6 +408,13 @@ static int __init rtrack_init(void)
 	rt->vdev.release = video_device_release_empty;
 	video_set_drvdata(&rt->vdev, rt);
 
+	if (video_register_device(&rt->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
+		v4l2_device_unregister(&rt->v4l2_dev);
+		release_region(rt->io, 2);
+		return -EINVAL;
+	}
+	v4l2_info(v4l2_dev, "AIMSlab RadioTrack/RadioReveal card driver.\n");
+
 	/* Set up the I/O locking */
 
 	mutex_init(&rt->lock);
@@ -422,13 +425,6 @@ static int __init rtrack_init(void)
 	outb(0x48, rt->io);		/* volume down but still "on"	*/
 	sleep_delay(2000000);	/* make sure it's totally down	*/
 	outb(0xc0, rt->io);		/* steady volume, mute card	*/
-
-	if (video_register_device(&rt->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
-		v4l2_device_unregister(&rt->v4l2_dev);
-		release_region(rt->io, 2);
-		return -EINVAL;
-	}
-	v4l2_info(v4l2_dev, "AIMSlab RadioTrack/RadioReveal card driver.\n");
 
 	return 0;
 }

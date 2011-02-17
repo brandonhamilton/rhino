@@ -58,12 +58,6 @@ static unsigned long pcm990_pin_config[] __initdata = {
 	/* I2C */
 	GPIO117_I2C_SCL,
 	GPIO118_I2C_SDA,
-
-	/* AC97 */
-	GPIO28_AC97_BITCLK,
-	GPIO29_AC97_SDATA_IN_0,
-	GPIO30_AC97_SDATA_OUT,
-	GPIO31_AC97_SYNC,
 };
 
 /*
@@ -265,7 +259,8 @@ static void pcm990_irq_handler(unsigned int irq, struct irq_desc *desc)
 	unsigned long pending = (~PCM990_INTSETCLR) & pcm990_irq_enabled;
 
 	do {
-		desc->chip->ack(irq);	/* clear our parent IRQ */
+		GEDR(PCM990_CTRL_INT_IRQ_GPIO) =
+					GPIO_bit(PCM990_CTRL_INT_IRQ_GPIO);
 		if (likely(pending)) {
 			irq = PCM027_IRQ(0) + __ffs(pending);
 			generic_handle_irq(irq);
@@ -326,7 +321,7 @@ static void pcm990_mci_exit(struct device *dev, void *data)
 #define MSECS_PER_JIFFY (1000/HZ)
 
 static struct pxamci_platform_data pcm990_mci_platform_data = {
-	.detect_delay_ms	= 250,
+	.detect_delay		= 250 / MSECS_PER_JIFFY,
 	.ocr_mask		= MMC_VDD_32_33 | MMC_VDD_33_34,
 	.init 			= pcm990_mci_init,
 	.setpower 		= pcm990_mci_setpower,
@@ -453,6 +448,7 @@ static struct soc_camera_link iclink[] = {
 		.query_bus_param	= pcm990_camera_query_bus_param,
 		.set_bus_param		= pcm990_camera_set_bus_param,
 		.free_bus		= pcm990_camera_free_bus,
+		.module_name		= "mt9v022",
 	}, {
 		.bus_id			= 0, /* Must match with the camera ID */
 		.board_info		= &pcm990_camera_i2c[1],
@@ -460,6 +456,7 @@ static struct soc_camera_link iclink[] = {
 		.query_bus_param	= pcm990_camera_query_bus_param,
 		.set_bus_param		= pcm990_camera_set_bus_param,
 		.free_bus		= pcm990_camera_free_bus,
+		.module_name		= "mt9m001",
 	},
 };
 

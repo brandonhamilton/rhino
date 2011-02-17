@@ -28,14 +28,11 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/cpufreq.h>
-#ifdef CONFIG_ACPI_PROCFS
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#endif
 
 #include <asm/io.h>
 #include <asm/uaccess.h>
@@ -663,7 +660,7 @@ static int acpi_processor_get_throttling_fadt(struct acpi_processor *pr)
 
 #ifdef CONFIG_X86
 static int acpi_throttling_rdmsr(struct acpi_processor *pr,
-					u64 *value)
+					acpi_integer * value)
 {
 	struct cpuinfo_x86 *c;
 	u64 msr_high, msr_low;
@@ -684,13 +681,13 @@ static int acpi_throttling_rdmsr(struct acpi_processor *pr,
 		rdmsr_safe(MSR_IA32_THERM_CONTROL,
 			(u32 *)&msr_low , (u32 *) &msr_high);
 		msr = (msr_high << 32) | msr_low;
-		*value = (u64) msr;
+		*value = (acpi_integer) msr;
 		ret = 0;
 	}
 	return ret;
 }
 
-static int acpi_throttling_wrmsr(struct acpi_processor *pr, u64 value)
+static int acpi_throttling_wrmsr(struct acpi_processor *pr, acpi_integer value)
 {
 	struct cpuinfo_x86 *c;
 	unsigned int cpu;
@@ -714,14 +711,14 @@ static int acpi_throttling_wrmsr(struct acpi_processor *pr, u64 value)
 }
 #else
 static int acpi_throttling_rdmsr(struct acpi_processor *pr,
-				u64 *value)
+				acpi_integer * value)
 {
 	printk(KERN_ERR PREFIX
 		"HARDWARE addr space,NOT supported yet\n");
 	return -1;
 }
 
-static int acpi_throttling_wrmsr(struct acpi_processor *pr, u64 value)
+static int acpi_throttling_wrmsr(struct acpi_processor *pr, acpi_integer value)
 {
 	printk(KERN_ERR PREFIX
 		"HARDWARE addr space,NOT supported yet\n");
@@ -730,7 +727,7 @@ static int acpi_throttling_wrmsr(struct acpi_processor *pr, u64 value)
 #endif
 
 static int acpi_read_throttling_status(struct acpi_processor *pr,
-					u64 *value)
+					acpi_integer *value)
 {
 	u32 bit_width, bit_offset;
 	u64 ptc_value;
@@ -749,7 +746,7 @@ static int acpi_read_throttling_status(struct acpi_processor *pr,
 				  address, (u32 *) &ptc_value,
 				  (u32) (bit_width + bit_offset));
 		ptc_mask = (1 << bit_width) - 1;
-		*value = (u64) ((ptc_value >> bit_offset) & ptc_mask);
+		*value = (acpi_integer) ((ptc_value >> bit_offset) & ptc_mask);
 		ret = 0;
 		break;
 	case ACPI_ADR_SPACE_FIXED_HARDWARE:
@@ -763,7 +760,7 @@ static int acpi_read_throttling_status(struct acpi_processor *pr,
 }
 
 static int acpi_write_throttling_state(struct acpi_processor *pr,
-				u64 value)
+				acpi_integer value)
 {
 	u32 bit_width, bit_offset;
 	u64 ptc_value;
@@ -796,7 +793,7 @@ static int acpi_write_throttling_state(struct acpi_processor *pr,
 }
 
 static int acpi_get_throttling_state(struct acpi_processor *pr,
-				u64 value)
+				acpi_integer value)
 {
 	int i;
 
@@ -811,7 +808,7 @@ static int acpi_get_throttling_state(struct acpi_processor *pr,
 }
 
 static int acpi_get_throttling_value(struct acpi_processor *pr,
-			int state, u64 *value)
+			int state, acpi_integer *value)
 {
 	int ret = -1;
 
@@ -829,7 +826,7 @@ static int acpi_processor_get_throttling_ptc(struct acpi_processor *pr)
 {
 	int state = 0;
 	int ret;
-	u64 value;
+	acpi_integer value;
 
 	if (!pr)
 		return -EINVAL;
@@ -996,7 +993,7 @@ static int acpi_processor_set_throttling_ptc(struct acpi_processor *pr,
 					     int state, bool force)
 {
 	int ret;
-	u64 value;
+	acpi_integer value;
 
 	if (!pr)
 		return -EINVAL;
@@ -1136,6 +1133,9 @@ int acpi_processor_get_throttling_info(struct acpi_processor *pr)
 	int result = 0;
 	struct acpi_processor_throttling *pthrottling;
 
+	if (!pr)
+		return -EINVAL;
+
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 			  "pblk_address[0x%08x] duty_offset[%d] duty_width[%d]\n",
 			  pr->throttling.address,
@@ -1216,8 +1216,8 @@ int acpi_processor_get_throttling_info(struct acpi_processor *pr)
 	return result;
 }
 
-#ifdef CONFIG_ACPI_PROCFS
 /* proc interface */
+#ifdef CONFIG_ACPI_PROCFS
 static int acpi_processor_throttling_seq_show(struct seq_file *seq,
 					      void *offset)
 {

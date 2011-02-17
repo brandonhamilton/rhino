@@ -26,8 +26,6 @@
 
 */
 
-#include <linux/slab.h>
-
 #include "b43.h"
 #include "phy_a.h"
 #include "phy_common.h"

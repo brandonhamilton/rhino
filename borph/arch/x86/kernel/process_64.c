@@ -49,14 +49,15 @@
 #include <asm/ia32.h>
 #include <asm/idle.h>
 #include <asm/syscalls.h>
+#include <asm/ds.h>
 #include <asm/debugreg.h>
-
-#include <trace/events/power.h>
 
 asmlinkage extern void ret_from_fork(void);
 
 DEFINE_PER_CPU(unsigned long, old_rsp);
 static DEFINE_PER_CPU(unsigned char, is_idle);
+
+unsigned long kernel_thread_flags = CLONE_VM | CLONE_UNTRACED;
 
 static ATOMIC_NOTIFIER_HEAD(idle_notifier);
 
@@ -140,9 +141,6 @@ void cpu_idle(void)
 			stop_critical_timings();
 			pm_idle();
 			start_critical_timings();
-
-			trace_power_end(smp_processor_id());
-
 			/* In many cases the interrupt that ended idle
 			   has already called exit_idle. But some idle
 			   loops can be woken up without interrupt. */
@@ -165,19 +163,19 @@ void __show_regs(struct pt_regs *regs, int all)
 	unsigned int ds, cs, es;
 
 	show_regs_common();
-	printk(KERN_DEFAULT "RIP: %04lx:[<%016lx>] ", regs->cs & 0xffff, regs->ip);
+	printk(KERN_INFO "RIP: %04lx:[<%016lx>] ", regs->cs & 0xffff, regs->ip);
 	printk_address(regs->ip, 1);
-	printk(KERN_DEFAULT "RSP: %04lx:%016lx  EFLAGS: %08lx\n", regs->ss,
+	printk(KERN_INFO "RSP: %04lx:%016lx  EFLAGS: %08lx\n", regs->ss,
 			regs->sp, regs->flags);
-	printk(KERN_DEFAULT "RAX: %016lx RBX: %016lx RCX: %016lx\n",
+	printk(KERN_INFO "RAX: %016lx RBX: %016lx RCX: %016lx\n",
 	       regs->ax, regs->bx, regs->cx);
-	printk(KERN_DEFAULT "RDX: %016lx RSI: %016lx RDI: %016lx\n",
+	printk(KERN_INFO "RDX: %016lx RSI: %016lx RDI: %016lx\n",
 	       regs->dx, regs->si, regs->di);
-	printk(KERN_DEFAULT "RBP: %016lx R08: %016lx R09: %016lx\n",
+	printk(KERN_INFO "RBP: %016lx R08: %016lx R09: %016lx\n",
 	       regs->bp, regs->r8, regs->r9);
-	printk(KERN_DEFAULT "R10: %016lx R11: %016lx R12: %016lx\n",
+	printk(KERN_INFO "R10: %016lx R11: %016lx R12: %016lx\n",
 	       regs->r10, regs->r11, regs->r12);
-	printk(KERN_DEFAULT "R13: %016lx R14: %016lx R15: %016lx\n",
+	printk(KERN_INFO "R13: %016lx R14: %016lx R15: %016lx\n",
 	       regs->r13, regs->r14, regs->r15);
 
 	asm("movl %%ds,%0" : "=r" (ds));
@@ -198,21 +196,27 @@ void __show_regs(struct pt_regs *regs, int all)
 	cr3 = read_cr3();
 	cr4 = read_cr4();
 
-	printk(KERN_DEFAULT "FS:  %016lx(%04x) GS:%016lx(%04x) knlGS:%016lx\n",
+	printk(KERN_INFO "FS:  %016lx(%04x) GS:%016lx(%04x) knlGS:%016lx\n",
 	       fs, fsindex, gs, gsindex, shadowgs);
-	printk(KERN_DEFAULT "CS:  %04x DS: %04x ES: %04x CR0: %016lx\n", cs, ds,
+	printk(KERN_INFO "CS:  %04x DS: %04x ES: %04x CR0: %016lx\n", cs, ds,
 			es, cr0);
-	printk(KERN_DEFAULT "CR2: %016lx CR3: %016lx CR4: %016lx\n", cr2, cr3,
+	printk(KERN_INFO "CR2: %016lx CR3: %016lx CR4: %016lx\n", cr2, cr3,
 			cr4);
 
 	get_debugreg(d0, 0);
 	get_debugreg(d1, 1);
 	get_debugreg(d2, 2);
-	printk(KERN_DEFAULT "DR0: %016lx DR1: %016lx DR2: %016lx\n", d0, d1, d2);
+	printk(KERN_INFO "DR0: %016lx DR1: %016lx DR2: %016lx\n", d0, d1, d2);
 	get_debugreg(d3, 3);
 	get_debugreg(d6, 6);
 	get_debugreg(d7, 7);
-	printk(KERN_DEFAULT "DR3: %016lx DR6: %016lx DR7: %016lx\n", d3, d6, d7);
+	printk(KERN_INFO "DR3: %016lx DR6: %016lx DR7: %016lx\n", d3, d6, d7);
+}
+
+void show_regs(struct pt_regs *regs)
+{
+	show_registers(regs);
+	show_trace(NULL, regs, (void *)(regs + 1), regs->bp);
 }
 
 void release_thread(struct task_struct *dead_task)
@@ -269,9 +273,8 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 	*childregs = *regs;
 
 	childregs->ax = 0;
-	if (user_mode(regs))
-		childregs->sp = sp;
-	else
+	childregs->sp = sp;
+	if (sp == ~0UL)
 		childregs->sp = (unsigned long)childregs;
 
 	p->thread.sp = (unsigned long) childregs;
@@ -280,12 +283,12 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 
 	set_tsk_thread_flag(p, TIF_FORK);
 
+	p->thread.fs = me->thread.fs;
+	p->thread.gs = me->thread.gs;
 	p->thread.io_bitmap_ptr = NULL;
 
 	savesegment(gs, p->thread.gsindex);
-	p->thread.gs = p->thread.gsindex ? 0 : me->thread.gs;
 	savesegment(fs, p->thread.fsindex);
-	p->thread.fs = p->thread.fsindex ? 0 : me->thread.fs;
 	savesegment(es, p->thread.es);
 	savesegment(ds, p->thread.ds);
 
@@ -317,6 +320,13 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 		if (err)
 			goto out;
 	}
+
+	clear_tsk_thread_flag(p, TIF_DS_AREA_MSR);
+	p->thread.ds_ctx = NULL;
+
+	clear_tsk_thread_flag(p, TIF_DEBUGCTLMSR);
+	p->thread.debugctlmsr = 0;
+
 	err = 0;
 out:
 	if (err && p->thread.io_bitmap_ptr) {
@@ -393,7 +403,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 
 	/* we're going to use this soon, after a few expensive things */
 	if (preload_fpu)
-		prefetch(next->fpu.state);
+		prefetch(next->xstate);
 
 	/*
 	 * Reload esp0, LDT and the page table pointer:
@@ -424,7 +434,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	load_TLS(next, cpu);
 
 	/* Must be after DS reload */
-	__unlazy_fpu(prev_p);
+	unlazy_fpu(prev_p);
 
 	/* Make sure cpu is ready for new context */
 	if (preload_fpu)
@@ -498,6 +508,25 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	return prev_p;
 }
 
+/*
+ * sys_execve() executes a new program.
+ */
+asmlinkage
+long sys_execve(char __user *name, char __user * __user *argv,
+		char __user * __user *envp, struct pt_regs *regs)
+{
+	long error;
+	char *filename;
+
+	filename = getname(name);
+	error = PTR_ERR(filename);
+	if (IS_ERR(filename))
+		return error;
+	error = do_execve(filename, argv, envp, regs);
+	putname(filename);
+	return error;
+}
+
 void set_personality_64bit(void)
 {
 	/* inherit personality from parent */
@@ -512,16 +541,13 @@ void set_personality_64bit(void)
 	current->personality &= ~READ_IMPLIES_EXEC;
 }
 
-void set_personality_ia32(void)
+asmlinkage long
+sys_clone(unsigned long clone_flags, unsigned long newsp,
+	  void __user *parent_tid, void __user *child_tid, struct pt_regs *regs)
 {
-	/* inherit personality from parent */
-
-	/* Make sure to be in 32bit mode */
-	set_thread_flag(TIF_IA32);
-	current->personality |= force_personality32;
-
-	/* Prepare the first "return" to user space */
-	current_thread_info()->status |= TS_COMPAT;
+	if (!newsp)
+		newsp = regs->sp;
+	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
 }
 
 unsigned long get_wchan(struct task_struct *p)

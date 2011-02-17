@@ -30,8 +30,6 @@
 #include <asm/mach/time.h>
 #include <asm/errno.h>
 
-#include "time.h"
-
 /*! Note: all timers are UPCOUNTING */
 
 /*!

@@ -23,10 +23,12 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
+#include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/vmalloc.h>
 #include <linux/elf.h>
 #include <linux/seq_file.h>
+#include <linux/smp_lock.h>
 #include <linux/syscalls.h>
 #include <linux/moduleloader.h>
 #include <linux/interrupt.h>
@@ -468,8 +470,7 @@ static const struct file_operations rtlx_fops = {
 	.release = file_release,
 	.write =   file_write,
 	.read =    file_read,
-	.poll =    file_poll,
-	.llseek =  noop_llseek,
+	.poll =    file_poll
 };
 
 static struct irqaction rtlx_irq = {

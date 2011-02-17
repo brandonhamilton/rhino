@@ -43,11 +43,10 @@ struct dst_entry {
 	short			error;
 	short			obsolete;
 	int			flags;
-#define DST_HOST		0x0001
-#define DST_NOXFRM		0x0002
-#define DST_NOPOLICY		0x0004
-#define DST_NOHASH		0x0008
-#define DST_NOCACHE		0x0010
+#define DST_HOST		1
+#define DST_NOXFRM		2
+#define DST_NOPOLICY		4
+#define DST_NOHASH		8
 	unsigned long		expires;
 
 	unsigned short		header_len;	/* more space at head required */
@@ -84,6 +83,8 @@ struct dst_entry {
 	 * (L1_CACHE_SIZE would be too much)
 	 */
 #ifdef CONFIG_64BIT
+	long			__pad_to_align_refcnt[2];
+#else
 	long			__pad_to_align_refcnt[1];
 #endif
 	/*
@@ -95,7 +96,7 @@ struct dst_entry {
 	unsigned long		lastuse;
 	union {
 		struct dst_entry *next;
-		struct rtable __rcu *rt_next;
+		struct rtable    *rt_next;
 		struct rt6_info   *rt6_next;
 		struct dn_route  *dn_next;
 	};
@@ -112,7 +113,7 @@ dst_metric(const struct dst_entry *dst, int metric)
 static inline u32
 dst_feature(const struct dst_entry *dst, u32 feature)
 {
-	return dst_metric(dst, RTAX_FEATURES) & feature;
+	return (dst ? dst_metric(dst, RTAX_FEATURES) & feature : 0);
 }
 
 static inline u32 dst_mtu(const struct dst_entry *dst)
@@ -169,12 +170,6 @@ static inline void dst_use(struct dst_entry *dst, unsigned long time)
 	dst->lastuse = time;
 }
 
-static inline void dst_use_noref(struct dst_entry *dst, unsigned long time)
-{
-	dst->__use++;
-	dst->lastuse = time;
-}
-
 static inline
 struct dst_entry * dst_clone(struct dst_entry * dst)
 {
@@ -184,93 +179,22 @@ struct dst_entry * dst_clone(struct dst_entry * dst)
 }
 
 extern void dst_release(struct dst_entry *dst);
-
-static inline void refdst_drop(unsigned long refdst)
-{
-	if (!(refdst & SKB_DST_NOREF))
-		dst_release((struct dst_entry *)(refdst & SKB_DST_PTRMASK));
-}
-
-/**
- * skb_dst_drop - drops skb dst
- * @skb: buffer
- *
- * Drops dst reference count if a reference was taken.
- */
 static inline void skb_dst_drop(struct sk_buff *skb)
 {
-	if (skb->_skb_refdst) {
-		refdst_drop(skb->_skb_refdst);
-		skb->_skb_refdst = 0UL;
-	}
-}
-
-static inline void skb_dst_copy(struct sk_buff *nskb, const struct sk_buff *oskb)
-{
-	nskb->_skb_refdst = oskb->_skb_refdst;
-	if (!(nskb->_skb_refdst & SKB_DST_NOREF))
-		dst_clone(skb_dst(nskb));
-}
-
-/**
- * skb_dst_force - makes sure skb dst is refcounted
- * @skb: buffer
- *
- * If dst is not yet refcounted, let's do it
- */
-static inline void skb_dst_force(struct sk_buff *skb)
-{
-	if (skb_dst_is_noref(skb)) {
-		WARN_ON(!rcu_read_lock_held());
-		skb->_skb_refdst &= ~SKB_DST_NOREF;
-		dst_clone(skb_dst(skb));
-	}
-}
-
-
-/**
- *	__skb_tunnel_rx - prepare skb for rx reinsert
- *	@skb: buffer
- *	@dev: tunnel device
- *
- *	After decapsulation, packet is going to re-enter (netif_rx()) our stack,
- *	so make some cleanups. (no accounting done)
- */
-static inline void __skb_tunnel_rx(struct sk_buff *skb, struct net_device *dev)
-{
-	skb->dev = dev;
-	skb->rxhash = 0;
-	skb_set_queue_mapping(skb, 0);
-	skb_dst_drop(skb);
-	nf_reset(skb);
-}
-
-/**
- *	skb_tunnel_rx - prepare skb for rx reinsert
- *	@skb: buffer
- *	@dev: tunnel device
- *
- *	After decapsulation, packet is going to re-enter (netif_rx()) our stack,
- *	so make some cleanups, and perform accounting.
- *	Note: this accounting is not SMP safe.
- */
-static inline void skb_tunnel_rx(struct sk_buff *skb, struct net_device *dev)
-{
-	/* TODO : stats should be SMP safe */
-	dev->stats.rx_packets++;
-	dev->stats.rx_bytes += skb->len;
-	__skb_tunnel_rx(skb, dev);
+	if (skb->_skb_dst)
+		dst_release(skb_dst(skb));
+	skb->_skb_dst = 0UL;
 }
 
 /* Children define the path of the packet through the
  * Linux networking.  Thus, destinations are stackable.
  */
 
-static inline struct dst_entry *skb_dst_pop(struct sk_buff *skb)
+static inline struct dst_entry *dst_pop(struct dst_entry *dst)
 {
-	struct dst_entry *child = skb_dst(skb)->child;
+	struct dst_entry *child = dst_clone(dst->child);
 
-	skb_dst_drop(skb);
+	dst_release(dst);
 	return child;
 }
 
@@ -301,6 +225,21 @@ static inline void dst_confirm(struct dst_entry *dst)
 {
 	if (dst)
 		neigh_confirm(dst->neighbour);
+}
+
+static inline void dst_negative_advice(struct dst_entry **dst_p,
+				       struct sock *sk)
+{
+	struct dst_entry * dst = *dst_p;
+	if (dst && dst->ops->negative_advice) {
+		*dst_p = dst->ops->negative_advice(dst);
+
+		if (dst != *dst_p) {
+			extern void sk_reset_txq(struct sock *sk);
+
+			sk_reset_txq(sk);
+		}
+	}
 }
 
 static inline void dst_link_failure(struct sk_buff *skb)

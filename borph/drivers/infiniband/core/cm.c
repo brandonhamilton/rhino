@@ -42,7 +42,6 @@
 #include <linux/random.h>
 #include <linux/rbtree.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
 #include <linux/kdev_t.h>
@@ -2409,12 +2408,10 @@ int ib_send_cm_mra(struct ib_cm_id *cm_id,
 		msg_response = CM_MSG_RESPONSE_REP;
 		break;
 	case IB_CM_ESTABLISHED:
-		if (cm_id->lap_state == IB_CM_LAP_RCVD) {
-			cm_state = cm_id->state;
-			lap_state = IB_CM_MRA_LAP_SENT;
-			msg_response = CM_MSG_RESPONSE_OTHER;
-			break;
-		}
+		cm_state = cm_id->state;
+		lap_state = IB_CM_MRA_LAP_SENT;
+		msg_response = CM_MSG_RESPONSE_OTHER;
+		break;
 	default:
 		ret = -EINVAL;
 		goto error1;
@@ -3600,7 +3597,7 @@ static ssize_t cm_show_counter(struct kobject *obj, struct attribute *attr,
 		       atomic_long_read(&group->counter[cm_attr->index]));
 }
 
-static const struct sysfs_ops cm_counter_ops = {
+static struct sysfs_ops cm_counter_ops = {
 	.show = cm_show_counter
 };
 
@@ -3696,7 +3693,7 @@ static void cm_add_one(struct ib_device *ib_device)
 	cm_dev->device = device_create(&cm_class, &ib_device->dev,
 				       MKDEV(0, 0), NULL,
 				       "%s", ib_device->name);
-	if (IS_ERR(cm_dev->device)) {
+	if (!cm_dev->device) {
 		kfree(cm_dev);
 		return;
 	}

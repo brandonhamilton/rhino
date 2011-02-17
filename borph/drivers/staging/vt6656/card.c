@@ -95,7 +95,7 @@ const WORD cwRXBCNTSFOff[MAX_RATE] =
  * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-BOOL CARDbSetMediaChannel(void *pDeviceHandler, unsigned int uConnectionChannel)
+BOOL CARDbSetMediaChannel (PVOID pDeviceHandler, UINT uConnectionChannel)
 {
 PSDevice            pDevice = (PSDevice) pDeviceHandler;
 BOOL                bResult = TRUE;
@@ -156,10 +156,11 @@ BOOL                bResult = TRUE;
  * Return Value: response Control frame rate
  *
  */
-static WORD swGetCCKControlRate(void *pDeviceHandler, WORD wRateIdx)
+static
+WORD swGetCCKControlRate(PVOID pDeviceHandler, WORD wRateIdx)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    unsigned int ui = (unsigned int)wRateIdx;
+    UINT ui = (UINT)wRateIdx;
     while (ui > RATE_1M) {
         if (pDevice->wBasicRate & ((WORD)1 << ui)) {
             return (WORD)ui;
@@ -182,10 +183,11 @@ static WORD swGetCCKControlRate(void *pDeviceHandler, WORD wRateIdx)
  * Return Value: response Control frame rate
  *
  */
-static WORD swGetOFDMControlRate(void *pDeviceHandler, WORD wRateIdx)
+static
+WORD swGetOFDMControlRate (PVOID pDeviceHandler, WORD wRateIdx)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    unsigned int ui = (unsigned int)wRateIdx;
+    UINT ui = (UINT)wRateIdx;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BASIC RATE: %X\n", pDevice->wBasicRate);
 
@@ -220,12 +222,12 @@ static WORD swGetOFDMControlRate(void *pDeviceHandler, WORD wRateIdx)
  * Return Value: none
  *
  */
-void
+VOID
 CARDvCaculateOFDMRParameter (
-      WORD wRate,
-      BYTE byBBType,
-     PBYTE pbyTxRate,
-     PBYTE pbyRsvTime
+    IN  WORD wRate,
+    IN  BYTE byBBType,
+    OUT PBYTE pbyTxRate,
+    OUT PBYTE pbyRsvTime
     )
 {
     switch (wRate) {
@@ -332,7 +334,7 @@ CARDvCaculateOFDMRParameter (
  * Return Value: None.
  *
  */
-void CARDvSetRSPINF(void *pDeviceHandler, BYTE byBBType)
+void CARDvSetRSPINF (PVOID pDeviceHandler, BYTE byBBType)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     BYTE    abyServ[4] = {0,0,0,0};             // For CCK
@@ -457,10 +459,11 @@ void CARDvSetRSPINF(void *pDeviceHandler, BYTE byBBType)
     abyData[14] = abySignal[3];
     abyData[15] = abyServ[3];
 
-    for (i = 0; i < 9; i++) {
-	abyData[16+i*2] = abyTxRate[i];
-	abyData[16+i*2+1] = abyRsvTime[i];
+    for(i=0;i<9;i++) {
+        abyData[16+i*2] = abyTxRate[i];
+        abyData[16+i*2+1] = abyRsvTime[i];
     }
+
 
     CONTROLnsRequestOut(pDevice,
                         MESSAGE_TYPE_WRITE,
@@ -483,7 +486,7 @@ void CARDvSetRSPINF(void *pDeviceHandler, BYTE byBBType)
  * Return Value: None.
  *
  */
-void vUpdateIFS(void *pDeviceHandler)
+void vUpdateIFS (PVOID pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     //Set SIFS, DIFS, EIFS, SlotTime, CwMin
@@ -507,7 +510,7 @@ void vUpdateIFS(void *pDeviceHandler)
     else {// PK_TYPE_11GA & PK_TYPE_11GB
         BYTE byRate = 0;
         BOOL bOFDMRate = FALSE;
-	unsigned int ii = 0;
+        UINT ii = 0;
         PWLAN_IE_SUPP_RATES pItemRates = NULL;
 
         pDevice->uSIFS = C_SIFS_BG;
@@ -568,7 +571,7 @@ void vUpdateIFS(void *pDeviceHandler)
                         &byMaxMin);
 }
 
-void CARDvUpdateBasicTopRate(void *pDeviceHandler)
+void CARDvUpdateBasicTopRate (PVOID pDeviceHandler)
 {
 PSDevice    pDevice = (PSDevice) pDeviceHandler;
 BYTE byTopOFDM = RATE_24M, byTopCCK = RATE_1M;
@@ -607,7 +610,7 @@ BYTE ii;
  * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-BOOL CARDbAddBasicRate(void *pDeviceHandler, WORD wRateIdx)
+BOOL CARDbAddBasicRate (PVOID pDeviceHandler, WORD wRateIdx)
 {
 PSDevice    pDevice = (PSDevice) pDeviceHandler;
 WORD wRate = (WORD)(1<<wRateIdx);
@@ -620,7 +623,7 @@ WORD wRate = (WORD)(1<<wRateIdx);
     return(TRUE);
 }
 
-BOOL CARDbIsOFDMinBasicRate(void *pDeviceHandler)
+BOOL CARDbIsOFDMinBasicRate (PVOID pDeviceHandler)
 {
 PSDevice    pDevice = (PSDevice) pDeviceHandler;
 int ii;
@@ -632,7 +635,7 @@ int ii;
     return FALSE;
 }
 
-BYTE CARDbyGetPktType(void *pDeviceHandler)
+BYTE CARDbyGetPktType (PVOID pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
 
@@ -704,8 +707,7 @@ QWORD CARDqGetTSFOffset (BYTE byRxRate, QWORD qwTSF1, QWORD qwTSF2)
  * Return Value: none
  *
  */
-void CARDvAdjustTSF(void *pDeviceHandler, BYTE byRxRate,
-		    QWORD qwBSSTimestamp, QWORD qwLocalTSF)
+void CARDvAdjustTSF (PVOID pDeviceHandler, BYTE byRxRate, QWORD qwBSSTimestamp, QWORD qwLocalTSF)
 {
 
     PSDevice        pDevice = (PSDevice) pDeviceHandler;
@@ -754,7 +756,7 @@ void CARDvAdjustTSF(void *pDeviceHandler, BYTE byRxRate,
  * Return Value: TRUE if success; otherwise FALSE
  *
  */
-BOOL CARDbGetCurrentTSF(void *pDeviceHandler, PQWORD pqwCurrTSF)
+BOOL CARDbGetCurrentTSF (PVOID pDeviceHandler, PQWORD pqwCurrTSF)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
 
@@ -776,7 +778,7 @@ BOOL CARDbGetCurrentTSF(void *pDeviceHandler, PQWORD pqwCurrTSF)
  * Return Value: TRUE if success; otherwise FALSE
  *
  */
-BOOL CARDbClearCurrentTSF(void *pDeviceHandler)
+BOOL CARDbClearCurrentTSF(PVOID pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
 
@@ -805,9 +807,9 @@ BOOL CARDbClearCurrentTSF(void *pDeviceHandler)
 QWORD CARDqGetNextTBTT (QWORD qwTSF, WORD wBeaconInterval)
 {
 
-    unsigned int    uLowNextTBTT;
-    unsigned int    uHighRemain, uLowRemain;
-    unsigned int    uBeaconInterval;
+    UINT    uLowNextTBTT;
+    UINT    uHighRemain, uLowRemain;
+    UINT    uBeaconInterval;
 
     uBeaconInterval = wBeaconInterval * 1024;
     // Next TBTT = ((local_current_TSF / beacon_interval) + 1 ) * beacon_interval
@@ -842,7 +844,7 @@ QWORD CARDqGetNextTBTT (QWORD qwTSF, WORD wBeaconInterval)
  * Return Value: none
  *
  */
-void CARDvSetFirstNextTBTT(void *pDeviceHandler, WORD wBeaconInterval)
+void CARDvSetFirstNextTBTT (PVOID pDeviceHandler, WORD wBeaconInterval)
 {
 
     PSDevice        pDevice = (PSDevice) pDeviceHandler;
@@ -896,8 +898,7 @@ void CARDvSetFirstNextTBTT(void *pDeviceHandler, WORD wBeaconInterval)
  * Return Value: none
  *
  */
-void CARDvUpdateNextTBTT(void *pDeviceHandler, QWORD qwTSF,
-			 WORD wBeaconInterval)
+void CARDvUpdateNextTBTT (PVOID pDeviceHandler, QWORD qwTSF, WORD wBeaconInterval)
 {
     PSDevice        pDevice = (PSDevice) pDeviceHandler;
     DWORD           dwLoTBTT,dwHiTBTT;
@@ -944,7 +945,7 @@ void CARDvUpdateNextTBTT(void *pDeviceHandler, QWORD qwTSF,
  * Return Value: TRUE if success; otherwise FALSE
  *
  */
-BOOL CARDbRadioPowerOff(void *pDeviceHandler)
+BOOL CARDbRadioPowerOff (PVOID pDeviceHandler)
 {
 PSDevice    pDevice = (PSDevice) pDeviceHandler;
 BOOL bResult = TRUE;
@@ -985,7 +986,7 @@ BOOL bResult = TRUE;
  * Return Value: TRUE if success; otherwise FALSE
  *
  */
-BOOL CARDbRadioPowerOn(void *pDeviceHandler)
+BOOL CARDbRadioPowerOn (PVOID pDeviceHandler)
 {
 PSDevice    pDevice = (PSDevice) pDeviceHandler;
 BOOL bResult = TRUE;
@@ -1018,7 +1019,7 @@ BOOL bResult = TRUE;
     return bResult;
 }
 
-void CARDvSetBSSMode(void *pDeviceHandler)
+void CARDvSetBSSMode (PVOID pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     // Set BB and packet type at the same time.//{{RobertYu:20050222, AL7230 have two TX PA output, only connet to b/g now
@@ -1079,10 +1080,10 @@ void CARDvSetBSSMode(void *pDeviceHandler)
 -*/
 BOOL
 CARDbChannelSwitch (
-     void *pDeviceHandler,
-     BYTE             byMode,
-     BYTE             byNewChannel,
-     BYTE             byCount
+    IN PVOID            pDeviceHandler,
+    IN BYTE             byMode,
+    IN BYTE             byNewChannel,
+    IN BYTE             byCount
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
@@ -1102,7 +1103,7 @@ CARDbChannelSwitch (
         //bResult=CARDbStopTxPacket(pDevice, PKT_TYPE_802_11_ALL);
         pDevice->bStopDataPkt = TRUE;
     }
-	return bResult;
+    return (bResult);
 }
 
 

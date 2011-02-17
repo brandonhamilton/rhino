@@ -30,7 +30,6 @@
 #include <linux/module.h>
 #include <linux/kfifo.h>
 #include <linux/vmalloc.h>
-#include <linux/gfp.h>
 #include <net/net_namespace.h>
 
 #include "dccp.h"
@@ -44,7 +43,7 @@ static int bufsize = 64 * 1024;
 static const char procname[] = "dccpprobe";
 
 static struct {
-	struct kfifo	  fifo;
+	struct kfifo	  *fifo;
 	spinlock_t	  lock;
 	wait_queue_head_t wait;
 	struct timespec	  tstart;
@@ -68,7 +67,7 @@ static void printl(const char *fmt, ...)
 	len += vscnprintf(tbuf+len, sizeof(tbuf)-len, fmt, args);
 	va_end(args);
 
-	kfifo_in_locked(&dccpw.fifo, tbuf, len, &dccpw.lock);
+	kfifo_put(dccpw.fifo, tbuf, len);
 	wake_up(&dccpw.wait);
 }
 
@@ -110,7 +109,7 @@ static struct jprobe dccp_send_probe = {
 
 static int dccpprobe_open(struct inode *inode, struct file *file)
 {
-	kfifo_reset(&dccpw.fifo);
+	kfifo_reset(dccpw.fifo);
 	getnstimeofday(&dccpw.tstart);
 	return 0;
 }
@@ -132,11 +131,11 @@ static ssize_t dccpprobe_read(struct file *file, char __user *buf,
 		return -ENOMEM;
 
 	error = wait_event_interruptible(dccpw.wait,
-					 kfifo_len(&dccpw.fifo) != 0);
+					 __kfifo_len(dccpw.fifo) != 0);
 	if (error)
 		goto out_free;
 
-	cnt = kfifo_out_locked(&dccpw.fifo, tbuf, len, &dccpw.lock);
+	cnt = kfifo_get(dccpw.fifo, tbuf, len);
 	error = copy_to_user(buf, tbuf, cnt) ? -EFAULT : 0;
 
 out_free:
@@ -149,7 +148,6 @@ static const struct file_operations dccpprobe_fops = {
 	.owner	 = THIS_MODULE,
 	.open	 = dccpprobe_open,
 	.read    = dccpprobe_read,
-	.llseek  = noop_llseek,
 };
 
 static __init int dccpprobe_init(void)
@@ -158,13 +156,14 @@ static __init int dccpprobe_init(void)
 
 	init_waitqueue_head(&dccpw.wait);
 	spin_lock_init(&dccpw.lock);
-	if (kfifo_alloc(&dccpw.fifo, bufsize, GFP_KERNEL))
-		return ret;
+	dccpw.fifo = kfifo_alloc(bufsize, GFP_KERNEL, &dccpw.lock);
+	if (IS_ERR(dccpw.fifo))
+		return PTR_ERR(dccpw.fifo);
+
 	if (!proc_net_fops_create(&init_net, procname, S_IRUSR, &dccpprobe_fops))
 		goto err0;
 
-	try_then_request_module((ret = register_jprobe(&dccp_send_probe)) == 0,
-				"dccp");
+	ret = register_jprobe(&dccp_send_probe);
 	if (ret)
 		goto err1;
 
@@ -173,14 +172,14 @@ static __init int dccpprobe_init(void)
 err1:
 	proc_net_remove(&init_net, procname);
 err0:
-	kfifo_free(&dccpw.fifo);
+	kfifo_free(dccpw.fifo);
 	return ret;
 }
 module_init(dccpprobe_init);
 
 static __exit void dccpprobe_exit(void)
 {
-	kfifo_free(&dccpw.fifo);
+	kfifo_free(dccpw.fifo);
 	proc_net_remove(&init_net, procname);
 	unregister_jprobe(&dccp_send_probe);
 

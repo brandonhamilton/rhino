@@ -37,7 +37,6 @@
 #include <linux/fcntl.h>
 #include <linux/init.h>
 #include <linux/skbuff.h>
-#include <linux/workqueue.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
 #include <linux/rfkill.h>
@@ -492,10 +491,6 @@ int hci_dev_open(__u16 dev)
 	if (test_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks))
 		set_bit(HCI_RAW, &hdev->flags);
 
-	/* Treat all non BR/EDR controllers as raw devices for now */
-	if (hdev->dev_type != HCI_BREDR)
-		set_bit(HCI_RAW, &hdev->flags);
-
 	if (hdev->open(hdev)) {
 		ret = -EIO;
 		goto done;
@@ -802,7 +797,7 @@ int hci_get_dev_info(void __user *arg)
 
 	strcpy(di.name, hdev->name);
 	di.bdaddr   = hdev->bdaddr;
-	di.type     = (hdev->bus & 0x0f) | (hdev->dev_type << 4);
+	di.type     = hdev->type;
 	di.flags    = hdev->flags;
 	di.pkt_type = hdev->pkt_type;
 	di.acl_mtu  = hdev->acl_mtu;
@@ -874,8 +869,8 @@ int hci_register_dev(struct hci_dev *hdev)
 	struct list_head *head = &hci_dev_list, *p;
 	int i, id = 0;
 
-	BT_DBG("%p name %s bus %d owner %p", hdev, hdev->name,
-						hdev->bus, hdev->owner);
+	BT_DBG("%p name %s type %d owner %p", hdev, hdev->name,
+						hdev->type, hdev->owner);
 
 	if (!hdev->open || !hdev->close || !hdev->destruct)
 		return -EINVAL;
@@ -913,7 +908,7 @@ int hci_register_dev(struct hci_dev *hdev)
 	skb_queue_head_init(&hdev->cmd_q);
 	skb_queue_head_init(&hdev->raw_q);
 
-	for (i = 0; i < NUM_REASSEMBLY; i++)
+	for (i = 0; i < 3; i++)
 		hdev->reassembly[i] = NULL;
 
 	init_waitqueue_head(&hdev->req_wait_q);
@@ -923,17 +918,11 @@ int hci_register_dev(struct hci_dev *hdev)
 
 	hci_conn_hash_init(hdev);
 
-	INIT_LIST_HEAD(&hdev->blacklist);
-
 	memset(&hdev->stat, 0, sizeof(struct hci_dev_stats));
 
 	atomic_set(&hdev->promisc, 0);
 
 	write_unlock_bh(&hci_dev_list_lock);
-
-	hdev->workqueue = create_singlethread_workqueue(hdev->name);
-	if (!hdev->workqueue)
-		goto nomem;
 
 	hci_register_sysfs(hdev);
 
@@ -949,13 +938,6 @@ int hci_register_dev(struct hci_dev *hdev)
 	hci_notify(hdev, HCI_DEV_REG);
 
 	return id;
-
-nomem:
-	write_lock_bh(&hci_dev_list_lock);
-	list_del(&hdev->list);
-	write_unlock_bh(&hci_dev_list_lock);
-
-	return -ENOMEM;
 }
 EXPORT_SYMBOL(hci_register_dev);
 
@@ -964,7 +946,7 @@ int hci_unregister_dev(struct hci_dev *hdev)
 {
 	int i;
 
-	BT_DBG("%p name %s bus %d", hdev, hdev->name, hdev->bus);
+	BT_DBG("%p name %s type %d", hdev, hdev->name, hdev->type);
 
 	write_lock_bh(&hci_dev_list_lock);
 	list_del(&hdev->list);
@@ -972,7 +954,7 @@ int hci_unregister_dev(struct hci_dev *hdev)
 
 	hci_dev_do_close(hdev);
 
-	for (i = 0; i < NUM_REASSEMBLY; i++)
+	for (i = 0; i < 3; i++)
 		kfree_skb(hdev->reassembly[i]);
 
 	hci_notify(hdev, HCI_DEV_UNREG);
@@ -983,8 +965,6 @@ int hci_unregister_dev(struct hci_dev *hdev)
 	}
 
 	hci_unregister_sysfs(hdev);
-
-	destroy_workqueue(hdev->workqueue);
 
 	__hci_dev_put(hdev);
 
@@ -1032,170 +1012,89 @@ int hci_recv_frame(struct sk_buff *skb)
 }
 EXPORT_SYMBOL(hci_recv_frame);
 
-static int hci_reassembly(struct hci_dev *hdev, int type, void *data,
-			  int count, __u8 index, gfp_t gfp_mask)
-{
-	int len = 0;
-	int hlen = 0;
-	int remain = count;
-	struct sk_buff *skb;
-	struct bt_skb_cb *scb;
-
-	if ((type < HCI_ACLDATA_PKT || type > HCI_EVENT_PKT) ||
-				index >= NUM_REASSEMBLY)
-		return -EILSEQ;
-
-	skb = hdev->reassembly[index];
-
-	if (!skb) {
-		switch (type) {
-		case HCI_ACLDATA_PKT:
-			len = HCI_MAX_FRAME_SIZE;
-			hlen = HCI_ACL_HDR_SIZE;
-			break;
-		case HCI_EVENT_PKT:
-			len = HCI_MAX_EVENT_SIZE;
-			hlen = HCI_EVENT_HDR_SIZE;
-			break;
-		case HCI_SCODATA_PKT:
-			len = HCI_MAX_SCO_SIZE;
-			hlen = HCI_SCO_HDR_SIZE;
-			break;
-		}
-
-		skb = bt_skb_alloc(len, gfp_mask);
-		if (!skb)
-			return -ENOMEM;
-
-		scb = (void *) skb->cb;
-		scb->expect = hlen;
-		scb->pkt_type = type;
-
-		skb->dev = (void *) hdev;
-		hdev->reassembly[index] = skb;
-	}
-
-	while (count) {
-		scb = (void *) skb->cb;
-		len = min(scb->expect, (__u16)count);
-
-		memcpy(skb_put(skb, len), data, len);
-
-		count -= len;
-		data += len;
-		scb->expect -= len;
-		remain = count;
-
-		switch (type) {
-		case HCI_EVENT_PKT:
-			if (skb->len == HCI_EVENT_HDR_SIZE) {
-				struct hci_event_hdr *h = hci_event_hdr(skb);
-				scb->expect = h->plen;
-
-				if (skb_tailroom(skb) < scb->expect) {
-					kfree_skb(skb);
-					hdev->reassembly[index] = NULL;
-					return -ENOMEM;
-				}
-			}
-			break;
-
-		case HCI_ACLDATA_PKT:
-			if (skb->len  == HCI_ACL_HDR_SIZE) {
-				struct hci_acl_hdr *h = hci_acl_hdr(skb);
-				scb->expect = __le16_to_cpu(h->dlen);
-
-				if (skb_tailroom(skb) < scb->expect) {
-					kfree_skb(skb);
-					hdev->reassembly[index] = NULL;
-					return -ENOMEM;
-				}
-			}
-			break;
-
-		case HCI_SCODATA_PKT:
-			if (skb->len == HCI_SCO_HDR_SIZE) {
-				struct hci_sco_hdr *h = hci_sco_hdr(skb);
-				scb->expect = h->dlen;
-
-				if (skb_tailroom(skb) < scb->expect) {
-					kfree_skb(skb);
-					hdev->reassembly[index] = NULL;
-					return -ENOMEM;
-				}
-			}
-			break;
-		}
-
-		if (scb->expect == 0) {
-			/* Complete frame */
-
-			bt_cb(skb)->pkt_type = type;
-			hci_recv_frame(skb);
-
-			hdev->reassembly[index] = NULL;
-			return remain;
-		}
-	}
-
-	return remain;
-}
+/* Receive packet type fragment */
+#define __reassembly(hdev, type)  ((hdev)->reassembly[(type) - 2])
 
 int hci_recv_fragment(struct hci_dev *hdev, int type, void *data, int count)
 {
-	int rem = 0;
-
 	if (type < HCI_ACLDATA_PKT || type > HCI_EVENT_PKT)
 		return -EILSEQ;
 
 	while (count) {
-		rem = hci_reassembly(hdev, type, data, count,
-						type - 1, GFP_ATOMIC);
-		if (rem < 0)
-			return rem;
-
-		data += (count - rem);
-		count = rem;
-	};
-
-	return rem;
-}
-EXPORT_SYMBOL(hci_recv_fragment);
-
-#define STREAM_REASSEMBLY 0
-
-int hci_recv_stream_fragment(struct hci_dev *hdev, void *data, int count)
-{
-	int type;
-	int rem = 0;
-
-	while (count) {
-		struct sk_buff *skb = hdev->reassembly[STREAM_REASSEMBLY];
+		struct sk_buff *skb = __reassembly(hdev, type);
+		struct { int expect; } *scb;
+		int len = 0;
 
 		if (!skb) {
-			struct { char type; } *pkt;
-
 			/* Start of the frame */
-			pkt = data;
-			type = pkt->type;
 
-			data++;
-			count--;
-		} else
-			type = bt_cb(skb)->pkt_type;
+			switch (type) {
+			case HCI_EVENT_PKT:
+				if (count >= HCI_EVENT_HDR_SIZE) {
+					struct hci_event_hdr *h = data;
+					len = HCI_EVENT_HDR_SIZE + h->plen;
+				} else
+					return -EILSEQ;
+				break;
 
-		rem = hci_reassembly(hdev, type, data,
-					count, STREAM_REASSEMBLY, GFP_ATOMIC);
-		if (rem < 0)
-			return rem;
+			case HCI_ACLDATA_PKT:
+				if (count >= HCI_ACL_HDR_SIZE) {
+					struct hci_acl_hdr *h = data;
+					len = HCI_ACL_HDR_SIZE + __le16_to_cpu(h->dlen);
+				} else
+					return -EILSEQ;
+				break;
 
-		data += (count - rem);
-		count = rem;
-	};
+			case HCI_SCODATA_PKT:
+				if (count >= HCI_SCO_HDR_SIZE) {
+					struct hci_sco_hdr *h = data;
+					len = HCI_SCO_HDR_SIZE + h->dlen;
+				} else
+					return -EILSEQ;
+				break;
+			}
 
-	return rem;
+			skb = bt_skb_alloc(len, GFP_ATOMIC);
+			if (!skb) {
+				BT_ERR("%s no memory for packet", hdev->name);
+				return -ENOMEM;
+			}
+
+			skb->dev = (void *) hdev;
+			bt_cb(skb)->pkt_type = type;
+
+			__reassembly(hdev, type) = skb;
+
+			scb = (void *) skb->cb;
+			scb->expect = len;
+		} else {
+			/* Continuation */
+
+			scb = (void *) skb->cb;
+			len = scb->expect;
+		}
+
+		len = min(len, count);
+
+		memcpy(skb_put(skb, len), data, len);
+
+		scb->expect -= len;
+
+		if (scb->expect == 0) {
+			/* Complete frame */
+
+			__reassembly(hdev, type) = NULL;
+
+			bt_cb(skb)->pkt_type = type;
+			hci_recv_frame(skb);
+		}
+
+		count -= len; data += len;
+	}
+
+	return 0;
 }
-EXPORT_SYMBOL(hci_recv_stream_fragment);
+EXPORT_SYMBOL(hci_recv_fragment);
 
 /* ---- Interface to upper protocols ---- */
 
@@ -1357,7 +1256,7 @@ static void hci_add_acl_hdr(struct sk_buff *skb, __u16 handle, __u16 flags)
 	hdr->dlen   = cpu_to_le16(len);
 }
 
-void hci_send_acl(struct hci_conn *conn, struct sk_buff *skb, __u16 flags)
+int hci_send_acl(struct hci_conn *conn, struct sk_buff *skb, __u16 flags)
 {
 	struct hci_dev *hdev = conn->hdev;
 	struct sk_buff *list;
@@ -1399,16 +1298,23 @@ void hci_send_acl(struct hci_conn *conn, struct sk_buff *skb, __u16 flags)
 	}
 
 	tasklet_schedule(&hdev->tx_task);
+
+	return 0;
 }
 EXPORT_SYMBOL(hci_send_acl);
 
 /* Send SCO data */
-void hci_send_sco(struct hci_conn *conn, struct sk_buff *skb)
+int hci_send_sco(struct hci_conn *conn, struct sk_buff *skb)
 {
 	struct hci_dev *hdev = conn->hdev;
 	struct hci_sco_hdr hdr;
 
 	BT_DBG("%s len %d", hdev->name, skb->len);
+
+	if (skb->len > hdev->sco_mtu) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
 
 	hdr.handle = cpu_to_le16(conn->handle);
 	hdr.dlen   = skb->len;
@@ -1422,6 +1328,8 @@ void hci_send_sco(struct hci_conn *conn, struct sk_buff *skb)
 
 	skb_queue_tail(&conn->data_q, skb);
 	tasklet_schedule(&hdev->tx_task);
+
+	return 0;
 }
 EXPORT_SYMBOL(hci_send_sco);
 

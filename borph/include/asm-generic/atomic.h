@@ -30,20 +30,21 @@
  * atomic_read - read atomic variable
  * @v: pointer of type atomic_t
  *
- * Atomically reads the value of @v.
+ * Atomically reads the value of @v.  Note that the guaranteed
+ * useful range of an atomic_t is only 24 bits.
  */
-#define atomic_read(v)	(*(volatile int *)&(v)->counter)
+#define atomic_read(v)	((v)->counter)
 
 /**
  * atomic_set - set atomic variable
  * @v: pointer of type atomic_t
  * @i: required value
  *
- * Atomically sets the value of @v to @i.
+ * Atomically sets the value of @v to @i.  Note that the guaranteed
+ * useful range of an atomic_t is only 24 bits.
  */
 #define atomic_set(v, i) (((v)->counter) = (i))
 
-#include <linux/irqflags.h>
 #include <asm/system.h>
 
 /**
@@ -52,17 +53,18 @@
  * @v: pointer of type atomic_t
  *
  * Atomically adds @i to @v and returns the result
+ * Note that the guaranteed useful range of an atomic_t is only 24 bits.
  */
 static inline int atomic_add_return(int i, atomic_t *v)
 {
 	unsigned long flags;
 	int temp;
 
-	raw_local_irq_save(flags); /* Don't trace it in an irqsoff handler */
+	local_irq_save(flags);
 	temp = v->counter;
 	temp += i;
 	v->counter = temp;
-	raw_local_irq_restore(flags);
+	local_irq_restore(flags);
 
 	return temp;
 }
@@ -73,17 +75,18 @@ static inline int atomic_add_return(int i, atomic_t *v)
  * @v: pointer of type atomic_t
  *
  * Atomically subtracts @i from @v and returns the result
+ * Note that the guaranteed useful range of an atomic_t is only 24 bits.
  */
 static inline int atomic_sub_return(int i, atomic_t *v)
 {
 	unsigned long flags;
 	int temp;
 
-	raw_local_irq_save(flags); /* Don't trace it in an irqsoff handler */
+	local_irq_save(flags);
 	temp = v->counter;
 	temp -= i;
 	v->counter = temp;
-	raw_local_irq_restore(flags);
+	local_irq_restore(flags);
 
 	return temp;
 }
@@ -120,23 +123,14 @@ static inline void atomic_dec(atomic_t *v)
 #define atomic_dec_and_test(v)		(atomic_sub_return(1, (v)) == 0)
 #define atomic_inc_and_test(v)		(atomic_add_return(1, (v)) == 0)
 
-#define atomic_xchg(ptr, v)		(xchg(&(ptr)->counter, (v)))
-#define atomic_cmpxchg(v, old, new)	(cmpxchg(&((v)->counter), (old), (new)))
-
-#define cmpxchg_local(ptr, o, n)				  	       \
-	((__typeof__(*(ptr)))__cmpxchg_local_generic((ptr), (unsigned long)(o),\
-			(unsigned long)(n), sizeof(*(ptr))))
-
-#define cmpxchg64_local(ptr, o, n) __cmpxchg64_local_generic((ptr), (o), (n))
-
-static inline int atomic_add_unless(atomic_t *v, int a, int u)
-{
-  int c, old;
-  c = atomic_read(v);
-  while (c != u && (old = atomic_cmpxchg(v, c, c + a)) != c)
-    c = old;
-  return c != u;
-}
+#define atomic_add_unless(v, a, u)				\
+({								\
+	int c, old;						\
+	c = atomic_read(v);					\
+	while (c != (u) && (old = atomic_cmpxchg((v), c, c + (a))) != c) \
+		c = old;					\
+	c != (u);						\
+})
 
 #define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
@@ -145,10 +139,19 @@ static inline void atomic_clear_mask(unsigned long mask, unsigned long *addr)
 	unsigned long flags;
 
 	mask = ~mask;
-	raw_local_irq_save(flags); /* Don't trace it in a irqsoff handler */
+	local_irq_save(flags);
 	*addr &= mask;
-	raw_local_irq_restore(flags);
+	local_irq_restore(flags);
 }
+
+#define atomic_xchg(ptr, v)		(xchg(&(ptr)->counter, (v)))
+#define atomic_cmpxchg(v, old, new)	(cmpxchg(&((v)->counter), (old), (new)))
+
+#define cmpxchg_local(ptr, o, n)				  	       \
+	((__typeof__(*(ptr)))__cmpxchg_local_generic((ptr), (unsigned long)(o),\
+			(unsigned long)(n), sizeof(*(ptr))))
+
+#define cmpxchg64_local(ptr, o, n) __cmpxchg64_local_generic((ptr), (o), (n))
 
 /* Assume that atomic operations are already serializing */
 #define smp_mb__before_atomic_dec()	barrier()

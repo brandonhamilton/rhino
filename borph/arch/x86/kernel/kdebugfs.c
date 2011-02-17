@@ -9,7 +9,6 @@
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/stat.h>
 #include <linux/io.h>
@@ -78,7 +77,6 @@ static int setup_data_open(struct inode *inode, struct file *file)
 static const struct file_operations fops_setup_data = {
 	.read		= setup_data_read,
 	.open		= setup_data_open,
-	.llseek		= default_llseek,
 };
 
 static int __init

@@ -2,7 +2,6 @@
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
  * Copyright © 2001-2007 Red Hat, Inc.
- * Copyright © 2004-2010 David Woodhouse <dwmw2@infradead.org>
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
@@ -23,7 +22,7 @@ static void jffs2_build_remove_unlinked_inode(struct jffs2_sb_info *,
 static inline struct jffs2_inode_cache *
 first_inode_chain(int *i, struct jffs2_sb_info *c)
 {
-	for (; *i < c->inocache_hashsize; (*i)++) {
+	for (; *i < INOCACHE_HASHSIZE; (*i)++) {
 		if (c->inocache_list[*i])
 			return c->inocache_list[*i];
 	}

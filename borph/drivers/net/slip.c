@@ -83,7 +83,6 @@
 #include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include "slip.h"
 #ifdef CONFIG_INET
 #include <linux/ip.h>
@@ -271,7 +270,7 @@ static int sl_realloc_bufs(struct slip *sl, int mtu)
 			memcpy(sl->xbuff, sl->xhead, sl->xleft);
 		} else  {
 			sl->xleft = 0;
-			dev->stats.tx_dropped++;
+			sl->tx_dropped++;
 		}
 	}
 	sl->xhead = sl->xbuff;
@@ -281,7 +280,7 @@ static int sl_realloc_bufs(struct slip *sl, int mtu)
 			memcpy(sl->rbuff, rbuff, sl->rcount);
 		} else  {
 			sl->rcount = 0;
-			dev->stats.rx_over_errors++;
+			sl->rx_over_errors++;
 			set_bit(SLF_ERROR, &sl->flags);
 		}
 	}
@@ -319,7 +318,6 @@ static inline void sl_unlock(struct slip *sl)
 /* Send one completely decapsulated IP datagram to the IP layer. */
 static void sl_bump(struct slip *sl)
 {
-	struct net_device *dev = sl->dev;
 	struct sk_buff *skb;
 	int count;
 
@@ -330,13 +328,13 @@ static void sl_bump(struct slip *sl)
 		if (c & SL_TYPE_COMPRESSED_TCP) {
 			/* ignore compressed packets when CSLIP is off */
 			if (!(sl->mode & SL_MODE_CSLIP)) {
-				printk(KERN_WARNING "%s: compressed packet ignored\n", dev->name);
+				printk(KERN_WARNING "%s: compressed packet ignored\n", sl->dev->name);
 				return;
 			}
 			/* make sure we've reserved enough space for uncompress
 			   to use */
 			if (count + 80 > sl->buffsize) {
-				dev->stats.rx_over_errors++;
+				sl->rx_over_errors++;
 				return;
 			}
 			count = slhc_uncompress(sl->slcomp, sl->rbuff, count);
@@ -347,7 +345,7 @@ static void sl_bump(struct slip *sl)
 				/* turn on header compression */
 				sl->mode |= SL_MODE_CSLIP;
 				sl->mode &= ~SL_MODE_ADAPTIVE;
-				printk(KERN_INFO "%s: header compression turned on\n", dev->name);
+				printk(KERN_INFO "%s: header compression turned on\n", sl->dev->name);
 			}
 			sl->rbuff[0] &= 0x4f;
 			if (slhc_remember(sl->slcomp, sl->rbuff, count) <= 0)
@@ -356,20 +354,20 @@ static void sl_bump(struct slip *sl)
 	}
 #endif  /* SL_INCLUDE_CSLIP */
 
-	dev->stats.rx_bytes += count;
+	sl->rx_bytes += count;
 
 	skb = dev_alloc_skb(count);
 	if (skb == NULL) {
-		printk(KERN_WARNING "%s: memory squeeze, dropping packet.\n", dev->name);
-		dev->stats.rx_dropped++;
+		printk(KERN_WARNING "%s: memory squeeze, dropping packet.\n", sl->dev->name);
+		sl->rx_dropped++;
 		return;
 	}
-	skb->dev = dev;
+	skb->dev = sl->dev;
 	memcpy(skb_put(skb, count), sl->rbuff, count);
 	skb_reset_mac_header(skb);
 	skb->protocol = htons(ETH_P_IP);
 	netif_rx(skb);
-	dev->stats.rx_packets++;
+	sl->rx_packets++;
 }
 
 /* Encapsulate one IP datagram and stuff into a TTY queue. */
@@ -380,7 +378,7 @@ static void sl_encaps(struct slip *sl, unsigned char *icp, int len)
 
 	if (len > sl->mtu) {		/* Sigh, shouldn't occur BUT ... */
 		printk(KERN_WARNING "%s: truncating oversized transmit packet!\n", sl->dev->name);
-		sl->dev->stats.tx_dropped++;
+		sl->tx_dropped++;
 		sl_unlock(sl);
 		return;
 	}
@@ -434,7 +432,7 @@ static void slip_write_wakeup(struct tty_struct *tty)
 	if (sl->xleft <= 0)  {
 		/* Now serial buffer is almost free & we can start
 		 * transmission of another packet */
-		sl->dev->stats.tx_packets++;
+		sl->tx_packets++;
 		clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
 		sl_unlock(sl);
 		return;
@@ -459,7 +457,7 @@ static void sl_tx_timeout(struct net_device *dev)
 		 *      14 Oct 1994 Dmitry Gorodchanin.
 		 */
 #ifdef SL_CHECK_TRANSMIT
-		if (time_before(jiffies, dev_trans_start(dev) + 20 * HZ))  {
+		if (time_before(jiffies, dev->trans_start + 20 * HZ))  {
 			/* 20 sec timeout not reached */
 			goto out;
 		}
@@ -497,7 +495,7 @@ sl_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	sl_lock(sl);
-	dev->stats.tx_bytes += skb->len;
+	sl->tx_bytes += skb->len;
 	sl_encaps(sl, skb->data, skb->len);
 	spin_unlock(&sl->lock);
 
@@ -559,39 +557,39 @@ static int sl_change_mtu(struct net_device *dev, int new_mtu)
 
 /* Netdevice get statistics request */
 
-static struct rtnl_link_stats64 *
-sl_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+static struct net_device_stats *
+sl_get_stats(struct net_device *dev)
 {
-	struct net_device_stats *devstats = &dev->stats;
-	unsigned long c_rx_dropped = 0;
-#ifdef SL_INCLUDE_CSLIP
-	unsigned long c_rx_fifo_errors = 0;
-	unsigned long c_tx_fifo_errors = 0;
-	unsigned long c_collisions = 0;
+	static struct net_device_stats stats;
 	struct slip *sl = netdev_priv(dev);
-	struct slcompress *comp = sl->slcomp;
-
-	if (comp) {
-		c_rx_fifo_errors = comp->sls_i_compressed;
-		c_rx_dropped     = comp->sls_i_tossed;
-		c_tx_fifo_errors = comp->sls_o_compressed;
-		c_collisions     = comp->sls_o_misses;
-	}
-	stats->rx_fifo_errors = sl->rx_compressed + c_rx_fifo_errors;
-	stats->tx_fifo_errors = sl->tx_compressed + c_tx_fifo_errors;
-	stats->collisions     = sl->tx_misses + c_collisions;
+#ifdef SL_INCLUDE_CSLIP
+	struct slcompress *comp;
 #endif
-	stats->rx_packets     = devstats->rx_packets;
-	stats->tx_packets     = devstats->tx_packets;
-	stats->rx_bytes       = devstats->rx_bytes;
-	stats->tx_bytes       = devstats->tx_bytes;
-	stats->rx_dropped     = devstats->rx_dropped + c_rx_dropped;
-	stats->tx_dropped     = devstats->tx_dropped;
-	stats->tx_errors      = devstats->tx_errors;
-	stats->rx_errors      = devstats->rx_errors;
-	stats->rx_over_errors = devstats->rx_over_errors;
 
-	return stats;
+	memset(&stats, 0, sizeof(struct net_device_stats));
+
+	stats.rx_packets     = sl->rx_packets;
+	stats.tx_packets     = sl->tx_packets;
+	stats.rx_bytes	     = sl->rx_bytes;
+	stats.tx_bytes	     = sl->tx_bytes;
+	stats.rx_dropped     = sl->rx_dropped;
+	stats.tx_dropped     = sl->tx_dropped;
+	stats.tx_errors      = sl->tx_errors;
+	stats.rx_errors      = sl->rx_errors;
+	stats.rx_over_errors = sl->rx_over_errors;
+#ifdef SL_INCLUDE_CSLIP
+	stats.rx_fifo_errors = sl->rx_compressed;
+	stats.tx_fifo_errors = sl->tx_compressed;
+	stats.collisions     = sl->tx_misses;
+	comp = sl->slcomp;
+	if (comp) {
+		stats.rx_fifo_errors += comp->sls_i_compressed;
+		stats.rx_dropped     += comp->sls_i_tossed;
+		stats.tx_fifo_errors += comp->sls_o_compressed;
+		stats.collisions     += comp->sls_o_misses;
+	}
+#endif /* CONFIG_INET */
+	return (&stats);
 }
 
 /* Netdevice register callback */
@@ -634,7 +632,7 @@ static const struct net_device_ops sl_netdev_ops = {
 	.ndo_open		= sl_open,
 	.ndo_stop		= sl_close,
 	.ndo_start_xmit		= sl_xmit,
-	.ndo_get_stats64        = sl_get_stats64,
+	.ndo_get_stats	        = sl_get_stats,
 	.ndo_change_mtu		= sl_change_mtu,
 	.ndo_tx_timeout		= sl_tx_timeout,
 #ifdef CONFIG_SLIP_SMART
@@ -682,7 +680,7 @@ static void slip_receive_buf(struct tty_struct *tty, const unsigned char *cp,
 	while (count--) {
 		if (fp && *fp++) {
 			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
-				sl->dev->stats.rx_errors++;
+				sl->rx_errors++;
 			cp++;
 			continue;
 		}
@@ -944,7 +942,7 @@ static int slip_esc(unsigned char *s, unsigned char *d, int len)
 		}
 	}
 	*ptr++ = END;
-	return ptr - d;
+	return (ptr - d);
 }
 
 static void slip_unesc(struct slip *sl, unsigned char s)
@@ -982,7 +980,7 @@ static void slip_unesc(struct slip *sl, unsigned char s)
 			sl->rbuff[sl->rcount++] = s;
 			return;
 		}
-		sl->dev->stats.rx_over_errors++;
+		sl->rx_over_errors++;
 		set_bit(SLF_ERROR, &sl->flags);
 	}
 }
@@ -1058,7 +1056,7 @@ static void slip_unesc6(struct slip *sl, unsigned char s)
 					sl->rbuff[sl->rcount++] = c;
 					return;
 				}
-				sl->dev->stats.rx_over_errors++;
+				sl->rx_over_errors++;
 				set_bit(SLF_ERROR, &sl->flags);
 			}
 		}
@@ -1270,7 +1268,7 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 	case SIOCGLEASE:
 		*p = sl->leased;
-	}
+	};
 	spin_unlock_bh(&sl->lock);
 	return 0;
 }

@@ -45,8 +45,6 @@
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
 #include <linux/jiffies.h>
-#include <linux/list.h>
-#include <linux/slab.h>
 
 /* for sysctl */
 #include <linux/fs.h>
@@ -87,25 +85,25 @@ static int sysctl_ip_vs_lblcr_expiration = 24*60*60*HZ;
 /*
  *      IPVS destination set structure and operations
  */
-struct ip_vs_dest_set_elem {
-	struct list_head	list;          /* list link */
+struct ip_vs_dest_list {
+	struct ip_vs_dest_list  *next;          /* list link */
 	struct ip_vs_dest       *dest;          /* destination server */
 };
 
 struct ip_vs_dest_set {
 	atomic_t                size;           /* set size */
 	unsigned long           lastmod;        /* last modified time */
-	struct list_head	list;           /* destination list */
+	struct ip_vs_dest_list  *list;          /* destination list */
 	rwlock_t	        lock;           /* lock for this list */
 };
 
 
-static struct ip_vs_dest_set_elem *
+static struct ip_vs_dest_list *
 ip_vs_dest_set_insert(struct ip_vs_dest_set *set, struct ip_vs_dest *dest)
 {
-	struct ip_vs_dest_set_elem *e;
+	struct ip_vs_dest_list *e;
 
-	list_for_each_entry(e, &set->list, list) {
+	for (e=set->list; e!=NULL; e=e->next) {
 		if (e->dest == dest)
 			/* already existed */
 			return NULL;
@@ -120,7 +118,9 @@ ip_vs_dest_set_insert(struct ip_vs_dest_set *set, struct ip_vs_dest *dest)
 	atomic_inc(&dest->refcnt);
 	e->dest = dest;
 
-	list_add(&e->list, &set->list);
+	/* link it to the list */
+	e->next = set->list;
+	set->list = e;
 	atomic_inc(&set->size);
 
 	set->lastmod = jiffies;
@@ -130,33 +130,34 @@ ip_vs_dest_set_insert(struct ip_vs_dest_set *set, struct ip_vs_dest *dest)
 static void
 ip_vs_dest_set_erase(struct ip_vs_dest_set *set, struct ip_vs_dest *dest)
 {
-	struct ip_vs_dest_set_elem *e;
+	struct ip_vs_dest_list *e, **ep;
 
-	list_for_each_entry(e, &set->list, list) {
+	for (ep=&set->list, e=*ep; e!=NULL; e=*ep) {
 		if (e->dest == dest) {
 			/* HIT */
+			*ep = e->next;
 			atomic_dec(&set->size);
 			set->lastmod = jiffies;
 			atomic_dec(&e->dest->refcnt);
-			list_del(&e->list);
 			kfree(e);
 			break;
 		}
+		ep = &e->next;
 	}
 }
 
 static void ip_vs_dest_set_eraseall(struct ip_vs_dest_set *set)
 {
-	struct ip_vs_dest_set_elem *e, *ep;
+	struct ip_vs_dest_list *e, **ep;
 
 	write_lock(&set->lock);
-	list_for_each_entry_safe(e, ep, &set->list, list) {
+	for (ep=&set->list, e=*ep; e!=NULL; e=*ep) {
+		*ep = e->next;
 		/*
 		 * We don't kfree dest because it is refered either
 		 * by its service or by the trash dest list.
 		 */
 		atomic_dec(&e->dest->refcnt);
-		list_del(&e->list);
 		kfree(e);
 	}
 	write_unlock(&set->lock);
@@ -165,7 +166,7 @@ static void ip_vs_dest_set_eraseall(struct ip_vs_dest_set *set)
 /* get weighted least-connection node in the destination set */
 static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 {
-	register struct ip_vs_dest_set_elem *e;
+	register struct ip_vs_dest_list *e;
 	struct ip_vs_dest *dest, *least;
 	int loh, doh;
 
@@ -173,7 +174,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 		return NULL;
 
 	/* select the first destination server, whose weight > 0 */
-	list_for_each_entry(e, &set->list, list) {
+	for (e=set->list; e!=NULL; e=e->next) {
 		least = e->dest;
 		if (least->flags & IP_VS_DEST_F_OVERLOAD)
 			continue;
@@ -189,7 +190,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 
 	/* find the destination with the weighted least load */
   nextstage:
-	list_for_each_entry(e, &set->list, list) {
+	for (e=e->next; e!=NULL; e=e->next) {
 		dest = e->dest;
 		if (dest->flags & IP_VS_DEST_F_OVERLOAD)
 			continue;
@@ -219,7 +220,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 /* get weighted most-connection node in the destination set */
 static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 {
-	register struct ip_vs_dest_set_elem *e;
+	register struct ip_vs_dest_list *e;
 	struct ip_vs_dest *dest, *most;
 	int moh, doh;
 
@@ -227,7 +228,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 		return NULL;
 
 	/* select the first destination server, whose weight > 0 */
-	list_for_each_entry(e, &set->list, list) {
+	for (e=set->list; e!=NULL; e=e->next) {
 		most = e->dest;
 		if (atomic_read(&most->weight) > 0) {
 			moh = atomic_read(&most->activeconns) * 50
@@ -239,7 +240,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 
 	/* find the destination with the weighted most load */
   nextstage:
-	list_for_each_entry(e, &set->list, list) {
+	for (e=e->next; e!=NULL; e=e->next) {
 		dest = e->dest;
 		doh = atomic_read(&dest->activeconns) * 50
 			+ atomic_read(&dest->inactconns);
@@ -386,9 +387,9 @@ ip_vs_lblcr_new(struct ip_vs_lblcr_table *tbl, const union nf_inet_addr *daddr,
 		ip_vs_addr_copy(dest->af, &en->addr, daddr);
 		en->lastuse = jiffies;
 
-		/* initialize its dest set */
+		/* initilize its dest set */
 		atomic_set(&(en->set.size), 0);
-		INIT_LIST_HEAD(&en->set.list);
+		en->set.list = NULL;
 		rwlock_init(&en->set.lock);
 
 		ip_vs_lblcr_hash(tbl, en);

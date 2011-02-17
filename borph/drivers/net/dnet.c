@@ -27,7 +27,7 @@
 #undef DEBUG
 
 /* function for reading internal MAC register */
-static u16 dnet_readw_mac(struct dnet *bp, u16 reg)
+u16 dnet_readw_mac(struct dnet *bp, u16 reg)
 {
 	u16 data_read;
 
@@ -46,7 +46,7 @@ static u16 dnet_readw_mac(struct dnet *bp, u16 reg)
 }
 
 /* function for writing internal MAC register */
-static void dnet_writew_mac(struct dnet *bp, u16 reg, u16 val)
+void dnet_writew_mac(struct dnet *bp, u16 reg, u16 val)
 {
 	/* load data to write */
 	dnet_writel(bp, val, MACREG_DATA);
@@ -63,11 +63,11 @@ static void __dnet_set_hwaddr(struct dnet *bp)
 {
 	u16 tmp;
 
-	tmp = be16_to_cpup((__be16 *)bp->dev->dev_addr);
+	tmp = cpu_to_be16(*((u16 *) bp->dev->dev_addr));
 	dnet_writew_mac(bp, DNET_INTERNAL_MAC_ADDR_0_REG, tmp);
-	tmp = be16_to_cpup((__be16 *)(bp->dev->dev_addr + 2));
+	tmp = cpu_to_be16(*((u16 *) (bp->dev->dev_addr + 2)));
 	dnet_writew_mac(bp, DNET_INTERNAL_MAC_ADDR_1_REG, tmp);
-	tmp = be16_to_cpup((__be16 *)(bp->dev->dev_addr + 4));
+	tmp = cpu_to_be16(*((u16 *) (bp->dev->dev_addr + 4)));
 	dnet_writew_mac(bp, DNET_INTERNAL_MAC_ADDR_2_REG, tmp);
 }
 
@@ -89,11 +89,11 @@ static void __devinit dnet_get_hwaddr(struct dnet *bp)
 	 * Mac_addr[15:0]).
 	 */
 	tmp = dnet_readw_mac(bp, DNET_INTERNAL_MAC_ADDR_0_REG);
-	*((__be16 *)addr) = cpu_to_be16(tmp);
+	*((u16 *) addr) = be16_to_cpu(tmp);
 	tmp = dnet_readw_mac(bp, DNET_INTERNAL_MAC_ADDR_1_REG);
-	*((__be16 *)(addr + 2)) = cpu_to_be16(tmp);
+	*((u16 *) (addr + 2)) = be16_to_cpu(tmp);
 	tmp = dnet_readw_mac(bp, DNET_INTERNAL_MAC_ADDR_2_REG);
-	*((__be16 *)(addr + 4)) = cpu_to_be16(tmp);
+	*((u16 *) (addr + 4)) = be16_to_cpu(tmp);
 
 	if (is_valid_ether_addr(addr))
 		memcpy(bp->dev->dev_addr, addr, sizeof(addr));
@@ -361,7 +361,7 @@ err_out:
 }
 
 /* For Neptune board: LINK1000 as Link LED and TX as activity LED */
-static int dnet_phy_marvell_fixup(struct phy_device *phydev)
+int dnet_phy_marvell_fixup(struct phy_device *phydev)
 {
 	return phy_write(phydev, 0x18, 0x4148);
 }
@@ -594,6 +594,8 @@ static netdev_tx_t dnet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_unlock_irqrestore(&bp->lock, flags);
 
+	dev->trans_start = jiffies;
+
 	return NETDEV_TX_OK;
 }
 
@@ -797,7 +799,7 @@ static int dnet_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	if (!phydev)
 		return -ENODEV;
 
-	return phy_mii_ioctl(phydev, rq, cmd);
+	return phy_mii_ioctl(phydev, if_mii(rq), cmd);
 }
 
 static void dnet_get_drvinfo(struct net_device *dev,
@@ -854,7 +856,7 @@ static int __devinit dnet_probe(struct platform_device *pdev)
 	dev = alloc_etherdev(sizeof(*bp));
 	if (!dev) {
 		dev_err(&pdev->dev, "etherdev alloc failed, aborting.\n");
-		goto err_out_release_mem;
+		goto err_out;
 	}
 
 	/* TODO: Actually, we have some interesting features... */
@@ -911,13 +913,12 @@ static int __devinit dnet_probe(struct platform_device *pdev)
 	if (err)
 		dev_warn(&pdev->dev, "Cannot register PHY board fixup.\n");
 
-	err = dnet_mii_init(bp);
-	if (err)
+	if (dnet_mii_init(bp) != 0)
 		goto err_out_unregister_netdev;
 
 	dev_info(&pdev->dev, "Dave DNET at 0x%p (0x%08x) irq %d %pM\n",
 	       bp->regs, mem_base, dev->irq, dev->dev_addr);
-	dev_info(&pdev->dev, "has %smdio, %sirq, %sgigabit, %sdma\n",
+	dev_info(&pdev->dev, "has %smdio, %sirq, %sgigabit, %sdma \n",
 	       (bp->capabilities & DNET_HAS_MDIO) ? "" : "no ",
 	       (bp->capabilities & DNET_HAS_IRQ) ? "" : "no ",
 	       (bp->capabilities & DNET_HAS_GIGABIT) ? "" : "no ",
@@ -937,8 +938,6 @@ err_out_iounmap:
 	iounmap(bp->regs);
 err_out_free_dev:
 	free_netdev(dev);
-err_out_release_mem:
-	release_mem_region(mem_base, mem_size);
 err_out:
 	return err;
 }

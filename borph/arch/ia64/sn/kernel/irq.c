@@ -12,7 +12,6 @@
 #include <linux/spinlock.h>
 #include <linux/init.h>
 #include <linux/rculist.h>
-#include <linux/slab.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/arch.h>
 #include <asm/sn/intr.h>

@@ -20,7 +20,3 @@ __NR_chown32,
 __NR_fchown32,
 __NR_lchown32,
 #endif
-__NR_link,
-#ifdef __NR_linkat
-__NR_linkat,
-#endif

@@ -7,10 +7,11 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/miscdevice.h>
+#include <linux/slab.h>
 #include <linux/fcntl.h>
 #include <linux/poll.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/mm.h>
 #include <linux/of.h>
@@ -22,7 +23,6 @@
 #include <asm/io.h>
 #include <asm/upa.h>
 
-static DEFINE_MUTEX(flash_mutex);
 static DEFINE_SPINLOCK(flash_lock);
 static struct {
 	unsigned long read_base;	/* Physical read address */
@@ -81,7 +81,7 @@ flash_mmap(struct file *file, struct vm_area_struct *vma)
 static long long
 flash_llseek(struct file *file, long long offset, int origin)
 {
-	mutex_lock(&flash_mutex);
+	lock_kernel();
 	switch (origin) {
 		case 0:
 			file->f_pos = offset;
@@ -95,10 +95,10 @@ flash_llseek(struct file *file, long long offset, int origin)
 			file->f_pos = flash.read_size;
 			break;
 		default:
-			mutex_unlock(&flash_mutex);
+			unlock_kernel();
 			return -EINVAL;
 	}
-	mutex_unlock(&flash_mutex);
+	unlock_kernel();
 	return file->f_pos;
 }
 
@@ -106,9 +106,9 @@ static ssize_t
 flash_read(struct file * file, char __user * buf,
 	   size_t count, loff_t *ppos)
 {
-	loff_t p = *ppos;
+	unsigned long p = file->f_pos;
 	int i;
-
+	
 	if (count > flash.read_size - p)
 		count = flash.read_size - p;
 
@@ -119,20 +119,20 @@ flash_read(struct file * file, char __user * buf,
 		buf++;
 	}
 
-	*ppos += count;
+	file->f_pos += count;
 	return count;
 }
 
 static int
 flash_open(struct inode *inode, struct file *file)
 {
-	mutex_lock(&flash_mutex);
+	lock_kernel();
 	if (test_and_set_bit(0, (void *)&flash.busy) != 0) {
-		mutex_unlock(&flash_mutex);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
-	mutex_unlock(&flash_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -160,10 +160,10 @@ static const struct file_operations flash_fops = {
 
 static struct miscdevice flash_dev = { FLASH_MINOR, "flash", &flash_fops };
 
-static int __devinit flash_probe(struct platform_device *op,
+static int __devinit flash_probe(struct of_device *op,
 				 const struct of_device_id *match)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	struct device_node *parent;
 
 	parent = dp->parent;
@@ -185,14 +185,14 @@ static int __devinit flash_probe(struct platform_device *op,
 	flash.busy = 0;
 
 	printk(KERN_INFO "%s: OBP Flash, RD %lx[%lx] WR %lx[%lx]\n",
-	       op->dev.of_node->full_name,
+	       op->node->full_name,
 	       flash.read_base, flash.read_size,
 	       flash.write_base, flash.write_size);
 
 	return misc_register(&flash_dev);
 }
 
-static int __devexit flash_remove(struct platform_device *op)
+static int __devexit flash_remove(struct of_device *op)
 {
 	misc_deregister(&flash_dev);
 
@@ -208,23 +208,20 @@ static const struct of_device_id flash_match[] = {
 MODULE_DEVICE_TABLE(of, flash_match);
 
 static struct of_platform_driver flash_driver = {
-	.driver = {
-		.name = "flash",
-		.owner = THIS_MODULE,
-		.of_match_table = flash_match,
-	},
+	.name		= "flash",
+	.match_table	= flash_match,
 	.probe		= flash_probe,
 	.remove		= __devexit_p(flash_remove),
 };
 
 static int __init flash_init(void)
 {
-	return of_register_platform_driver(&flash_driver);
+	return of_register_driver(&flash_driver, &of_bus_type);
 }
 
 static void __exit flash_cleanup(void)
 {
-	of_unregister_platform_driver(&flash_driver);
+	of_unregister_driver(&flash_driver);
 }
 
 module_init(flash_init);

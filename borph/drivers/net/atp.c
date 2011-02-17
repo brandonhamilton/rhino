@@ -68,7 +68,7 @@ static int xcvr[NUM_UNITS]; 			/* The data transfer mode. */
 
 	In 1997 Realtek made available the documentation for the second generation
 	RTL8012 chip, which has lead to several driver improvements.
-	  http://www.realtek.com.tw/
+	  http://www.realtek.com.tw/cn/cn.html
 
 					Theory of Operation
 
@@ -129,6 +129,7 @@ static int xcvr[NUM_UNITS]; 			/* The data transfer mode. */
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -445,7 +446,7 @@ static int net_open(struct net_device *dev)
 	init_timer(&lp->timer);
 	lp->timer.expires = jiffies + TIMED_CHECKER;
 	lp->timer.data = (unsigned long)dev;
-	lp->timer.function = atp_timed_checker;    /* timer handler */
+	lp->timer.function = &atp_timed_checker;    /* timer handler */
 	add_timer(&lp->timer);
 
 	netif_start_queue(dev);
@@ -547,7 +548,7 @@ static void tx_timeout(struct net_device *dev)
 	dev->stats.tx_errors++;
 	/* Try to restart the adapter. */
 	hardware_init(dev);
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue(dev);
 	dev->stats.tx_errors++;
 }
@@ -586,6 +587,7 @@ static netdev_tx_t atp_send_packet(struct sk_buff *skb,
 	write_reg(ioaddr, IMR, ISR_RxOK | ISR_TxErr | ISR_TxOK);
 	write_reg_high(ioaddr, IMR, ISRh_RxErr);
 
+	dev->trans_start = jiffies;
 	dev_kfree_skb (skb);
 	return NETDEV_TX_OK;
 }
@@ -802,6 +804,7 @@ static void net_rx(struct net_device *dev)
  done:
 	write_reg(ioaddr, CMR1, CMR1_NextPkt);
 	lp->last_rx_time = jiffies;
+	return;
 }
 
 static void read_block(long ioaddr, int length, unsigned char *p, int data_mode)
@@ -858,7 +861,7 @@ static void set_rx_mode_8002(struct net_device *dev)
 	struct net_local *lp = netdev_priv(dev);
 	long ioaddr = dev->base_addr;
 
-	if (!netdev_mc_empty(dev) || (dev->flags & (IFF_ALLMULTI|IFF_PROMISC)))
+	if (dev->mc_count > 0 || (dev->flags & (IFF_ALLMULTI|IFF_PROMISC)))
 		lp->addr_mode = CMR2h_PROMISC;
 	else
 		lp->addr_mode = CMR2h_Normal;
@@ -874,17 +877,18 @@ static void set_rx_mode_8012(struct net_device *dev)
 
 	if (dev->flags & IFF_PROMISC) {			/* Set promiscuous. */
 		new_mode = CMR2h_PROMISC;
-	} else if ((netdev_mc_count(dev) > 1000) ||
-		   (dev->flags & IFF_ALLMULTI)) {
+	} else if ((dev->mc_count > 1000)  ||  (dev->flags & IFF_ALLMULTI)) {
 		/* Too many to filter perfectly -- accept all multicasts. */
 		memset(mc_filter, 0xff, sizeof(mc_filter));
 		new_mode = CMR2h_Normal;
 	} else {
-		struct netdev_hw_addr *ha;
+		struct dev_mc_list *mclist;
 
 		memset(mc_filter, 0, sizeof(mc_filter));
-		netdev_for_each_mc_addr(ha, dev) {
-			int filterbit = ether_crc_le(ETH_ALEN, ha->addr) & 0x3f;
+		for (i = 0, mclist = dev->mc_list; mclist && i < dev->mc_count;
+			 i++, mclist = mclist->next)
+		{
+			int filterbit = ether_crc_le(ETH_ALEN, mclist->dmi_addr) & 0x3f;
 			mc_filter[filterbit >> 5] |= 1 << (filterbit & 31);
 		}
 		new_mode = CMR2h_Normal;

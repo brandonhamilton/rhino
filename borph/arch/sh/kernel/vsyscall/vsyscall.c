@@ -11,6 +11,7 @@
  * for more details.
  */
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/gfp.h>

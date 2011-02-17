@@ -1,4 +1,3 @@
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/bitops.h>
 #include <linux/cpumask.h>

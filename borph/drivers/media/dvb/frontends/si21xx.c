@@ -97,6 +97,8 @@
 #define	LNB_SUPPLY_CTRL_REG_4		0xce
 #define	LNB_SUPPLY_STATUS_REG		0xcf
 
+#define FALSE	0
+#define TRUE	1
 #define FAIL	-1
 #define PASS	0
 
@@ -268,7 +270,7 @@ static int si21_writereg(struct si21xx_state *state, u8 reg, u8 data)
 	return (ret != 1) ? -EREMOTEIO : 0;
 }
 
-static int si21_write(struct dvb_frontend *fe, const u8 buf[], int len)
+static int si21_write(struct dvb_frontend *fe, u8 *buf, int len)
 {
 	struct si21xx_state *state = fe->demodulator_priv;
 
@@ -716,7 +718,7 @@ static int si21xx_set_frontend(struct dvb_frontend *fe,
 	int fine_tune_freq;
 	unsigned char sample_rate = 0;
 	/* boolean */
-	bool inband_interferer_ind;
+	unsigned int inband_interferer_ind;
 
 	/* INTERMEDIATE VALUES */
 	int icoarse_tune_freq; /* MHz */
@@ -726,8 +728,15 @@ static int si21xx_set_frontend(struct dvb_frontend *fe,
 	unsigned int x1;
 	unsigned int x2;
 	int i;
-	bool inband_interferer_div2[ALLOWABLE_FS_COUNT];
-	bool inband_interferer_div4[ALLOWABLE_FS_COUNT];
+	unsigned int inband_interferer_div2[ALLOWABLE_FS_COUNT] = {
+			FALSE, FALSE, FALSE, FALSE, FALSE,
+			FALSE, FALSE, FALSE, FALSE, FALSE
+	};
+	unsigned int inband_interferer_div4[ALLOWABLE_FS_COUNT] = {
+			FALSE, FALSE, FALSE, FALSE, FALSE,
+			FALSE, FALSE, FALSE, FALSE, FALSE
+	};
+
 	int status;
 
 	/* allowable sample rates for ADC in MHz */
@@ -753,7 +762,7 @@ static int si21xx_set_frontend(struct dvb_frontend *fe,
 	}
 
 	for (i = 0; i < ALLOWABLE_FS_COUNT; ++i)
-		inband_interferer_div2[i] = inband_interferer_div4[i] = false;
+		inband_interferer_div2[i] = inband_interferer_div4[i] = FALSE;
 
 	if_limit_high = -700000;
 	if_limit_low = -100000;
@@ -789,7 +798,7 @@ static int si21xx_set_frontend(struct dvb_frontend *fe,
 
 		if (((band_low < x1) && (x1 < band_high)) ||
 					((band_low < x2) && (x2 < band_high)))
-					inband_interferer_div4[i] = true;
+					inband_interferer_div4[i] = TRUE;
 
 	}
 
@@ -802,28 +811,25 @@ static int si21xx_set_frontend(struct dvb_frontend *fe,
 
 		if (((band_low < x1) && (x1 < band_high)) ||
 					((band_low < x2) && (x2 < band_high)))
-					inband_interferer_div2[i] = true;
+					inband_interferer_div2[i] = TRUE;
 	}
 
-	inband_interferer_ind = true;
-	for (i = 0; i < ALLOWABLE_FS_COUNT; ++i) {
-		if (inband_interferer_div2[i] || inband_interferer_div4[i]) {
-			inband_interferer_ind = false;
-			break;
-		}
-	}
+	inband_interferer_ind = TRUE;
+	for (i = 0; i < ALLOWABLE_FS_COUNT; ++i)
+		inband_interferer_ind &= inband_interferer_div2[i] |
+						inband_interferer_div4[i];
 
 	if (inband_interferer_ind) {
 		for (i = 0; i < ALLOWABLE_FS_COUNT; ++i) {
-			if (!inband_interferer_div2[i]) {
+			if (inband_interferer_div2[i] == FALSE) {
 				sample_rate = (u8) afs[i];
 				break;
 			}
 		}
 	} else {
 		for (i = 0; i < ALLOWABLE_FS_COUNT; ++i) {
-			if ((inband_interferer_div2[i] ||
-			     !inband_interferer_div4[i])) {
+			if ((inband_interferer_div2[i] |
+					inband_interferer_div4[i]) == FALSE) {
 				sample_rate = (u8) afs[i];
 				break;
 			}

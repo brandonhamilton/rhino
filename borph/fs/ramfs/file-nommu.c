@@ -21,7 +21,6 @@
 #include <linux/pagevec.h>
 #include <linux/mman.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 
 #include <asm/uaccess.h>
 #include "internal.h"
@@ -42,7 +41,7 @@ const struct file_operations ramfs_file_operations = {
 	.aio_read		= generic_file_aio_read,
 	.write			= do_sync_write,
 	.aio_write		= generic_file_aio_write,
-	.fsync			= noop_fsync,
+	.fsync			= simple_sync_file,
 	.splice_read		= generic_file_splice_read,
 	.splice_write		= generic_file_splice_write,
 	.llseek			= generic_file_llseek,
@@ -61,7 +60,7 @@ const struct inode_operations ramfs_file_inode_operations = {
  */
 int ramfs_nommu_expand_for_mapping(struct inode *inode, size_t newsize)
 {
-	unsigned long npages, xpages, loop;
+	unsigned long npages, xpages, loop, limit;
 	struct page *pages;
 	unsigned order;
 	void *data;
@@ -124,6 +123,30 @@ add_error:
 
 /*****************************************************************************/
 /*
+ * check that file shrinkage doesn't leave any VMAs dangling in midair
+ */
+static int ramfs_nommu_check_mappings(struct inode *inode,
+				      size_t newsize, size_t size)
+{
+	struct vm_area_struct *vma;
+	struct prio_tree_iter iter;
+
+	/* search for VMAs that fall within the dead zone */
+	vma_prio_tree_foreach(vma, &iter, &inode->i_mapping->i_mmap,
+			      newsize >> PAGE_SHIFT,
+			      (size + PAGE_SIZE - 1) >> PAGE_SHIFT
+			      ) {
+		/* found one - only interested if it's shared out of the page
+		 * cache */
+		if (vma->vm_flags & VM_SHARED)
+			return -ETXTBSY; /* not quite true, but near enough */
+	}
+
+	return 0;
+}
+
+/*****************************************************************************/
+/*
  *
  */
 static int ramfs_nommu_resize(struct inode *inode, loff_t newsize, loff_t size)
@@ -141,13 +164,14 @@ static int ramfs_nommu_resize(struct inode *inode, loff_t newsize, loff_t size)
 
 	/* check that a decrease in size doesn't cut off any shared mappings */
 	if (newsize < size) {
-		ret = nommu_shrink_inode_mappings(inode, size, newsize);
+		ret = ramfs_nommu_check_mappings(inode, newsize, size);
 		if (ret < 0)
 			return ret;
 	}
 
-	truncate_setsize(inode, newsize);
-	return 0;
+	ret = vmtruncate(inode, newsize);
+
+	return ret;
 }
 
 /*****************************************************************************/
@@ -168,8 +192,7 @@ static int ramfs_nommu_setattr(struct dentry *dentry, struct iattr *ia)
 
 	/* pick out size-changing events */
 	if (ia->ia_valid & ATTR_SIZE) {
-		loff_t size = inode->i_size;
-
+		loff_t size = i_size_read(inode);
 		if (ia->ia_size != size) {
 			ret = ramfs_nommu_resize(inode, ia->ia_size, size);
 			if (ret < 0 || ia->ia_valid == ATTR_SIZE)
@@ -182,7 +205,7 @@ static int ramfs_nommu_setattr(struct dentry *dentry, struct iattr *ia)
 		}
 	}
 
-	setattr_copy(inode, ia);
+	ret = inode_setattr(inode, ia);
  out:
 	ia->ia_valid = old_ia_valid;
 	return ret;

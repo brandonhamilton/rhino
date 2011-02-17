@@ -22,7 +22,6 @@
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
-#include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/mount.h>
 #include "ecryptfs_kernel.h"
@@ -86,7 +85,7 @@ out:
 	return 0;
 }
 
-int __init ecryptfs_init_kthread(void)
+int ecryptfs_init_kthread(void)
 {
 	int rc = 0;
 

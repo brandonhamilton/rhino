@@ -215,14 +215,12 @@ struct rdma_ucm_event_resp {
 
 /* Option levels */
 enum {
-	RDMA_OPTION_ID		= 0,
-	RDMA_OPTION_IB		= 1
+	RDMA_OPTION_ID		= 0
 };
 
 /* Option details */
 enum {
-	RDMA_OPTION_ID_TOS	= 0,
-	RDMA_OPTION_IB_PATH	= 1
+	RDMA_OPTION_ID_TOS	= 0
 };
 
 struct rdma_ucm_set_option {

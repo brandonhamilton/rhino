@@ -16,7 +16,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <asm/i387.h>
 
 struct crypto_fpu_ctx {

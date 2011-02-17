@@ -79,21 +79,21 @@ struct ilo_hwinfo {
 struct ccb {
 	union {
 		char *send_fifobar;
-		u64 send_fifobar_pa;
+		u64 padding1;
 	} ccb_u1;
 	union {
 		char *send_desc;
-		u64 send_desc_pa;
+		u64 padding2;
 	} ccb_u2;
 	u64 send_ctrl;
 
 	union {
 		char *recv_fifobar;
-		u64 recv_fifobar_pa;
+		u64 padding3;
 	} ccb_u3;
 	union {
 		char *recv_desc;
-		u64 recv_desc_pa;
+		u64 padding4;
 	} ccb_u4;
 	u64 recv_ctrl;
 

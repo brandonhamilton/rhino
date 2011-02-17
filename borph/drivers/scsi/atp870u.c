@@ -29,7 +29,6 @@
 #include <linux/pci.h>
 #include <linux/blkdev.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <asm/system.h>
 #include <asm/io.h>
 
@@ -605,7 +604,7 @@ handled:
  *
  *	Queue a command to the ATP queue. Called with the host lock held.
  */
-static int atp870u_queuecommand_lck(struct scsi_cmnd *req_p,
+static int atp870u_queuecommand(struct scsi_cmnd * req_p, 
 			 void (*done) (struct scsi_cmnd *))
 {
 	unsigned char c;
@@ -693,8 +692,6 @@ static int atp870u_queuecommand_lck(struct scsi_cmnd *req_p,
 #endif	
 	return 0;
 }
-
-static DEF_SCSI_QCMD(atp870u_queuecommand)
 
 /**
  *	send_s870	-	send a command to the controller

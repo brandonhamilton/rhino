@@ -26,7 +26,6 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/firmware.h>
-#include <linux/slab.h>
 #include <asm/div64.h>
 
 #include "dvb_frontend.h"
@@ -232,7 +231,7 @@ static int write_fw(struct drx397xD_state *s, enum blob_ix ix)
 exit_rc:
 	read_unlock(&fw[s->chip_rev].lock);
 
-	return rc;
+	return 0;
 }
 
 /* Function is not endian safe, use the RD16 wrapper below */

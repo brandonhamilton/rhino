@@ -14,6 +14,7 @@
 #include <linux/buffer_head.h>
 #include <linux/gfs2_ondisk.h>
 #include <linux/crc32.h>
+#include <linux/slow-work.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -26,8 +27,6 @@
 #include "super.h"
 #include "util.h"
 #include "dir.h"
-
-struct workqueue_struct *gfs_recovery_wq;
 
 int gfs2_replay_read_block(struct gfs2_jdesc *jd, unsigned int blk,
 			   struct buffer_head **bh)
@@ -444,7 +443,23 @@ static void gfs2_recovery_done(struct gfs2_sbd *sdp, unsigned int jid,
         kobject_uevent_env(&sdp->sd_kobj, KOBJ_CHANGE, envp);
 }
 
-void gfs2_recover_func(struct work_struct *work)
+static int gfs2_recover_get_ref(struct slow_work *work)
+{
+	struct gfs2_jdesc *jd = container_of(work, struct gfs2_jdesc, jd_work);
+	if (test_and_set_bit(JDF_RECOVERY, &jd->jd_flags))
+		return -EBUSY;
+	return 0;
+}
+
+static void gfs2_recover_put_ref(struct slow_work *work)
+{
+	struct gfs2_jdesc *jd = container_of(work, struct gfs2_jdesc, jd_work);
+	clear_bit(JDF_RECOVERY, &jd->jd_flags);
+	smp_mb__after_clear_bit();
+	wake_up_bit(&jd->jd_flags, JDF_RECOVERY);
+}
+
+static void gfs2_recover_work(struct slow_work *work)
 {
 	struct gfs2_jdesc *jd = container_of(work, struct gfs2_jdesc, jd_work);
 	struct gfs2_inode *ip = GFS2_I(jd->jd_inode);
@@ -455,13 +470,11 @@ void gfs2_recover_func(struct work_struct *work)
 	int ro = 0;
 	unsigned int pass;
 	int error;
-	int jlocked = 0;
 
-	if (sdp->sd_args.ar_spectator ||
-	    (jd->jd_jid != sdp->sd_lockstruct.ls_jid)) {
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid) {
 		fs_info(sdp, "jid=%u: Trying to acquire journal lock...\n",
 			jd->jd_jid);
-		jlocked = 1;
+
 		/* Acquire the journal lock so we can do recovery */
 
 		error = gfs2_glock_nq_num(sdp, jd->jd_jid, &gfs2_journal_glops,
@@ -556,33 +569,39 @@ void gfs2_recover_func(struct work_struct *work)
 			jd->jd_jid, t);
 	}
 
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid)
+		gfs2_glock_dq_uninit(&ji_gh);
+
 	gfs2_recovery_done(sdp, jd->jd_jid, LM_RD_SUCCESS);
 
-	if (jlocked) {
-		gfs2_glock_dq_uninit(&ji_gh);
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid)
 		gfs2_glock_dq_uninit(&j_gh);
-	}
 
 	fs_info(sdp, "jid=%u: Done\n", jd->jd_jid);
-	goto done;
+	return;
 
 fail_gunlock_tr:
 	gfs2_glock_dq_uninit(&t_gh);
 fail_gunlock_ji:
-	if (jlocked) {
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid) {
 		gfs2_glock_dq_uninit(&ji_gh);
 fail_gunlock_j:
 		gfs2_glock_dq_uninit(&j_gh);
 	}
 
 	fs_info(sdp, "jid=%u: %s\n", jd->jd_jid, (error) ? "Failed" : "Done");
+
 fail:
 	gfs2_recovery_done(sdp, jd->jd_jid, LM_RD_GAVEUP);
-done:
-	clear_bit(JDF_RECOVERY, &jd->jd_flags);
-	smp_mb__after_clear_bit();
-	wake_up_bit(&jd->jd_flags, JDF_RECOVERY);
 }
+
+struct slow_work_ops gfs2_recover_ops = {
+	.owner	 = THIS_MODULE,
+	.get_ref = gfs2_recover_get_ref,
+	.put_ref = gfs2_recover_put_ref,
+	.execute = gfs2_recover_work,
+};
+
 
 static int gfs2_recovery_wait(void *word)
 {
@@ -590,21 +609,13 @@ static int gfs2_recovery_wait(void *word)
 	return 0;
 }
 
-int gfs2_recover_journal(struct gfs2_jdesc *jd, bool wait)
+int gfs2_recover_journal(struct gfs2_jdesc *jd)
 {
 	int rv;
-
-	if (test_and_set_bit(JDF_RECOVERY, &jd->jd_flags))
-		return -EBUSY;
-
-	/* we have JDF_RECOVERY, queue should always succeed */
-	rv = queue_work(gfs_recovery_wq, &jd->jd_work);
-	BUG_ON(!rv);
-
-	if (wait)
-		wait_on_bit(&jd->jd_flags, JDF_RECOVERY, gfs2_recovery_wait,
-			    TASK_UNINTERRUPTIBLE);
-
+	rv = slow_work_enqueue(&jd->jd_work);
+	if (rv)
+		return rv;
+	wait_on_bit(&jd->jd_flags, JDF_RECOVERY, gfs2_recovery_wait, TASK_UNINTERRUPTIBLE);
 	return 0;
 }
 

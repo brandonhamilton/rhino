@@ -9,7 +9,6 @@
 //
 //============================================================================
 #include <linux/usb.h>
-#include <linux/gfp.h>
 
 #include "wb35tx_f.h"
 #include "mds_f.h"
@@ -210,7 +209,7 @@ static void Wb35Tx_EP2VM_complete(struct urb * pUrb)
 {
 	struct wbsoft_priv *adapter = pUrb->context;
 	struct hw_data *	pHwData = &adapter->sHwData;
-	struct T02_descriptor	T02, TSTATUS;
+	T02_DESCRIPTOR	T02, TSTATUS;
 	struct wb35_tx *pWb35Tx = &pHwData->Wb35Tx;
 	u32 *		pltmp = (u32 *)pWb35Tx->EP2_buf;
 	u32		i;

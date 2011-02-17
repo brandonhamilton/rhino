@@ -36,6 +36,7 @@
 #include <asm/mach-au1x00/au1000.h>
 #include <asm/mach-au1x00/gpio.h>
 
+#if !defined(CONFIG_SOC_AU1000)
 static int gpio2_get(struct gpio_chip *chip, unsigned offset)
 {
 	return alchemy_gpio2_get_value(offset + ALCHEMY_GPIO2_BASE);
@@ -62,7 +63,7 @@ static int gpio2_to_irq(struct gpio_chip *chip, unsigned offset)
 {
 	return alchemy_gpio2_to_irq(offset + ALCHEMY_GPIO2_BASE);
 }
-
+#endif /* !defined(CONFIG_SOC_AU1000) */
 
 static int gpio1_get(struct gpio_chip *chip, unsigned offset)
 {
@@ -103,6 +104,7 @@ struct gpio_chip alchemy_gpio_chip[] = {
 		.base			= ALCHEMY_GPIO1_BASE,
 		.ngpio			= ALCHEMY_GPIO1_NUM,
 	},
+#if !defined(CONFIG_SOC_AU1000)
 	[1] = {
 		.label                  = "alchemy-gpio2",
 		.direction_input        = gpio2_direction_input,
@@ -113,13 +115,15 @@ struct gpio_chip alchemy_gpio_chip[] = {
 		.base                   = ALCHEMY_GPIO2_BASE,
 		.ngpio                  = ALCHEMY_GPIO2_NUM,
 	},
+#endif
 };
 
 static int __init alchemy_gpiolib_init(void)
 {
 	gpiochip_add(&alchemy_gpio_chip[0]);
-	if (alchemy_get_cputype() != ALCHEMY_CPU_AU1000)
-		gpiochip_add(&alchemy_gpio_chip[1]);
+#if !defined(CONFIG_SOC_AU1000)
+	gpiochip_add(&alchemy_gpio_chip[1]);
+#endif
 
 	return 0;
 }

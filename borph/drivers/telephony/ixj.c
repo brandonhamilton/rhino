@@ -257,7 +257,7 @@
 #include <linux/fs.h>		/* everything... */
 #include <linux/errno.h>	/* error codes */
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/mm.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
@@ -277,7 +277,6 @@
 #define TYPE(inode) (iminor(inode) >> 4)
 #define NUM(inode) (iminor(inode) & 0xf)
 
-static DEFINE_MUTEX(ixj_mutex);
 static int ixjdebug;
 static int hertz = HZ;
 static int samplerate = 100;
@@ -5880,13 +5879,20 @@ out:
 static int ixj_build_filter_cadence(IXJ *j, IXJ_FILTER_CADENCE __user * cp)
 {
 	IXJ_FILTER_CADENCE *lcp;
-	lcp = memdup_user(cp, sizeof(IXJ_FILTER_CADENCE));
-	if (IS_ERR(lcp)) {
+	lcp = kmalloc(sizeof(IXJ_FILTER_CADENCE), GFP_KERNEL);
+	if (lcp == NULL) {
 		if(ixjdebug & 0x0001) {
-			printk(KERN_INFO "Could not allocate memory for cadence or could not copy cadence to kernel\n");
+			printk(KERN_INFO "Could not allocate memory for cadence\n");
 		}
-		return PTR_ERR(lcp);
+		return -ENOMEM;
         }
+	if (copy_from_user(lcp, cp, sizeof(IXJ_FILTER_CADENCE))) {
+		if(ixjdebug & 0x0001) {
+			printk(KERN_INFO "Could not copy cadence to kernel\n");
+		}
+		kfree(lcp);
+		return -EFAULT;
+	}
 	if (lcp->filter > 5) {
 		if(ixjdebug & 0x0001) {
 			printk(KERN_INFO "Cadence out of range\n");
@@ -6656,9 +6662,9 @@ static long do_ixj_ioctl(struct file *file_p, unsigned int cmd, unsigned long ar
 static long ixj_ioctl(struct file *file_p, unsigned int cmd, unsigned long arg)
 {
 	long ret;
-	mutex_lock(&ixj_mutex);
+	lock_kernel();
 	ret = do_ixj_ioctl(file_p, cmd, arg);
-	mutex_unlock(&ixj_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -6677,8 +6683,7 @@ static const struct file_operations ixj_fops =
         .poll           = ixj_poll,
         .unlocked_ioctl = ixj_ioctl,
         .release        = ixj_release,
-        .fasync         = ixj_fasync,
-        .llseek	 = default_llseek,
+        .fasync         = ixj_fasync
 };
 
 static int ixj_linetest(IXJ *j)

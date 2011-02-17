@@ -19,7 +19,6 @@
 #include <linux/rtc.h>
 #include <linux/rtc/m48t59.h>
 #include <linux/bcd.h>
-#include <linux/slab.h>
 
 #ifndef NO_IRQ
 #define NO_IRQ	(-1)
@@ -105,7 +104,7 @@ static int m48t59_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	dev_dbg(dev, "RTC read time %04d-%02d-%02d %02d/%02d/%02d\n",
 		tm->tm_year + 1900, tm->tm_mon, tm->tm_mday,
 		tm->tm_hour, tm->tm_min, tm->tm_sec);
-	return rtc_valid_tm(tm);
+	return 0;
 }
 
 static int m48t59_rtc_set_time(struct device *dev, struct rtc_time *tm)
@@ -196,7 +195,7 @@ static int m48t59_rtc_readalarm(struct device *dev, struct rtc_wkalrm *alrm)
 	dev_dbg(dev, "RTC read alarm time %04d-%02d-%02d %02d/%02d/%02d\n",
 		tm->tm_year + 1900, tm->tm_mon, tm->tm_mday,
 		tm->tm_hour, tm->tm_min, tm->tm_sec);
-	return rtc_valid_tm(tm);
+	return 0;
 }
 
 /*
@@ -343,7 +342,7 @@ static const struct rtc_class_ops m48t02_rtc_ops = {
 	.set_time	= m48t59_rtc_set_time,
 };
 
-static ssize_t m48t59_nvram_read(struct file *filp, struct kobject *kobj,
+static ssize_t m48t59_nvram_read(struct kobject *kobj,
 				struct bin_attribute *bin_attr,
 				char *buf, loff_t pos, size_t size)
 {
@@ -363,7 +362,7 @@ static ssize_t m48t59_nvram_read(struct file *filp, struct kobject *kobj,
 	return cnt;
 }
 
-static ssize_t m48t59_nvram_write(struct file *filp, struct kobject *kobj,
+static ssize_t m48t59_nvram_write(struct kobject *kobj,
 				struct bin_attribute *bin_attr,
 				char *buf, loff_t pos, size_t size)
 {
@@ -482,9 +481,6 @@ static int __devinit m48t59_rtc_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	spin_lock_init(&m48t59->lock);
-	platform_set_drvdata(pdev, m48t59);
-
 	m48t59->rtc = rtc_device_register(name, &pdev->dev, ops, THIS_MODULE);
 	if (IS_ERR(m48t59->rtc)) {
 		ret = PTR_ERR(m48t59->rtc);
@@ -494,18 +490,21 @@ static int __devinit m48t59_rtc_probe(struct platform_device *pdev)
 	m48t59_nvram_attr.size = pdata->offset;
 
 	ret = sysfs_create_bin_file(&pdev->dev.kobj, &m48t59_nvram_attr);
-	if (ret) {
-		rtc_device_unregister(m48t59->rtc);
+	if (ret)
 		goto out;
-	}
 
+	spin_lock_init(&m48t59->lock);
+	platform_set_drvdata(pdev, m48t59);
 	return 0;
 
 out:
+	if (!IS_ERR(m48t59->rtc))
+		rtc_device_unregister(m48t59->rtc);
 	if (m48t59->irq != NO_IRQ)
 		free_irq(m48t59->irq, &pdev->dev);
 	if (m48t59->ioaddr)
 		iounmap(m48t59->ioaddr);
+	if (m48t59)
 		kfree(m48t59);
 	return ret;
 }

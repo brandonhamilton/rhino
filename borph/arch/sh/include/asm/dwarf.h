@@ -243,13 +243,16 @@ struct dwarf_cie {
 
 	unsigned long cie_pointer;
 
+	struct list_head link;
+
 	unsigned long flags;
 #define DWARF_CIE_Z_AUGMENTATION	(1 << 0)
 
-	/* linked-list entry if this CIE is from a module */
-	struct list_head link;
-
-	struct rb_node node;
+	/*
+	 * 'mod' will be non-NULL if this CIE came from a module's
+	 * .eh_frame section.
+	 */
+	struct module *mod;
 };
 
 /**
@@ -263,11 +266,13 @@ struct dwarf_fde {
 	unsigned long address_range;
 	unsigned char *instructions;
 	unsigned char *end;
-
-	/* linked-list entry if this FDE is from a module */
 	struct list_head link;
 
-	struct rb_node node;
+	/*
+	 * 'mod' will be non-NULL if this FDE came from a module's
+	 * .eh_frame section.
+	 */
+	struct module *mod;
 };
 
 /**

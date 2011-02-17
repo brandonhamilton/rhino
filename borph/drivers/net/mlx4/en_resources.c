@@ -31,7 +31,6 @@
  *
  */
 
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mlx4/qp.h>
 

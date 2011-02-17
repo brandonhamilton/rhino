@@ -22,8 +22,8 @@ my %last_wakeup;
 
 my $max_wakeup_latency;
 my $min_wakeup_latency;
-my $total_wakeup_latency = 0;
-my $total_wakeups = 0;
+my $total_wakeup_latency;
+my $total_wakeups;
 
 sub sched::sched_switch
 {
@@ -67,12 +67,8 @@ sub trace_end
 {
     printf("wakeup_latency stats:\n\n");
     print "total_wakeups: $total_wakeups\n";
-    if ($total_wakeups) {
-	printf("avg_wakeup_latency (ns): %u\n",
-	       avg($total_wakeup_latency, $total_wakeups));
-    } else {
-	printf("avg_wakeup_latency (ns): N/A\n");
-    }
+    printf("avg_wakeup_latency (ns): %u\n",
+	   avg($total_wakeup_latency, $total_wakeups));
     printf("min_wakeup_latency (ns): %u\n", $min_wakeup_latency);
     printf("max_wakeup_latency (ns): %u\n", $max_wakeup_latency);
 

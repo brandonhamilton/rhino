@@ -28,33 +28,63 @@
  * Authors: Thomas Hellstrom <thellstrom-at-vmware-dot-com>
  */
 
+#include <linux/vmalloc.h>
 #include <linux/sched.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/file.h>
 #include <linux/swap.h>
-#include <linux/slab.h>
 #include "drm_cache.h"
-#include "drm_mem_util.h"
 #include "ttm/ttm_module.h"
 #include "ttm/ttm_bo_driver.h"
 #include "ttm/ttm_placement.h"
-#include "ttm/ttm_page_alloc.h"
 
 static int ttm_tt_swapin(struct ttm_tt *ttm);
 
 /**
  * Allocates storage for pointers to the pages that back the ttm.
+ *
+ * Uses kmalloc if possible. Otherwise falls back to vmalloc.
  */
 static void ttm_tt_alloc_page_directory(struct ttm_tt *ttm)
 {
-	ttm->pages = drm_calloc_large(ttm->num_pages, sizeof(*ttm->pages));
+	unsigned long size = ttm->num_pages * sizeof(*ttm->pages);
+	ttm->pages = NULL;
+
+	if (size <= PAGE_SIZE)
+		ttm->pages = kzalloc(size, GFP_KERNEL);
+
+	if (!ttm->pages) {
+		ttm->pages = vmalloc_user(size);
+		if (ttm->pages)
+			ttm->page_flags |= TTM_PAGE_FLAG_VMALLOC;
+	}
 }
 
 static void ttm_tt_free_page_directory(struct ttm_tt *ttm)
 {
-	drm_free_large(ttm->pages);
+	if (ttm->page_flags & TTM_PAGE_FLAG_VMALLOC) {
+		vfree(ttm->pages);
+		ttm->page_flags &= ~TTM_PAGE_FLAG_VMALLOC;
+	} else {
+		kfree(ttm->pages);
+	}
 	ttm->pages = NULL;
+}
+
+static struct page *ttm_tt_alloc_page(unsigned page_flags)
+{
+	gfp_t gfp_flags = GFP_USER;
+
+	if (page_flags & TTM_PAGE_FLAG_ZERO_ALLOC)
+		gfp_flags |= __GFP_ZERO;
+
+	if (page_flags & TTM_PAGE_FLAG_DMA32)
+		gfp_flags |= __GFP_DMA32;
+	else
+		gfp_flags |= __GFP_HIGHMEM;
+
+	return alloc_page(gfp_flags);
 }
 
 static void ttm_tt_free_user_pages(struct ttm_tt *ttm)
@@ -97,20 +127,14 @@ static void ttm_tt_free_user_pages(struct ttm_tt *ttm)
 static struct page *__ttm_tt_get_page(struct ttm_tt *ttm, int index)
 {
 	struct page *p;
-	struct list_head h;
 	struct ttm_mem_global *mem_glob = ttm->glob->mem_glob;
 	int ret;
 
 	while (NULL == (p = ttm->pages[index])) {
+		p = ttm_tt_alloc_page(ttm->page_flags);
 
-		INIT_LIST_HEAD(&h);
-
-		ret = ttm_get_pages(&h, ttm->page_flags, ttm->caching_state, 1);
-
-		if (ret != 0)
+		if (!p)
 			return NULL;
-
-		p = list_first_entry(&h, struct page, lru);
 
 		ret = ttm_mem_global_alloc_page(mem_glob, p, false, false);
 		if (unlikely(ret != 0))
@@ -172,34 +196,23 @@ EXPORT_SYMBOL(ttm_tt_populate);
 
 #ifdef CONFIG_X86
 static inline int ttm_tt_set_page_caching(struct page *p,
-					  enum ttm_caching_state c_old,
-					  enum ttm_caching_state c_new)
+					  enum ttm_caching_state c_state)
 {
-	int ret = 0;
-
 	if (PageHighMem(p))
 		return 0;
 
-	if (c_old != tt_cached) {
-		/* p isn't in the default caching state, set it to
-		 * writeback first to free its current memtype. */
-
-		ret = set_pages_wb(p, 1);
-		if (ret)
-			return ret;
+	switch (c_state) {
+	case tt_cached:
+		return set_pages_wb(p, 1);
+	case tt_wc:
+	    return set_memory_wc((unsigned long) page_address(p), 1);
+	default:
+		return set_pages_uc(p, 1);
 	}
-
-	if (c_new == tt_wc)
-		ret = set_memory_wc((unsigned long) page_address(p), 1);
-	else if (c_new == tt_uncached)
-		ret = set_pages_uc(p, 1);
-
-	return ret;
 }
 #else /* CONFIG_X86 */
 static inline int ttm_tt_set_page_caching(struct page *p,
-					  enum ttm_caching_state c_old,
-					  enum ttm_caching_state c_new)
+					  enum ttm_caching_state c_state)
 {
 	return 0;
 }
@@ -220,10 +233,10 @@ static int ttm_tt_set_caching(struct ttm_tt *ttm,
 	if (ttm->caching_state == c_state)
 		return 0;
 
-	if (ttm->state == tt_unpopulated) {
-		/* Change caching but don't populate */
-		ttm->caching_state = c_state;
-		return 0;
+	if (c_state != tt_cached) {
+		ret = ttm_tt_populate(ttm);
+		if (unlikely(ret != 0))
+			return ret;
 	}
 
 	if (ttm->caching_state == tt_cached)
@@ -232,9 +245,7 @@ static int ttm_tt_set_caching(struct ttm_tt *ttm,
 	for (i = 0; i < ttm->num_pages; ++i) {
 		cur_page = ttm->pages[i];
 		if (likely(cur_page != NULL)) {
-			ret = ttm_tt_set_page_caching(cur_page,
-						      ttm->caching_state,
-						      c_state);
+			ret = ttm_tt_set_page_caching(cur_page, c_state);
 			if (unlikely(ret != 0))
 				goto out_err;
 		}
@@ -248,7 +259,7 @@ out_err:
 	for (j = 0; j < i; ++j) {
 		cur_page = ttm->pages[j];
 		if (likely(cur_page != NULL)) {
-			(void)ttm_tt_set_page_caching(cur_page, c_state,
+			(void)ttm_tt_set_page_caching(cur_page,
 						      ttm->caching_state);
 		}
 	}
@@ -274,17 +285,13 @@ EXPORT_SYMBOL(ttm_tt_set_placement_caching);
 static void ttm_tt_free_alloced_pages(struct ttm_tt *ttm)
 {
 	int i;
-	unsigned count = 0;
-	struct list_head h;
 	struct page *cur_page;
 	struct ttm_backend *be = ttm->be;
 
-	INIT_LIST_HEAD(&h);
-
 	if (be)
 		be->func->clear(be);
+	(void)ttm_tt_set_caching(ttm, tt_cached);
 	for (i = 0; i < ttm->num_pages; ++i) {
-
 		cur_page = ttm->pages[i];
 		ttm->pages[i] = NULL;
 		if (cur_page) {
@@ -294,11 +301,9 @@ static void ttm_tt_free_alloced_pages(struct ttm_tt *ttm)
 				       "Leaking pages.\n");
 			ttm_mem_global_free_page(ttm->glob->mem_glob,
 						 cur_page);
-			list_add(&cur_page->lru, &h);
-			count++;
+			__free_page(cur_page);
 		}
 	}
-	ttm_put_pages(&h, count, ttm->page_flags, ttm->caching_state);
 	ttm->state = tt_unpopulated;
 	ttm->first_himem_page = ttm->num_pages;
 	ttm->last_lomem_page = -1;
@@ -440,8 +445,10 @@ int ttm_tt_bind(struct ttm_tt *ttm, struct ttm_mem_reg *bo_mem)
 		return ret;
 
 	ret = be->func->bind(be, bo_mem);
-	if (unlikely(ret != 0))
+	if (ret) {
+		printk(KERN_ERR TTM_PFX "Couldn't bind backend.\n");
 		return ret;
+	}
 
 	ttm->state = tt_bound;
 
@@ -460,7 +467,7 @@ static int ttm_tt_swapin(struct ttm_tt *ttm)
 	void *from_virtual;
 	void *to_virtual;
 	int i;
-	int ret = -ENOMEM;
+	int ret;
 
 	if (ttm->page_flags & TTM_PAGE_FLAG_USER) {
 		ret = ttm_tt_set_user(ttm, ttm->tsk, ttm->start,
@@ -479,10 +486,8 @@ static int ttm_tt_swapin(struct ttm_tt *ttm)
 
 	for (i = 0; i < ttm->num_pages; ++i) {
 		from_page = read_mapping_page(swap_space, i, NULL);
-		if (IS_ERR(from_page)) {
-			ret = PTR_ERR(from_page);
+		if (IS_ERR(from_page))
 			goto out_err;
-		}
 		to_page = __ttm_tt_get_page(ttm, i);
 		if (unlikely(to_page == NULL))
 			goto out_err;
@@ -505,7 +510,7 @@ static int ttm_tt_swapin(struct ttm_tt *ttm)
 	return 0;
 out_err:
 	ttm_tt_free_alloced_pages(ttm);
-	return ret;
+	return -ENOMEM;
 }
 
 int ttm_tt_swapout(struct ttm_tt *ttm, struct file *persistant_swap_storage)
@@ -517,7 +522,6 @@ int ttm_tt_swapout(struct ttm_tt *ttm, struct file *persistant_swap_storage)
 	void *from_virtual;
 	void *to_virtual;
 	int i;
-	int ret = -ENOMEM;
 
 	BUG_ON(ttm->state != tt_unbound && ttm->state != tt_unpopulated);
 	BUG_ON(ttm->caching_state != tt_cached);
@@ -540,7 +544,7 @@ int ttm_tt_swapout(struct ttm_tt *ttm, struct file *persistant_swap_storage)
 						0);
 		if (unlikely(IS_ERR(swap_storage))) {
 			printk(KERN_ERR "Failed allocating swap storage.\n");
-			return PTR_ERR(swap_storage);
+			return -ENOMEM;
 		}
 	} else
 		swap_storage = persistant_swap_storage;
@@ -552,10 +556,9 @@ int ttm_tt_swapout(struct ttm_tt *ttm, struct file *persistant_swap_storage)
 		if (unlikely(from_page == NULL))
 			continue;
 		to_page = read_mapping_page(swap_space, i, NULL);
-		if (unlikely(IS_ERR(to_page))) {
-			ret = PTR_ERR(to_page);
+		if (unlikely(to_page == NULL))
 			goto out_err;
-		}
+
 		preempt_disable();
 		from_virtual = kmap_atomic(from_page, KM_USER0);
 		to_virtual = kmap_atomic(to_page, KM_USER1);
@@ -579,5 +582,5 @@ out_err:
 	if (!persistant_swap_storage)
 		fput(swap_storage);
 
-	return ret;
+	return -ENOMEM;
 }

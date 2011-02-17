@@ -50,7 +50,8 @@ tracing_sched_switch_trace(struct trace_array *tr,
 }
 
 static void
-probe_sched_switch(void *ignore, struct task_struct *prev, struct task_struct *next)
+probe_sched_switch(struct rq *__rq, struct task_struct *prev,
+			struct task_struct *next)
 {
 	struct trace_array_cpu *data;
 	unsigned long flags;
@@ -108,7 +109,7 @@ tracing_sched_wakeup_trace(struct trace_array *tr,
 }
 
 static void
-probe_sched_wakeup(void *ignore, struct task_struct *wakee, int success)
+probe_sched_wakeup(struct rq *__rq, struct task_struct *wakee, int success)
 {
 	struct trace_array_cpu *data;
 	unsigned long flags;
@@ -138,21 +139,21 @@ static int tracing_sched_register(void)
 {
 	int ret;
 
-	ret = register_trace_sched_wakeup(probe_sched_wakeup, NULL);
+	ret = register_trace_sched_wakeup(probe_sched_wakeup);
 	if (ret) {
 		pr_info("wakeup trace: Couldn't activate tracepoint"
 			" probe to kernel_sched_wakeup\n");
 		return ret;
 	}
 
-	ret = register_trace_sched_wakeup_new(probe_sched_wakeup, NULL);
+	ret = register_trace_sched_wakeup_new(probe_sched_wakeup);
 	if (ret) {
 		pr_info("wakeup trace: Couldn't activate tracepoint"
 			" probe to kernel_sched_wakeup_new\n");
 		goto fail_deprobe;
 	}
 
-	ret = register_trace_sched_switch(probe_sched_switch, NULL);
+	ret = register_trace_sched_switch(probe_sched_switch);
 	if (ret) {
 		pr_info("sched trace: Couldn't activate tracepoint"
 			" probe to kernel_sched_switch\n");
@@ -161,17 +162,17 @@ static int tracing_sched_register(void)
 
 	return ret;
 fail_deprobe_wake_new:
-	unregister_trace_sched_wakeup_new(probe_sched_wakeup, NULL);
+	unregister_trace_sched_wakeup_new(probe_sched_wakeup);
 fail_deprobe:
-	unregister_trace_sched_wakeup(probe_sched_wakeup, NULL);
+	unregister_trace_sched_wakeup(probe_sched_wakeup);
 	return ret;
 }
 
 static void tracing_sched_unregister(void)
 {
-	unregister_trace_sched_switch(probe_sched_switch, NULL);
-	unregister_trace_sched_wakeup_new(probe_sched_wakeup, NULL);
-	unregister_trace_sched_wakeup(probe_sched_wakeup, NULL);
+	unregister_trace_sched_switch(probe_sched_switch);
+	unregister_trace_sched_wakeup_new(probe_sched_wakeup);
+	unregister_trace_sched_wakeup(probe_sched_wakeup);
 }
 
 static void tracing_start_sched_switch(void)

@@ -161,18 +161,14 @@ static int s3c24xx_clkout_setparent(struct clk *clk, struct clk *parent)
 
 /* external clock definitions */
 
-static struct clk_ops dclk_ops = {
-	.set_parent	= s3c24xx_dclk_setparent,
-	.set_rate	= s3c24xx_set_dclk_rate,
-	.round_rate	= s3c24xx_round_dclk_rate,
-};
-
 struct clk s3c24xx_dclk0 = {
 	.name		= "dclk0",
 	.id		= -1,
 	.ctrlbit	= S3C2410_DCLKCON_DCLK0EN,
 	.enable	        = s3c24xx_dclk_enable,
-	.ops		= &dclk_ops,
+	.set_parent	= s3c24xx_dclk_setparent,
+	.set_rate	= s3c24xx_set_dclk_rate,
+	.round_rate	= s3c24xx_round_dclk_rate,
 };
 
 struct clk s3c24xx_dclk1 = {
@@ -180,21 +176,19 @@ struct clk s3c24xx_dclk1 = {
 	.id		= -1,
 	.ctrlbit	= S3C2410_DCLKCON_DCLK1EN,
 	.enable		= s3c24xx_dclk_enable,
-	.ops		= &dclk_ops,
-};
-
-static struct clk_ops clkout_ops = {
-	.set_parent	= s3c24xx_clkout_setparent,
+	.set_parent	= s3c24xx_dclk_setparent,
+	.set_rate	= s3c24xx_set_dclk_rate,
+	.round_rate	= s3c24xx_round_dclk_rate,
 };
 
 struct clk s3c24xx_clkout0 = {
 	.name		= "clkout0",
 	.id		= -1,
-	.ops		= &clkout_ops,
+	.set_parent	= s3c24xx_clkout_setparent,
 };
 
 struct clk s3c24xx_clkout1 = {
 	.name		= "clkout1",
 	.id		= -1,
-	.ops		= &clkout_ops,
+	.set_parent	= s3c24xx_clkout_setparent,
 };

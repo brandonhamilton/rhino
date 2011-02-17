@@ -120,14 +120,14 @@ static inline void direct_qirr_info(int n_cpu, u8 value)
 
 /* LPAR low level accessors */
 
-static inline unsigned int lpar_xirr_info_get(unsigned char cppr)
+static inline unsigned int lpar_xirr_info_get(void)
 {
 	unsigned long lpar_rc;
 	unsigned long return_value;
 
-	lpar_rc = plpar_xirr(&return_value, cppr);
+	lpar_rc = plpar_xirr(&return_value);
 	if (lpar_rc != H_SUCCESS)
-		panic(" bad return code xirr - rc = %lx\n", lpar_rc);
+		panic(" bad return code xirr - rc = %lx \n", lpar_rc);
 	return (unsigned int)return_value;
 }
 
@@ -163,43 +163,39 @@ static inline void lpar_qirr_info(int n_cpu , u8 value)
 /* Interface to generic irq subsystem */
 
 #ifdef CONFIG_SMP
-/*
- * For the moment we only implement delivery to all cpus or one cpu.
- *
- * If the requested affinity is cpu_all_mask, we set global affinity.
- * If not we set it to the first cpu in the mask, even if multiple cpus
- * are set. This is so things like irqbalance (which set core and package
- * wide affinities) do the right thing.
- */
-static int get_irq_server(unsigned int virq, const struct cpumask *cpumask,
-			  unsigned int strict_check)
+static int get_irq_server(unsigned int virq, unsigned int strict_check)
 {
+	int server;
+	/* For the moment only implement delivery to all cpus or one cpu */
+	cpumask_t cpumask;
+	cpumask_t tmp = CPU_MASK_NONE;
 
+	cpumask_copy(&cpumask, irq_to_desc(virq)->affinity);
 	if (!distribute_irqs)
 		return default_server;
 
-	if (!cpumask_subset(cpu_possible_mask, cpumask)) {
-		int server = cpumask_first_and(cpu_online_mask, cpumask);
+	if (!cpus_equal(cpumask, CPU_MASK_ALL)) {
+		cpus_and(tmp, cpu_online_map, cpumask);
 
-		if (server < nr_cpu_ids)
+		server = first_cpu(tmp);
+
+		if (server < NR_CPUS)
 			return get_hard_smp_processor_id(server);
 
 		if (strict_check)
 			return -1;
 	}
 
-	/*
-	 * Workaround issue with some versions of JS20 firmware that
-	 * deliver interrupts to cpus which haven't been started. This
-	 * happens when using the maxcpus= boot option.
-	 */
-	if (cpumask_equal(cpu_online_mask, cpu_present_mask))
+	if (cpus_equal(cpu_online_map, cpu_present_map))
 		return default_distrib_server;
 
 	return default_server;
 }
 #else
-#define get_irq_server(virq, cpumask, strict_check) (default_server)
+static int get_irq_server(unsigned int virq, unsigned int strict_check)
+{
+	return default_server;
+}
 #endif
 
 static void xics_unmask_irq(unsigned int virq)
@@ -215,7 +211,7 @@ static void xics_unmask_irq(unsigned int virq)
 	if (irq == XICS_IPI || irq == XICS_IRQ_SPURIOUS)
 		return;
 
-	server = get_irq_server(virq, irq_to_desc(virq)->affinity, 0);
+	server = get_irq_server(virq, 0);
 
 	call_status = rtas_call(ibm_set_xive, 3, 1, NULL, irq, server,
 				DEFAULT_PRIORITY);
@@ -243,7 +239,7 @@ static unsigned int xics_startup(unsigned int virq)
 	 * at that level, so we do it here by hand.
 	 */
 	if (irq_to_desc(virq)->msi_desc)
-		unmask_msi_irq(irq_get_irq_data(virq));
+		unmask_msi_irq(virq);
 
 	/* unmask it */
 	xics_unmask_irq(virq);
@@ -339,8 +335,7 @@ static unsigned int xics_get_irq_direct(void)
 
 static unsigned int xics_get_irq_lpar(void)
 {
-	struct xics_cppr *os_cppr = &__get_cpu_var(xics_cppr);
-	unsigned int xirr = lpar_xirr_info_get(os_cppr->stack[os_cppr->index]);
+	unsigned int xirr = lpar_xirr_info_get();
 	unsigned int vec = xics_xirr_vector(xirr);
 	unsigned int irq;
 
@@ -406,7 +401,11 @@ static int xics_set_affinity(unsigned int virq, const struct cpumask *cpumask)
 		return -1;
 	}
 
-	irq_server = get_irq_server(virq, cpumask, 1);
+	/*
+	 * For the moment only implement delivery to all cpus or one cpu.
+	 * Get current irq_server for the given irq
+	 */
+	irq_server = get_irq_server(virq, 1);
 	if (irq_server == -1) {
 		char cpulist[128];
 		cpumask_scnprintf(cpulist, sizeof(cpulist), cpumask);
@@ -429,7 +428,7 @@ static int xics_set_affinity(unsigned int virq, const struct cpumask *cpumask)
 }
 
 static struct irq_chip xics_pic_direct = {
-	.name = "XICS",
+	.name = " XICS     ",
 	.startup = xics_startup,
 	.mask = xics_mask_irq,
 	.unmask = xics_unmask_irq,
@@ -438,7 +437,7 @@ static struct irq_chip xics_pic_direct = {
 };
 
 static struct irq_chip xics_pic_lpar = {
-	.name = "XICS",
+	.name = " XICS     ",
 	.startup = xics_startup,
 	.mask = xics_mask_irq,
 	.unmask = xics_unmask_irq,
@@ -515,13 +514,15 @@ static void __init xics_init_host(void)
 /*
  * XICS only has a single IPI, so encode the messages per CPU
  */
-static DEFINE_PER_CPU_SHARED_ALIGNED(unsigned long, xics_ipi_message);
+struct xics_ipi_struct {
+        unsigned long value;
+	} ____cacheline_aligned;
+
+static struct xics_ipi_struct xics_ipi_message[NR_CPUS] __cacheline_aligned;
 
 static inline void smp_xics_do_message(int cpu, int msg)
 {
-	unsigned long *tgt = &per_cpu(xics_ipi_message, cpu);
-
-	set_bit(msg, tgt);
+	set_bit(msg, &xics_ipi_message[cpu].value);
 	mb();
 	if (firmware_has_feature(FW_FEATURE_LPAR))
 		lpar_qirr_info(cpu, IPI_PRIORITY);
@@ -547,21 +548,25 @@ void smp_xics_message_pass(int target, int msg)
 
 static irqreturn_t xics_ipi_dispatch(int cpu)
 {
-	unsigned long *tgt = &per_cpu(xics_ipi_message, cpu);
+	WARN_ON(cpu_is_offline(cpu));
 
 	mb();	/* order mmio clearing qirr */
-	while (*tgt) {
-		if (test_and_clear_bit(PPC_MSG_CALL_FUNCTION, tgt)) {
+	while (xics_ipi_message[cpu].value) {
+		if (test_and_clear_bit(PPC_MSG_CALL_FUNCTION,
+				       &xics_ipi_message[cpu].value)) {
 			smp_message_recv(PPC_MSG_CALL_FUNCTION);
 		}
-		if (test_and_clear_bit(PPC_MSG_RESCHEDULE, tgt)) {
+		if (test_and_clear_bit(PPC_MSG_RESCHEDULE,
+				       &xics_ipi_message[cpu].value)) {
 			smp_message_recv(PPC_MSG_RESCHEDULE);
 		}
-		if (test_and_clear_bit(PPC_MSG_CALL_FUNC_SINGLE, tgt)) {
+		if (test_and_clear_bit(PPC_MSG_CALL_FUNC_SINGLE,
+				       &xics_ipi_message[cpu].value)) {
 			smp_message_recv(PPC_MSG_CALL_FUNC_SINGLE);
 		}
 #if defined(CONFIG_DEBUGGER) || defined(CONFIG_KEXEC)
-		if (test_and_clear_bit(PPC_MSG_DEBUGGER_BREAK, tgt)) {
+		if (test_and_clear_bit(PPC_MSG_DEBUGGER_BREAK,
+				       &xics_ipi_message[cpu].value)) {
 			smp_message_recv(PPC_MSG_DEBUGGER_BREAK);
 		}
 #endif
@@ -613,7 +618,7 @@ int __init smp_xics_probe(void)
 {
 	xics_request_ipi();
 
-	return cpumask_weight(cpu_possible_mask);
+	return cpus_weight(cpu_possible_map);
 }
 
 #endif /* CONFIG_SMP */
@@ -783,13 +788,9 @@ static void xics_set_cpu_priority(unsigned char cppr)
 {
 	struct xics_cppr *os_cppr = &__get_cpu_var(xics_cppr);
 
-	/*
-	 * we only really want to set the priority when there's
-	 * just one cppr value on the stack
-	 */
-	WARN_ON(os_cppr->index != 0);
+	BUG_ON(os_cppr->index != 0);
 
-	os_cppr->stack[0] = cppr;
+	os_cppr->stack[os_cppr->index] = cppr;
 
 	if (firmware_has_feature(FW_FEATURE_LPAR))
 		lpar_cppr_info(cppr);
@@ -824,14 +825,8 @@ void xics_setup_cpu(void)
 
 void xics_teardown_cpu(void)
 {
-	struct xics_cppr *os_cppr = &__get_cpu_var(xics_cppr);
 	int cpu = smp_processor_id();
 
-	/*
-	 * we have to reset the cppr index to 0 because we're
-	 * not going to return from the IPI
-	 */
-	os_cppr->index = 0;
 	xics_set_cpu_priority(0);
 
 	/* Clear any pending IPI request */
@@ -928,10 +923,8 @@ void xics_migrate_irqs_away(void)
 		if (xics_status[0] != hw_cpu)
 			goto unlock;
 
-		/* This is expected during cpu offline. */
-		if (cpu_online(cpu))
-			printk(KERN_WARNING "IRQ %u affinity broken off cpu %u\n",
-			       virq, cpu);
+		printk(KERN_WARNING "IRQ %u affinity broken off cpu %u\n",
+		       virq, cpu);
 
 		/* Reset affinity to all cpus */
 		cpumask_setall(irq_to_desc(virq)->affinity);

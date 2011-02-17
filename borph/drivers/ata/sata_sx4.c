@@ -81,7 +81,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
@@ -302,6 +301,11 @@ static int pdc_port_start(struct ata_port *ap)
 {
 	struct device *dev = ap->host->dev;
 	struct pdc_port_priv *pp;
+	int rc;
+
+	rc = ata_port_start(ap);
+	if (rc)
+		return rc;
 
 	pp = devm_kzalloc(dev, sizeof(*pp), GFP_KERNEL);
 	if (!pp)
@@ -835,7 +839,8 @@ static irqreturn_t pdc20621_interrupt(int irq, void *dev_instance)
 			ap = host->ports[port_no];
 		tmp = mask & (1 << i);
 		VPRINTK("seq %u, port_no %u, ap %p, tmp %x\n", i, port_no, ap, tmp);
-		if (tmp && ap) {
+		if (tmp && ap &&
+		    !(ap->flags & ATA_FLAG_DISABLED)) {
 			struct ata_queued_cmd *qc;
 
 			qc = ata_qc_from_tag(ap, ap->link.active_tag);
@@ -921,7 +926,7 @@ static void pdc_error_handler(struct ata_port *ap)
 	if (!(ap->pflags & ATA_PFLAG_FROZEN))
 		pdc_reset_port(ap);
 
-	ata_sff_error_handler(ap);
+	ata_std_error_handler(ap);
 }
 
 static void pdc_post_internal_cmd(struct ata_queued_cmd *qc)

@@ -55,10 +55,8 @@ void *module_alloc(unsigned long size)
 /* Free memory returned from module_alloc */
 void module_free(struct module *mod, void *module_region)
 {
-	if (mod) {
-		vfree(mod->arch.syminfo);
-		mod->arch.syminfo = NULL;
-	}
+	vfree(mod->arch.syminfo);
+	mod->arch.syminfo = NULL;
 	vfree(module_region);
 }
 
@@ -407,9 +405,10 @@ int module_finalize(const Elf_Ehdr *hdr,
 {
 	vfree(me->arch.syminfo);
 	me->arch.syminfo = NULL;
-	return 0;
+	return module_bug_finalize(hdr, sechdrs, me);
 }
 
 void module_arch_cleanup(struct module *mod)
 {
+	module_bug_cleanup(mod);
 }

@@ -8,8 +8,8 @@
  * published by the Free Software Foundation.
  */
 
-#ifndef __MACH_MX3x_H__
-#define __MACH_MX3x_H__
+#ifndef __ASM_ARCH_MXC_MX31_H__
+#define __ASM_ARCH_MXC_MX31_H__
 
 /*
  * MX31 memory map:
@@ -240,7 +240,7 @@
 
 #define MX3x_PROD_SIGNATURE		0x1	/* For MX31 */
 
-/* silicon revisions specific to i.MX31 and i.MX35 */
+/* silicon revisions specific to i.MX31 */
 #define MX3x_CHIP_REV_1_0		0x10
 #define MX3x_CHIP_REV_1_1		0x11
 #define MX3x_CHIP_REV_1_2		0x12
@@ -267,17 +267,8 @@ static inline int mx31_revision(void)
 {
 	return mx31_cpu_rev;
 }
-
-extern unsigned int mx35_cpu_rev;
-extern void mx35_read_cpu_rev(void);
-
-static inline int mx35_revision(void)
-{
-	return mx35_cpu_rev;
-}
 #endif
 
-#ifdef IMX_NEEDS_DEPRECATED_SYMBOLS
 /* these should go away */
 #define L2CC_BASE_ADDR MX3x_L2CC_BASE_ADDR
 #define L2CC_SIZE MX3x_L2CC_SIZE
@@ -397,6 +388,18 @@ static inline int mx35_revision(void)
 #define MXC_INT_EXT_WDOG MX3x_INT_EXT_WDOG
 #define MXC_INT_EXT_TV MX3x_INT_EXT_TV
 #define PROD_SIGNATURE MX3x_PROD_SIGNATURE
-#endif
+#define CHIP_REV_1_0 MX3x_CHIP_REV_1_0
+#define CHIP_REV_1_1 MX3x_CHIP_REV_1_1
+#define CHIP_REV_1_2 MX3x_CHIP_REV_1_2
+#define CHIP_REV_1_3 MX3x_CHIP_REV_1_3
+#define CHIP_REV_2_0 MX3x_CHIP_REV_2_0
+#define CHIP_REV_2_1 MX3x_CHIP_REV_2_1
+#define CHIP_REV_2_2 MX3x_CHIP_REV_2_2
+#define CHIP_REV_2_3 MX3x_CHIP_REV_2_3
+#define CHIP_REV_3_0 MX3x_CHIP_REV_3_0
+#define CHIP_REV_3_1 MX3x_CHIP_REV_3_1
+#define CHIP_REV_3_2 MX3x_CHIP_REV_3_2
+#define SYSTEM_REV_MIN MX3x_SYSTEM_REV_MIN
+#define SYSTEM_REV_NUM MX3x_SYSTEM_REV_NUM
 
-#endif /* ifndef __MACH_MX3x_H__ */
+#endif /*  __ASM_ARCH_MXC_MX31_H__ */

@@ -293,10 +293,7 @@ int aac_get_config_status(struct aac_dev *dev, int commit_flag)
 			status = -EINVAL;
 		}
 	}
-	/* Do not set XferState to zero unless receives a response from F/W */
-	if (status >= 0)
-		aac_fib_complete(fibptr);
-
+	aac_fib_complete(fibptr);
 	/* Send a CT_COMMIT_CONFIG to enable discovery of devices */
 	if (status >= 0) {
 		if ((aac_commit == 1) || commit_flag) {
@@ -313,29 +310,14 @@ int aac_get_config_status(struct aac_dev *dev, int commit_flag)
 				    FsaNormal,
 				    1, 1,
 				    NULL, NULL);
-			/* Do not set XferState to zero unless
-			 * receives a response from F/W */
-			if (status >= 0)
-				aac_fib_complete(fibptr);
+			aac_fib_complete(fibptr);
 		} else if (aac_commit == 0) {
 			printk(KERN_WARNING
 			  "aac_get_config_status: Foreign device configurations are being ignored\n");
 		}
 	}
-	/* FIB should be freed only after getting the response from the F/W */
-	if (status != -ERESTARTSYS)
-		aac_fib_free(fibptr);
+	aac_fib_free(fibptr);
 	return status;
-}
-
-static void aac_expose_phy_device(struct scsi_cmnd *scsicmd)
-{
-	char inq_data;
-	scsi_sg_copy_to_buffer(scsicmd,  &inq_data, sizeof(inq_data));
-	if ((inq_data & 0x20) && (inq_data & 0x1f) == TYPE_DISK) {
-		inq_data &= 0xdf;
-		scsi_sg_copy_from_buffer(scsicmd, &inq_data, sizeof(inq_data));
-	}
 }
 
 /**
@@ -373,9 +355,7 @@ int aac_get_containers(struct aac_dev *dev)
 		maximum_num_containers = le32_to_cpu(dresp->ContainerSwitchEntries);
 		aac_fib_complete(fibptr);
 	}
-	/* FIB should be freed only after getting the response from the F/W */
-	if (status != -ERESTARTSYS)
-		aac_fib_free(fibptr);
+	aac_fib_free(fibptr);
 
 	if (maximum_num_containers < MAXIMUM_NUM_CONTAINERS)
 		maximum_num_containers = MAXIMUM_NUM_CONTAINERS;
@@ -1265,12 +1245,8 @@ int aac_get_adapter_info(struct aac_dev* dev)
 			 NULL);
 
 	if (rcode < 0) {
-		/* FIB should be freed only after
-		 * getting the response from the F/W */
-		if (rcode != -ERESTARTSYS) {
-			aac_fib_complete(fibptr);
-			aac_fib_free(fibptr);
-		}
+		aac_fib_complete(fibptr);
+		aac_fib_free(fibptr);
 		return rcode;
 	}
 	memcpy(&dev->adapter_info, info, sizeof(*info));
@@ -1294,12 +1270,6 @@ int aac_get_adapter_info(struct aac_dev* dev)
 
 		if (rcode >= 0)
 			memcpy(&dev->supplement_adapter_info, sinfo, sizeof(*sinfo));
-		if (rcode == -ERESTARTSYS) {
-			fibptr = aac_fib_alloc(dev);
-			if (!fibptr)
-				return -ENOMEM;
-		}
-
 	}
 
 
@@ -1500,11 +1470,9 @@ int aac_get_adapter_info(struct aac_dev* dev)
 			  (dev->scsi_host_ptr->sg_tablesize * 8) + 112;
 		}
 	}
-	/* FIB should be freed only after getting the response from the F/W */
-	if (rcode != -ERESTARTSYS) {
-		aac_fib_complete(fibptr);
-		aac_fib_free(fibptr);
-	}
+
+	aac_fib_complete(fibptr);
+	aac_fib_free(fibptr);
 
 	return rcode;
 }
@@ -1608,7 +1576,6 @@ static int aac_read(struct scsi_cmnd * scsicmd)
 	int status;
 	struct aac_dev *dev;
 	struct fib * cmd_fibcontext;
-	int cid;
 
 	dev = (struct aac_dev *)scsicmd->device->host->hostdata;
 	/*
@@ -1658,22 +1625,6 @@ static int aac_read(struct scsi_cmnd * scsicmd)
 		count = (scsicmd->cmnd[7] << 8) | scsicmd->cmnd[8];
 		break;
 	}
-
-	if ((lba + count) > (dev->fsa_dev[scmd_id(scsicmd)].size)) {
-		cid = scmd_id(scsicmd);
-		dprintk((KERN_DEBUG "aacraid: Illegal lba\n"));
-		scsicmd->result = DID_OK << 16 | COMMAND_COMPLETE << 8 |
-			SAM_STAT_CHECK_CONDITION;
-		set_sense(&dev->fsa_dev[cid].sense_data,
-			  HARDWARE_ERROR, SENCODE_INTERNAL_TARGET_FAILURE,
-			  ASENCODE_INTERNAL_TARGET_FAILURE, 0, 0);
-		memcpy(scsicmd->sense_buffer, &dev->fsa_dev[cid].sense_data,
-		       min_t(size_t, sizeof(dev->fsa_dev[cid].sense_data),
-			     SCSI_SENSE_BUFFERSIZE));
-		scsicmd->scsi_done(scsicmd);
-		return 1;
-	}
-
 	dprintk((KERN_DEBUG "aac_read[cpu %d]: lba = %llu, t = %ld.\n",
 	  smp_processor_id(), (unsigned long long)lba, jiffies));
 	if (aac_adapter_bounds(dev,scsicmd,lba))
@@ -1682,7 +1633,6 @@ static int aac_read(struct scsi_cmnd * scsicmd)
 	 *	Alocate and initialize a Fib
 	 */
 	if (!(cmd_fibcontext = aac_fib_alloc(dev))) {
-		printk(KERN_WARNING "aac_read: fib allocation failed\n");
 		return -1;
 	}
 
@@ -1715,7 +1665,6 @@ static int aac_write(struct scsi_cmnd * scsicmd)
 	int status;
 	struct aac_dev *dev;
 	struct fib * cmd_fibcontext;
-	int cid;
 
 	dev = (struct aac_dev *)scsicmd->device->host->hostdata;
 	/*
@@ -1755,22 +1704,6 @@ static int aac_write(struct scsi_cmnd * scsicmd)
 		count = (scsicmd->cmnd[7] << 8) | scsicmd->cmnd[8];
 		fua = scsicmd->cmnd[1] & 0x8;
 	}
-
-	if ((lba + count) > (dev->fsa_dev[scmd_id(scsicmd)].size)) {
-		cid = scmd_id(scsicmd);
-		dprintk((KERN_DEBUG "aacraid: Illegal lba\n"));
-		scsicmd->result = DID_OK << 16 | COMMAND_COMPLETE << 8 |
-			SAM_STAT_CHECK_CONDITION;
-		set_sense(&dev->fsa_dev[cid].sense_data,
-			  HARDWARE_ERROR, SENCODE_INTERNAL_TARGET_FAILURE,
-			  ASENCODE_INTERNAL_TARGET_FAILURE, 0, 0);
-		memcpy(scsicmd->sense_buffer, &dev->fsa_dev[cid].sense_data,
-		       min_t(size_t, sizeof(dev->fsa_dev[cid].sense_data),
-			     SCSI_SENSE_BUFFERSIZE));
-		scsicmd->scsi_done(scsicmd);
-		return 1;
-	}
-
 	dprintk((KERN_DEBUG "aac_write[cpu %d]: lba = %llu, t = %ld.\n",
 	  smp_processor_id(), (unsigned long long)lba, jiffies));
 	if (aac_adapter_bounds(dev,scsicmd,lba))
@@ -1779,14 +1712,9 @@ static int aac_write(struct scsi_cmnd * scsicmd)
 	 *	Allocate and initialize a Fib then setup a BlockWrite command
 	 */
 	if (!(cmd_fibcontext = aac_fib_alloc(dev))) {
-		/* FIB temporarily unavailable,not catastrophic failure */
-
-		/* scsicmd->result = DID_ERROR << 16;
-		 * scsicmd->scsi_done(scsicmd);
-		 * return 0;
-		 */
-		printk(KERN_WARNING "aac_write: fib allocation failed\n");
-		return -1;
+		scsicmd->result = DID_ERROR << 16;
+		scsicmd->scsi_done(scsicmd);
+		return 0;
 	}
 
 	status = aac_adapter_write(cmd_fibcontext, scsicmd, lba, count, fua);
@@ -2617,11 +2545,6 @@ static void aac_srb_callback(void *context, struct fib * fibptr)
 
 	scsi_dma_unmap(scsicmd);
 
-	/* expose physical device if expose_physicald flag is on */
-	if (scsicmd->cmnd[0] == INQUIRY && !(scsicmd->cmnd[1] & 0x01)
-	  && expose_physicals > 0)
-		aac_expose_phy_device(scsicmd);
-
 	/*
 	 * First check the fib status
 	 */
@@ -2727,22 +2650,8 @@ static void aac_srb_callback(void *context, struct fib * fibptr)
 			scsicmd->cmnd[0],
 			le32_to_cpu(srbreply->scsi_status));
 #endif
-		if ((scsicmd->cmnd[0] == ATA_12)
-		  || (scsicmd->cmnd[0] == ATA_16)) {
-			if (scsicmd->cmnd[2] & (0x01 << 5)) {
-				scsicmd->result = DID_OK << 16
-						| COMMAND_COMPLETE << 8;
-				break;
-			} else {
-				scsicmd->result = DID_ERROR << 16
-						| COMMAND_COMPLETE << 8;
-				break;
-			}
-		} else {
-			scsicmd->result = DID_ERROR << 16
-					| COMMAND_COMPLETE << 8;
-			break;
-		}
+		scsicmd->result = DID_ERROR << 16 | COMMAND_COMPLETE << 8;
+		break;
 	}
 	if (le32_to_cpu(srbreply->scsi_status) == SAM_STAT_CHECK_CONDITION) {
 		int len;

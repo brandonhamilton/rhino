@@ -74,69 +74,70 @@ const BYTE acbyRxRate[MAX_RATE] =
 
 /*---------------------  Static Functions  --------------------------*/
 
-static BYTE s_byGetRateIdx(BYTE byRate);
+static BYTE s_byGetRateIdx(IN BYTE byRate);
+
 
 static
-void
+VOID
 s_vGetDASA(
-      PBYTE pbyRxBufferAddr,
-     unsigned int *pcbHeaderSize,
-     PSEthernetHeader psEthHeader
+    IN  PBYTE pbyRxBufferAddr,
+    OUT PUINT pcbHeaderSize,
+    OUT PSEthernetHeader psEthHeader
     );
 
 static
-void
+VOID
 s_vProcessRxMACHeader (
-      PSDevice pDevice,
-      PBYTE pbyRxBufferAddr,
-      unsigned int cbPacketSize,
-      BOOL bIsWEP,
-      BOOL bExtIV,
-     unsigned int *pcbHeadSize
+    IN  PSDevice pDevice,
+    IN  PBYTE pbyRxBufferAddr,
+    IN  UINT cbPacketSize,
+    IN  BOOL bIsWEP,
+    IN  BOOL bExtIV,
+    OUT PUINT pcbHeadSize
     );
 
 static BOOL s_bAPModeRxCtl(
-     PSDevice pDevice,
-     PBYTE    pbyFrame,
-     signed int      iSANodeIndex
+    IN PSDevice pDevice,
+    IN PBYTE    pbyFrame,
+    IN INT      iSANodeIndex
     );
 
 
 
 static BOOL s_bAPModeRxData (
-     PSDevice pDevice,
-     struct sk_buff *skb,
-     unsigned int     FrameSize,
-     unsigned int     cbHeaderOffset,
-     signed int      iSANodeIndex,
-     signed int      iDANodeIndex
+    IN PSDevice pDevice,
+    IN struct sk_buff* skb,
+    IN UINT     FrameSize,
+    IN UINT     cbHeaderOffset,
+    IN INT      iSANodeIndex,
+    IN INT      iDANodeIndex
     );
 
 
 static BOOL s_bHandleRxEncryption(
-     PSDevice     pDevice,
-     PBYTE        pbyFrame,
-     unsigned int         FrameSize,
-     PBYTE        pbyRsr,
-     PBYTE       pbyNewRsr,
-     PSKeyItem   * pKeyOut,
+    IN PSDevice     pDevice,
+    IN PBYTE        pbyFrame,
+    IN UINT         FrameSize,
+    IN PBYTE        pbyRsr,
+    OUT PBYTE       pbyNewRsr,
+    OUT PSKeyItem   *pKeyOut,
     int *       pbExtIV,
-     PWORD       pwRxTSC15_0,
-     PDWORD      pdwRxTSC47_16
+    OUT PWORD       pwRxTSC15_0,
+    OUT PDWORD      pdwRxTSC47_16
     );
 
 static BOOL s_bHostWepRxEncryption(
 
-     PSDevice     pDevice,
-     PBYTE        pbyFrame,
-     unsigned int         FrameSize,
-     PBYTE        pbyRsr,
-     BOOL         bOnFly,
-     PSKeyItem    pKey,
-     PBYTE       pbyNewRsr,
+    IN PSDevice     pDevice,
+    IN PBYTE        pbyFrame,
+    IN UINT         FrameSize,
+    IN PBYTE        pbyRsr,
+    IN BOOL         bOnFly,
+    IN PSKeyItem    pKey,
+    OUT PBYTE       pbyNewRsr,
     int *       pbExtIV,
-     PWORD       pwRxTSC15_0,
-     PDWORD      pdwRxTSC47_16
+    OUT PWORD       pwRxTSC15_0,
+    OUT PDWORD      pdwRxTSC47_16
 
     );
 
@@ -160,18 +161,18 @@ static BOOL s_bHostWepRxEncryption(
  *
 -*/
 static
-void
+VOID
 s_vProcessRxMACHeader (
-      PSDevice pDevice,
-      PBYTE pbyRxBufferAddr,
-      unsigned int cbPacketSize,
-      BOOL bIsWEP,
-      BOOL bExtIV,
-     unsigned int *pcbHeadSize
+    IN  PSDevice pDevice,
+    IN  PBYTE pbyRxBufferAddr,
+    IN  UINT cbPacketSize,
+    IN  BOOL bIsWEP,
+    IN  BOOL bExtIV,
+    OUT PUINT pcbHeadSize
     )
 {
     PBYTE           pbyRxBuffer;
-    unsigned int            cbHeaderSize = 0;
+    UINT            cbHeaderSize = 0;
     PWORD           pwType;
     PS802_11Header  pMACHeader;
     int             ii;
@@ -195,14 +196,16 @@ s_vProcessRxMACHeader (
     };
 
     pbyRxBuffer = (PBYTE) (pbyRxBufferAddr + cbHeaderSize);
-    if (!compare_ether_addr(pbyRxBuffer, &pDevice->abySNAP_Bridgetunnel[0])) {
+    if (IS_ETH_ADDRESS_EQUAL(pbyRxBuffer, &pDevice->abySNAP_Bridgetunnel[0])) {
         cbHeaderSize += 6;
-    } else if (!compare_ether_addr(pbyRxBuffer, &pDevice->abySNAP_RFC1042[0])) {
+    }
+    else if (IS_ETH_ADDRESS_EQUAL(pbyRxBuffer, &pDevice->abySNAP_RFC1042[0])) {
         cbHeaderSize += 6;
         pwType = (PWORD) (pbyRxBufferAddr + cbHeaderSize);
-	if ((*pwType == cpu_to_le16(ETH_P_IPX)) ||
-	    (*pwType == cpu_to_le16(0xF380))) {
-		cbHeaderSize -= 8;
+        if ((*pwType!= TYPE_PKT_IPX) && (*pwType != cpu_to_le16(0xF380))) {
+        }
+        else {
+            cbHeaderSize -= 8;
             pwType = (PWORD) (pbyRxBufferAddr + cbHeaderSize);
             if (bIsWEP) {
                 if (bExtIV) {
@@ -231,11 +234,11 @@ s_vProcessRxMACHeader (
         }
     }
 
-    cbHeaderSize -= (ETH_ALEN * 2);
+    cbHeaderSize -= (U_ETHER_ADDR_LEN * 2);
     pbyRxBuffer = (PBYTE) (pbyRxBufferAddr + cbHeaderSize);
-    for (ii = 0; ii < ETH_ALEN; ii++)
+    for(ii=0;ii<U_ETHER_ADDR_LEN;ii++)
         *pbyRxBuffer++ = pDevice->sRxEthHeader.abyDstAddr[ii];
-    for (ii = 0; ii < ETH_ALEN; ii++)
+    for(ii=0;ii<U_ETHER_ADDR_LEN;ii++)
         *pbyRxBuffer++ = pDevice->sRxEthHeader.abySrcAddr[ii];
 
     *pcbHeadSize = cbHeaderSize;
@@ -244,7 +247,7 @@ s_vProcessRxMACHeader (
 
 
 
-static BYTE s_byGetRateIdx(BYTE byRate)
+static BYTE s_byGetRateIdx (IN BYTE byRate)
 {
     BYTE    byRateIdx;
 
@@ -257,55 +260,50 @@ static BYTE s_byGetRateIdx(BYTE byRate)
 
 
 static
-void
+VOID
 s_vGetDASA (
-      PBYTE pbyRxBufferAddr,
-     unsigned int *pcbHeaderSize,
-     PSEthernetHeader psEthHeader
+    IN  PBYTE pbyRxBufferAddr,
+    OUT PUINT pcbHeaderSize,
+    OUT PSEthernetHeader psEthHeader
     )
 {
-	unsigned int            cbHeaderSize = 0;
-	PS802_11Header  pMACHeader;
-	int             ii;
+    UINT            cbHeaderSize = 0;
+    PS802_11Header  pMACHeader;
+    int             ii;
 
-	pMACHeader = (PS802_11Header) (pbyRxBufferAddr + cbHeaderSize);
+    pMACHeader = (PS802_11Header) (pbyRxBufferAddr + cbHeaderSize);
 
-	if ((pMACHeader->wFrameCtl & FC_TODS) == 0) {
-		if (pMACHeader->wFrameCtl & FC_FROMDS) {
-			for (ii = 0; ii < ETH_ALEN; ii++) {
-				psEthHeader->abyDstAddr[ii] =
-					pMACHeader->abyAddr1[ii];
-				psEthHeader->abySrcAddr[ii] =
-					pMACHeader->abyAddr3[ii];
-			}
-		} else {
-			/* IBSS mode */
-			for (ii = 0; ii < ETH_ALEN; ii++) {
-				psEthHeader->abyDstAddr[ii] =
-					pMACHeader->abyAddr1[ii];
-				psEthHeader->abySrcAddr[ii] =
-					pMACHeader->abyAddr2[ii];
-			}
-		}
-	} else {
-		/* Is AP mode.. */
-		if (pMACHeader->wFrameCtl & FC_FROMDS) {
-			for (ii = 0; ii < ETH_ALEN; ii++) {
-				psEthHeader->abyDstAddr[ii] =
-					pMACHeader->abyAddr3[ii];
-				psEthHeader->abySrcAddr[ii] =
-					pMACHeader->abyAddr4[ii];
-				cbHeaderSize += 6;
-			}
-		} else {
-			for (ii = 0; ii < ETH_ALEN; ii++) {
-				psEthHeader->abyDstAddr[ii] =
-					pMACHeader->abyAddr3[ii];
-				psEthHeader->abySrcAddr[ii] =
-					pMACHeader->abyAddr2[ii];
-			}
-		}
-	};
+    if ((pMACHeader->wFrameCtl & FC_TODS) == 0) {
+        if (pMACHeader->wFrameCtl & FC_FROMDS) {
+            for(ii=0;ii<U_ETHER_ADDR_LEN;ii++) {
+                psEthHeader->abyDstAddr[ii] = pMACHeader->abyAddr1[ii];
+                psEthHeader->abySrcAddr[ii] = pMACHeader->abyAddr3[ii];
+            }
+        }
+        else {
+            // IBSS mode
+            for(ii=0;ii<U_ETHER_ADDR_LEN;ii++) {
+                psEthHeader->abyDstAddr[ii] = pMACHeader->abyAddr1[ii];
+                psEthHeader->abySrcAddr[ii] = pMACHeader->abyAddr2[ii];
+            }
+        }
+    }
+    else {
+        // Is AP mode..
+        if (pMACHeader->wFrameCtl & FC_FROMDS) {
+            for(ii=0;ii<U_ETHER_ADDR_LEN;ii++) {
+                psEthHeader->abyDstAddr[ii] = pMACHeader->abyAddr3[ii];
+                psEthHeader->abySrcAddr[ii] = pMACHeader->abyAddr4[ii];
+                cbHeaderSize += 6;
+            }
+        }
+        else {
+            for(ii=0;ii<U_ETHER_ADDR_LEN;ii++) {
+                psEthHeader->abyDstAddr[ii] = pMACHeader->abyAddr3[ii];
+                psEthHeader->abySrcAddr[ii] = pMACHeader->abyAddr2[ii];
+            }
+        }
+    };
     *pcbHeaderSize = cbHeaderSize;
 }
 
@@ -314,9 +312,9 @@ s_vGetDASA (
 
 BOOL
 RXbBulkInProcessData (
-     PSDevice         pDevice,
-     PRCB             pRCB,
-     unsigned long            BytesToIndicate
+    IN PSDevice         pDevice,
+    IN PRCB             pRCB,
+    IN ULONG            BytesToIndicate
     )
 {
 
@@ -331,24 +329,26 @@ RXbBulkInProcessData (
     PQWORD          pqwTSFTime;
     PBYTE           pbyFrame;
     BOOL            bDeFragRx = FALSE;
-    unsigned int            cbHeaderOffset;
-    unsigned int            FrameSize;
+    UINT            cbHeaderOffset;
+    UINT            FrameSize;
     WORD            wEtherType = 0;
-    signed int             iSANodeIndex = -1;
-    signed int             iDANodeIndex = -1;
-    unsigned int            ii;
-    unsigned int            cbIVOffset;
+    INT             iSANodeIndex = -1;
+    INT             iDANodeIndex = -1;
+    UINT            ii;
+    UINT            cbIVOffset;
     PBYTE           pbyRxSts;
     PBYTE           pbyRxRate;
     PBYTE           pbySQ;
+#ifdef Calcu_LinkQual
     PBYTE           pby3SQ;
-    unsigned int            cbHeaderSize;
+#endif
+    UINT            cbHeaderSize;
     PSKeyItem       pKey = NULL;
     WORD            wRxTSC15_0 = 0;
     DWORD           dwRxTSC47_16 = 0;
     SKeyItem        STempKey;
     // 802.11h RPI
-    /* signed long ldBm = 0; */
+    //LONG            ldBm = 0;
     BOOL            bIsWEP = FALSE;
     BOOL            bExtIV = FALSE;
     DWORD           dwWbkStatus;
@@ -368,7 +368,7 @@ RXbBulkInProcessData (
 
     //[31:16]RcvByteCount ( not include 4-byte Status )
     dwWbkStatus =  *( (PDWORD)(skb->data) );
-    FrameSize = (unsigned int)(dwWbkStatus >> 16);
+    FrameSize = (UINT)(dwWbkStatus >> 16);
     FrameSize += 4;
 
     if (BytesToIndicate != FrameSize) {
@@ -376,9 +376,9 @@ RXbBulkInProcessData (
         return FALSE;
     }
 
-    if ((BytesToIndicate > 2372) || (BytesToIndicate <= 40)) {
+    if ((BytesToIndicate > 2372)||(BytesToIndicate <= 40)) {
         // Frame Size error drop this packet.
-	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "---------- WRONG Length 2\n");
+        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"---------- WRONG Length 2 \n");
         return FALSE;
     }
 
@@ -412,6 +412,7 @@ RXbBulkInProcessData (
     wPLCPwithPadding = ( (*pwPLCP_Length / 4) + ( (*pwPLCP_Length % 4) ? 1:0 ) ) *4;
 
     pqwTSFTime = (PQWORD) (pbyDAddress + 8 + wPLCPwithPadding);
+#ifdef Calcu_LinkQual
   if(pDevice->byBBType == BB_TYPE_11G)  {
       pby3SQ = pbyDAddress + 8 + wPLCPwithPadding + 12;
       pbySQ = pby3SQ;
@@ -420,6 +421,9 @@ RXbBulkInProcessData (
    pbySQ = pbyDAddress + 8 + wPLCPwithPadding + 8;
    pby3SQ = pbySQ;
   }
+#else
+    pbySQ = pbyDAddress + 8 + wPLCPwithPadding + 8;
+#endif
     pbyNewRsr = pbyDAddress + 8 + wPLCPwithPadding + 9;
     pbyRSSI = pbyDAddress + 8 + wPLCPwithPadding + 10;
     pbyRsr = pbyDAddress + 8 + wPLCPwithPadding + 11;
@@ -445,22 +449,21 @@ RXbBulkInProcessData (
     if ((pMgmt->eCurrMode == WMAC_MODE_STANDBY) ||
         (pMgmt->eCurrMode == WMAC_MODE_ESS_STA)) {
        if (pMgmt->sNodeDBTable[0].bActive) {
-	 if (!compare_ether_addr(pMgmt->abyCurrBSSID, pMACHeader->abyAddr2)) {
+         if(IS_ETH_ADDRESS_EQUAL (pMgmt->abyCurrBSSID, pMACHeader->abyAddr2) ) {
 	    if (pMgmt->sNodeDBTable[0].uInActiveCount != 0)
                   pMgmt->sNodeDBTable[0].uInActiveCount = 0;
            }
        }
     }
 
-    if (!is_multicast_ether_addr(pMACHeader->abyAddr1) && !is_broadcast_ether_addr(pMACHeader->abyAddr1)) {
+    if (!IS_MULTICAST_ADDRESS(pMACHeader->abyAddr1) && !IS_BROADCAST_ADDRESS(pMACHeader->abyAddr1)) {
         if ( WCTLbIsDuplicate(&(pDevice->sDupRxCache), (PS802_11Header) pbyFrame) ) {
             pDevice->s802_11Counter.FrameDuplicateCount++;
             return FALSE;
         }
 
-	if (compare_ether_addr(pDevice->abyCurrentNetAddr,
-			       pMACHeader->abyAddr1)) {
-		return FALSE;
+        if ( !IS_ETH_ADDRESS_EQUAL (pDevice->abyCurrentNetAddr, pMACHeader->abyAddr1) ) {
+            return FALSE;
         }
     }
 
@@ -468,8 +471,7 @@ RXbBulkInProcessData (
     // Use for TKIP MIC
     s_vGetDASA(pbyFrame, &cbHeaderSize, &pDevice->sRxEthHeader);
 
-    if (!compare_ether_addr((PBYTE)&(pDevice->sRxEthHeader.abySrcAddr[0]),
-			    pDevice->abyCurrentNetAddr))
+    if (IS_ETH_ADDRESS_EQUAL((PBYTE)&(pDevice->sRxEthHeader.abySrcAddr[0]), pDevice->abyCurrentNetAddr))
         return FALSE;
 
     if ((pMgmt->eCurrMode == WMAC_MODE_ESS_AP) || (pMgmt->eCurrMode == WMAC_MODE_IBSS_STA)) {
@@ -562,8 +564,8 @@ RXbBulkInProcessData (
     //
     // RX OK
     //
-    /* remove the FCS/CRC length */
-    FrameSize -= ETH_FCS_LEN;
+    //remove the CRC length
+    FrameSize -= U_CRC_LEN;
 
     if ( !(*pbyRsr & (RSR_ADDRBROAD | RSR_ADDRMULTI)) && // unicast address
         (IS_FRAGMENT_PKT((pbyFrame)))
@@ -752,11 +754,10 @@ RXbBulkInProcessData (
         pMgmt->pCurrBSS->byRSSIStatCnt++;
         pMgmt->pCurrBSS->byRSSIStatCnt %= RSSI_STAT_COUNT;
         pMgmt->pCurrBSS->ldBmAverage[pMgmt->pCurrBSS->byRSSIStatCnt] = ldBm;
-	for (ii = 0; ii < RSSI_STAT_COUNT; ii++) {
-		if (pMgmt->pCurrBSS->ldBmAverage[ii] != 0) {
-			pMgmt->pCurrBSS->ldBmMAX =
-				max(pMgmt->pCurrBSS->ldBmAverage[ii], ldBm);
-		}
+        for(ii=0;ii<RSSI_STAT_COUNT;ii++) {
+            if (pMgmt->pCurrBSS->ldBmAverage[ii] != 0) {
+            pMgmt->pCurrBSS->ldBmMAX = max(pMgmt->pCurrBSS->ldBmAverage[ii], ldBm);
+            }
         }
     }
 */
@@ -864,6 +865,7 @@ RXbBulkInProcessData (
                             pDevice->dev->name);
                     }
                 }
+		//2008-0409-07, <Add> by Einsn Liu
        #ifdef WPA_SUPPLICANT_DRIVER_WEXT_SUPPORT
 				//send event to wpa_supplicant
 				//if(pDevice->bWPASuppWextEnabled == TRUE)
@@ -928,9 +930,9 @@ RXbBulkInProcessData (
         if (bIsWEP) {
             WORD        wLocalTSC15_0 = 0;
             DWORD       dwLocalTSC47_16 = 0;
-	    unsigned long long       RSC = 0;
+            ULONGLONG       RSC = 0;
             // endian issues
-	    RSC = *((unsigned long long *) &(pKey->KeyRSC));
+            RSC = *((ULONGLONG *) &(pKey->KeyRSC));
             wLocalTSC15_0 = (WORD) RSC;
             dwLocalTSC47_16 = (DWORD) (RSC>>16);
 
@@ -1015,9 +1017,9 @@ RXbBulkInProcessData (
 
 
 static BOOL s_bAPModeRxCtl (
-     PSDevice pDevice,
-     PBYTE    pbyFrame,
-     signed int      iSANodeIndex
+    IN PSDevice pDevice,
+    IN PBYTE    pbyFrame,
+    IN INT      iSANodeIndex
     )
 {
     PS802_11Header      p802_11Header;
@@ -1063,9 +1065,7 @@ static BOOL s_bAPModeRxCtl (
                     // delcare received ps-poll event
                     if (IS_CTL_PSPOLL(pbyFrame)) {
                         pMgmt->sNodeDBTable[iSANodeIndex].bRxPSPoll = TRUE;
-			bScheduleCommand((void *) pDevice,
-					 WLAN_CMD_RX_PSPOLL,
-					 NULL);
+                        bScheduleCommand((HANDLE)pDevice, WLAN_CMD_RX_PSPOLL, NULL);
                         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "dpc: WLAN_CMD_RX_PSPOLL 1\n");
                     }
                     else {
@@ -1074,9 +1074,7 @@ static BOOL s_bAPModeRxCtl (
                         if (!IS_FC_POWERMGT(pbyFrame)) {
                             pMgmt->sNodeDBTable[iSANodeIndex].bPSEnable = FALSE;
                             pMgmt->sNodeDBTable[iSANodeIndex].bRxPSPoll = TRUE;
-				bScheduleCommand((void *) pDevice,
-						 WLAN_CMD_RX_PSPOLL,
-						 NULL);
+                            bScheduleCommand((HANDLE)pDevice, WLAN_CMD_RX_PSPOLL, NULL);
                             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "dpc: WLAN_CMD_RX_PSPOLL 2\n");
                         }
                     }
@@ -1092,9 +1090,7 @@ static BOOL s_bAPModeRxCtl (
                       if (pMgmt->sNodeDBTable[iSANodeIndex].wEnQueueCnt > 0) {
                           pMgmt->sNodeDBTable[iSANodeIndex].bPSEnable = FALSE;
                           pMgmt->sNodeDBTable[iSANodeIndex].bRxPSPoll = TRUE;
-			bScheduleCommand((void *) pDevice,
-					 WLAN_CMD_RX_PSPOLL,
-					 NULL);
+                          bScheduleCommand((HANDLE)pDevice, WLAN_CMD_RX_PSPOLL, NULL);
                          DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "dpc: WLAN_CMD_RX_PSPOLL 3\n");
 
                       }
@@ -1143,18 +1139,18 @@ static BOOL s_bAPModeRxCtl (
 }
 
 static BOOL s_bHandleRxEncryption (
-     PSDevice     pDevice,
-     PBYTE        pbyFrame,
-     unsigned int         FrameSize,
-     PBYTE        pbyRsr,
-     PBYTE       pbyNewRsr,
-     PSKeyItem   * pKeyOut,
+    IN PSDevice     pDevice,
+    IN PBYTE        pbyFrame,
+    IN UINT         FrameSize,
+    IN PBYTE        pbyRsr,
+    OUT PBYTE       pbyNewRsr,
+    OUT PSKeyItem   *pKeyOut,
     int *       pbExtIV,
-     PWORD       pwRxTSC15_0,
-     PDWORD      pdwRxTSC47_16
+    OUT PWORD       pwRxTSC15_0,
+    OUT PDWORD      pdwRxTSC47_16
     )
 {
-    unsigned int            PayloadLen = FrameSize;
+    UINT            PayloadLen = FrameSize;
     PBYTE           pbyIV;
     BYTE            byKeyIdx;
     PSKeyItem       pKey = NULL;
@@ -1289,20 +1285,20 @@ static BOOL s_bHandleRxEncryption (
 
 
 static BOOL s_bHostWepRxEncryption (
-     PSDevice     pDevice,
-     PBYTE        pbyFrame,
-     unsigned int         FrameSize,
-     PBYTE        pbyRsr,
-     BOOL         bOnFly,
-     PSKeyItem    pKey,
-     PBYTE       pbyNewRsr,
+    IN PSDevice     pDevice,
+    IN PBYTE        pbyFrame,
+    IN UINT         FrameSize,
+    IN PBYTE        pbyRsr,
+    IN BOOL         bOnFly,
+    IN PSKeyItem    pKey,
+    OUT PBYTE       pbyNewRsr,
     int *       pbExtIV,
-     PWORD       pwRxTSC15_0,
-     PDWORD      pdwRxTSC47_16
+    OUT PWORD       pwRxTSC15_0,
+    OUT PDWORD      pdwRxTSC47_16
     )
 {
     PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
-    unsigned int            PayloadLen = FrameSize;
+    UINT            PayloadLen = FrameSize;
     PBYTE           pbyIV;
     BYTE            byKeyIdx;
     BYTE            byDecMode = KEY_CTL_WEP;
@@ -1421,12 +1417,12 @@ static BOOL s_bHostWepRxEncryption (
 
 
 static BOOL s_bAPModeRxData (
-     PSDevice pDevice,
-     struct sk_buff *skb,
-     unsigned int     FrameSize,
-     unsigned int     cbHeaderOffset,
-     signed int      iSANodeIndex,
-     signed int      iDANodeIndex
+    IN PSDevice pDevice,
+    IN struct sk_buff* skb,
+    IN UINT     FrameSize,
+    IN UINT     cbHeaderOffset,
+    IN INT      iSANodeIndex,
+    IN INT      iDANodeIndex
     )
 
 {
@@ -1442,7 +1438,7 @@ static BOOL s_bAPModeRxData (
     if (FrameSize > CB_MAX_BUF_SIZE)
         return FALSE;
     // check DA
-    if (is_multicast_ether_addr((PBYTE)(skb->data+cbHeaderOffset))) {
+    if(IS_MULTICAST_ADDRESS((PBYTE)(skb->data+cbHeaderOffset))) {
        if (pMgmt->sNodeDBTable[0].bPSEnable) {
 
            skbcpy = dev_alloc_skb((int)pDevice->rx_buf_sz);
@@ -1497,8 +1493,7 @@ static BOOL s_bAPModeRxData (
             iDANodeIndex = 0;
 
         if ((pDevice->uAssocCount > 1) && (iDANodeIndex >= 0)) {
-		bRelayPacketSend(pDevice, (PBYTE) (skb->data + cbHeaderOffset),
-				 FrameSize, (unsigned int) iDANodeIndex);
+            bRelayPacketSend(pDevice, (PBYTE)(skb->data + cbHeaderOffset), FrameSize, (UINT)iDANodeIndex);
         }
 
         if (bRelayOnly)
@@ -1514,16 +1509,18 @@ static BOOL s_bAPModeRxData (
 
 
 
-void RXvWorkItem(void *Context)
+VOID
+RXvWorkItem(
+    PVOID Context
+    )
 {
     PSDevice pDevice = (PSDevice) Context;
-    int ntStatus;
+    NTSTATUS        ntStatus;
     PRCB            pRCB=NULL;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"---->Rx Polling Thread\n");
     spin_lock_irq(&pDevice->lock);
-
-    while ((pDevice->Flags & fMP_POST_READS) &&
+    while ( MP_TEST_FLAG(pDevice, fMP_POST_READS) &&
             MP_IS_READY(pDevice) &&
             (pDevice->NumRecvFreeList != 0) ) {
         pRCB = pDevice->FirstRecvFreeList;
@@ -1538,10 +1535,10 @@ void RXvWorkItem(void *Context)
 }
 
 
-void
+VOID
 RXvFreeRCB(
-     PRCB pRCB,
-     BOOL bReAllocSkb
+    IN PRCB pRCB,
+    IN BOOL bReAllocSkb
     )
 {
     PSDevice pDevice = (PSDevice)pRCB->pDevice;
@@ -1568,7 +1565,7 @@ RXvFreeRCB(
     pDevice->NumRecvFreeList++;
 
 
-    if ((pDevice->Flags & fMP_POST_READS) && MP_IS_READY(pDevice) &&
+    if (MP_TEST_FLAG(pDevice, fMP_POST_READS) && MP_IS_READY(pDevice) &&
         (pDevice->bIsRxWorkItemQueued == FALSE) ) {
 
         pDevice->bIsRxWorkItemQueued = TRUE;
@@ -1578,7 +1575,10 @@ RXvFreeRCB(
 }
 
 
-void RXvMngWorkItem(void *Context)
+VOID
+RXvMngWorkItem(
+    PVOID Context
+    )
 {
     PSDevice pDevice = (PSDevice) Context;
     PRCB            pRCB=NULL;
@@ -1598,7 +1598,7 @@ void RXvMngWorkItem(void *Context)
         }
         ASSERT(pRCB);// cannot be NULL
         pRxPacket = &(pRCB->sMngPacket);
-	vMgrRxManagePacket((void *) pDevice, &(pDevice->sMgmtObj), pRxPacket);
+        vMgrRxManagePacket((HANDLE)pDevice, &(pDevice->sMgmtObj), pRxPacket);
         pRCB->Ref--;
         if(pRCB->Ref == 0) {
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"RxvFreeMng %d %d\n",pDevice->NumRecvFreeList, pDevice->NumRecvMngList);

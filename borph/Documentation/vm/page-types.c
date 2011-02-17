@@ -1,22 +1,11 @@
 /*
  * page-types: Tool for querying page flags
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; version 2.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should find a copy of v2 of the GNU General Public License somewhere on
- * your Linux system; if not, write to the Free Software Foundation, Inc., 59
- * Temple Place, Suite 330, Boston, MA 02111-1307 USA.
- *
  * Copyright (C) 2009 Intel corporation
  *
  * Authors: Wu Fengguang <fengguang.wu@intel.com>
+ *
+ * Released under the General Public License (GPL).
  */
 
 #define _LARGEFILE64_SOURCE
@@ -478,7 +467,7 @@ static void prepare_hwpoison_fd(void)
 	}
 
 	if (opt_unpoison && !hwpoison_forget_fd) {
-		sprintf(buf, "%s/unpoison-pfn", hwpoison_debug_fs);
+		sprintf(buf, "%s/renew-pfn", hwpoison_debug_fs);
 		hwpoison_forget_fd = checked_open(buf, O_WRONLY);
 	}
 }
@@ -694,7 +683,7 @@ static void usage(void)
 #endif
 "            -l|--list                  Show page details in ranges\n"
 "            -L|--list-each             Show page details one by one\n"
-"            -N|--no-summary            Don't show summary info\n"
+"            -N|--no-summary            Don't show summay info\n"
 "            -X|--hwpoison              hwpoison pages\n"
 "            -x|--unpoison              unpoison pages\n"
 "            -h|--help                  Show this usage message\n"

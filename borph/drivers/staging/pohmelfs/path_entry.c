@@ -14,6 +14,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/ktime.h>
 #include <linux/fs_struct.h>
@@ -44,9 +45,9 @@ int pohmelfs_construct_path_string(struct pohmelfs_inode *pi, void *data, int le
 		return -ENOENT;
 	}
 
-	spin_lock(&current->fs->lock);
+	read_lock(&current->fs->lock);
 	path.mnt = mntget(current->fs->root.mnt);
-	spin_unlock(&current->fs->lock);
+	read_unlock(&current->fs->lock);
 
 	path.dentry = d;
 
@@ -91,9 +92,9 @@ int pohmelfs_path_length(struct pohmelfs_inode *pi)
 		return -ENOENT;
 	}
 
-	spin_lock(&current->fs->lock);
+	read_lock(&current->fs->lock);
 	root = dget(current->fs->root.dentry);
-	spin_unlock(&current->fs->lock);
+	read_unlock(&current->fs->lock);
 
 	spin_lock(&dcache_lock);
 

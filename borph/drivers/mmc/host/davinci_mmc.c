@@ -73,7 +73,6 @@
 /* DAVINCI_MMCCTL definitions */
 #define MMCCTL_DATRST         (1 << 0)
 #define MMCCTL_CMDRST         (1 << 1)
-#define MMCCTL_WIDTH_8_BIT    (1 << 8)
 #define MMCCTL_WIDTH_4_BIT    (1 << 2)
 #define MMCCTL_DATEG_DISABLED (0 << 6)
 #define MMCCTL_DATEG_RISING   (1 << 6)
@@ -137,15 +136,15 @@
 
 /*
  * One scatterlist dma "segment" is at most MAX_CCNT rw_threshold units,
- * and we handle up to MAX_NR_SG segments.  MMC_BLOCK_BOUNCE kicks in only
- * for drivers with max_segs == 1, making the segments bigger (64KB)
- * than the page or two that's otherwise typical. nr_sg (passed from
- * platform data) == 16 gives at least the same throughput boost, using
- * EDMA transfer linkage instead of spending CPU time copying pages.
+ * and we handle up to NR_SG segments.  MMC_BLOCK_BOUNCE kicks in only
+ * for drivers with max_hw_segs == 1, making the segments bigger (64KB)
+ * than the page or two that's otherwise typical.  NR_SG == 16 gives at
+ * least the same throughput boost, using EDMA transfer linkage instead
+ * of spending CPU time copying pages.
  */
 #define MAX_CCNT	((1 << 16) - 1)
 
-#define MAX_NR_SG	16
+#define NR_SG		16
 
 static unsigned rw_threshold = 32;
 module_param(rw_threshold, uint, S_IRUGO);
@@ -171,7 +170,6 @@ struct mmc_davinci_host {
 #define DAVINCI_MMC_DATADIR_READ	1
 #define DAVINCI_MMC_DATADIR_WRITE	2
 	unsigned char data_dir;
-	unsigned char suspended;
 
 	/* buffer is used during PIO of one scatterlist segment, and
 	 * is updated along with buffer_bytes_left.  bytes_left applies
@@ -193,7 +191,7 @@ struct mmc_davinci_host {
 	struct edmacc_param	tx_template;
 	struct edmacc_param	rx_template;
 	unsigned		n_link;
-	u32			links[MAX_NR_SG - 1];
+	u32			links[NR_SG - 1];
 
 	/* For PIO we walk scatterlists one segment at a time. */
 	unsigned int		sg_len;
@@ -203,8 +201,6 @@ struct mmc_davinci_host {
 	u8 version;
 	/* for ns in one cycle calculation */
 	unsigned ns_in_one_cycle;
-	/* Number of sg segments */
-	u8 nr_sg;
 #ifdef CONFIG_CPU_FREQ
 	struct notifier_block	freq_transition;
 #endif
@@ -571,7 +567,6 @@ davinci_release_dma_channels(struct mmc_davinci_host *host)
 
 static int __init davinci_acquire_dma_channels(struct mmc_davinci_host *host)
 {
-	u32 link_size;
 	int r, i;
 
 	/* Acquire master DMA write channel */
@@ -597,8 +592,7 @@ static int __init davinci_acquire_dma_channels(struct mmc_davinci_host *host)
 	/* Allocate parameter RAM slots, which will later be bound to a
 	 * channel as needed to handle a scatterlist.
 	 */
-	link_size = min_t(unsigned, host->nr_sg, ARRAY_SIZE(host->links));
-	for (i = 0; i < link_size; i++) {
+	for (i = 0; i < ARRAY_SIZE(host->links); i++) {
 		r = edma_alloc_slot(EDMA_CTLR(host->txdma), EDMA_SLOT_ANY);
 		if (r < 0) {
 			dev_dbg(mmc_dev(host->mmc), "dma PaRAM alloc --> %d\n",
@@ -797,42 +791,22 @@ static void calculate_clk_divider(struct mmc_host *mmc, struct mmc_ios *ios)
 
 static void mmc_davinci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
+	unsigned int mmc_pclk = 0;
 	struct mmc_davinci_host *host = mmc_priv(mmc);
 
+	mmc_pclk = host->mmc_input_clk;
 	dev_dbg(mmc_dev(host->mmc),
 		"clock %dHz busmode %d powermode %d Vdd %04x\n",
 		ios->clock, ios->bus_mode, ios->power_mode,
 		ios->vdd);
-
-	switch (ios->bus_width) {
-	case MMC_BUS_WIDTH_8:
-		dev_dbg(mmc_dev(host->mmc), "Enabling 8 bit mode\n");
-		writel((readl(host->base + DAVINCI_MMCCTL) &
-			~MMCCTL_WIDTH_4_BIT) | MMCCTL_WIDTH_8_BIT,
-			host->base + DAVINCI_MMCCTL);
-		break;
-	case MMC_BUS_WIDTH_4:
+	if (ios->bus_width == MMC_BUS_WIDTH_4) {
 		dev_dbg(mmc_dev(host->mmc), "Enabling 4 bit mode\n");
-		if (host->version == MMC_CTLR_VERSION_2)
-			writel((readl(host->base + DAVINCI_MMCCTL) &
-				~MMCCTL_WIDTH_8_BIT) | MMCCTL_WIDTH_4_BIT,
-				host->base + DAVINCI_MMCCTL);
-		else
-			writel(readl(host->base + DAVINCI_MMCCTL) |
-				MMCCTL_WIDTH_4_BIT,
-				host->base + DAVINCI_MMCCTL);
-		break;
-	case MMC_BUS_WIDTH_1:
-		dev_dbg(mmc_dev(host->mmc), "Enabling 1 bit mode\n");
-		if (host->version == MMC_CTLR_VERSION_2)
-			writel(readl(host->base + DAVINCI_MMCCTL) &
-				~(MMCCTL_WIDTH_8_BIT | MMCCTL_WIDTH_4_BIT),
-				host->base + DAVINCI_MMCCTL);
-		else
-			writel(readl(host->base + DAVINCI_MMCCTL) &
-				~MMCCTL_WIDTH_4_BIT,
-				host->base + DAVINCI_MMCCTL);
-		break;
+		writel(readl(host->base + DAVINCI_MMCCTL) | MMCCTL_WIDTH_4_BIT,
+			host->base + DAVINCI_MMCCTL);
+	} else {
+		dev_dbg(mmc_dev(host->mmc), "Disabling 4 bit mode\n");
+		writel(readl(host->base + DAVINCI_MMCCTL) & ~MMCCTL_WIDTH_4_BIT,
+			host->base + DAVINCI_MMCCTL);
 	}
 
 	calculate_clk_divider(mmc, ios);
@@ -910,26 +884,19 @@ static void mmc_davinci_cmd_done(struct mmc_davinci_host *host,
 	}
 }
 
-static inline void mmc_davinci_reset_ctrl(struct mmc_davinci_host *host,
-								int val)
-{
-	u32 temp;
-
-	temp = readl(host->base + DAVINCI_MMCCTL);
-	if (val)	/* reset */
-		temp |= MMCCTL_CMDRST | MMCCTL_DATRST;
-	else		/* enable */
-		temp &= ~(MMCCTL_CMDRST | MMCCTL_DATRST);
-
-	writel(temp, host->base + DAVINCI_MMCCTL);
-	udelay(10);
-}
-
 static void
 davinci_abort_data(struct mmc_davinci_host *host, struct mmc_data *data)
 {
-	mmc_davinci_reset_ctrl(host, 1);
-	mmc_davinci_reset_ctrl(host, 0);
+	u32 temp;
+
+	/* reset command and data state machines */
+	temp = readl(host->base + DAVINCI_MMCCTL);
+	writel(temp | MMCCTL_CMDRST | MMCCTL_DATRST,
+		host->base + DAVINCI_MMCCTL);
+
+	temp &= ~(MMCCTL_CMDRST | MMCCTL_DATRST);
+	udelay(10);
+	writel(temp, host->base + DAVINCI_MMCCTL);
 }
 
 static irqreturn_t mmc_davinci_irq(int irq, void *dev_id)
@@ -1133,8 +1100,15 @@ static inline void mmc_davinci_cpufreq_deregister(struct mmc_davinci_host *host)
 #endif
 static void __init init_mmcsd_host(struct mmc_davinci_host *host)
 {
+	/* DAT line portion is diabled and in reset state */
+	writel(readl(host->base + DAVINCI_MMCCTL) | MMCCTL_DATRST,
+		host->base + DAVINCI_MMCCTL);
 
-	mmc_davinci_reset_ctrl(host, 1);
+	/* CMD line portion is diabled and in reset state */
+	writel(readl(host->base + DAVINCI_MMCCTL) | MMCCTL_CMDRST,
+		host->base + DAVINCI_MMCCTL);
+
+	udelay(10);
 
 	writel(0, host->base + DAVINCI_MMCCLK);
 	writel(MMCCLK_CLKEN, host->base + DAVINCI_MMCCLK);
@@ -1142,7 +1116,12 @@ static void __init init_mmcsd_host(struct mmc_davinci_host *host)
 	writel(0x1FFF, host->base + DAVINCI_MMCTOR);
 	writel(0xFFFF, host->base + DAVINCI_MMCTOD);
 
-	mmc_davinci_reset_ctrl(host, 0);
+	writel(readl(host->base + DAVINCI_MMCCTL) & ~MMCCTL_DATRST,
+		host->base + DAVINCI_MMCCTL);
+	writel(readl(host->base + DAVINCI_MMCCTL) & ~MMCCTL_CMDRST,
+		host->base + DAVINCI_MMCCTL);
+
+	udelay(10);
 }
 
 static int __init davinci_mmcsd_probe(struct platform_device *pdev)
@@ -1202,12 +1181,6 @@ static int __init davinci_mmcsd_probe(struct platform_device *pdev)
 
 	init_mmcsd_host(host);
 
-	if (pdata->nr_sg)
-		host->nr_sg = pdata->nr_sg - 1;
-
-	if (host->nr_sg > MAX_NR_SG || !host->nr_sg)
-		host->nr_sg = MAX_NR_SG;
-
 	host->use_dma = use_dma;
 	host->irq = irq;
 
@@ -1216,13 +1189,9 @@ static int __init davinci_mmcsd_probe(struct platform_device *pdev)
 
 	/* REVISIT:  someday, support IRQ-driven card detection.  */
 	mmc->caps |= MMC_CAP_NEEDS_POLL;
-	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY;
 
-	if (pdata && (pdata->wires == 4 || pdata->wires == 0))
+	if (!pdata || pdata->wires == 4 || pdata->wires == 0)
 		mmc->caps |= MMC_CAP_4_BIT_DATA;
-
-	if (pdata && (pdata->wires == 8))
-		mmc->caps |= (MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA);
 
 	host->version = pdata->version;
 
@@ -1239,7 +1208,8 @@ static int __init davinci_mmcsd_probe(struct platform_device *pdev)
 	 * Each hw_seg uses one EDMA parameter RAM slot, always one
 	 * channel and then usually some linked slots.
 	 */
-	mmc->max_segs		= 1 + host->n_link;
+	mmc->max_hw_segs	= 1 + host->n_link;
+	mmc->max_phys_segs	= mmc->max_hw_segs;
 
 	/* EDMA limit per hw segment (one or two MBytes) */
 	mmc->max_seg_size	= MAX_CCNT * rw_threshold;
@@ -1249,7 +1219,8 @@ static int __init davinci_mmcsd_probe(struct platform_device *pdev)
 	mmc->max_blk_count	= 65535; /* NBLK is 16 bits */
 	mmc->max_req_size	= mmc->max_blk_size * mmc->max_blk_count;
 
-	dev_dbg(mmc_dev(host->mmc), "max_segs=%d\n", mmc->max_segs);
+	dev_dbg(mmc_dev(host->mmc), "max_phys_segs=%d\n", mmc->max_phys_segs);
+	dev_dbg(mmc_dev(host->mmc), "max_hw_segs=%d\n", mmc->max_hw_segs);
 	dev_dbg(mmc_dev(host->mmc), "max_blk_size=%d\n", mmc->max_blk_size);
 	dev_dbg(mmc_dev(host->mmc), "max_req_size=%d\n", mmc->max_req_size);
 	dev_dbg(mmc_dev(host->mmc), "max_seg_size=%d\n", mmc->max_seg_size);
@@ -1331,65 +1302,32 @@ static int __exit davinci_mmcsd_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_PM
-static int davinci_mmcsd_suspend(struct device *dev)
+static int davinci_mmcsd_suspend(struct platform_device *pdev, pm_message_t msg)
 {
-	struct platform_device *pdev = to_platform_device(dev);
 	struct mmc_davinci_host *host = platform_get_drvdata(pdev);
-	int ret;
 
-	mmc_host_enable(host->mmc);
-	ret = mmc_suspend_host(host->mmc);
-	if (!ret) {
-		writel(0, host->base + DAVINCI_MMCIM);
-		mmc_davinci_reset_ctrl(host, 1);
-		mmc_host_disable(host->mmc);
-		clk_disable(host->clk);
-		host->suspended = 1;
-	} else {
-		host->suspended = 0;
-		mmc_host_disable(host->mmc);
-	}
-
-	return ret;
+	return mmc_suspend_host(host->mmc, msg);
 }
 
-static int davinci_mmcsd_resume(struct device *dev)
+static int davinci_mmcsd_resume(struct platform_device *pdev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
 	struct mmc_davinci_host *host = platform_get_drvdata(pdev);
-	int ret;
 
-	if (!host->suspended)
-		return 0;
-
-	clk_enable(host->clk);
-	mmc_host_enable(host->mmc);
-
-	mmc_davinci_reset_ctrl(host, 0);
-	ret = mmc_resume_host(host->mmc);
-	if (!ret)
-		host->suspended = 0;
-
-	return ret;
+	return mmc_resume_host(host->mmc);
 }
-
-static const struct dev_pm_ops davinci_mmcsd_pm = {
-	.suspend        = davinci_mmcsd_suspend,
-	.resume         = davinci_mmcsd_resume,
-};
-
-#define davinci_mmcsd_pm_ops (&davinci_mmcsd_pm)
 #else
-#define davinci_mmcsd_pm_ops NULL
+#define davinci_mmcsd_suspend	NULL
+#define davinci_mmcsd_resume	NULL
 #endif
 
 static struct platform_driver davinci_mmcsd_driver = {
 	.driver		= {
 		.name	= "davinci_mmc",
 		.owner	= THIS_MODULE,
-		.pm	= davinci_mmcsd_pm_ops,
 	},
 	.remove		= __exit_p(davinci_mmcsd_remove),
+	.suspend	= davinci_mmcsd_suspend,
+	.resume		= davinci_mmcsd_resume,
 };
 
 static int __init davinci_mmcsd_init(void)

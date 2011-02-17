@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/cpufreq.h>
 

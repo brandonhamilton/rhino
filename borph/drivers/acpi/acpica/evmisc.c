@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2010, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -259,15 +259,9 @@ static void ACPI_SYSTEM_XFACE acpi_ev_notify_dispatch(void *context)
 
 	handler_obj = notify_info->notify.handler_obj;
 	if (handler_obj) {
-		struct acpi_object_notify_handler *notifier;
-
-		notifier = &handler_obj->notify;
-		while (notifier) {
-			notifier->handler(notify_info->notify.node,
-					  notify_info->notify.value,
-					  notifier->context);
-			notifier = notifier->next;
-		}
+		handler_obj->notify.handler(notify_info->notify.node,
+					    notify_info->notify.value,
+					    handler_obj->notify.context);
 	}
 
 	/* All done with the info object */
@@ -553,7 +547,7 @@ acpi_status acpi_ev_release_global_lock(void)
 	acpi_gbl_global_lock_acquired = FALSE;
 
 	/* Release the local GL mutex */
-	acpi_ev_global_lock_thread_id = 0;
+	acpi_ev_global_lock_thread_id = NULL;
 	acpi_ev_global_lock_acquired = 0;
 	acpi_os_release_mutex(acpi_gbl_global_lock_mutex->mutex.os_mutex);
 	return_ACPI_STATUS(status);
@@ -590,7 +584,7 @@ void acpi_ev_terminate(void)
 			status = acpi_disable_event(i, 0);
 			if (ACPI_FAILURE(status)) {
 				ACPI_ERROR((AE_INFO,
-					    "Could not disable fixed event %u",
+					    "Could not disable fixed event %d",
 					    (u32) i));
 			}
 		}

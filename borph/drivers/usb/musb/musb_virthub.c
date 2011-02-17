@@ -35,6 +35,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/time.h>
@@ -67,8 +68,14 @@ static void musb_port_suspend(struct musb *musb, bool do_suspend)
 		musb_writeb(mbase, MUSB_POWER, power);
 
 		/* Needed for OPT A tests */
+#ifdef CONFIG_MACH_OMAP3517EVM
+		musb->read_mask &= ~AM3517_READ_ISSUE_POWER;
+#endif
 		power = musb_readb(mbase, MUSB_POWER);
 		while (power & MUSB_POWER_SUSPENDM) {
+#ifdef CONFIG_MACH_OMAP3517EVM
+			musb->read_mask &= ~AM3517_READ_ISSUE_POWER;
+#endif
 			power = musb_readb(mbase, MUSB_POWER);
 			if (retries-- < 1)
 				break;
@@ -82,10 +89,6 @@ static void musb_port_suspend(struct musb *musb, bool do_suspend)
 			musb->xceiv->state = OTG_STATE_A_SUSPEND;
 			musb->is_active = is_otg_enabled(musb)
 					&& musb->xceiv->host->b_hnp_enable;
-			if (musb->is_active)
-				mod_timer(&musb->otg_timer, jiffies
-					+ msecs_to_jiffies(
-						OTG_TIME_A_AIDL_BDIS));
 			musb_platform_try_idle(musb, 0);
 			break;
 #ifdef	CONFIG_USB_MUSB_OTG
@@ -132,6 +135,9 @@ static void musb_port_reset(struct musb *musb, bool do_reset)
 	/* NOTE:  caller guarantees it will turn off the reset when
 	 * the appropriate amount of time has passed
 	 */
+#ifdef CONFIG_MACH_OMAP3517EVM
+	musb->read_mask &= ~AM3517_READ_ISSUE_POWER;
+#endif
 	power = musb_readb(mbase, MUSB_POWER);
 	if (do_reset) {
 
@@ -165,6 +171,9 @@ static void musb_port_reset(struct musb *musb, bool do_reset)
 
 		musb->ignore_disconnect = false;
 
+#ifdef CONFIG_MACH_OMAP3517EVM
+		musb->read_mask &= ~AM3517_READ_ISSUE_POWER;
+#endif
 		power = musb_readb(mbase, MUSB_POWER);
 		if (power & MUSB_POWER_HSMODE) {
 			DBG(4, "high-speed device connected\n");
@@ -183,24 +192,15 @@ static void musb_port_reset(struct musb *musb, bool do_reset)
 
 void musb_root_disconnect(struct musb *musb)
 {
-	musb->port1_status = USB_PORT_STAT_POWER
-			| (USB_PORT_STAT_C_CONNECTION << 16);
+	musb->port1_status = (1 << USB_PORT_FEAT_POWER)
+			| (1 << USB_PORT_FEAT_C_CONNECTION);
 
 	usb_hcd_poll_rh_status(musb_to_hcd(musb));
 	musb->is_active = 0;
 
 	switch (musb->xceiv->state) {
-	case OTG_STATE_A_SUSPEND:
-#ifdef	CONFIG_USB_MUSB_OTG
-		if (is_otg_enabled(musb)
-				&& musb->xceiv->host->b_hnp_enable) {
-			musb->xceiv->state = OTG_STATE_A_PERIPHERAL;
-			musb->g.is_a_peripheral = 1;
-			break;
-		}
-#endif
-		/* FALLTHROUGH */
 	case OTG_STATE_A_HOST:
+	case OTG_STATE_A_SUSPEND:
 		musb->xceiv->state = OTG_STATE_A_WAIT_BCON;
 		musb->is_active = 0;
 		break;
@@ -244,7 +244,7 @@ int musb_hub_control(
 
 	spin_lock_irqsave(&musb->lock, flags);
 
-	if (unlikely(!HCD_HW_ACCESSIBLE(hcd))) {
+	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))) {
 		spin_unlock_irqrestore(&musb->lock, flags);
 		return -ESHUTDOWN;
 	}

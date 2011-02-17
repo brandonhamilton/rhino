@@ -29,8 +29,6 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/io.h>
-#include <linux/slab.h>
-#include <linux/delay.h>
 
 #include <asm/system.h>
 #include <mach/hardware.h>
@@ -291,7 +289,7 @@ void omap_set_dma_transfer_params(int lch, int data_type, int elem_count,
 		val = dma_read(CCR(lch));
 
 		/* DMA_SYNCHRO_CONTROL_UPPER depends on the channel number */
-		val &= ~((1 << 23) | (3 << 19) | 0x1f);
+		val &= ~((3 << 19) | 0x1f);
 		val |= (dma_trigger & ~0x1f) << 14;
 		val |= dma_trigger & 0x1f;
 
@@ -305,14 +303,11 @@ void omap_set_dma_transfer_params(int lch, int data_type, int elem_count,
 		else
 			val &= ~(1 << 18);
 
-		if (src_or_dst_synch == OMAP_DMA_DST_SYNC_PREFETCH) {
-			val &= ~(1 << 24);	/* dest synch */
-			val |= (1 << 23);	/* Prefetch */
-		} else if (src_or_dst_synch) {
+		if (src_or_dst_synch)
 			val |= 1 << 24;		/* source synch */
-		} else {
+		else
 			val &= ~(1 << 24);	/* dest synch */
-		}
+
 		dma_write(val, CCR(lch));
 	}
 
@@ -505,8 +500,7 @@ void omap_set_dma_src_burst_mode(int lch, enum omap_dma_burst_mode burst_mode)
 			burst = 0x2;
 			break;
 		}
-		/*
-		 * not supported by current hardware on OMAP1
+		/* not supported by current hardware on OMAP1
 		 * w |= (0x03 << 7);
 		 * fall through
 		 */
@@ -515,8 +509,7 @@ void omap_set_dma_src_burst_mode(int lch, enum omap_dma_burst_mode burst_mode)
 			burst = 0x3;
 			break;
 		}
-		/*
-		 * OMAP1 don't support burst 16
+		/* OMAP1 don't support burst 16
 		 * fall through
 		 */
 	default:
@@ -610,8 +603,7 @@ void omap_set_dma_dest_burst_mode(int lch, enum omap_dma_burst_mode burst_mode)
 			burst = 0x3;
 			break;
 		}
-		/*
-		 * OMAP1 don't support burst 16
+		/* OMAP1 don't support burst 16
 		 * fall through
 		 */
 	default:
@@ -716,20 +708,12 @@ static inline void omap2_enable_irq_lch(int lch)
 	spin_unlock_irqrestore(&dma_chan_lock, flags);
 }
 
-static inline void omap2_disable_irq_lch(int lch)
+void omap_enable_irq_dma(int lch)
 {
-	u32 val;
-	unsigned long flags;
-
-	if (!cpu_class_is_omap2())
-		return;
-
-	spin_lock_irqsave(&dma_chan_lock, flags);
-	val = dma_read(IRQENABLE_L0);
-	val &= ~(1 << lch);
-	dma_write(val, IRQENABLE_L0);
-	spin_unlock_irqrestore(&dma_chan_lock, flags);
+	omap2_enable_irq_lch(lch);
+	omap_enable_channel_irq(lch);
 }
+EXPORT_SYMBOL(omap_enable_irq_dma);
 
 int omap_request_dma(int dev_id, const char *dev_name,
 		     void (*callback)(int lch, u16 ch_status, void *data),
@@ -829,7 +813,14 @@ void omap_free_dma(int lch)
 	}
 
 	if (cpu_class_is_omap2()) {
-		omap2_disable_irq_lch(lch);
+		u32 val;
+
+		spin_lock_irqsave(&dma_chan_lock, flags);
+		/* Disable interrupts */
+		val = dma_read(IRQENABLE_L0);
+		val &= ~(1 << lch);
+		dma_write(val, IRQENABLE_L0);
+		spin_unlock_irqrestore(&dma_chan_lock, flags);
 
 		/* Clear the CSR register and IRQ status register */
 		dma_write(OMAP2_DMA_CSR_CLEAR_MASK, CSR(lch));
@@ -952,15 +943,6 @@ void omap_start_dma(int lch)
 {
 	u32 l;
 
-	/*
-	 * The CPC/CDAC register needs to be initialized to zero
-	 * before starting dma transfer.
-	 */
-	if (cpu_is_omap15xx())
-		dma_write(0, CPC(lch));
-	else
-		dma_write(0, CDAC(lch));
-
 	if (!omap_dma_in_1510_mode() && dma_chan[lch].next_lch != -1) {
 		int next_lch, cur_lch;
 		char dma_chan_link_map[OMAP_DMA4_LOGICAL_DMA_CH_COUNT];
@@ -997,17 +979,11 @@ void omap_start_dma(int lch)
 	l = dma_read(CCR(lch));
 
 	/*
-	 * Errata: Inter Frame DMA buffering issue (All OMAP2420 and
-	 * OMAP2430ES1.0): DMA will wrongly buffer elements if packing and
-	 * bursting is enabled. This might result in data gets stalled in
-	 * FIFO at the end of the block.
-	 * Workaround: DMA channels must have BUFFERING_DISABLED bit set to
-	 * guarantee no data will stay in the DMA FIFO in case inter frame
-	 * buffering occurs.
+	 * Errata: On ES2.0 BUFFERING disable must be set.
+	 * This will always fail on ES1.0
 	 */
-	if (cpu_is_omap2420() ||
-	    (cpu_is_omap2430() && (omap_type() == OMAP2430_REV_ES1_0)))
-		l |= OMAP_DMA_CCR_BUFFERING_DISABLE;
+	if (cpu_is_omap24xx())
+		l |= OMAP_DMA_CCR_EN;
 
 	l |= OMAP_DMA_CCR_EN;
 	dma_write(l, CCR(lch));
@@ -1025,39 +1001,8 @@ void omap_stop_dma(int lch)
 		dma_write(0, CICR(lch));
 
 	l = dma_read(CCR(lch));
-	/* OMAP3 Errata i541: sDMA FIFO draining does not finish */
-	if (cpu_is_omap34xx() && (l & OMAP_DMA_CCR_SEL_SRC_DST_SYNC)) {
-		int i = 0;
-		u32 sys_cf;
-
-		/* Configure No-Standby */
-		l = dma_read(OCP_SYSCONFIG);
-		sys_cf = l;
-		l &= ~DMA_SYSCONFIG_MIDLEMODE_MASK;
-		l |= DMA_SYSCONFIG_MIDLEMODE(DMA_IDLEMODE_NO_IDLE);
-		dma_write(l , OCP_SYSCONFIG);
-
-		l = dma_read(CCR(lch));
-		l &= ~OMAP_DMA_CCR_EN;
-		dma_write(l, CCR(lch));
-
-		/* Wait for sDMA FIFO drain */
-		l = dma_read(CCR(lch));
-		while (i < 100 && (l & (OMAP_DMA_CCR_RD_ACTIVE |
-					OMAP_DMA_CCR_WR_ACTIVE))) {
-			udelay(5);
-			i++;
-			l = dma_read(CCR(lch));
-		}
-		if (i >= 100)
-			printk(KERN_ERR "DMA drain did not complete on "
-					"lch %d\n", lch);
-		/* Restore OCP_SYSCONFIG */
-		dma_write(sys_cf, OCP_SYSCONFIG);
-	} else {
-		l &= ~OMAP_DMA_CCR_EN;
-		dma_write(l, CCR(lch));
-	}
+	l &= ~OMAP_DMA_CCR_EN;
+	dma_write(l, CCR(lch));
 
 	if (!omap_dma_in_1510_mode() && dma_chan[lch].next_lch != -1) {
 		int next_lch, cur_lch = lch;
@@ -1245,7 +1190,7 @@ void omap_dma_unlink_lch(int lch_head, int lch_queue)
 	}
 
 	if ((dma_chan[lch_head].flags & OMAP_DMA_ACTIVE) ||
-	    (dma_chan[lch_queue].flags & OMAP_DMA_ACTIVE)) {
+	    (dma_chan[lch_head].flags & OMAP_DMA_ACTIVE)) {
 		printk(KERN_ERR "omap_dma: You need to stop the DMA channels "
 		       "before unlinking\n");
 		dump_stack();
@@ -1329,10 +1274,8 @@ int omap_request_dma_chain(int dev_id, const char *dev_name,
 		return -EINVAL;
 	}
 
-	/*
-	 * Allocate a queue to maintain the status of the channels
-	 * in the chain
-	 */
+	/* Allocate a queue to maintain the status of the channels
+	 * in the chain */
 	channels = kmalloc(sizeof(*channels) * no_of_chans, GFP_KERNEL);
 	if (channels == NULL) {
 		printk(KERN_ERR "omap_dma: No memory for channel queue\n");
@@ -1934,7 +1877,8 @@ static irqreturn_t omap1_dma_irq_handler(int irq, void *dev_id)
 #define omap1_dma_irq_handler	NULL
 #endif
 
-#ifdef CONFIG_ARCH_OMAP2PLUS
+#if defined(CONFIG_ARCH_OMAP2) || defined(CONFIG_ARCH_OMAP3) || \
+			defined(CONFIG_ARCH_OMAP4)
 
 static int omap2_dma_handle_ch(int ch)
 {
@@ -1961,8 +1905,7 @@ static int omap2_dma_handle_ch(int ch)
 		printk(KERN_INFO "DMA transaction error with device %d\n",
 		       dma_chan[ch].dev_id);
 		if (cpu_class_is_omap2()) {
-			/*
-			 * Errata: sDMA Channel is not disabled
+			/* Errata: sDMA Channel is not disabled
 			 * after a transaction error. So we explicitely
 			 * disable the channel
 			 */
@@ -1983,8 +1926,6 @@ static int omap2_dma_handle_ch(int ch)
 
 	dma_write(OMAP2_DMA_CSR_CLEAR_MASK, CSR(ch));
 	dma_write(1 << ch, IRQSTATUS_L0);
-	/* read back the register to flush the write */
-	dma_read(IRQSTATUS_L0);
 
 	/* If the ch is not chained then chain_id will be -1 */
 	if (dma_chan[ch].chain_id != -1) {
@@ -2164,9 +2105,6 @@ static int __init omap_init_dma(void)
 
 	for (ch = 0; ch < dma_chan_count; ch++) {
 		omap_clear_dma(ch);
-		if (cpu_class_is_omap2())
-			omap2_disable_irq_lch(ch);
-
 		dma_chan[ch].dev_id = -1;
 		dma_chan[ch].next_lch = -1;
 
@@ -2202,13 +2140,13 @@ static int __init omap_init_dma(void)
 	if (cpu_class_is_omap2()) {
 		int irq;
 		if (cpu_is_omap44xx())
-			irq = OMAP44XX_IRQ_SDMA_0;
+			irq = INT_44XX_SDMA_IRQ0;
 		else
 			irq = INT_24XX_SDMA_IRQ0;
 		setup_irq(irq, &omap24xx_dma_irq);
 	}
 
-	if (cpu_is_omap34xx() || cpu_is_omap44xx()) {
+	if (cpu_is_omap34xx()) {
 		/* Enable smartidle idlemodes and autoidle */
 		u32 v = dma_read(OCP_SYSCONFIG);
 		v &= ~(DMA_SYSCONFIG_MIDLEMODE_MASK |
@@ -2219,8 +2157,7 @@ static int __init omap_init_dma(void)
 			DMA_SYSCONFIG_AUTOIDLE);
 		dma_write(v , OCP_SYSCONFIG);
 		/* reserve dma channels 0 and 1 in high security devices */
-		if (cpu_is_omap34xx() &&
-			(omap_type() != OMAP2_DEVICE_TYPE_GP)) {
+		if (omap_type() != OMAP2_DEVICE_TYPE_GP) {
 			printk(KERN_INFO "Reserving DMA channels 0 and 1 for "
 					"HS ROM code\n");
 			dma_chan[0].dev_id = 0;

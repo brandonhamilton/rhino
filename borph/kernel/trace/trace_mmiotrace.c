@@ -9,7 +9,6 @@
 #include <linux/kernel.h>
 #include <linux/mmiotrace.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/time.h>
 
 #include <asm/atomic.h>

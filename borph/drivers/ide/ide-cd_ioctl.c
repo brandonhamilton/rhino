@@ -8,7 +8,6 @@
 
 #include <linux/kernel.h>
 #include <linux/cdrom.h>
-#include <linux/gfp.h>
 #include <linux/ide.h>
 #include <scsi/scsi.h>
 
@@ -454,7 +453,7 @@ int ide_cdrom_packet(struct cdrom_device_info *cdi,
 	   touch it at all. */
 
 	if (cgc->data_direction == CGC_DATA_WRITE)
-		flags |= REQ_WRITE;
+		flags |= REQ_RW;
 
 	if (cgc->sense)
 		memset(cgc->sense, 0, sizeof(struct request_sense));

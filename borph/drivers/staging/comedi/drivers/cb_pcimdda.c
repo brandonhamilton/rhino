@@ -91,8 +91,7 @@ Configuration Options:
 #include "8255.h"
 
 /* device ids of the cards we support -- currently only 1 card supported */
-#define PCI_VENDOR_ID_COMPUTERBOARDS	0x1307
-#define PCI_ID_PCIM_DDA06_16		0x0053
+#define PCI_ID_PCIM_DDA06_16 0x0053
 
 /*
  * This is straight from skel.c -- I did this in case this source file
@@ -195,45 +194,7 @@ MODULE_DESCRIPTION("Comedi low-level driver for the Computerboards PCIM-DDA "
 		   "series.  Currently only supports PCIM-DDA06-16 (which "
 		   "also happens to be the only board in this series. :) ) ");
 MODULE_LICENSE("GPL");
-static int __devinit cb_pcimdda_driver_pci_probe(struct pci_dev *dev,
-						 const struct pci_device_id
-						 *ent)
-{
-	return comedi_pci_auto_config(dev, cb_pcimdda_driver.driver_name);
-}
-
-static void __devexit cb_pcimdda_driver_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
-}
-
-static struct pci_driver cb_pcimdda_driver_pci_driver = {
-	.id_table = pci_table,
-	.probe = &cb_pcimdda_driver_pci_probe,
-	.remove = __devexit_p(&cb_pcimdda_driver_pci_remove)
-};
-
-static int __init cb_pcimdda_driver_init_module(void)
-{
-	int retval;
-
-	retval = comedi_driver_register(&cb_pcimdda_driver);
-	if (retval < 0)
-		return retval;
-
-	cb_pcimdda_driver_pci_driver.name =
-	    (char *)cb_pcimdda_driver.driver_name;
-	return pci_register_driver(&cb_pcimdda_driver_pci_driver);
-}
-
-static void __exit cb_pcimdda_driver_cleanup_module(void)
-{
-	pci_unregister_driver(&cb_pcimdda_driver_pci_driver);
-	comedi_driver_unregister(&cb_pcimdda_driver);
-}
-
-module_init(cb_pcimdda_driver_init_module);
-module_exit(cb_pcimdda_driver_cleanup_module);
+COMEDI_PCI_INITCLEANUP_NOMODULE(cb_pcimdda_driver, pci_table);
 
 static int ao_winsn(struct comedi_device *dev, struct comedi_subdevice *s,
 		    struct comedi_insn *insn, unsigned int *data);
@@ -323,10 +284,11 @@ static int attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	s->n_chan = thisboard->ao_chans;
 	s->maxdata = figure_out_maxdata(thisboard->ao_bits);
 	/* this is hard-coded here */
-	if (it->options[2])
+	if (it->options[2]) {
 		s->range_table = &range_bipolar10;
-	else
+	} else {
 		s->range_table = &range_bipolar5;
+	}
 	s->insn_write = &ao_winsn;
 	s->insn_read = &ao_rinsn;
 
@@ -375,8 +337,9 @@ static int detach(struct comedi_device *dev)
 		}
 
 		if (devpriv->pci_dev) {
-			if (devpriv->registers)
+			if (devpriv->registers) {
 				comedi_pci_disable(devpriv->pci_dev);
+			}
 			pci_dev_put(devpriv->pci_dev);
 		}
 
@@ -464,11 +427,13 @@ static int ao_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
  */
 static int probe(struct comedi_device *dev, const struct comedi_devconfig *it)
 {
-	struct pci_dev *pcidev = NULL;
+	struct pci_dev *pcidev;
 	int index;
 	unsigned long registers;
 
-	for_each_pci_dev(pcidev) {
+	for (pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, NULL);
+	     pcidev != NULL;
+	     pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pcidev)) {
 		/*  is it not a computer boards card? */
 		if (pcidev->vendor != PCI_VENDOR_ID_COMPUTERBOARDS)
 			continue;

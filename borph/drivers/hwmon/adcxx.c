@@ -37,7 +37,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/sysfs.h>
@@ -63,23 +62,18 @@ static ssize_t adcxx_read(struct device *dev,
 	struct spi_device *spi = to_spi_device(dev);
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(devattr);
 	struct adcxx *adc = dev_get_drvdata(&spi->dev);
-	u8 tx_buf[2];
+	u8 tx_buf[2] = { attr->index << 3 }; /* other bits are don't care */
 	u8 rx_buf[2];
 	int status;
-	u32 value;
+	int value;
 
 	if (mutex_lock_interruptible(&adc->lock))
 		return -ERESTARTSYS;
 
-	if (adc->channels == 1) {
-		status = spi_read(spi, rx_buf, sizeof(rx_buf));
-	} else {
-		tx_buf[0] = attr->index << 3; /* other bits are don't care */
-		status = spi_write_then_read(spi, tx_buf, sizeof(tx_buf),
-						rx_buf, sizeof(rx_buf));
-	}
+	status = spi_write_then_read(spi, tx_buf, sizeof(tx_buf),
+					rx_buf, sizeof(rx_buf));
 	if (status < 0) {
-		dev_warn(dev, "SPI synch. transfer failed with status %d\n",
+		dev_warn(dev, "spi_write_then_read failed with status %d\n",
 				status);
 		goto out;
 	}

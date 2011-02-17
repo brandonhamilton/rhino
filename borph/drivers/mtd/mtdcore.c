@@ -2,28 +2,12 @@
  * Core registration and callback routines for MTD
  * drivers and users.
  *
- * Copyright © 1999-2010 David Woodhouse <dwmw2@infradead.org>
- * Copyright © 2006      Red Hat UK Limited 
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- *
  */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/major.h>
@@ -31,42 +15,13 @@
 #include <linux/err.h>
 #include <linux/ioctl.h>
 #include <linux/init.h>
+#include <linux/mtd/compatmac.h>
 #include <linux/proc_fs.h>
-#include <linux/idr.h>
-#include <linux/backing-dev.h>
-#include <linux/gfp.h>
 
 #include <linux/mtd/mtd.h>
+#include "internal.h"
 
 #include "mtdcore.h"
-/*
- * backing device capabilities for non-mappable devices (such as NAND flash)
- * - permits private mappings, copies are taken of the data
- */
-struct backing_dev_info mtd_bdi_unmappable = {
-	.capabilities	= BDI_CAP_MAP_COPY,
-};
-
-/*
- * backing device capabilities for R/O mappable devices (such as ROM)
- * - permits private mappings, copies are taken of the data
- * - permits non-writable shared mappings
- */
-struct backing_dev_info mtd_bdi_ro_mappable = {
-	.capabilities	= (BDI_CAP_MAP_COPY | BDI_CAP_MAP_DIRECT |
-			   BDI_CAP_EXEC_MAP | BDI_CAP_READ_MAP),
-};
-
-/*
- * backing device capabilities for writable mappable devices (such as RAM)
- * - permits private mappings, copies are taken of the data
- * - permits non-writable shared mappings
- */
-struct backing_dev_info mtd_bdi_rw_mappable = {
-	.capabilities	= (BDI_CAP_MAP_COPY | BDI_CAP_MAP_DIRECT |
-			   BDI_CAP_EXEC_MAP | BDI_CAP_READ_MAP |
-			   BDI_CAP_WRITE_MAP),
-};
 
 static int mtd_cls_suspend(struct device *dev, pm_message_t state);
 static int mtd_cls_resume(struct device *dev);
@@ -78,18 +33,13 @@ static struct class mtd_class = {
 	.resume = mtd_cls_resume,
 };
 
-static DEFINE_IDR(mtd_idr);
-
 /* These are exported solely for the purpose of mtd_blkdevs.c. You
    should not use them for _anything_ else */
 DEFINE_MUTEX(mtd_table_mutex);
-EXPORT_SYMBOL_GPL(mtd_table_mutex);
+struct mtd_info *mtd_table[MAX_MTD_DEVICES];
 
-struct mtd_info *__mtd_next_device(int i)
-{
-	return idr_get_next(&mtd_idr, &i);
-}
-EXPORT_SYMBOL_GPL(__mtd_next_device);
+EXPORT_SYMBOL_GPL(mtd_table_mutex);
+EXPORT_SYMBOL_GPL(mtd_table);
 
 static LIST_HEAD(mtd_notifiers);
 
@@ -285,13 +235,13 @@ static struct device_type mtd_devtype = {
  *	Add a device to the list of MTD devices present in the system, and
  *	notify each currently active MTD 'user' of its arrival. Returns
  *	zero on success or 1 on failure, which currently will only happen
- *	if there is insufficient memory or a sysfs error.
+ *	if the number of present devices exceeds MAX_MTD_DEVICES (i.e. 16)
+ *	or there's a sysfs error.
  */
 
 int add_mtd_device(struct mtd_info *mtd)
 {
-	struct mtd_notifier *not;
-	int i, error;
+	int i;
 
 	if (!mtd->backing_dev_info) {
 		switch (mtd->type) {
@@ -310,73 +260,70 @@ int add_mtd_device(struct mtd_info *mtd)
 	BUG_ON(mtd->writesize == 0);
 	mutex_lock(&mtd_table_mutex);
 
-	do {
-		if (!idr_pre_get(&mtd_idr, GFP_KERNEL))
-			goto fail_locked;
-		error = idr_get_new(&mtd_idr, mtd, &i);
-	} while (error == -EAGAIN);
+	for (i=0; i < MAX_MTD_DEVICES; i++)
+		if (!mtd_table[i]) {
+			struct mtd_notifier *not;
 
-	if (error)
-		goto fail_locked;
+			mtd_table[i] = mtd;
+			mtd->index = i;
+			mtd->usecount = 0;
 
-	mtd->index = i;
-	mtd->usecount = 0;
+			if (is_power_of_2(mtd->erasesize))
+				mtd->erasesize_shift = ffs(mtd->erasesize) - 1;
+			else
+				mtd->erasesize_shift = 0;
 
-	if (is_power_of_2(mtd->erasesize))
-		mtd->erasesize_shift = ffs(mtd->erasesize) - 1;
-	else
-		mtd->erasesize_shift = 0;
+			if (is_power_of_2(mtd->writesize))
+				mtd->writesize_shift = ffs(mtd->writesize) - 1;
+			else
+				mtd->writesize_shift = 0;
 
-	if (is_power_of_2(mtd->writesize))
-		mtd->writesize_shift = ffs(mtd->writesize) - 1;
-	else
-		mtd->writesize_shift = 0;
+			mtd->erasesize_mask = (1 << mtd->erasesize_shift) - 1;
+			mtd->writesize_mask = (1 << mtd->writesize_shift) - 1;
 
-	mtd->erasesize_mask = (1 << mtd->erasesize_shift) - 1;
-	mtd->writesize_mask = (1 << mtd->writesize_shift) - 1;
+			/* Some chips always power up locked. Unlock them now */
+			if ((mtd->flags & MTD_WRITEABLE)
+			    && (mtd->flags & MTD_POWERUP_LOCK) && mtd->unlock) {
+				if (mtd->unlock(mtd, 0, mtd->size))
+					printk(KERN_WARNING
+					       "%s: unlock failed, "
+					       "writes may not work\n",
+					       mtd->name);
+			}
 
-	/* Some chips always power up locked. Unlock them now */
-	if ((mtd->flags & MTD_WRITEABLE)
-	    && (mtd->flags & MTD_POWERUP_LOCK) && mtd->unlock) {
-		if (mtd->unlock(mtd, 0, mtd->size))
-			printk(KERN_WARNING
-			       "%s: unlock failed, writes may not work\n",
-			       mtd->name);
-	}
+			/* Caller should have set dev.parent to match the
+			 * physical device.
+			 */
+			mtd->dev.type = &mtd_devtype;
+			mtd->dev.class = &mtd_class;
+			mtd->dev.devt = MTD_DEVT(i);
+			dev_set_name(&mtd->dev, "mtd%d", i);
+			dev_set_drvdata(&mtd->dev, mtd);
+			if (device_register(&mtd->dev) != 0) {
+				mtd_table[i] = NULL;
+				break;
+			}
 
-	/* Caller should have set dev.parent to match the
-	 * physical device.
-	 */
-	mtd->dev.type = &mtd_devtype;
-	mtd->dev.class = &mtd_class;
-	mtd->dev.devt = MTD_DEVT(i);
-	dev_set_name(&mtd->dev, "mtd%d", i);
-	dev_set_drvdata(&mtd->dev, mtd);
-	if (device_register(&mtd->dev) != 0)
-		goto fail_added;
+			if (MTD_DEVT(i))
+				device_create(&mtd_class, mtd->dev.parent,
+						MTD_DEVT(i) + 1,
+						NULL, "mtd%dro", i);
 
-	if (MTD_DEVT(i))
-		device_create(&mtd_class, mtd->dev.parent,
-			      MTD_DEVT(i) + 1,
-			      NULL, "mtd%dro", i);
+			DEBUG(0, "mtd: Giving out device %d to %s\n",i, mtd->name);
+			/* No need to get a refcount on the module containing
+			   the notifier, since we hold the mtd_table_mutex */
+			list_for_each_entry(not, &mtd_notifiers, list)
+				not->add(mtd);
 
-	DEBUG(0, "mtd: Giving out device %d to %s\n", i, mtd->name);
-	/* No need to get a refcount on the module containing
-	   the notifier, since we hold the mtd_table_mutex */
-	list_for_each_entry(not, &mtd_notifiers, list)
-		not->add(mtd);
+			mutex_unlock(&mtd_table_mutex);
+			/* We _know_ we aren't being removed, because
+			   our caller is still holding us here. So none
+			   of this try_ nonsense, and no bitching about it
+			   either. :) */
+			__module_get(THIS_MODULE);
+			return 0;
+		}
 
-	mutex_unlock(&mtd_table_mutex);
-	/* We _know_ we aren't being removed, because
-	   our caller is still holding us here. So none
-	   of this try_ nonsense, and no bitching about it
-	   either. :) */
-	__module_get(THIS_MODULE);
-	return 0;
-
-fail_added:
-	idr_remove(&mtd_idr, i);
-fail_locked:
 	mutex_unlock(&mtd_table_mutex);
 	return 1;
 }
@@ -394,34 +341,31 @@ fail_locked:
 int del_mtd_device (struct mtd_info *mtd)
 {
 	int ret;
-	struct mtd_notifier *not;
 
 	mutex_lock(&mtd_table_mutex);
 
-	if (idr_find(&mtd_idr, mtd->index) != mtd) {
+	if (mtd_table[mtd->index] != mtd) {
 		ret = -ENODEV;
-		goto out_error;
-	}
-
-	/* No need to get a refcount on the module containing
-		the notifier, since we hold the mtd_table_mutex */
-	list_for_each_entry(not, &mtd_notifiers, list)
-		not->remove(mtd);
-
-	if (mtd->usecount) {
+	} else if (mtd->usecount) {
 		printk(KERN_NOTICE "Removing MTD device #%d (%s) with use count %d\n",
 		       mtd->index, mtd->name, mtd->usecount);
 		ret = -EBUSY;
 	} else {
+		struct mtd_notifier *not;
+
 		device_unregister(&mtd->dev);
 
-		idr_remove(&mtd_idr, mtd->index);
+		/* No need to get a refcount on the module containing
+		   the notifier, since we hold the mtd_table_mutex */
+		list_for_each_entry(not, &mtd_notifiers, list)
+			not->remove(mtd);
+
+		mtd_table[mtd->index] = NULL;
 
 		module_put(THIS_MODULE);
 		ret = 0;
 	}
 
-out_error:
 	mutex_unlock(&mtd_table_mutex);
 	return ret;
 }
@@ -437,7 +381,7 @@ out_error:
 
 void register_mtd_user (struct mtd_notifier *new)
 {
-	struct mtd_info *mtd;
+	int i;
 
 	mutex_lock(&mtd_table_mutex);
 
@@ -445,8 +389,9 @@ void register_mtd_user (struct mtd_notifier *new)
 
  	__module_get(THIS_MODULE);
 
-	mtd_for_each_device(mtd)
-		new->add(mtd);
+	for (i=0; i< MAX_MTD_DEVICES; i++)
+		if (mtd_table[i])
+			new->add(mtd_table[i]);
 
 	mutex_unlock(&mtd_table_mutex);
 }
@@ -463,14 +408,15 @@ void register_mtd_user (struct mtd_notifier *new)
 
 int unregister_mtd_user (struct mtd_notifier *old)
 {
-	struct mtd_info *mtd;
+	int i;
 
 	mutex_lock(&mtd_table_mutex);
 
 	module_put(THIS_MODULE);
 
-	mtd_for_each_device(mtd)
-		old->remove(mtd);
+	for (i=0; i< MAX_MTD_DEVICES; i++)
+		if (mtd_table[i])
+			old->remove(mtd_table[i]);
 
 	list_del(&old->list);
 	mutex_unlock(&mtd_table_mutex);
@@ -492,56 +438,42 @@ int unregister_mtd_user (struct mtd_notifier *old)
 
 struct mtd_info *get_mtd_device(struct mtd_info *mtd, int num)
 {
-	struct mtd_info *ret = NULL, *other;
-	int err = -ENODEV;
+	struct mtd_info *ret = NULL;
+	int i, err = -ENODEV;
 
 	mutex_lock(&mtd_table_mutex);
 
 	if (num == -1) {
-		mtd_for_each_device(other) {
-			if (other == mtd) {
-				ret = mtd;
-				break;
-			}
-		}
-	} else if (num >= 0) {
-		ret = idr_find(&mtd_idr, num);
+		for (i=0; i< MAX_MTD_DEVICES; i++)
+			if (mtd_table[i] == mtd)
+				ret = mtd_table[i];
+	} else if (num < MAX_MTD_DEVICES) {
+		ret = mtd_table[num];
 		if (mtd && mtd != ret)
 			ret = NULL;
 	}
 
-	if (!ret) {
-		ret = ERR_PTR(err);
-		goto out;
+	if (!ret)
+		goto out_unlock;
+
+	if (!try_module_get(ret->owner))
+		goto out_unlock;
+
+	if (ret->get_device) {
+		err = ret->get_device(ret);
+		if (err)
+			goto out_put;
 	}
 
-	err = __get_mtd_device(ret);
-	if (err)
-		ret = ERR_PTR(err);
-out:
+	ret->usecount++;
 	mutex_unlock(&mtd_table_mutex);
 	return ret;
-}
 
-
-int __get_mtd_device(struct mtd_info *mtd)
-{
-	int err;
-
-	if (!try_module_get(mtd->owner))
-		return -ENODEV;
-
-	if (mtd->get_device) {
-
-		err = mtd->get_device(mtd);
-
-		if (err) {
-			module_put(mtd->owner);
-			return err;
-		}
-	}
-	mtd->usecount++;
-	return 0;
+out_put:
+	module_put(ret->owner);
+out_unlock:
+	mutex_unlock(&mtd_table_mutex);
+	return ERR_PTR(err);
 }
 
 /**
@@ -555,14 +487,14 @@ int __get_mtd_device(struct mtd_info *mtd)
 
 struct mtd_info *get_mtd_device_nm(const char *name)
 {
-	int err = -ENODEV;
-	struct mtd_info *mtd = NULL, *other;
+	int i, err = -ENODEV;
+	struct mtd_info *mtd = NULL;
 
 	mutex_lock(&mtd_table_mutex);
 
-	mtd_for_each_device(other) {
-		if (!strcmp(name, other->name)) {
-			mtd = other;
+	for (i = 0; i < MAX_MTD_DEVICES; i++) {
+		if (mtd_table[i] && !strcmp(name, mtd_table[i]->name)) {
+			mtd = mtd_table[i];
 			break;
 		}
 	}
@@ -592,19 +524,14 @@ out_unlock:
 
 void put_mtd_device(struct mtd_info *mtd)
 {
+	int c;
+
 	mutex_lock(&mtd_table_mutex);
-	__put_mtd_device(mtd);
-	mutex_unlock(&mtd_table_mutex);
-
-}
-
-void __put_mtd_device(struct mtd_info *mtd)
-{
-	--mtd->usecount;
-	BUG_ON(mtd->usecount < 0);
-
+	c = --mtd->usecount;
 	if (mtd->put_device)
 		mtd->put_device(mtd);
+	mutex_unlock(&mtd_table_mutex);
+	BUG_ON(c < 0);
 
 	module_put(mtd->owner);
 }
@@ -642,9 +569,7 @@ EXPORT_SYMBOL_GPL(add_mtd_device);
 EXPORT_SYMBOL_GPL(del_mtd_device);
 EXPORT_SYMBOL_GPL(get_mtd_device);
 EXPORT_SYMBOL_GPL(get_mtd_device_nm);
-EXPORT_SYMBOL_GPL(__get_mtd_device);
 EXPORT_SYMBOL_GPL(put_mtd_device);
-EXPORT_SYMBOL_GPL(__put_mtd_device);
 EXPORT_SYMBOL_GPL(register_mtd_user);
 EXPORT_SYMBOL_GPL(unregister_mtd_user);
 EXPORT_SYMBOL_GPL(default_mtd_writev);
@@ -656,9 +581,14 @@ EXPORT_SYMBOL_GPL(default_mtd_writev);
 
 static struct proc_dir_entry *proc_mtd;
 
-static inline int mtd_proc_info(char *buf, struct mtd_info *this)
+static inline int mtd_proc_info (char *buf, int i)
 {
-	return sprintf(buf, "mtd%d: %8.8llx %8.8x \"%s\"\n", this->index,
+	struct mtd_info *this = mtd_table[i];
+
+	if (!this)
+		return 0;
+
+	return sprintf(buf, "mtd%d: %8.8llx %8.8x \"%s\"\n", i,
 		       (unsigned long long)this->size,
 		       this->erasesize, this->name);
 }
@@ -666,15 +596,15 @@ static inline int mtd_proc_info(char *buf, struct mtd_info *this)
 static int mtd_read_proc (char *page, char **start, off_t off, int count,
 			  int *eof, void *data_unused)
 {
-	struct mtd_info *mtd;
-	int len, l;
+	int len, l, i;
         off_t   begin = 0;
 
 	mutex_lock(&mtd_table_mutex);
 
 	len = sprintf(page, "dev:    size   erasesize  name\n");
-	mtd_for_each_device(mtd) {
-		l = mtd_proc_info(page + len, mtd);
+        for (i=0; i< MAX_MTD_DEVICES; i++) {
+
+                l = mtd_proc_info(page + len, i);
                 len += l;
                 if (len+begin > off+count)
                         goto done;
@@ -699,55 +629,20 @@ done:
 /*====================================================================*/
 /* Init code */
 
-static int __init mtd_bdi_init(struct backing_dev_info *bdi, const char *name)
-{
-	int ret;
-
-	ret = bdi_init(bdi);
-	if (!ret)
-		ret = bdi_register(bdi, NULL, name);
-
-	if (ret)
-		bdi_destroy(bdi);
-
-	return ret;
-}
-
 static int __init init_mtd(void)
 {
 	int ret;
-
 	ret = class_register(&mtd_class);
-	if (ret)
-		goto err_reg;
 
-	ret = mtd_bdi_init(&mtd_bdi_unmappable, "mtd-unmap");
-	if (ret)
-		goto err_bdi1;
-
-	ret = mtd_bdi_init(&mtd_bdi_ro_mappable, "mtd-romap");
-	if (ret)
-		goto err_bdi2;
-
-	ret = mtd_bdi_init(&mtd_bdi_rw_mappable, "mtd-rwmap");
-	if (ret)
-		goto err_bdi3;
-
+	if (ret) {
+		pr_err("Error registering mtd class: %d\n", ret);
+		return ret;
+	}
 #ifdef CONFIG_PROC_FS
 	if ((proc_mtd = create_proc_entry( "mtd", 0, NULL )))
 		proc_mtd->read_proc = mtd_read_proc;
 #endif /* CONFIG_PROC_FS */
 	return 0;
-
-err_bdi3:
-	bdi_destroy(&mtd_bdi_ro_mappable);
-err_bdi2:
-	bdi_destroy(&mtd_bdi_unmappable);
-err_bdi1:
-	class_unregister(&mtd_class);
-err_reg:
-	pr_err("Error registering mtd class or bdi: %d\n", ret);
-	return ret;
 }
 
 static void __exit cleanup_mtd(void)
@@ -757,9 +652,6 @@ static void __exit cleanup_mtd(void)
 		remove_proc_entry( "mtd", NULL);
 #endif /* CONFIG_PROC_FS */
 	class_unregister(&mtd_class);
-	bdi_destroy(&mtd_bdi_unmappable);
-	bdi_destroy(&mtd_bdi_ro_mappable);
-	bdi_destroy(&mtd_bdi_rw_mappable);
 }
 
 module_init(init_mtd);

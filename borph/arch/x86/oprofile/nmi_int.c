@@ -31,9 +31,8 @@ static struct op_x86_model_spec *model;
 static DEFINE_PER_CPU(struct op_msrs, cpu_msrs);
 static DEFINE_PER_CPU(unsigned long, saved_lvtpc);
 
-/* must be protected with get_online_cpus()/put_online_cpus(): */
-static int nmi_enabled;
-static int ctr_running;
+/* 0 == registered but off, 1 == registered and on */
+static int nmi_enabled = 0;
 
 struct op_counter_config counter_config[OP_MAX_COUNTER];
 
@@ -62,16 +61,12 @@ static int profile_exceptions_notify(struct notifier_block *self,
 {
 	struct die_args *args = (struct die_args *)data;
 	int ret = NOTIFY_DONE;
+	int cpu = smp_processor_id();
 
 	switch (val) {
 	case DIE_NMI:
 	case DIE_NMI_IPI:
-		if (ctr_running)
-			model->check_ctrs(args->regs, &__get_cpu_var(cpu_msrs));
-		else if (!nmi_enabled)
-			break;
-		else
-			model->stop(&__get_cpu_var(cpu_msrs));
+		model->check_ctrs(args->regs, &per_cpu(cpu_msrs, cpu));
 		ret = NOTIFY_STOP;
 		break;
 	default:
@@ -100,36 +95,24 @@ static void nmi_cpu_save_registers(struct op_msrs *msrs)
 static void nmi_cpu_start(void *dummy)
 {
 	struct op_msrs const *msrs = &__get_cpu_var(cpu_msrs);
-	if (!msrs->controls)
-		WARN_ON_ONCE(1);
-	else
-		model->start(msrs);
+	model->start(msrs);
 }
 
 static int nmi_start(void)
 {
-	get_online_cpus();
 	on_each_cpu(nmi_cpu_start, NULL, 1);
-	ctr_running = 1;
-	put_online_cpus();
 	return 0;
 }
 
 static void nmi_cpu_stop(void *dummy)
 {
 	struct op_msrs const *msrs = &__get_cpu_var(cpu_msrs);
-	if (!msrs->controls)
-		WARN_ON_ONCE(1);
-	else
-		model->stop(msrs);
+	model->stop(msrs);
 }
 
 static void nmi_stop(void)
 {
-	get_online_cpus();
 	on_each_cpu(nmi_cpu_stop, NULL, 1);
-	ctr_running = 0;
-	put_online_cpus();
 }
 
 #ifdef CONFIG_OPROFILE_EVENT_MULTIPLEX
@@ -176,7 +159,7 @@ static int nmi_setup_mux(void)
 
 	for_each_possible_cpu(i) {
 		per_cpu(cpu_msrs, i).multiplex =
-			kzalloc(multiplex_size, GFP_KERNEL);
+			kmalloc(multiplex_size, GFP_KERNEL);
 		if (!per_cpu(cpu_msrs, i).multiplex)
 			return 0;
 	}
@@ -196,6 +179,7 @@ static void nmi_cpu_setup_mux(int cpu, struct op_msrs const * const msrs)
 		if (counter_config[i].enabled) {
 			multiplex[i].saved = -(u64)counter_config[i].count;
 		} else {
+			multiplex[i].addr  = 0;
 			multiplex[i].saved = 0;
 		}
 	}
@@ -205,27 +189,25 @@ static void nmi_cpu_setup_mux(int cpu, struct op_msrs const * const msrs)
 
 static void nmi_cpu_save_mpx_registers(struct op_msrs *msrs)
 {
-	struct op_msr *counters = msrs->counters;
 	struct op_msr *multiplex = msrs->multiplex;
 	int i;
 
 	for (i = 0; i < model->num_counters; ++i) {
 		int virt = op_x86_phys_to_virt(i);
-		if (counters[i].addr)
-			rdmsrl(counters[i].addr, multiplex[virt].saved);
+		if (multiplex[virt].addr)
+			rdmsrl(multiplex[virt].addr, multiplex[virt].saved);
 	}
 }
 
 static void nmi_cpu_restore_mpx_registers(struct op_msrs *msrs)
 {
-	struct op_msr *counters = msrs->counters;
 	struct op_msr *multiplex = msrs->multiplex;
 	int i;
 
 	for (i = 0; i < model->num_counters; ++i) {
 		int virt = op_x86_phys_to_virt(i);
-		if (counters[i].addr)
-			wrmsrl(counters[i].addr, multiplex[virt].saved);
+		if (multiplex[virt].addr)
+			wrmsrl(multiplex[virt].addr, multiplex[virt].saved);
 	}
 }
 
@@ -240,7 +222,7 @@ static void nmi_cpu_switch(void *dummy)
 
 	/* move to next set */
 	si += model->num_counters;
-	if ((si >= model->num_virt_counters) || (counter_config[si].count == 0))
+	if ((si > model->num_virt_counters) || (counter_config[si].count == 0))
 		per_cpu(switch_index, cpu) = 0;
 	else
 		per_cpu(switch_index, cpu) = si;
@@ -269,10 +251,7 @@ static int nmi_switch_event(void)
 	if (nmi_multiplex_on() < 0)
 		return -EINVAL;		/* not necessary */
 
-	get_online_cpus();
-	if (ctr_running)
-		on_each_cpu(nmi_cpu_switch, NULL, 1);
-	put_online_cpus();
+	on_each_cpu(nmi_cpu_switch, NULL, 1);
 
 	return 0;
 }
@@ -315,7 +294,6 @@ static void free_msrs(void)
 		kfree(per_cpu(cpu_msrs, i).controls);
 		per_cpu(cpu_msrs, i).controls = NULL;
 	}
-	nmi_shutdown_mux();
 }
 
 static int allocate_msrs(void)
@@ -325,24 +303,17 @@ static int allocate_msrs(void)
 
 	int i;
 	for_each_possible_cpu(i) {
-		per_cpu(cpu_msrs, i).counters = kzalloc(counters_size,
+		per_cpu(cpu_msrs, i).counters = kmalloc(counters_size,
 							GFP_KERNEL);
 		if (!per_cpu(cpu_msrs, i).counters)
-			goto fail;
-		per_cpu(cpu_msrs, i).controls = kzalloc(controls_size,
+			return 0;
+		per_cpu(cpu_msrs, i).controls = kmalloc(controls_size,
 							GFP_KERNEL);
 		if (!per_cpu(cpu_msrs, i).controls)
-			goto fail;
+			return 0;
 	}
 
-	if (!nmi_setup_mux())
-		goto fail;
-
 	return 1;
-
-fail:
-	free_msrs();
-	return 0;
 }
 
 static void nmi_cpu_setup(void *dummy)
@@ -363,6 +334,49 @@ static struct notifier_block profile_exceptions_nb = {
 	.next = NULL,
 	.priority = 2
 };
+
+static int nmi_setup(void)
+{
+	int err = 0;
+	int cpu;
+
+	if (!allocate_msrs())
+		err = -ENOMEM;
+	else if (!nmi_setup_mux())
+		err = -ENOMEM;
+	else
+		err = register_die_notifier(&profile_exceptions_nb);
+
+	if (err) {
+		free_msrs();
+		nmi_shutdown_mux();
+		return err;
+	}
+
+	/* We need to serialize save and setup for HT because the subset
+	 * of msrs are distinct for save and setup operations
+	 */
+
+	/* Assume saved/restored counters are the same on all CPUs */
+	model->fill_in_addresses(&per_cpu(cpu_msrs, 0));
+	for_each_possible_cpu(cpu) {
+		if (!cpu)
+			continue;
+
+		memcpy(per_cpu(cpu_msrs, cpu).counters,
+		       per_cpu(cpu_msrs, 0).counters,
+		       sizeof(struct op_msr) * model->num_counters);
+
+		memcpy(per_cpu(cpu_msrs, cpu).controls,
+		       per_cpu(cpu_msrs, 0).controls,
+		       sizeof(struct op_msr) * model->num_controls);
+
+		mux_clone(cpu);
+	}
+	on_each_cpu(nmi_cpu_setup, NULL, 1);
+	nmi_enabled = 1;
+	return 0;
+}
 
 static void nmi_cpu_restore_registers(struct op_msrs *msrs)
 {
@@ -397,24 +411,20 @@ static void nmi_cpu_shutdown(void *dummy)
 	apic_write(APIC_LVTPC, per_cpu(saved_lvtpc, cpu));
 	apic_write(APIC_LVTERR, v);
 	nmi_cpu_restore_registers(msrs);
-	if (model->cpu_down)
-		model->cpu_down();
 }
 
-static void nmi_cpu_up(void *dummy)
+static void nmi_shutdown(void)
 {
-	if (nmi_enabled)
-		nmi_cpu_setup(dummy);
-	if (ctr_running)
-		nmi_cpu_start(dummy);
-}
+	struct op_msrs *msrs;
 
-static void nmi_cpu_down(void *dummy)
-{
-	if (ctr_running)
-		nmi_cpu_stop(dummy);
-	if (nmi_enabled)
-		nmi_cpu_shutdown(dummy);
+	nmi_enabled = 0;
+	on_each_cpu(nmi_cpu_shutdown, NULL, 1);
+	unregister_die_notifier(&profile_exceptions_nb);
+	nmi_shutdown_mux();
+	msrs = &get_cpu_var(cpu_msrs);
+	model->shutdown(msrs);
+	free_msrs();
+	put_cpu_var(cpu_msrs);
 }
 
 static int nmi_create_files(struct super_block *sb, struct dentry *root)
@@ -446,6 +456,7 @@ static int nmi_create_files(struct super_block *sb, struct dentry *root)
 	return 0;
 }
 
+#ifdef CONFIG_SMP
 static int oprofile_cpu_notifier(struct notifier_block *b, unsigned long action,
 				 void *data)
 {
@@ -453,10 +464,10 @@ static int oprofile_cpu_notifier(struct notifier_block *b, unsigned long action,
 	switch (action) {
 	case CPU_DOWN_FAILED:
 	case CPU_ONLINE:
-		smp_call_function_single(cpu, nmi_cpu_up, NULL, 0);
+		smp_call_function_single(cpu, nmi_cpu_start, NULL, 0);
 		break;
 	case CPU_DOWN_PREPARE:
-		smp_call_function_single(cpu, nmi_cpu_down, NULL, 1);
+		smp_call_function_single(cpu, nmi_cpu_stop, NULL, 1);
 		break;
 	}
 	return NOTIFY_DONE;
@@ -465,75 +476,7 @@ static int oprofile_cpu_notifier(struct notifier_block *b, unsigned long action,
 static struct notifier_block oprofile_cpu_nb = {
 	.notifier_call = oprofile_cpu_notifier
 };
-
-static int nmi_setup(void)
-{
-	int err = 0;
-	int cpu;
-
-	if (!allocate_msrs())
-		return -ENOMEM;
-
-	/* We need to serialize save and setup for HT because the subset
-	 * of msrs are distinct for save and setup operations
-	 */
-
-	/* Assume saved/restored counters are the same on all CPUs */
-	err = model->fill_in_addresses(&per_cpu(cpu_msrs, 0));
-	if (err)
-		goto fail;
-
-	for_each_possible_cpu(cpu) {
-		if (!cpu)
-			continue;
-
-		memcpy(per_cpu(cpu_msrs, cpu).counters,
-		       per_cpu(cpu_msrs, 0).counters,
-		       sizeof(struct op_msr) * model->num_counters);
-
-		memcpy(per_cpu(cpu_msrs, cpu).controls,
-		       per_cpu(cpu_msrs, 0).controls,
-		       sizeof(struct op_msr) * model->num_controls);
-
-		mux_clone(cpu);
-	}
-
-	nmi_enabled = 0;
-	ctr_running = 0;
-	barrier();
-	err = register_die_notifier(&profile_exceptions_nb);
-	if (err)
-		goto fail;
-
-	get_online_cpus();
-	register_cpu_notifier(&oprofile_cpu_nb);
-	on_each_cpu(nmi_cpu_setup, NULL, 1);
-	nmi_enabled = 1;
-	put_online_cpus();
-
-	return 0;
-fail:
-	free_msrs();
-	return err;
-}
-
-static void nmi_shutdown(void)
-{
-	struct op_msrs *msrs;
-
-	get_online_cpus();
-	unregister_cpu_notifier(&oprofile_cpu_nb);
-	on_each_cpu(nmi_cpu_shutdown, NULL, 1);
-	nmi_enabled = 0;
-	ctr_running = 0;
-	put_online_cpus();
-	barrier();
-	unregister_die_notifier(&profile_exceptions_nb);
-	msrs = &get_cpu_var(cpu_msrs);
-	model->shutdown(msrs);
-	free_msrs();
-	put_cpu_var(cpu_msrs);
-}
+#endif
 
 #ifdef CONFIG_PM
 
@@ -568,13 +511,8 @@ static int __init init_sysfs(void)
 	int error;
 
 	error = sysdev_class_register(&oprofile_sysclass);
-	if (error)
-		return error;
-
-	error = sysdev_register(&device_oprofile);
-	if (error)
-		sysdev_class_unregister(&oprofile_sysclass);
-
+	if (!error)
+		error = sysdev_register(&device_oprofile);
 	return error;
 }
 
@@ -585,10 +523,8 @@ static void exit_sysfs(void)
 }
 
 #else
-
-static inline int  init_sysfs(void) { return 0; }
-static inline void exit_sysfs(void) { }
-
+#define init_sysfs() do { } while (0)
+#define exit_sysfs() do { } while (0)
 #endif /* CONFIG_PM */
 
 static int __init p4_init(char **cpu_type)
@@ -641,18 +577,6 @@ static int __init ppro_init(char **cpu_type)
 	if (force_arch_perfmon && cpu_has_arch_perfmon)
 		return 0;
 
-	/*
-	 * Documentation on identifying Intel processors by CPU family
-	 * and model can be found in the Intel Software Developer's
-	 * Manuals (SDM):
-	 *
-	 *  http://www.intel.com/products/processor/manuals/
-	 *
-	 * As of May 2010 the documentation for this was in the:
-	 * "Intel 64 and IA-32 Architectures Software Developer's
-	 * Manual Volume 3B: System Programming Guide", "Table B-1
-	 * CPUID Signature Values of DisplayFamily_DisplayModel".
-	 */
 	switch (cpu_model) {
 	case 0 ... 2:
 		*cpu_type = "i386/ppro";
@@ -671,19 +595,14 @@ static int __init ppro_init(char **cpu_type)
 	case 14:
 		*cpu_type = "i386/core";
 		break;
-	case 0x0f:
-	case 0x16:
-	case 0x17:
-	case 0x1d:
+	case 15: case 23:
 		*cpu_type = "i386/core_2";
 		break;
-	case 0x1a:
-	case 0x1e:
-	case 0x2e:
+	case 26:
 		spec = &op_arch_perfmon_spec;
 		*cpu_type = "i386/core_i7";
 		break;
-	case 0x1c:
+	case 28:
 		*cpu_type = "i386/atom";
 		break;
 	default:
@@ -694,6 +613,9 @@ static int __init ppro_init(char **cpu_type)
 	model = spec;
 	return 1;
 }
+
+/* in order to get sysfs right */
+static int using_nmi;
 
 int __init op_nmi_init(struct oprofile_operations *ops)
 {
@@ -725,12 +647,6 @@ int __init op_nmi_init(struct oprofile_operations *ops)
 			break;
 		case 0x11:
 			cpu_type = "x86-64/family11h";
-			break;
-		case 0x12:
-			cpu_type = "x86-64/family12h";
-			break;
-		case 0x14:
-			cpu_type = "x86-64/family14h";
 			break;
 		default:
 			return -ENODEV;
@@ -769,6 +685,9 @@ int __init op_nmi_init(struct oprofile_operations *ops)
 		return -ENODEV;
 	}
 
+#ifdef CONFIG_SMP
+	register_cpu_notifier(&oprofile_cpu_nb);
+#endif
 	/* default values, can be overwritten by model */
 	ops->create_files	= nmi_create_files;
 	ops->setup		= nmi_setup;
@@ -787,15 +706,20 @@ int __init op_nmi_init(struct oprofile_operations *ops)
 
 	mux_init(ops);
 
-	ret = init_sysfs();
-	if (ret)
-		return ret;
-
+	init_sysfs();
+	using_nmi = 1;
 	printk(KERN_INFO "oprofile: using NMI interrupt.\n");
 	return 0;
 }
 
 void op_nmi_exit(void)
 {
-	exit_sysfs();
+	if (using_nmi) {
+		exit_sysfs();
+#ifdef CONFIG_SMP
+		unregister_cpu_notifier(&oprofile_cpu_nb);
+#endif
+	}
+	if (model->exit)
+		model->exit();
 }

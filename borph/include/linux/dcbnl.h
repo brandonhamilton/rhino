@@ -22,6 +22,8 @@
 
 #include <linux/types.h>
 
+#define DCB_PROTO_VERSION 1
+
 struct dcbmsg {
 	__u8               dcb_family;
 	__u8               cmd;

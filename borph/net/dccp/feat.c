@@ -22,7 +22,6 @@
  *  2 of the License, or (at your option) any later version.
  */
 #include <linux/module.h>
-#include <linux/slab.h>
 #include "ccid.h"
 #include "feat.h"
 
@@ -730,6 +729,16 @@ int dccp_feat_register_sp(struct sock *sk, u8 feat, u8 is_local,
 				  0, list, len);
 }
 
+/* Analogous to dccp_feat_register_sp(), but for non-negotiable values */
+int dccp_feat_register_nn(struct sock *sk, u8 feat, u64 val)
+{
+	/* any changes must be registered before establishing the connection */
+	if (sk->sk_state != DCCP_CLOSED)
+		return -EISCONN;
+	if (dccp_feat_type(feat) != FEAT_NN)
+		return -EINVAL;
+	return __feat_register_nn(&dccp_sk(sk)->dccps_featneg, feat, 0, val);
+}
 
 /*
  *	Tracking features whose value depend on the choice of CCID

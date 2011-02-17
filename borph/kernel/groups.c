@@ -143,9 +143,10 @@ int groups_search(const struct group_info *group_info, gid_t grp)
 	right = group_info->ngroups;
 	while (left < right) {
 		unsigned int mid = (left+right)/2;
-		if (grp > GROUP_AT(group_info, mid))
+		int cmp = grp - GROUP_AT(group_info, mid);
+		if (cmp > 0)
 			left = mid + 1;
-		else if (grp < GROUP_AT(group_info, mid))
+		else if (cmp < 0)
 			right = mid;
 		else
 			return 1;
@@ -163,6 +164,12 @@ int groups_search(const struct group_info *group_info, gid_t grp)
  */
 int set_groups(struct cred *new, struct group_info *group_info)
 {
+	int retval;
+
+	retval = security_task_setgroups(group_info);
+	if (retval)
+		return retval;
+
 	put_group_info(new->group_info);
 	groups_sort(group_info);
 	get_group_info(group_info);

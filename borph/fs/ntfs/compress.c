@@ -25,7 +25,6 @@
 #include <linux/buffer_head.h>
 #include <linux/blkdev.h>
 #include <linux/vmalloc.h>
-#include <linux/slab.h>
 
 #include "attrib.h"
 #include "inode.h"

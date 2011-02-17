@@ -52,7 +52,6 @@
 
 #include <linux/pci.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include "ibmasm.h"
 #include "lowlevel.h"
 #include "remote.h"

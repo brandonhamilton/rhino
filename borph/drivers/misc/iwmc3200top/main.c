@@ -25,7 +25,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/debugfs.h>
@@ -50,20 +49,6 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR(DRIVER_COPYRIGHT);
 MODULE_FIRMWARE(FW_NAME(FW_API_VER));
 
-
-static inline int __iwmct_tx(struct iwmct_priv *priv, void *src, int count)
-{
-	return sdio_memcpy_toio(priv->func, IWMC_SDIO_DATA_ADDR, src, count);
-
-}
-int iwmct_tx(struct iwmct_priv *priv, void *src, int count)
-{
-	int ret;
-	sdio_claim_host(priv->func);
-	ret =  __iwmct_tx(priv, src, count);
-	sdio_release_host(priv->func);
-	return ret;
-}
 /*
  * This workers main task is to wait for OP_OPR_ALIVE
  * from TOP FW until ALIVE_MSG_TIMOUT timeout is elapsed.
@@ -81,7 +66,7 @@ static void iwmct_rescan_worker(struct work_struct *ws)
 
 	ret = bus_rescan_devices(priv->func->dev.bus);
 	if (ret < 0)
-		LOG_INFO(priv, INIT, "bus_rescan_devices FAILED!!!\n");
+		LOG_INFO(priv, FW_DOWNLOAD, "bus_rescan_devices FAILED!!!\n");
 }
 
 static void op_top_message(struct iwmct_priv *priv, struct top_msg *msg)
@@ -152,7 +137,7 @@ int iwmct_send_hcmd(struct iwmct_priv *priv, u8 *cmd, u16 len)
 	int ret;
 	u8 *buf;
 
-	LOG_TRACE(priv, FW_MSG, "Sending hcmd:\n");
+	LOG_INFOEX(priv, FW_MSG, "Sending hcmd:\n");
 
 	/* add padding to 256 for IWMC */
 	((struct top_msg *)cmd)->hdr.flags |= CMD_FLAG_PADDING_256;
@@ -173,12 +158,27 @@ int iwmct_send_hcmd(struct iwmct_priv *priv, u8 *cmd, u16 len)
 	}
 
 	memcpy(buf, cmd, len);
-	ret = iwmct_tx(priv, buf, FW_HCMD_BLOCK_SIZE);
+
+	sdio_claim_host(priv->func);
+	ret = sdio_memcpy_toio(priv->func, IWMC_SDIO_DATA_ADDR, buf,
+			       FW_HCMD_BLOCK_SIZE);
+	sdio_release_host(priv->func);
 
 	kfree(buf);
 	return ret;
 }
 
+int iwmct_tx(struct iwmct_priv *priv, unsigned int addr,
+	void *src, int count)
+{
+	int ret;
+
+	sdio_claim_host(priv->func);
+	ret = sdio_memcpy_toio(priv->func, addr, src, count);
+	sdio_release_host(priv->func);
+
+	return ret;
+}
 
 static void iwmct_irq_read_worker(struct work_struct *ws)
 {
@@ -192,7 +192,7 @@ static void iwmct_irq_read_worker(struct work_struct *ws)
 
 	priv = container_of(ws, struct iwmct_priv, isr_worker);
 
-	LOG_TRACE(priv, IRQ, "enter iwmct_irq_read_worker %p\n", ws);
+	LOG_INFO(priv, IRQ, "enter iwmct_irq_read_worker %p\n", ws);
 
 	/* --------------------- Handshake with device -------------------- */
 	sdio_claim_host(priv->func);
@@ -273,7 +273,8 @@ static void iwmct_irq_read_worker(struct work_struct *ws)
 
 		if (barker & BARKER_DNLOAD_SYNC_MSK) {
 			/* Send the same barker back */
-			ret = __iwmct_tx(priv, buf, iosize);
+			ret = sdio_memcpy_toio(priv->func, IWMC_SDIO_DATA_ADDR,
+					       buf, iosize);
 			if (ret) {
 				LOG_ERROR(priv, IRQ,
 					 "error %d echoing barker\n", ret);
@@ -291,6 +292,15 @@ static void iwmct_irq_read_worker(struct work_struct *ws)
 
 	sdio_release_host(priv->func);
 
+
+	LOG_INFO(priv, IRQ, "barker download request 0x%x is:\n", priv->barker);
+	LOG_INFO(priv, IRQ, "*******  Top FW %s requested ********\n",
+			(priv->barker & BARKER_DNLOAD_TOP_MSK) ? "was" : "not");
+	LOG_INFO(priv, IRQ, "*******  GPS FW %s requested ********\n",
+			(priv->barker & BARKER_DNLOAD_GPS_MSK) ? "was" : "not");
+	LOG_INFO(priv, IRQ, "*******  BT FW %s requested ********\n",
+			(priv->barker & BARKER_DNLOAD_BT_MSK) ? "was" : "not");
+
 	if (priv->dbg.fw_download)
 		iwmct_fw_load(priv);
 	else
@@ -302,7 +312,7 @@ exit_release:
 	sdio_release_host(priv->func);
 exit:
 	kfree(buf);
-	LOG_TRACE(priv, IRQ, "exit iwmct_irq_read_worker\n");
+	LOG_INFO(priv, IRQ, "exit iwmct_irq_read_worker\n");
 }
 
 static void iwmct_irq(struct sdio_func *func)
@@ -315,12 +325,12 @@ static void iwmct_irq(struct sdio_func *func)
 
 	priv = sdio_get_drvdata(func);
 
-	LOG_TRACE(priv, IRQ, "enter iwmct_irq\n");
+	LOG_INFO(priv, IRQ, "enter iwmct_irq\n");
 
 	/* read the function's status register */
 	val = sdio_readb(func, IWMC_SDIO_INTR_STATUS_ADDR, &ret);
 
-	LOG_TRACE(priv, IRQ, "iir value = %d, ret=%d\n", val, ret);
+	LOG_INFO(priv, IRQ, "iir value = %d, ret=%d\n", val, ret);
 
 	if (!val) {
 		LOG_ERROR(priv, IRQ, "iir = 0, exiting ISR\n");
@@ -362,7 +372,7 @@ static void iwmct_irq(struct sdio_func *func)
 
 	queue_work(priv->wq, &priv->isr_worker);
 
-	LOG_TRACE(priv, IRQ, "exit iwmct_irq\n");
+	LOG_INFO(priv, IRQ, "exit iwmct_irq\n");
 
 	return;
 
@@ -598,6 +608,8 @@ static void iwmct_remove(struct sdio_func *func)
 	struct iwmct_work_struct *read_req;
 	struct iwmct_priv *priv = sdio_get_drvdata(func);
 
+	priv = sdio_get_drvdata(func);
+
 	LOG_INFO(priv, INIT, "enter\n");
 
 	sdio_claim_host(func);
@@ -648,7 +660,7 @@ static int __init iwmct_init(void)
 
 	/* Default log filter settings */
 	iwmct_log_set_filter(LOG_SRC_ALL, LOG_SEV_FILTER_RUNTIME);
-	iwmct_log_set_filter(LOG_SRC_FW_MSG, LOG_SEV_FW_FILTER_ALL);
+	iwmct_log_set_filter(LOG_SRC_FW_MSG, LOG_SEV_FILTER_ALL);
 	iwmct_log_set_fw_filter(LOG_SRC_ALL, FW_LOG_SEV_FILTER_RUNTIME);
 
 	rc = sdio_register_driver(&iwmct_driver);

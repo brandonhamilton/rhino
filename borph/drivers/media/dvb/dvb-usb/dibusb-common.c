@@ -142,13 +142,8 @@ static int dibusb_i2c_xfer(struct i2c_adapter *adap,struct i2c_msg msg[],int num
 		} else if ((msg[i].flags & I2C_M_RD) == 0) {
 			if (dibusb_i2c_msg(d, msg[i].addr, msg[i].buf,msg[i].len,NULL,0) < 0)
 				break;
-		} else if (msg[i].addr != 0x50) {
-			/* 0x50 is the address of the eeprom - we need to protect it
-			 * from dibusb's bad i2c implementation: reads without
-			 * writing the offset before are forbidden */
-			if (dibusb_i2c_msg(d, msg[i].addr, NULL, 0, msg[i].buf, msg[i].len) < 0)
-				break;
-		}
+		} else
+			break;
 	}
 
 	mutex_unlock(&d->i2c_mutex);
@@ -248,12 +243,6 @@ static struct dib3000mc_config mod3000p_dib3000p_config = {
 
 int dibusb_dib3000mc_frontend_attach(struct dvb_usb_adapter *adap)
 {
-	if (adap->dev->udev->descriptor.idVendor  == USB_VID_LITEON &&
-			adap->dev->udev->descriptor.idProduct ==
-			USB_PID_LITEON_DVB_T_WARM) {
-		msleep(1000);
-	}
-
 	if ((adap->fe = dvb_attach(dib3000mc_attach, &adap->dev->i2c_adap, DEFAULT_DIB3000P_I2C_ADDRESS,  &mod3000p_dib3000p_config)) != NULL ||
 		(adap->fe = dvb_attach(dib3000mc_attach, &adap->dev->i2c_adap, DEFAULT_DIB3000MC_I2C_ADDRESS, &mod3000p_dib3000p_config)) != NULL) {
 		if (adap->priv != NULL) {
@@ -327,7 +316,7 @@ EXPORT_SYMBOL(dibusb_dib3000mc_tuner_attach);
 /*
  * common remote control stuff
  */
-struct ir_scancode ir_codes_dibusb_table[] = {
+struct dvb_usb_rc_key dibusb_rc_keys[] = {
 	/* Key codes for the little Artec T1/Twinhan/HAMA/ remote. */
 	{ 0x0016, KEY_POWER },
 	{ 0x0010, KEY_MUTE },
@@ -456,7 +445,7 @@ struct ir_scancode ir_codes_dibusb_table[] = {
 	{ 0x804e, KEY_ENTER },
 	{ 0x804f, KEY_VOLUMEDOWN },
 };
-EXPORT_SYMBOL(ir_codes_dibusb_table);
+EXPORT_SYMBOL(dibusb_rc_keys);
 
 int dibusb_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 {

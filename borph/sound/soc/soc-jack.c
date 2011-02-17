@@ -32,14 +32,13 @@
  * Returns zero if successful, or a negative error code on failure.
  * On success jack will be initialised.
  */
-int snd_soc_jack_new(struct snd_soc_codec *codec, const char *id, int type,
+int snd_soc_jack_new(struct snd_soc_card *card, const char *id, int type,
 		     struct snd_soc_jack *jack)
 {
-	jack->codec = codec;
+	jack->card = card;
 	INIT_LIST_HEAD(&jack->pins);
-	BLOCKING_INIT_NOTIFIER_HEAD(&jack->notifier);
 
-	return snd_jack_new(codec->card->snd_card, id, type, &jack->jack);
+	return snd_jack_new(card->codec->card, id, type, &jack->jack);
 }
 EXPORT_SYMBOL_GPL(snd_soc_jack_new);
 
@@ -64,10 +63,11 @@ void snd_soc_jack_report(struct snd_soc_jack *jack, int status, int mask)
 	int enable;
 	int oldstatus;
 
-	if (!jack)
+	if (!jack) {
+		WARN_ON_ONCE(!jack);
 		return;
-
-	codec = jack->codec;
+	}
+	codec = jack->card->codec;
 
 	mutex_lock(&codec->mutex);
 
@@ -92,9 +92,6 @@ void snd_soc_jack_report(struct snd_soc_jack *jack, int status, int mask)
 		else
 			snd_soc_dapm_disable_pin(codec, pin->pin);
 	}
-
-	/* Report before the DAPM sync to help users updating micbias status */
-	blocking_notifier_call_chain(&jack->notifier, status, NULL);
 
 	snd_soc_dapm_sync(codec);
 
@@ -146,40 +143,6 @@ int snd_soc_jack_add_pins(struct snd_soc_jack *jack, int count,
 }
 EXPORT_SYMBOL_GPL(snd_soc_jack_add_pins);
 
-/**
- * snd_soc_jack_notifier_register - Register a notifier for jack status
- *
- * @jack:  ASoC jack
- * @nb:    Notifier block to register
- *
- * Register for notification of the current status of the jack.  Note
- * that it is not possible to report additional jack events in the
- * callback from the notifier, this is intended to support
- * applications such as enabling electrical detection only when a
- * mechanical detection event has occurred.
- */
-void snd_soc_jack_notifier_register(struct snd_soc_jack *jack,
-				    struct notifier_block *nb)
-{
-	blocking_notifier_chain_register(&jack->notifier, nb);
-}
-EXPORT_SYMBOL_GPL(snd_soc_jack_notifier_register);
-
-/**
- * snd_soc_jack_notifier_unregister - Unregister a notifier for jack status
- *
- * @jack:  ASoC jack
- * @nb:    Notifier block to unregister
- *
- * Stop notifying for status changes.
- */
-void snd_soc_jack_notifier_unregister(struct snd_soc_jack *jack,
-				      struct notifier_block *nb)
-{
-	blocking_notifier_chain_unregister(&jack->notifier, nb);
-}
-EXPORT_SYMBOL_GPL(snd_soc_jack_notifier_unregister);
-
 #ifdef CONFIG_GPIOLIB
 /* gpio detect */
 static void snd_soc_jack_gpio_detect(struct snd_soc_jack_gpio *gpio)
@@ -187,6 +150,9 @@ static void snd_soc_jack_gpio_detect(struct snd_soc_jack_gpio *gpio)
 	struct snd_soc_jack *jack = gpio->jack;
 	int enable;
 	int report;
+
+	if (gpio->debounce_time > 0)
+		mdelay(gpio->debounce_time);
 
 	enable = gpio_get_value(gpio->gpio);
 	if (gpio->invert)
@@ -208,8 +174,7 @@ static irqreturn_t gpio_handler(int irq, void *data)
 {
 	struct snd_soc_jack_gpio *gpio = data;
 
-	schedule_delayed_work(&gpio->work,
-			      msecs_to_jiffies(gpio->debounce_time));
+	schedule_work(&gpio->work);
 
 	return IRQ_HANDLED;
 }
@@ -219,7 +184,7 @@ static void gpio_work(struct work_struct *work)
 {
 	struct snd_soc_jack_gpio *gpio;
 
-	gpio = container_of(work, struct snd_soc_jack_gpio, work.work);
+	gpio = container_of(work, struct snd_soc_jack_gpio, work);
 	snd_soc_jack_gpio_detect(gpio);
 }
 
@@ -260,13 +225,13 @@ int snd_soc_jack_add_gpios(struct snd_soc_jack *jack, int count,
 		if (ret)
 			goto err;
 
-		INIT_DELAYED_WORK(&gpios[i].work, gpio_work);
+		INIT_WORK(&gpios[i].work, gpio_work);
 		gpios[i].jack = jack;
 
 		ret = request_irq(gpio_to_irq(gpios[i].gpio),
 				gpio_handler,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-				jack->codec->dev->driver->name,
+				jack->card->dev->driver->name,
 				&gpios[i]);
 		if (ret)
 			goto err;
@@ -310,7 +275,6 @@ void snd_soc_jack_free_gpios(struct snd_soc_jack *jack, int count,
 		gpio_unexport(gpios[i].gpio);
 #endif
 		free_irq(gpio_to_irq(gpios[i].gpio), &gpios[i]);
-		cancel_delayed_work_sync(&gpios[i].work);
 		gpio_free(gpios[i].gpio);
 		gpios[i].jack = NULL;
 	}

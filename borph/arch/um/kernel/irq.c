@@ -12,7 +12,6 @@
 #include "linux/module.h"
 #include "linux/sched.h"
 #include "linux/seq_file.h"
-#include "linux/slab.h"
 #include "as-layout.h"
 #include "kern_util.h"
 #include "os.h"
@@ -46,7 +45,7 @@ int show_interrupts(struct seq_file *p, void *v)
 		for_each_online_cpu(j)
 			seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
 #endif
-		seq_printf(p, " %14s", irq_desc[i].chip->name);
+		seq_printf(p, " %14s", irq_desc[i].chip->typename);
 		seq_printf(p, "  %s", action->name);
 
 		for (action=action->next; action; action = action->next)
@@ -334,7 +333,7 @@ unsigned int do_IRQ(int irq, struct uml_pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs((struct pt_regs *)regs);
 	irq_enter();
-	generic_handle_irq(irq);
+	__do_IRQ(irq);
 	irq_exit();
 	set_irq_regs(old_regs);
 	return 1;
@@ -369,7 +368,7 @@ static void dummy(unsigned int irq)
 
 /* This is used for everything else than the timer. */
 static struct irq_chip normal_irq_type = {
-	.name = "SIGIO",
+	.typename = "SIGIO",
 	.release = free_irq_by_irq_and_dev,
 	.disable = dummy,
 	.enable = dummy,
@@ -378,7 +377,7 @@ static struct irq_chip normal_irq_type = {
 };
 
 static struct irq_chip SIGVTALRM_irq_type = {
-	.name = "SIGVTALRM",
+	.typename = "SIGVTALRM",
 	.release = free_irq_by_irq_and_dev,
 	.shutdown = dummy, /* never called */
 	.disable = dummy,
@@ -391,10 +390,17 @@ void __init init_IRQ(void)
 {
 	int i;
 
-	set_irq_chip_and_handler(TIMER_IRQ, &SIGVTALRM_irq_type, handle_edge_irq);
-
+	irq_desc[TIMER_IRQ].status = IRQ_DISABLED;
+	irq_desc[TIMER_IRQ].action = NULL;
+	irq_desc[TIMER_IRQ].depth = 1;
+	irq_desc[TIMER_IRQ].chip = &SIGVTALRM_irq_type;
+	enable_irq(TIMER_IRQ);
 	for (i = 1; i < NR_IRQS; i++) {
-		set_irq_chip_and_handler(i, &normal_irq_type, handle_edge_irq);
+		irq_desc[i].status = IRQ_DISABLED;
+		irq_desc[i].action = NULL;
+		irq_desc[i].depth = 1;
+		irq_desc[i].chip = &normal_irq_type;
+		enable_irq(i);
 	}
 }
 

@@ -74,8 +74,7 @@ config EFI_PCDP
 
 	  You must also enable the appropriate drivers (serial, VGA, etc.)
 
-	  See DIG64_HCDPv20_042804.pdf available from
-	  <http://www.dig64.org/specifications/> 
+	  See <http://www.dig64.org/specifications/DIG64_HCDPv20_042804.pdf>
 
 config DELL_RBU
 	tristate "BIOS update support for DELL systems via sysfs"
@@ -125,8 +124,7 @@ config ISCSI_IBFT_FIND
 
 config ISCSI_IBFT
 	tristate "iSCSI Boot Firmware Table Attributes module"
-	select ISCSI_BOOT_SYSFS
-	depends on ISCSI_IBFT_FIND && SCSI && SCSI_LOWLEVEL
+	depends on ISCSI_IBFT_FIND
 	default	n
 	help
 	  This option enables support for detection and exposing of iSCSI

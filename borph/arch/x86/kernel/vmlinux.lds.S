@@ -97,7 +97,7 @@ SECTIONS
 		HEAD_TEXT
 #ifdef CONFIG_X86_32
 		. = ALIGN(PAGE_SIZE);
-		*(.text..page_aligned)
+		*(.text.page_aligned)
 #endif
 		. = ALIGN(8);
 		_stext = .;
@@ -242,12 +242,6 @@ SECTIONS
 		__x86_cpu_dev_end = .;
 	}
 
-	/*
-	 * start address and size of operations which during runtime
-	 * can be patched with virtualization friendly instructions or
-	 * baremetal native ones. Think page table operations.
-	 * Details in paravirt_types.h
-	 */
 	. = ALIGN(8);
 	.parainstructions : AT(ADDR(.parainstructions) - LOAD_OFFSET) {
 		__parainstructions = .;
@@ -255,11 +249,6 @@ SECTIONS
 		__parainstructions_end = .;
 	}
 
-	/*
-	 * struct alt_inst entries. From the header (alternative.h):
-	 * "Alternative instructions for different CPU types or capabilities"
-	 * Think locking instructions on spinlocks.
-	 */
 	. = ALIGN(8);
 	.altinstructions : AT(ADDR(.altinstructions) - LOAD_OFFSET) {
 		__alt_instructions = .;
@@ -267,27 +256,10 @@ SECTIONS
 		__alt_instructions_end = .;
 	}
 
-	/*
-	 * And here are the replacement instructions. The linker sticks
-	 * them as binary blobs. The .altinstructions has enough data to
-	 * get the address and the length of them to patch the kernel safely.
-	 */
 	.altinstr_replacement : AT(ADDR(.altinstr_replacement) - LOAD_OFFSET) {
 		*(.altinstr_replacement)
 	}
 
-	/*
-	 * struct iommu_table_entry entries are injected in this section.
-	 * It is an array of IOMMUs which during run time gets sorted depending
-	 * on its dependency order. After rootfs_initcall is complete
-	 * this section can be safely removed.
-	 */
-	.iommu_table : AT(ADDR(.iommu_table) - LOAD_OFFSET) {
-		__iommu_table = .;
-		*(.iommu_table)
-		__iommu_table_end = .;
-	}
-	. = ALIGN(8);
 	/*
 	 * .exit.text is discard at runtime, not link time, to deal with
 	 *  references from .altinstructions and .eh_frame
@@ -301,7 +273,7 @@ SECTIONS
 	}
 
 #if !defined(CONFIG_X86_64) || !defined(CONFIG_SMP)
-	PERCPU(THREAD_SIZE)
+	PERCPU(PAGE_SIZE)
 #endif
 
 	. = ALIGN(PAGE_SIZE);
@@ -319,8 +291,8 @@ SECTIONS
 	.smp_locks : AT(ADDR(.smp_locks) - LOAD_OFFSET) {
 		__smp_locks = .;
 		*(.smp_locks)
-		. = ALIGN(PAGE_SIZE);
 		__smp_locks_end = .;
+		. = ALIGN(PAGE_SIZE);
 	}
 
 #ifdef CONFIG_X86_64
@@ -333,7 +305,7 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 	.bss : AT(ADDR(.bss) - LOAD_OFFSET) {
 		__bss_start = .;
-		*(.bss..page_aligned)
+		*(.bss.page_aligned)
 		*(.bss)
 		. = ALIGN(4);
 		__bss_stop = .;
@@ -347,7 +319,9 @@ SECTIONS
 		__brk_limit = .;
 	}
 
-	_end = .;
+	.end : AT(ADDR(.end) - LOAD_OFFSET) {
+		_end = .;
+	}
 
         STABS_DEBUG
         DWARF_DEBUG
@@ -369,7 +343,7 @@ SECTIONS
  * Per-cpu symbols which need to be offset from __per_cpu_load
  * for the boot processor.
  */
-#define INIT_PER_CPU(x) init_per_cpu__##x = x + __per_cpu_load
+#define INIT_PER_CPU(x) init_per_cpu__##x = per_cpu__##x + __per_cpu_load
 INIT_PER_CPU(gdt_page);
 INIT_PER_CPU(irq_stack_union);
 
@@ -380,7 +354,7 @@ INIT_PER_CPU(irq_stack_union);
 	   "kernel image bigger than KERNEL_IMAGE_SIZE");
 
 #ifdef CONFIG_SMP
-. = ASSERT((irq_stack_union == 0),
+. = ASSERT((per_cpu__irq_stack_union == 0),
            "irq_stack_union is not at start of per-cpu area");
 #endif
 

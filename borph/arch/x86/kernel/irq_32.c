@@ -17,7 +17,6 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <linux/percpu.h>
-#include <linux/mm.h>
 
 #include <asm/apic.h>
 
@@ -50,16 +49,20 @@ static inline int check_stack_overflow(void) { return 0; }
 static inline void print_stack_overflow(void) { }
 #endif
 
+#ifdef CONFIG_4KSTACKS
 /*
  * per-CPU IRQ handling contexts (thread information and stack)
  */
 union irq_ctx {
 	struct thread_info      tinfo;
 	u32                     stack[THREAD_SIZE/sizeof(u32)];
-} __attribute__((aligned(THREAD_SIZE)));
+} __attribute__((aligned(PAGE_SIZE)));
 
 static DEFINE_PER_CPU(union irq_ctx *, hardirq_ctx);
 static DEFINE_PER_CPU(union irq_ctx *, softirq_ctx);
+
+static DEFINE_PER_CPU_PAGE_ALIGNED(union irq_ctx, hardirq_stack);
+static DEFINE_PER_CPU_PAGE_ALIGNED(union irq_ctx, softirq_stack);
 
 static void call_on_stack(void *func, void *stack)
 {
@@ -126,9 +129,7 @@ void __cpuinit irq_ctx_init(int cpu)
 	if (per_cpu(hardirq_ctx, cpu))
 		return;
 
-	irqctx = page_address(alloc_pages_node(cpu_to_node(cpu),
-					       THREAD_FLAGS,
-					       THREAD_ORDER));
+	irqctx = &per_cpu(hardirq_stack, cpu);
 	irqctx->tinfo.task		= NULL;
 	irqctx->tinfo.exec_domain	= NULL;
 	irqctx->tinfo.cpu		= cpu;
@@ -137,9 +138,7 @@ void __cpuinit irq_ctx_init(int cpu)
 
 	per_cpu(hardirq_ctx, cpu) = irqctx;
 
-	irqctx = page_address(alloc_pages_node(cpu_to_node(cpu),
-					       THREAD_FLAGS,
-					       THREAD_ORDER));
+	irqctx = &per_cpu(softirq_stack, cpu);
 	irqctx->tinfo.task		= NULL;
 	irqctx->tinfo.exec_domain	= NULL;
 	irqctx->tinfo.cpu		= cpu;
@@ -150,6 +149,11 @@ void __cpuinit irq_ctx_init(int cpu)
 
 	printk(KERN_DEBUG "CPU %u irqstacks, hard=%p soft=%p\n",
 	       cpu, per_cpu(hardirq_ctx, cpu),  per_cpu(softirq_ctx, cpu));
+}
+
+void irq_ctx_exit(int cpu)
+{
+	per_cpu(hardirq_ctx, cpu) = NULL;
 }
 
 asmlinkage void do_softirq(void)
@@ -182,6 +186,11 @@ asmlinkage void do_softirq(void)
 
 	local_irq_restore(flags);
 }
+
+#else
+static inline int
+execute_on_irq_stack(int overflow, struct irq_desc *desc, int irq) { return 0; }
+#endif
 
 bool handle_irq(unsigned irq, struct pt_regs *regs)
 {

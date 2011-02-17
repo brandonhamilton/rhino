@@ -36,11 +36,15 @@ ENTRY(cpu_arm740_switch_mm)
  * cpu_arm740_proc_fin()
  */
 ENTRY(cpu_arm740_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
 	mrc	p15, 0, r0, c1, c0, 0
 	bic	r0, r0, #0x3f000000		@ bank/f/lock/s
 	bic	r0, r0, #0x0000000c		@ w-buffer/cache
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	mcr	p15, 0, r0, c7, c0, 0		@ invalidate cache
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm740_reset(loc)
@@ -55,7 +59,7 @@ ENTRY(cpu_arm740_reset)
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
 
-	__CPUINIT
+	__INIT
 
 	.type	__arm740_setup, #function
 __arm740_setup:

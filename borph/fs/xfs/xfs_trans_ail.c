@@ -24,6 +24,7 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
+#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_trans_priv.h"
 #include "xfs_error.h"
@@ -236,15 +237,14 @@ out:
 }
 
 /*
- * xfsaild_push does the work of pushing on the AIL.  Returning a timeout of
- * zero indicates that the caller should sleep until woken.
+ * Function that does the work of pushing on the AIL
  */
 long
 xfsaild_push(
 	struct xfs_ail	*ailp,
 	xfs_lsn_t	*last_lsn)
 {
-	long		tout = 0;
+	long		tout = 1000; /* milliseconds */
 	xfs_lsn_t	last_pushed_lsn = *last_lsn;
 	xfs_lsn_t	target =  ailp->xa_target;
 	xfs_lsn_t	lsn;
@@ -252,7 +252,6 @@ xfsaild_push(
 	int		flush_log, count, stuck;
 	xfs_mount_t	*mp = ailp->xa_mount;
 	struct xfs_ail_cursor	*cur = &ailp->xa_cursors;
-	int		push_xfsbufd = 0;
 
 	spin_lock(&ailp->xa_lock);
 	xfs_trans_ail_cursor_init(ailp, cur);
@@ -263,7 +262,7 @@ xfsaild_push(
 		 */
 		xfs_trans_ail_cursor_done(ailp, cur);
 		spin_unlock(&ailp->xa_lock);
-		*last_lsn = 0;
+		last_pushed_lsn = 0;
 		return tout;
 	}
 
@@ -280,6 +279,7 @@ xfsaild_push(
 	 * prevents use from spinning when we can't do anything or there is
 	 * lots of contention on the AIL lists.
 	 */
+	tout = 10;
 	lsn = lip->li_lsn;
 	flush_log = stuck = count = 0;
 	while ((XFS_LSN_CMP(lip->li_lsn, target) < 0)) {
@@ -308,7 +308,6 @@ xfsaild_push(
 			XFS_STATS_INC(xs_push_ail_pushbuf);
 			IOP_PUSHBUF(lip);
 			last_pushed_lsn = lsn;
-			push_xfsbufd = 1;
 			break;
 
 		case XFS_ITEM_PINNED:
@@ -319,6 +318,12 @@ xfsaild_push(
 
 		case XFS_ITEM_LOCKED:
 			XFS_STATS_INC(xs_push_ail_locked);
+			last_pushed_lsn = lsn;
+			stuck++;
+			break;
+
+		case XFS_ITEM_FLUSHING:
+			XFS_STATS_INC(xs_push_ail_flushing);
 			last_pushed_lsn = lsn;
 			stuck++;
 			break;
@@ -366,24 +371,19 @@ xfsaild_push(
 		 * move forward in the AIL.
 		 */
 		XFS_STATS_INC(xs_push_ail_flush);
-		xfs_log_force(mp, 0);
-	}
-
-	if (push_xfsbufd) {
-		/* we've got delayed write buffers to flush */
-		wake_up_process(mp->m_ddev_targp->bt_task);
+		xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE);
 	}
 
 	if (!count) {
 		/* We're past our target or empty, so idle */
-		last_pushed_lsn = 0;
+		tout = 1000;
 	} else if (XFS_LSN_CMP(lsn, target) >= 0) {
 		/*
 		 * We reached the target so wait a bit longer for I/O to
 		 * complete and remove pushed items from the AIL before we
 		 * start the next scan from the start of the AIL.
 		 */
-		tout = 50;
+		tout += 20;
 		last_pushed_lsn = 0;
 	} else if ((stuck * 100) / count > 90) {
 		/*
@@ -395,14 +395,11 @@ xfsaild_push(
 		 * Backoff a bit more to allow some I/O to complete before
 		 * continuing from where we were.
 		 */
-		tout = 20;
-	} else {
-		/* more to do, but wait a short while before continuing */
-		tout = 10;
+		tout += 10;
 	}
 	*last_lsn = last_pushed_lsn;
 	return tout;
-}
+}	/* xfsaild_push */
 
 
 /*

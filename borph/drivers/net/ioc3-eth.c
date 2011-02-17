@@ -44,7 +44,6 @@
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/dma-mapping.h>
-#include <linux/gfp.h>
 
 #ifdef CONFIG_SERIAL_8250
 #include <linux/serial_core.h>
@@ -82,6 +81,7 @@ struct ioc3_private {
 	struct ioc3_etxd *txr;
 	struct sk_buff *rx_skbs[512];
 	struct sk_buff *tx_skbs[128];
+	struct net_device_stats stats;
 	int rx_ci;			/* RX consumer index */
 	int rx_pi;			/* RX producer index */
 	int tx_ci;			/* TX consumer index */
@@ -503,8 +503,8 @@ static struct net_device_stats *ioc3_get_stats(struct net_device *dev)
 	struct ioc3_private *ip = netdev_priv(dev);
 	struct ioc3 *ioc3 = ip->regs;
 
-	dev->stats.collisions += (ioc3_r_etcdc() & ETCDC_COLLCNT_MASK);
-	return &dev->stats;
+	ip->stats.collisions += (ioc3_r_etcdc() & ETCDC_COLLCNT_MASK);
+	return &ip->stats;
 }
 
 static void ioc3_tcpudp_checksum(struct sk_buff *skb, uint32_t hwsum, int len)
@@ -575,9 +575,8 @@ static void ioc3_tcpudp_checksum(struct sk_buff *skb, uint32_t hwsum, int len)
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 }
 
-static inline void ioc3_rx(struct net_device *dev)
+static inline void ioc3_rx(struct ioc3_private *ip)
 {
-	struct ioc3_private *ip = netdev_priv(dev);
 	struct sk_buff *skb, *new_skb;
 	struct ioc3 *ioc3 = ip->regs;
 	int rx_entry, n_entry, len;
@@ -598,13 +597,13 @@ static inline void ioc3_rx(struct net_device *dev)
 		if (err & ERXBUF_GOODPKT) {
 			len = ((w0 >> ERXBUF_BYTECNT_SHIFT) & 0x7ff) - 4;
 			skb_trim(skb, len);
-			skb->protocol = eth_type_trans(skb, dev);
+			skb->protocol = eth_type_trans(skb, priv_netdev(ip));
 
 			new_skb = ioc3_alloc_skb(RX_BUF_ALLOC_SIZE, GFP_ATOMIC);
 			if (!new_skb) {
 				/* Ouch, drop packet and just recycle packet
 				   to keep the ring filled.  */
-				dev->stats.rx_dropped++;
+				ip->stats.rx_dropped++;
 				new_skb = skb;
 				goto next;
 			}
@@ -622,19 +621,19 @@ static inline void ioc3_rx(struct net_device *dev)
 			rxb = (struct ioc3_erxbuf *) new_skb->data;
 			skb_reserve(new_skb, RX_OFFSET);
 
-			dev->stats.rx_packets++;		/* Statistics */
-			dev->stats.rx_bytes += len;
+			ip->stats.rx_packets++;		/* Statistics */
+			ip->stats.rx_bytes += len;
 		} else {
-			/* The frame is invalid and the skb never
-			   reached the network layer so we can just
-			   recycle it.  */
-			new_skb = skb;
-			dev->stats.rx_errors++;
+ 			/* The frame is invalid and the skb never
+                           reached the network layer so we can just
+                           recycle it.  */
+ 			new_skb = skb;
+ 			ip->stats.rx_errors++;
 		}
 		if (err & ERXBUF_CRCERR)	/* Statistics */
-			dev->stats.rx_crc_errors++;
+			ip->stats.rx_crc_errors++;
 		if (err & ERXBUF_FRAMERR)
-			dev->stats.rx_frame_errors++;
+			ip->stats.rx_frame_errors++;
 next:
 		ip->rx_skbs[n_entry] = new_skb;
 		rxr[n_entry] = cpu_to_be64(ioc3_map(rxb, 1));
@@ -652,9 +651,8 @@ next:
 	ip->rx_ci = rx_entry;
 }
 
-static inline void ioc3_tx(struct net_device *dev)
+static inline void ioc3_tx(struct ioc3_private *ip)
 {
-	struct ioc3_private *ip = netdev_priv(dev);
 	unsigned long packets, bytes;
 	struct ioc3 *ioc3 = ip->regs;
 	int tx_entry, o_entry;
@@ -682,12 +680,12 @@ static inline void ioc3_tx(struct net_device *dev)
 		tx_entry = (etcir >> 7) & 127;
 	}
 
-	dev->stats.tx_packets += packets;
-	dev->stats.tx_bytes += bytes;
+	ip->stats.tx_packets += packets;
+	ip->stats.tx_bytes += bytes;
 	ip->txqlen -= packets;
 
 	if (ip->txqlen < 128)
-		netif_wake_queue(dev);
+		netif_wake_queue(priv_netdev(ip));
 
 	ip->tx_ci = o_entry;
 	spin_unlock(&ip->ioc3_lock);
@@ -700,9 +698,9 @@ static inline void ioc3_tx(struct net_device *dev)
  * with such error interrupts if something really goes wrong, so we might
  * also consider to take the interface down.
  */
-static void ioc3_error(struct net_device *dev, u32 eisr)
+static void ioc3_error(struct ioc3_private *ip, u32 eisr)
 {
-	struct ioc3_private *ip = netdev_priv(dev);
+	struct net_device *dev = priv_netdev(ip);
 	unsigned char *iface = dev->name;
 
 	spin_lock(&ip->ioc3_lock);
@@ -748,11 +746,11 @@ static irqreturn_t ioc3_interrupt(int irq, void *_dev)
 
 	if (eisr & (EISR_RXOFLO | EISR_RXBUFOFLO | EISR_RXMEMERR |
 	            EISR_RXPARERR | EISR_TXBUFUFLO | EISR_TXMEMERR))
-		ioc3_error(dev, eisr);
+		ioc3_error(ip, eisr);
 	if (eisr & EISR_RXTIMERINT)
-		ioc3_rx(dev);
+		ioc3_rx(ip);
 	if (eisr & EISR_TXEXPLICIT)
-		ioc3_tx(dev);
+		ioc3_tx(ip);
 
 	return IRQ_HANDLED;
 }
@@ -827,7 +825,7 @@ static void ioc3_mii_start(struct ioc3_private *ip)
 {
 	ip->ioc3_timer.expires = jiffies + (12 * HZ)/10;  /* 1.2 sec. */
 	ip->ioc3_timer.data = (unsigned long) ip;
-	ip->ioc3_timer.function = ioc3_timer;
+	ip->ioc3_timer.function = &ioc3_timer;
 	add_timer(&ip->ioc3_timer);
 }
 
@@ -1385,7 +1383,7 @@ static void __devexit ioc3_remove_one (struct pci_dev *pdev)
 	 */
 }
 
-static DEFINE_PCI_DEVICE_TABLE(ioc3_pci_tbl) = {
+static struct pci_device_id ioc3_pci_tbl[] = {
 	{ PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_IOC3, PCI_ANY_ID, PCI_ANY_ID },
 	{ 0 }
 };
@@ -1504,6 +1502,7 @@ static int ioc3_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	BARRIER();
 
+	dev->trans_start = jiffies;
 	ip->tx_skbs[produce] = skb;			/* Remember skb */
 	produce = (produce + 1) & 127;
 	ip->tx_pi = produce;
@@ -1665,10 +1664,11 @@ static int ioc3_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 static void ioc3_set_multicast_list(struct net_device *dev)
 {
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *dmi = dev->mc_list;
 	struct ioc3_private *ip = netdev_priv(dev);
 	struct ioc3 *ioc3 = ip->regs;
 	u64 ehar = 0;
+	int i;
 
 	netif_stop_queue(dev);				/* Lock out others. */
 
@@ -1681,16 +1681,16 @@ static void ioc3_set_multicast_list(struct net_device *dev)
 		ioc3_w_emcr(ip->emcr);			/* Clear promiscuous. */
 		(void) ioc3_r_emcr();
 
-		if ((dev->flags & IFF_ALLMULTI) ||
-		    (netdev_mc_count(dev) > 64)) {
+		if ((dev->flags & IFF_ALLMULTI) || (dev->mc_count > 64)) {
 			/* Too many for hashing to make sense or we want all
 			   multicast packets anyway,  so skip computing all the
 			   hashes and just accept all packets.  */
 			ip->ehar_h = 0xffffffff;
 			ip->ehar_l = 0xffffffff;
 		} else {
-			netdev_for_each_mc_addr(ha, dev) {
-				char *addr = ha->addr;
+			for (i = 0; i < dev->mc_count; i++) {
+				char *addr = dmi->dmi_addr;
+				dmi = dmi->next;
 
 				if (!(*addr & 1))
 					continue;

@@ -73,7 +73,6 @@
  *   i2400m_notif_submit
  */
 #include <linux/usb.h>
-#include <linux/gfp.h>
 #include "i2400m-usb.h"
 
 

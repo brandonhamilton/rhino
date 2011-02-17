@@ -25,6 +25,7 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/selection.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/tc.h>
 
@@ -305,7 +306,7 @@ tgafb_set_par(struct fb_info *info)
 	TGA_WRITE_REG(par, htimings, TGA_HORIZ_REG);
 	TGA_WRITE_REG(par, vtimings, TGA_VERT_REG);
 
-	/* Initialise RAMDAC. */
+	/* Initalise RAMDAC. */
 	if (tga_type == TGA_TYPE_8PLANE && tga_bus_pci) {
 
 		/* Init BT485 RAMDAC registers.  */

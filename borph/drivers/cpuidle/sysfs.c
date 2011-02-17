@@ -9,7 +9,6 @@
 #include <linux/kernel.h>
 #include <linux/cpuidle.h>
 #include <linux/sysfs.h>
-#include <linux/slab.h>
 #include <linux/cpu.h>
 
 #include "cpuidle.h"
@@ -23,7 +22,6 @@ static int __init cpuidle_sysfs_setup(char *unused)
 __setup("cpuidle_sysfs_switch", cpuidle_sysfs_setup);
 
 static ssize_t show_available_governors(struct sysdev_class *class,
-					struct sysdev_class_attribute *attr,
 					char *buf)
 {
 	ssize_t i = 0;
@@ -43,15 +41,13 @@ out:
 }
 
 static ssize_t show_current_driver(struct sysdev_class *class,
-				   struct sysdev_class_attribute *attr,
 				   char *buf)
 {
 	ssize_t ret;
-	struct cpuidle_driver *cpuidle_driver = cpuidle_get_driver();
 
 	spin_lock(&cpuidle_driver_lock);
-	if (cpuidle_driver)
-		ret = sprintf(buf, "%s\n", cpuidle_driver->name);
+	if (cpuidle_curr_driver)
+		ret = sprintf(buf, "%s\n", cpuidle_curr_driver->name);
 	else
 		ret = sprintf(buf, "none\n");
 	spin_unlock(&cpuidle_driver_lock);
@@ -60,7 +56,6 @@ static ssize_t show_current_driver(struct sysdev_class *class,
 }
 
 static ssize_t show_current_governor(struct sysdev_class *class,
-				     struct sysdev_class_attribute *attr,
 				     char *buf)
 {
 	ssize_t ret;
@@ -76,7 +71,6 @@ static ssize_t show_current_governor(struct sysdev_class *class,
 }
 
 static ssize_t store_current_governor(struct sysdev_class *class,
-				      struct sysdev_class_attribute *attr,
 				      const char *buf, size_t count)
 {
 	char gov_name[CPUIDLE_NAME_LEN];
@@ -197,7 +191,7 @@ static ssize_t cpuidle_store(struct kobject * kobj, struct attribute * attr,
 	return ret;
 }
 
-static const struct sysfs_ops cpuidle_sysfs_ops = {
+static struct sysfs_ops cpuidle_sysfs_ops = {
 	.show = cpuidle_show,
 	.store = cpuidle_store,
 };
@@ -283,7 +277,7 @@ static ssize_t cpuidle_state_show(struct kobject * kobj,
 	return ret;
 }
 
-static const struct sysfs_ops cpuidle_state_sysfs_ops = {
+static struct sysfs_ops cpuidle_state_sysfs_ops = {
 	.show = cpuidle_state_show,
 };
 

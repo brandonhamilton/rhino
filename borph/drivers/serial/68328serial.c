@@ -35,7 +35,6 @@
 #include <linux/pm.h>
 #include <linux/bitops.h>
 #include <linux/delay.h>
-#include <linux/gfp.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -78,6 +77,10 @@ struct m68k_serial *m68k_consinfo = 0;
 
 #define M68K_CLOCK (16667000) /* FIXME: 16MHz is likely wrong */
 
+#ifdef CONFIG_CONSOLE
+extern wait_queue_head_t keypress_wait; 
+#endif
+
 struct tty_driver *serial_driver;
 
 /* number of characters left in xmit buffer before we ask for more */
@@ -98,12 +101,18 @@ static void change_speed(struct m68k_serial *info);
  *	Setup for console. Argument comes from the boot command line.
  */
 
-/* note: this is messy, but it works, again, perhaps defined somewhere else?*/
-#ifdef CONFIG_M68VZ328
-#define CONSOLE_BAUD_RATE	19200
-#define DEFAULT_CBAUD		B19200
+#if defined(CONFIG_M68EZ328ADS) || defined(CONFIG_ALMA_ANS) || defined(CONFIG_DRAGONIXVZ)
+#define	CONSOLE_BAUD_RATE	115200
+#define	DEFAULT_CBAUD		B115200
+#else
+	/* (es) */
+	/* note: this is messy, but it works, again, perhaps defined somewhere else?*/
+	#ifdef CONFIG_M68VZ328
+	#define CONSOLE_BAUD_RATE	19200
+	#define DEFAULT_CBAUD		B19200
+	#endif
+	/* (/es) */
 #endif
-
 
 #ifndef CONSOLE_BAUD_RATE
 #define	CONSOLE_BAUD_RATE	9600
@@ -143,6 +152,8 @@ static inline int serial_paranoia_check(struct m68k_serial *info,
 static int baud_table[] = {
 	0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800,
 	9600, 19200, 38400, 57600, 115200, 0 };
+
+#define BAUD_TABLE_SIZE (sizeof(baud_table)/sizeof(baud_table[0]))
 
 /* Sets or clears DTR/RTS on the requested line */
 static inline void m68k_rtsdtr(struct m68k_serial *ss, int set)
@@ -290,6 +301,10 @@ static void receive_chars(struct m68k_serial *info, unsigned short rx)
 				return;
 #endif /* CONFIG_MAGIC_SYSRQ */
 			}
+			/* It is a 'keyboard interrupt' ;-) */
+#ifdef CONFIG_CONSOLE
+			wake_up(&keypress_wait);
+#endif			
 		}
 
 		if(!tty)
@@ -869,9 +884,7 @@ static int get_serial_info(struct m68k_serial * info,
 	tmp.close_delay = info->close_delay;
 	tmp.closing_wait = info->closing_wait;
 	tmp.custom_divisor = info->custom_divisor;
-	if (copy_to_user(retinfo, &tmp, sizeof(*retinfo)))
-		return -EFAULT;
-
+	copy_to_user(retinfo,&tmp,sizeof(*retinfo));
 	return 0;
 }
 
@@ -884,8 +897,7 @@ static int set_serial_info(struct m68k_serial * info,
 
 	if (!new_info)
 		return -EFAULT;
-	if (copy_from_user(&new_serial, new_info, sizeof(new_serial)))
-		return -EFAULT;
+	copy_from_user(&new_serial,new_info,sizeof(new_serial));
 	old_info = *info;
 
 	if (!capable(CAP_SYS_ADMIN)) {
@@ -946,7 +958,8 @@ static int get_lsr_info(struct m68k_serial * info, unsigned int *value)
 	status = 0;
 #endif
 	local_irq_restore(flags);
-	return put_user(status, value);
+	put_user(status,value);
+	return 0;
 }
 
 /*
@@ -1001,18 +1014,27 @@ static int rs_ioctl(struct tty_struct *tty, struct file * file,
 			send_break(info, arg ? arg*(100) : 250);
 			return 0;
 		case TIOCGSERIAL:
-			return get_serial_info(info,
-				       (struct serial_struct *) arg);
+			if (access_ok(VERIFY_WRITE, (void *) arg,
+						sizeof(struct serial_struct)))
+				return get_serial_info(info,
+					       (struct serial_struct *) arg);
+			return -EFAULT;
 		case TIOCSSERIAL:
 			return set_serial_info(info,
 					       (struct serial_struct *) arg);
 		case TIOCSERGETLSR: /* Get line status register */
-			return get_lsr_info(info, (unsigned int *) arg);
+			if (access_ok(VERIFY_WRITE, (void *) arg,
+						sizeof(unsigned int)))
+				return get_lsr_info(info, (unsigned int *) arg);
+			return -EFAULT;
 		case TIOCSERGSTRUCT:
-			if (copy_to_user((struct m68k_serial *) arg,
-				    info, sizeof(struct m68k_serial)))
+			if (!access_ok(VERIFY_WRITE, (void *) arg,
+						sizeof(struct m68k_serial)))
 				return -EFAULT;
+			copy_to_user((struct m68k_serial *) arg,
+				    info, sizeof(struct m68k_serial));
 			return 0;
+			
 		default:
 			return -ENOIOCTLCMD;
 		}
@@ -1222,9 +1244,7 @@ static int block_til_ready(struct tty_struct *tty, struct file * filp,
 			retval = -ERESTARTSYS;
 			break;
 		}
-		tty_unlock();
 		schedule();
-		tty_lock();
 	}
 	current->state = TASK_RUNNING;
 	remove_wait_queue(&info->open_wait, &wait);
@@ -1386,10 +1406,10 @@ static void m68328_set_baud(void)
 	USTCNT = ustcnt & ~USTCNT_TXEN;
 
 again:
-	for (i = 0; i < ARRAY_SIZE(baud_table); i++)
+	for (i = 0; i < sizeof(baud_table) / sizeof(baud_table[0]); i++)
 		if (baud_table[i] == m68328_console_baud)
 			break;
-	if (i >= ARRAY_SIZE(baud_table)) {
+	if (i >= sizeof(baud_table) / sizeof(baud_table[0])) {
 		m68328_console_baud = 9600;
 		goto again;
 	}
@@ -1415,10 +1435,10 @@ int m68328_console_setup(struct console *cp, char *arg)
 	if (arg)
 		n = simple_strtoul(arg,NULL,0);
 
-	for (i = 0; i < ARRAY_SIZE(baud_table); i++)
+	for (i = 0; i < BAUD_TABLE_SIZE; i++)
 		if (baud_table[i] == n)
 			break;
-	if (i < ARRAY_SIZE(baud_table)) {
+	if (i < BAUD_TABLE_SIZE) {
 		m68328_console_baud = n;
 		m68328_console_cbaud = 0;
 		if (i > 15) {

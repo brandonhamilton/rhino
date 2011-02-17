@@ -12,8 +12,8 @@
 #  If you want to build AP support (untested), comment out -DSTA_ONLY
 
 INSTALLDIR := /lib/modules/$(shell uname -r)/kernel/drivers/net/wireless
-ccflags-y := -I$(KERNELDIR)/include
-ccflags-y += -I$(src) \
+EXTRA_CFLAGS += -I$(KERNELDIR)/include
+EXTRA_CFLAGS += -I$(src) \
 		-DBUS_PCMCIA \
 		-DUSE_WPA \
 		-DUSE_WEXT \
@@ -25,16 +25,16 @@ ccflags-y += -I$(src) \
 #		-DUSE_UIL \
 #		-DUSE_PROFILE \
 
-ifeq ($(findstring HERMES25,$(ccflags-y)),)
+ifeq ($(findstring HERMES25,$(EXTRA_CFLAGS)),)
 WLNAME := wlags49_h2_cs
 $(WLNAME)-y := sta_h2.o
-ifeq ($(findstring STA_ONLY,$(ccflags-y)),)
+ifeq ($(findstring STA_ONLY,$(EXTRA_CFLAGS)),)
 $(WLNAME)-y += ap_h2.o
 endif
 else
 WLNAME=wlags49_h25_cs
 $(WLNAME)-y := sta_h25.o
-ifeq ($(findstring STA_ONLY,$(ccflags-y)),)
+ifeq ($(findstring STA_ONLY,$(EXTRA_CFLAGS)),)
 $(WLNAME)-y += ap_h25.o
 endif
 endif

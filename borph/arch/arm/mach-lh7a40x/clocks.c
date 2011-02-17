@@ -10,8 +10,6 @@
 #include <mach/hardware.h>
 #include <mach/clocks.h>
 #include <linux/err.h>
-#include <linux/device.h>
-#include <linux/string.h>
 
 struct module;
 

@@ -36,7 +36,7 @@ static void __flush_cache_one(unsigned long addr, unsigned long phys,
  * Called from kernel/module.c:sys_init_module and routine for a.out format,
  * signal handler code and kprobes code
  */
-static void sh4_flush_icache_range(void *args)
+static void __uses_jump_to_uncached sh4_flush_icache_range(void *args)
 {
 	struct flusher_data *data = args;
 	unsigned long start, end;
@@ -109,22 +109,29 @@ static inline void flush_cache_one(unsigned long start, unsigned long phys)
 static void sh4_flush_dcache_page(void *arg)
 {
 	struct page *page = arg;
-	unsigned long addr = (unsigned long)page_address(page);
 #ifndef CONFIG_SMP
 	struct address_space *mapping = page_mapping(page);
 
 	if (mapping && !mapping_mapped(mapping))
-		clear_bit(PG_dcache_clean, &page->flags);
+		set_bit(PG_dcache_dirty, &page->flags);
 	else
 #endif
-		flush_cache_one(CACHE_OC_ADDRESS_ARRAY |
-				(addr & shm_align_mask), page_to_phys(page));
+	{
+		unsigned long phys = page_to_phys(page);
+		unsigned long addr = CACHE_OC_ADDRESS_ARRAY;
+		int i, n;
+
+		/* Loop all the D-cache */
+		n = boot_cpu_data.dcache.n_aliases;
+		for (i = 0; i < n; i++, addr += PAGE_SIZE)
+			flush_cache_one(addr, phys);
+	}
 
 	wmb();
 }
 
 /* TODO: Selective icache invalidation through IC address array.. */
-static void flush_icache_all(void)
+static void __uses_jump_to_uncached flush_icache_all(void)
 {
 	unsigned long flags, ccr;
 
@@ -132,9 +139,9 @@ static void flush_icache_all(void)
 	jump_to_uncached();
 
 	/* Flush I-cache */
-	ccr = __raw_readl(CCR);
+	ccr = ctrl_inl(CCR);
 	ccr |= CCR_CACHE_ICI;
-	__raw_writel(ccr, CCR);
+	ctrl_outl(ccr, CCR);
 
 	/*
 	 * back_to_cached() will take care of the barrier for us, don't add
@@ -239,7 +246,7 @@ static void sh4_flush_cache_page(void *args)
 		 * another ASID than the current one.
 		 */
 		map_coherent = (current_cpu_data.dcache.n_aliases &&
-			test_bit(PG_dcache_clean, &page->flags) &&
+			!test_bit(PG_dcache_dirty, &page->flags) &&
 			page_mapped(page));
 		if (map_coherent)
 			vaddr = kmap_coherent(page, address);
@@ -249,7 +256,8 @@ static void sh4_flush_cache_page(void *args)
 		address = (unsigned long)vaddr;
 	}
 
-	flush_cache_one(CACHE_OC_ADDRESS_ARRAY |
+	if (pages_do_alias(address, phys))
+		flush_cache_one(CACHE_OC_ADDRESS_ARRAY |
 			(address & shm_align_mask), phys);
 
 	if (vma->vm_flags & VM_EXEC)
@@ -377,9 +385,9 @@ extern void __weak sh4__flush_region_init(void);
 void __init sh4_cache_init(void)
 {
 	printk("PVR=%08x CVR=%08x PRR=%08x\n",
-		__raw_readl(CCN_PVR),
-		__raw_readl(CCN_CVR),
-		__raw_readl(CCN_PRR));
+		ctrl_inl(CCN_PVR),
+		ctrl_inl(CCN_CVR),
+		ctrl_inl(CCN_PRR));
 
 	local_flush_icache_range	= sh4_flush_icache_range;
 	local_flush_dcache_page		= sh4_flush_dcache_page;

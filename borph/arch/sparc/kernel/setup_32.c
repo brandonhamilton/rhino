@@ -95,6 +95,8 @@ static void prom_sync_me(void)
 			     "nop\n\t"
 			     "nop\n\t" : : "r" (prom_tbr));
 	local_irq_restore(flags);
+
+	return;
 }
 
 static unsigned int boot_flags __initdata = 0;

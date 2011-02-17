@@ -34,7 +34,7 @@ struct mc32_mailbox
 {
  	u16 mbox;
  	u16 data[1];
-} __packed;
+} __attribute((packed));
 
 struct skb_header
 {
@@ -43,7 +43,7 @@ struct skb_header
 	u16 next;	/* Do not change! */
 	u16 length;
 	u32 data;
-} __packed;
+} __attribute((packed));
 
 struct mc32_stats
 {
@@ -68,7 +68,7 @@ struct mc32_stats
 	u32 dataA[6];
 	u16 dataB[5];
 	u32 dataC[14];
-} __packed;
+} __attribute((packed));
 
 #define STATUS_MASK	0x0F
 #define COMPLETED	(1<<7)

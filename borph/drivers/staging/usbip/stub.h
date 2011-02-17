@@ -25,11 +25,6 @@
 #include <linux/module.h>
 #include <linux/net.h>
 
-#define STUB_BUSID_OTHER 0
-#define STUB_BUSID_REMOV 1
-#define STUB_BUSID_ADDED 2
-#define STUB_BUSID_ALLOC 3
-
 struct stub_device {
 	struct usb_interface *interface;
 	struct list_head list;
@@ -77,14 +72,6 @@ struct stub_unlink {
 	__u32 status;
 };
 
-#define BUSID_SIZE 20
-struct bus_id_priv {
-	char name[BUSID_SIZE];
-	char status;
-	int interf_count;
-	struct stub_device *sdev;
-	char shutdown_busid;
-};
 
 extern struct kmem_cache *stub_priv_cache;
 
@@ -104,7 +91,5 @@ void stub_rx_loop(struct usbip_task *);
 void stub_enqueue_ret_unlink(struct stub_device *, __u32, __u32);
 
 /* stub_main.c */
-struct bus_id_priv *get_busid_priv(const char *busid);
-int del_match_busid(char *busid);
-
+int match_busid(const char *busid);
 void stub_device_cleanup_urbs(struct stub_device *sdev);

@@ -108,9 +108,14 @@ applications.
 
 1.4  Where to get things
 
-Info on latest versions of the driver are here:
+You can download the latest versions of the driver from:
 
-http://web.archive.org/web/*/http://www.quicknet.net/develop.htm
+http://www.quicknet.net/develop.htm
+
+You can download the latest version of this document from:
+
+http://www.quicknet.net/develop.htm
+
 
 1.5  Mailing List
 

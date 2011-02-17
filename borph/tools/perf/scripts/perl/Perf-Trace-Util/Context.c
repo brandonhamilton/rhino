@@ -31,14 +31,13 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
-#include "../../../perf.h"
-#include "../../../util/trace-event.h"
+#include "../../../util/trace-event-perl.h"
 
 #ifndef PERL_UNUSED_VAR
 #  define PERL_UNUSED_VAR(var) if (0) var = var
 #endif
 
-#line 42 "Context.c"
+#line 41 "Context.c"
 
 XS(XS_Perf__Trace__Context_common_pc); /* prototype to pass -Wmissing-prototypes */
 XS(XS_Perf__Trace__Context_common_pc)

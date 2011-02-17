@@ -19,7 +19,6 @@
 #include <linux/input.h>
 #include <linux/workqueue.h>
 #include <linux/mfd/da903x.h>
-#include <linux/slab.h>
 
 #define DA9034_MANUAL_CTRL	0x50
 #define DA9034_LDO_ADC_EN	(1 << 4)

@@ -20,11 +20,9 @@
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <linux/if_arp.h>
 #include <net/x25.h>
-#include <net/x25device.h>
 
 static int x25_receive_data(struct sk_buff *skb, struct x25_neigh *nb)
 {
@@ -55,7 +53,7 @@ static int x25_receive_data(struct sk_buff *skb, struct x25_neigh *nb)
 		if (!sock_owned_by_user(sk)) {
 			queued = x25_process_rx_frame(sk, skb);
 		} else {
-			queued = !sk_add_backlog(sk, skb);
+			sk_add_backlog(sk, skb);
 		}
 		bh_unlock_sock(sk);
 		sock_put(sk);
@@ -116,22 +114,19 @@ int x25_lapb_receive_frame(struct sk_buff *skb, struct net_device *dev,
 	}
 
 	switch (skb->data[0]) {
-
-	case X25_IFACE_DATA:
-		skb_pull(skb, 1);
-		if (x25_receive_data(skb, nb)) {
-			x25_neigh_put(nb);
-			goto out;
-		}
-		break;
-
-	case X25_IFACE_CONNECT:
-		x25_link_established(nb);
-		break;
-
-	case X25_IFACE_DISCONNECT:
-		x25_link_terminated(nb);
-		break;
+		case 0x00:
+			skb_pull(skb, 1);
+			if (x25_receive_data(skb, nb)) {
+				x25_neigh_put(nb);
+				goto out;
+			}
+			break;
+		case 0x01:
+			x25_link_established(nb);
+			break;
+		case 0x02:
+			x25_link_terminated(nb);
+			break;
 	}
 	x25_neigh_put(nb);
 drop:
@@ -152,7 +147,7 @@ void x25_establish_link(struct x25_neigh *nb)
 				return;
 			}
 			ptr  = skb_put(skb, 1);
-			*ptr = X25_IFACE_CONNECT;
+			*ptr = 0x01;
 			break;
 
 #if defined(CONFIG_LLC) || defined(CONFIG_LLC_MODULE)
@@ -188,7 +183,7 @@ void x25_terminate_link(struct x25_neigh *nb)
 	}
 
 	ptr  = skb_put(skb, 1);
-	*ptr = X25_IFACE_DISCONNECT;
+	*ptr = 0x02;
 
 	skb->protocol = htons(ETH_P_X25);
 	skb->dev      = nb->dev;
@@ -204,7 +199,7 @@ void x25_send_frame(struct sk_buff *skb, struct x25_neigh *nb)
 	switch (nb->dev->type) {
 		case ARPHRD_X25:
 			dptr  = skb_push(skb, 1);
-			*dptr = X25_IFACE_DATA;
+			*dptr = 0x00;
 			break;
 
 #if defined(CONFIG_LLC) || defined(CONFIG_LLC_MODULE)

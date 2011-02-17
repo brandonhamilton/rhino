@@ -6,7 +6,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>

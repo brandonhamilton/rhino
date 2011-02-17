@@ -112,19 +112,11 @@ irqreturn_t interrupt_handler(int dummy, void *card_inst)
 			}
 			else if(callid>=0x0000 && callid<=0x7FFF)
 			{
-				int len;
-
 				pr_debug("%s: Got Incoming Call\n",
 						sc_adapter[card]->devicename);
-				len = strlcpy(setup.phone, &(rcvmsg.msg_data.byte_array[4]),
-						sizeof(setup.phone));
-				if (len >= sizeof(setup.phone))
-					continue;
-				len = strlcpy(setup.eazmsn,
-						sc_adapter[card]->channel[rcvmsg.phy_link_no - 1].dn,
-						sizeof(setup.eazmsn));
-				if (len >= sizeof(setup.eazmsn))
-					continue;
+				strcpy(setup.phone,&(rcvmsg.msg_data.byte_array[4]));
+				strcpy(setup.eazmsn,
+					sc_adapter[card]->channel[rcvmsg.phy_link_no-1].dn);
 				setup.si1 = 7;
 				setup.si2 = 0;
 				setup.plan = 0;
@@ -184,9 +176,7 @@ irqreturn_t interrupt_handler(int dummy, void *card_inst)
 		 * Handle a GetMyNumber Rsp
 		 */
 		if (IS_CE_MESSAGE(rcvmsg,Call,0,GetMyNumber)){
-			strlcpy(sc_adapter[card]->channel[rcvmsg.phy_link_no - 1].dn,
-				rcvmsg.msg_data.byte_array,
-				sizeof(rcvmsg.msg_data.byte_array));
+			strcpy(sc_adapter[card]->channel[rcvmsg.phy_link_no-1].dn,rcvmsg.msg_data.byte_array);
 			continue;
 		}
 			

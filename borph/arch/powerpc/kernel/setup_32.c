@@ -16,7 +16,7 @@
 #include <linux/root_dev.h>
 #include <linux/cpu.h>
 #include <linux/console.h>
-#include <linux/memblock.h>
+#include <linux/lmb.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -39,6 +39,7 @@
 #include <asm/serial.h>
 #include <asm/udbg.h>
 #include <asm/mmu_context.h>
+#include <asm/swiotlb.h>
 
 #include "setup.h"
 
@@ -46,7 +47,7 @@
 
 extern void bootx_init(unsigned long r4, unsigned long phys);
 
-int boot_cpuid = -1;
+int boot_cpuid;
 EXPORT_SYMBOL_GPL(boot_cpuid);
 int boot_cpuid_phys;
 
@@ -241,36 +242,39 @@ int __init ppc_init(void)
 
 arch_initcall(ppc_init);
 
+#ifdef CONFIG_IRQSTACKS
 static void __init irqstack_early_init(void)
 {
 	unsigned int i;
 
 	/* interrupt stacks must be in lowmem, we get that for free on ppc32
-	 * as the memblock is limited to lowmem by default */
+	 * as the lmb is limited to lowmem by LMB_REAL_LIMIT */
 	for_each_possible_cpu(i) {
 		softirq_ctx[i] = (struct thread_info *)
-			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
 		hardirq_ctx[i] = (struct thread_info *)
-			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
 	}
 }
+#else
+#define irqstack_early_init()
+#endif
 
 #if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
 static void __init exc_lvl_early_init(void)
 {
-	unsigned int i, hw_cpu;
+	unsigned int i;
 
 	/* interrupt stacks must be in lowmem, we get that for free on ppc32
-	 * as the memblock is limited to lowmem by MEMBLOCK_REAL_LIMIT */
+	 * as the lmb is limited to lowmem by LMB_REAL_LIMIT */
 	for_each_possible_cpu(i) {
-		hw_cpu = get_hard_smp_processor_id(i);
-		critirq_ctx[hw_cpu] = (struct thread_info *)
-			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
+		critirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
 #ifdef CONFIG_BOOKE
-		dbgirq_ctx[hw_cpu] = (struct thread_info *)
-			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
-		mcheckirq_ctx[hw_cpu] = (struct thread_info *)
-			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
+		dbgirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+		mcheckirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
 #endif
 	}
 }
@@ -338,6 +342,11 @@ void __init setup_arch(char **cmdline_p)
 	if (ppc_md.setup_arch)
 		ppc_md.setup_arch();
 	if ( ppc_md.progress ) ppc_md.progress("arch: exit", 0x3eab);
+
+#ifdef CONFIG_SWIOTLB
+	if (ppc_swiotlb_enable)
+		swiotlb_init(1);
+#endif
 
 	paging_init();
 

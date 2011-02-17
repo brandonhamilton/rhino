@@ -368,7 +368,7 @@ static int __init iga_init(struct fb_info *info, struct iga_par *par)
 	return 1;
 }
 
-static int __init igafb_init(void)
+int __init igafb_init(void)
 {
         struct fb_info *info;
         struct pci_dev *pdev;
@@ -531,7 +531,6 @@ static int __init igafb_init(void)
 		iounmap(info->screen_base);
 		kfree(par->mmap_map);
 		kfree(info);
-		return -ENODEV;
         }
 
 #ifdef CONFIG_SPARC
@@ -557,7 +556,7 @@ static int __init igafb_init(void)
 	return 0;
 }
 
-static int __init igafb_setup(char *options)
+int __init igafb_setup(char *options)
 {
     char *this_opt;
 

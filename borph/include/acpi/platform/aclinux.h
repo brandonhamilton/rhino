@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2010, Intel Corp.
+ * Copyright (C) 2000 - 2009, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -75,6 +75,7 @@
 #define acpi_cache_t                        struct kmem_cache
 #define acpi_spinlock                       spinlock_t *
 #define acpi_cpu_flags                      unsigned long
+#define acpi_thread_id                      struct task_struct *
 
 #else /* !__KERNEL__ */
 
@@ -87,7 +88,7 @@
 /* Host-dependent types and defines for user-space ACPICA */
 
 #define ACPI_FLUSH_CPU_CACHE()
-#define ACPI_CAST_PTHREAD_T(pthread) ((acpi_thread_id) (pthread))
+#define acpi_thread_id                      pthread_t
 
 #if defined(__ia64__) || defined(__x86_64__)
 #define ACPI_MACHINE_WIDTH          64
@@ -112,13 +113,12 @@
 
 
 #ifdef __KERNEL__
-#include <acpi/actypes.h>
 /*
  * Overrides for in-kernel ACPICA
  */
 static inline acpi_thread_id acpi_os_get_thread_id(void)
 {
-	return (acpi_thread_id)(unsigned long)current;
+	return current;
 }
 
 /*
@@ -127,6 +127,7 @@ static inline acpi_thread_id acpi_os_get_thread_id(void)
  * However, boot has  (system_state != SYSTEM_RUNNING)
  * to quiet __might_sleep() in kmalloc() and resume does not.
  */
+#include <acpi/actypes.h>
 static inline void *acpi_os_allocate(acpi_size size)
 {
 	return kmalloc(size, irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL);
@@ -147,17 +148,13 @@ static inline void *acpi_os_acquire_object(acpi_cache_t * cache)
 #define ACPI_ALLOCATE_ZEROED(a) acpi_os_allocate_zeroed(a)
 #define ACPI_FREE(a)            kfree(a)
 
-#ifndef CONFIG_PREEMPT
-/*
- * Used within ACPICA to show where it is safe to preempt execution
- * when CONFIG_PREEMPT=n
- */
+/* Used within ACPICA to show where it is safe to preempt execution */
+#include <linux/hardirq.h>
 #define ACPI_PREEMPTION_POINT() \
 	do { \
-		if (!irqs_disabled()) \
+		if (!in_atomic_preempt_off()) \
 			cond_resched(); \
 	} while (0)
-#endif
 
 #endif /* __KERNEL__ */
 

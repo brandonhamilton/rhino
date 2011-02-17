@@ -50,10 +50,7 @@ static void rtl8225_write(struct ieee80211_hw *dev, u8 addr, u16 data)
 	udelay(10);
 
 	for (i = 15; i >= 0; i--) {
-		u16 reg = reg80;
-
-		if (bangdata & (1 << i))
-			reg |= 1;
+		u16 reg = reg80 | !!(bangdata & (1 << i));
 
 		if (i & 1)
 			rtl818x_iowrite16(priv, &priv->map->RFPinsOutput, reg);

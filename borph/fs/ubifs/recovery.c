@@ -24,14 +24,13 @@
  * This file implements functions needed to recover from unclean un-mounts.
  * When UBIFS is mounted, it checks a flag on the master node to determine if
  * an un-mount was completed successfully. If not, the process of mounting
- * incorporates additional checking and fixing of on-flash data structures.
+ * incorparates additional checking and fixing of on-flash data structures.
  * UBIFS always cleans away all remnants of an unclean un-mount, so that
  * errors do not accumulate. However UBIFS defers recovery if it is mounted
  * read-only, and the flash is not modified in that case.
  */
 
 #include <linux/crc32.h>
-#include <linux/slab.h>
 #include "ubifs.h"
 
 /**
@@ -292,7 +291,7 @@ int ubifs_recover_master_node(struct ubifs_info *c)
 
 	memcpy(c->mst_node, mst, UBIFS_MST_NODE_SZ);
 
-	if (c->ro_mount) {
+	if ((c->vfs_sb->s_flags & MS_RDONLY)) {
 		/* Read-only mode. Keep a copy for switching to rw mode */
 		c->rcvrd_mst_node = kmalloc(sz, GFP_KERNEL);
 		if (!c->rcvrd_mst_node) {
@@ -469,7 +468,7 @@ static int fix_unclean_leb(struct ubifs_info *c, struct ubifs_scan_leb *sleb,
 		endpt = snod->offs + snod->len;
 	}
 
-	if (c->ro_mount && !c->remounting_rw) {
+	if ((c->vfs_sb->s_flags & MS_RDONLY) && !c->remounting_rw) {
 		/* Add to recovery list */
 		struct ubifs_unclean_leb *ucleb;
 
@@ -772,8 +771,7 @@ out_free:
  * @sbuf: LEB-sized buffer to use
  *
  * This function does a scan of a LEB, but caters for errors that might have
- * been caused by unclean reboots from which we are attempting to recover
- * (assume that only the last log LEB can be corrupted by an unclean reboot).
+ * been caused by the unclean unmount from which we are attempting to recover.
  *
  * This function returns %0 on success and a negative error code on failure.
  */
@@ -884,7 +882,7 @@ int ubifs_recover_inl_heads(const struct ubifs_info *c, void *sbuf)
 {
 	int err;
 
-	ubifs_assert(!c->ro_mount || c->remounting_rw);
+	ubifs_assert(!(c->vfs_sb->s_flags & MS_RDONLY) || c->remounting_rw);
 
 	dbg_rcvry("checking index head at %d:%d", c->ihead_lnum, c->ihead_offs);
 	err = recover_head(c, c->ihead_lnum, c->ihead_offs, sbuf);
@@ -1064,21 +1062,8 @@ int ubifs_rcvry_gc_commit(struct ubifs_info *c)
 	}
 	err = ubifs_find_dirty_leb(c, &lp, wbuf->offs, 2);
 	if (err) {
-		/*
-		 * There are no dirty or empty LEBs subject to here being
-		 * enough for the index. Try to use
-		 * 'ubifs_find_free_leb_for_idx()', which will return any empty
-		 * LEBs (ignoring index requirements). If the index then
-		 * doesn't have enough LEBs the recovery commit will fail -
-		 * which is the  same result anyway i.e. recovery fails. So
-		 * there is no problem ignoring index  requirements and just
-		 * grabbing a free LEB since we have already established there
-		 * is not a dirty LEB we could have used instead.
-		 */
-		if (err == -ENOSPC) {
-			dbg_rcvry("could not find a dirty LEB");
-			goto find_free;
-		}
+		if (err == -ENOSPC)
+			dbg_err("could not find a dirty LEB");
 		return err;
 	}
 	ubifs_assert(!(lp.flags & LPROPS_INDEX));
@@ -1153,8 +1138,8 @@ int ubifs_rcvry_gc_commit(struct ubifs_info *c)
 find_free:
 	/*
 	 * There is no GC head LEB or the free space in the GC head LEB is too
-	 * small, or there are not dirty LEBs. Allocate gc_lnum by calling
-	 * 'ubifs_find_free_leb_for_idx()' so GC is not run.
+	 * small. Allocate gc_lnum by calling 'ubifs_find_free_leb_for_idx()' so
+	 * GC is not run.
 	 */
 	lnum = ubifs_find_free_leb_for_idx(c);
 	if (lnum < 0) {
@@ -1462,7 +1447,7 @@ int ubifs_recover_size(struct ubifs_info *c)
 			}
 		}
 		if (e->exists && e->i_size < e->d_size) {
-			if (!e->inode && c->ro_mount) {
+			if (!e->inode && (c->vfs_sb->s_flags & MS_RDONLY)) {
 				/* Fix the inode size and pin it in memory */
 				struct inode *inode;
 

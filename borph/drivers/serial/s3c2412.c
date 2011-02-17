@@ -102,7 +102,6 @@ static struct s3c24xx_uart_info s3c2412_uart_inf = {
 	.name		= "Samsung S3C2412 UART",
 	.type		= PORT_S3C2412,
 	.fifosize	= 64,
-	.has_divslot	= 1,
 	.rx_fifomask	= S3C2440_UFSTAT_RXMASK,
 	.rx_fifoshift	= S3C2440_UFSTAT_RXSHIFT,
 	.rx_fifofull	= S3C2440_UFSTAT_RXFULL,

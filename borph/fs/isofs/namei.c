@@ -6,7 +6,7 @@
  *  (C) 1991  Linus Torvalds - minix filesystem
  */
 
-#include <linux/gfp.h>
+#include <linux/smp_lock.h>
 #include "isofs.h"
 
 /*
@@ -167,7 +167,6 @@ struct dentry *isofs_lookup(struct inode *dir, struct dentry *dentry, struct nam
 	int found;
 	unsigned long uninitialized_var(block);
 	unsigned long uninitialized_var(offset);
-	struct isofs_sb_info *sbi = ISOFS_SB(dir->i_sb);
 	struct inode *inode;
 	struct page *page;
 
@@ -177,7 +176,7 @@ struct dentry *isofs_lookup(struct inode *dir, struct dentry *dentry, struct nam
 	if (!page)
 		return ERR_PTR(-ENOMEM);
 
-	mutex_lock(&sbi->s_mutex);
+	lock_kernel();
 	found = isofs_find_entry(dir, dentry,
 				&block, &offset,
 				page_address(page),
@@ -188,10 +187,10 @@ struct dentry *isofs_lookup(struct inode *dir, struct dentry *dentry, struct nam
 	if (found) {
 		inode = isofs_iget(dir->i_sb, block, offset);
 		if (IS_ERR(inode)) {
-			mutex_unlock(&sbi->s_mutex);
+			unlock_kernel();
 			return ERR_CAST(inode);
 		}
 	}
-	mutex_unlock(&sbi->s_mutex);
+	unlock_kernel();
 	return d_splice_alias(inode, dentry);
 }

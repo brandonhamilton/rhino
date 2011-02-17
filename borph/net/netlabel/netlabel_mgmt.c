@@ -34,7 +34,6 @@
 #include <linux/skbuff.h>
 #include <linux/in.h>
 #include <linux/in6.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>

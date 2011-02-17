@@ -1,5 +1,5 @@
 #
-# linux/drivers/mtd/devices/Makefile
+# linux/drivers/devices/Makefile
 #
 
 obj-$(CONFIG_MTD_DOC2000)	+= doc2000.o

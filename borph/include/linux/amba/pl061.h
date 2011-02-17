@@ -1,5 +1,3 @@
-#include <linux/types.h>
-
 /* platform data for the PL061 GPIO driver */
 
 struct pl061_platform_data {

@@ -98,10 +98,8 @@ static struct clk s3c2440_clk_cam = {
 static struct clk s3c2440_clk_cam_upll = {
 	.name		= "camif-upll",
 	.id		= -1,
-	.ops		= &(struct clk_ops) {
-		.set_rate	= s3c2440_camif_upll_setrate,
-		.round_rate	= s3c2440_camif_upll_round,
-	},
+	.set_rate	= s3c2440_camif_upll_setrate,
+	.round_rate	= s3c2440_camif_upll_round,
 };
 
 static struct clk s3c2440_clk_ac97 = {

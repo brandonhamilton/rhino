@@ -24,6 +24,7 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/unistd.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/etherdevice.h>

@@ -36,8 +36,7 @@
  */
 #if defined(CONFIG_M5206) || defined(CONFIG_M5206e) || \
     defined(CONFIG_M520x) || defined(CONFIG_M523x) || \
-    defined(CONFIG_M527x) || defined(CONFIG_M528x) || \
-    defined(CONFIG_M532x) || defined(CONFIG_M548x)
+    defined(CONFIG_M527x) || defined(CONFIG_M528x) || defined(CONFIG_M532x)
 
 /* These parts have GPIO organized by 8 bit ports */
 
@@ -137,8 +136,6 @@ static inline u32 __mcf_gpio_ppdr(unsigned gpio)
 #endif
 	else
 		return MCFGPIO_PPDR + mcfgpio_port(gpio - MCFGPIO_SCR_START);
-#else
-	return 0;
 #endif
 }
 
@@ -176,8 +173,6 @@ static inline u32 __mcf_gpio_podr(unsigned gpio)
 #endif
 	else
 		return MCFGPIO_PODR + mcfgpio_port(gpio - MCFGPIO_SCR_START);
-#else
-	return 0;
 #endif
 }
 

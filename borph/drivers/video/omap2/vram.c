@@ -23,9 +23,8 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/seq_file.h>
-#include <linux/memblock.h>
+#include <linux/bootmem.h>
 #include <linux/completion.h>
 #include <linux/debugfs.h>
 #include <linux/jiffies.h>
@@ -512,21 +511,22 @@ static u32 omap_vram_sdram_size __initdata;
 static u32 omap_vram_def_sdram_size __initdata;
 static u32 omap_vram_def_sdram_start __initdata;
 
-static int __init omap_vram_early_vram(char *p)
+static void __init omap_vram_early_vram(char **p)
 {
-	omap_vram_def_sdram_size = memparse(p, &p);
-	if (*p == ',')
-		omap_vram_def_sdram_start = simple_strtoul(p + 1, &p, 16);
-	return 0;
+	omap_vram_def_sdram_size = memparse(*p, p);
+	if (**p == ',')
+		omap_vram_def_sdram_start = simple_strtoul((*p) + 1, p, 16);
 }
-early_param("vram", omap_vram_early_vram);
+__early_param("vram=", omap_vram_early_vram);
 
 /*
  * Called from map_io. We need to call to this early enough so that we
  * can reserve the fixed SDRAM regions before VM could get hold of them.
  */
-void __init omap_vram_reserve_sdram_memblock(void)
+void __init omap_vram_reserve_sdram(void)
 {
+	struct bootmem_data	*bdata;
+	unsigned long		sdram_start, sdram_size;
 	u32 paddr;
 	u32 size = 0;
 
@@ -551,36 +551,32 @@ void __init omap_vram_reserve_sdram_memblock(void)
 	if (!size)
 		return;
 
-	size = ALIGN(size, SZ_2M);
+	size = PAGE_ALIGN(size);
+
+	bdata = NODE_DATA(0)->bdata;
+	sdram_start = bdata->node_min_pfn << PAGE_SHIFT;
+	sdram_size = (bdata->node_low_pfn << PAGE_SHIFT) - sdram_start;
 
 	if (paddr) {
-		if (paddr & ~PAGE_MASK) {
-			pr_err("VRAM start address 0x%08x not page aligned\n",
-					paddr);
+		if ((paddr & ~PAGE_MASK) || paddr < sdram_start ||
+				paddr + size > sdram_start + sdram_size) {
+			pr_err("Illegal SDRAM region for VRAM\n");
 			return;
 		}
 
-		if (!memblock_is_region_memory(paddr, size)) {
-			pr_err("Illegal SDRAM region 0x%08x..0x%08x for VRAM\n",
-					paddr, paddr + size - 1);
-			return;
-		}
-
-		if (memblock_is_region_reserved(paddr, size)) {
-			pr_err("FB: failed to reserve VRAM - busy\n");
-			return;
-		}
-
-		if (memblock_reserve(paddr, size) < 0) {
-			pr_err("FB: failed to reserve VRAM - no memory\n");
+		if (reserve_bootmem(paddr, size, BOOTMEM_EXCLUSIVE) < 0) {
+			pr_err("FB: failed to reserve VRAM\n");
 			return;
 		}
 	} else {
-		paddr = memblock_alloc(size, SZ_2M);
-	}
+		if (size > sdram_size) {
+			pr_err("Illegal SDRAM size for VRAM\n");
+			return;
+		}
 
-	memblock_free(paddr, size);
-	memblock_remove(paddr, size);
+		paddr = virt_to_phys(alloc_bootmem_pages(size));
+		BUG_ON(paddr & ~PAGE_MASK);
+	}
 
 	omap_vram_add_region(paddr, size);
 

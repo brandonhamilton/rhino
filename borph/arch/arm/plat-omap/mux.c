@@ -54,7 +54,7 @@ int __init_or_module omap_cfg_reg(const unsigned long index)
 {
 	struct pin_config *reg;
 
-	if (!cpu_class_is_omap1()) {
+	if (cpu_is_omap34xx() || cpu_is_omap44xx()) {
 		printk(KERN_ERR "mux: Broken omap_cfg_reg(%lu) entry\n",
 				index);
 		WARN_ON(1);

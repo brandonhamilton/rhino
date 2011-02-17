@@ -63,8 +63,7 @@ enum led_mode {
 enum tsf_sync {
 	TSF_SYNC_NONE = 0,
 	TSF_SYNC_INFRA = 1,
-	TSF_SYNC_ADHOC = 2,
-	TSF_SYNC_AP_NONE = 3,
+	TSF_SYNC_BEACON = 2,
 };
 
 /*
@@ -89,8 +88,6 @@ enum dev_state {
 	STATE_RADIO_RX_OFF_LINK,
 	STATE_RADIO_IRQ_ON,
 	STATE_RADIO_IRQ_OFF,
-	STATE_RADIO_IRQ_ON_ISR,
-	STATE_RADIO_IRQ_OFF_ISR,
 };
 
 /*
@@ -101,16 +98,6 @@ enum ifs {
 	IFS_SIFS = 1,
 	IFS_NEW_BACKOFF = 2,
 	IFS_NONE = 3,
-};
-
-/*
- * IFS backoff values for HT devices
- */
-enum txop {
-	TXOP_HTTXOP = 0,
-	TXOP_PIFS = 1,
-	TXOP_SIFS = 2,
-	TXOP_BACKOFF = 3,
 };
 
 /*

@@ -1,14 +1,13 @@
 #include "drmP.h"
 #include "nouveau_drv.h"
 #include "nouveau_dma.h"
-#include "nouveau_ramht.h"
 #include "nouveau_fbcon.h"
 
-void
+static void
 nv50_fbcon_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
-	struct nouveau_fbdev *nfbdev = info->par;
-	struct drm_device *dev = nfbdev->dev;
+	struct nouveau_fbcon_par *par = info->par;
+	struct drm_device *dev = par->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_channel *chan = dev_priv->channel;
 
@@ -17,7 +16,9 @@ nv50_fbcon_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 
 	if (!(info->flags & FBINFO_HWACCEL_DISABLED) &&
 	     RING_SPACE(chan, rect->rop == ROP_COPY ? 7 : 11)) {
-		nouveau_fbcon_gpu_lockup(info);
+		NV_ERROR(dev, "GPU lockup - switching to software fbcon\n");
+
+		info->flags |= FBINFO_HWACCEL_DISABLED;
 	}
 
 	if (info->flags & FBINFO_HWACCEL_DISABLED) {
@@ -30,11 +31,7 @@ nv50_fbcon_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 		OUT_RING(chan, 1);
 	}
 	BEGIN_RING(chan, NvSub2D, 0x0588, 1);
-	if (info->fix.visual == FB_VISUAL_TRUECOLOR ||
-	    info->fix.visual == FB_VISUAL_DIRECTCOLOR)
-		OUT_RING(chan, ((uint32_t *)info->pseudo_palette)[rect->color]);
-	else
-		OUT_RING(chan, rect->color);
+	OUT_RING(chan, rect->color);
 	BEGIN_RING(chan, NvSub2D, 0x0600, 4);
 	OUT_RING(chan, rect->dx);
 	OUT_RING(chan, rect->dy);
@@ -47,11 +44,11 @@ nv50_fbcon_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 	FIRE_RING(chan);
 }
 
-void
+static void
 nv50_fbcon_copyarea(struct fb_info *info, const struct fb_copyarea *region)
 {
-	struct nouveau_fbdev *nfbdev = info->par;
-	struct drm_device *dev = nfbdev->dev;
+	struct nouveau_fbcon_par *par = info->par;
+	struct drm_device *dev = par->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_channel *chan = dev_priv->channel;
 
@@ -59,7 +56,9 @@ nv50_fbcon_copyarea(struct fb_info *info, const struct fb_copyarea *region)
 		return;
 
 	if (!(info->flags & FBINFO_HWACCEL_DISABLED) && RING_SPACE(chan, 12)) {
-		nouveau_fbcon_gpu_lockup(info);
+		NV_ERROR(dev, "GPU lockup - switching to software fbcon\n");
+
+		info->flags |= FBINFO_HWACCEL_DISABLED;
 	}
 
 	if (info->flags & FBINFO_HWACCEL_DISABLED) {
@@ -82,11 +81,11 @@ nv50_fbcon_copyarea(struct fb_info *info, const struct fb_copyarea *region)
 	FIRE_RING(chan);
 }
 
-void
+static void
 nv50_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 {
-	struct nouveau_fbdev *nfbdev = info->par;
-	struct drm_device *dev = nfbdev->dev;
+	struct nouveau_fbcon_par *par = info->par;
+	struct drm_device *dev = par->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_channel *chan = dev_priv->channel;
 	uint32_t width, dwords, *data = (uint32_t *)image->data;
@@ -102,7 +101,8 @@ nv50_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 	}
 
 	if (!(info->flags & FBINFO_HWACCEL_DISABLED) && RING_SPACE(chan, 11)) {
-		nouveau_fbcon_gpu_lockup(info);
+		NV_ERROR(dev, "GPU lockup - switching to software fbcon\n");
+		info->flags |= FBINFO_HWACCEL_DISABLED;
 	}
 
 	if (info->flags & FBINFO_HWACCEL_DISABLED) {
@@ -110,7 +110,7 @@ nv50_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 		return;
 	}
 
-	width = ALIGN(image->width, 32);
+	width = (image->width + 31) & ~31;
 	dwords = (width * image->height) >> 5;
 
 	BEGIN_RING(chan, NvSub2D, 0x0814, 2);
@@ -135,7 +135,9 @@ nv50_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 		int push = dwords > 2047 ? 2047 : dwords;
 
 		if (RING_SPACE(chan, push + 1)) {
-			nouveau_fbcon_gpu_lockup(info);
+			NV_ERROR(dev,
+				 "GPU lockup - switching to software fbcon\n");
+			info->flags |= FBINFO_HWACCEL_DISABLED;
 			cfb_imageblit(info, image);
 			return;
 		}
@@ -153,15 +155,12 @@ nv50_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 int
 nv50_fbcon_accel_init(struct fb_info *info)
 {
-	struct nouveau_fbdev *nfbdev = info->par;
-	struct drm_device *dev = nfbdev->dev;
+	struct nouveau_fbcon_par *par = info->par;
+	struct drm_device *dev = par->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_channel *chan = dev_priv->channel;
 	struct nouveau_gpuobj *eng2d = NULL;
-	uint64_t fb;
 	int ret, format;
-
-	fb = info->fix.smem_start - dev_priv->fb_phys + dev_priv->vm_vram_base;
 
 	switch (info->var.bits_per_pixel) {
 	case 8:
@@ -194,14 +193,13 @@ nv50_fbcon_accel_init(struct fb_info *info)
 	if (ret)
 		return ret;
 
-	ret = nouveau_ramht_insert(dev_priv->channel, Nv2D, eng2d);
-	nouveau_gpuobj_ref(NULL, &eng2d);
+	ret = nouveau_gpuobj_ref_add(dev, dev_priv->channel, Nv2D, eng2d, NULL);
 	if (ret)
 		return ret;
 
 	ret = RING_SPACE(chan, 59);
 	if (ret) {
-		nouveau_fbcon_gpu_lockup(info);
+		NV_ERROR(dev, "GPU lockup - switching to software fbcon\n");
 		return ret;
 	}
 
@@ -238,7 +236,7 @@ nv50_fbcon_accel_init(struct fb_info *info)
 	BEGIN_RING(chan, NvSub2D, 0x0808, 3);
 	OUT_RING(chan, 0);
 	OUT_RING(chan, 0);
-	OUT_RING(chan, 1);
+	OUT_RING(chan, 0);
 	BEGIN_RING(chan, NvSub2D, 0x081c, 1);
 	OUT_RING(chan, 1);
 	BEGIN_RING(chan, NvSub2D, 0x0840, 4);
@@ -253,8 +251,9 @@ nv50_fbcon_accel_init(struct fb_info *info)
 	OUT_RING(chan, info->fix.line_length);
 	OUT_RING(chan, info->var.xres_virtual);
 	OUT_RING(chan, info->var.yres_virtual);
-	OUT_RING(chan, upper_32_bits(fb));
-	OUT_RING(chan, lower_32_bits(fb));
+	OUT_RING(chan, 0);
+	OUT_RING(chan, info->fix.smem_start - dev_priv->fb_phys +
+			 dev_priv->vm_vram_base);
 	BEGIN_RING(chan, NvSub2D, 0x0230, 2);
 	OUT_RING(chan, format);
 	OUT_RING(chan, 1);
@@ -262,9 +261,13 @@ nv50_fbcon_accel_init(struct fb_info *info)
 	OUT_RING(chan, info->fix.line_length);
 	OUT_RING(chan, info->var.xres_virtual);
 	OUT_RING(chan, info->var.yres_virtual);
-	OUT_RING(chan, upper_32_bits(fb));
-	OUT_RING(chan, lower_32_bits(fb));
+	OUT_RING(chan, 0);
+	OUT_RING(chan, info->fix.smem_start - dev_priv->fb_phys +
+			 dev_priv->vm_vram_base);
 
+	info->fbops->fb_fillrect = nv50_fbcon_fillrect;
+	info->fbops->fb_copyarea = nv50_fbcon_copyarea;
+	info->fbops->fb_imageblit = nv50_fbcon_imageblit;
 	return 0;
 }
 

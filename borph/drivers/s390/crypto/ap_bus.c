@@ -33,7 +33,6 @@
 #include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 #include <linux/notifier.h>
 #include <linux/kthread.h>
 #include <linux/mutex.h>
@@ -154,7 +153,14 @@ static inline int ap_instructions_available(void)
  */
 static int ap_interrupts_available(void)
 {
-	return test_facility(1) && test_facility(2);
+	unsigned long long facility_bits[2];
+
+	if (stfle(facility_bits, 2) <= 1)
+		return 0;
+	if (!(facility_bits[0] & (1ULL << 61)) ||
+	    !(facility_bits[1] & (1ULL << 62)))
+		return 0;
+	return 1;
 }
 
 /**

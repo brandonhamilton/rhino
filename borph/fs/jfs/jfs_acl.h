@@ -22,17 +22,12 @@
 
 int jfs_check_acl(struct inode *, int);
 int jfs_init_acl(tid_t, struct inode *, struct inode *);
-int jfs_acl_chmod(struct inode *inode);
+int jfs_setattr(struct dentry *, struct iattr *);
 
 #else
 
 static inline int jfs_init_acl(tid_t tid, struct inode *inode,
 			       struct inode *dir)
-{
-	return 0;
-}
-
-static inline int jfs_acl_chmod(struct inode *inode)
 {
 	return 0;
 }

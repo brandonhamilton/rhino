@@ -18,7 +18,6 @@
 #include <linux/fb.h>
 #include <linux/backlight.h>
 #include <linux/mfd/da903x.h>
-#include <linux/slab.h>
 
 #define DA9030_WLED_CONTROL	0x25
 #define DA9030_WLED_CP_EN	(1 << 6)
@@ -96,7 +95,7 @@ static int da903x_backlight_get_brightness(struct backlight_device *bl)
 	return data->current_brightness;
 }
 
-static const struct backlight_ops da903x_backlight_ops = {
+static struct backlight_ops da903x_backlight_ops = {
 	.update_status	= da903x_backlight_update_status,
 	.get_brightness	= da903x_backlight_get_brightness,
 };
@@ -106,7 +105,6 @@ static int da903x_backlight_probe(struct platform_device *pdev)
 	struct da9034_backlight_pdata *pdata = pdev->dev.platform_data;
 	struct da903x_backlight_data *data;
 	struct backlight_device *bl;
-	struct backlight_properties props;
 	int max_brightness;
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
@@ -136,15 +134,15 @@ static int da903x_backlight_probe(struct platform_device *pdev)
 		da903x_write(data->da903x_dev, DA9034_WLED_CONTROL2,
 				DA9034_WLED_ISET(pdata->output_current));
 
-	props.max_brightness = max_brightness;
-	bl = backlight_device_register(pdev->name, data->da903x_dev, data,
-				       &da903x_backlight_ops, &props);
+	bl = backlight_device_register(pdev->name, data->da903x_dev,
+			data, &da903x_backlight_ops);
 	if (IS_ERR(bl)) {
 		dev_err(&pdev->dev, "failed to register backlight\n");
 		kfree(data);
 		return PTR_ERR(bl);
 	}
 
+	bl->props.max_brightness = max_brightness;
 	bl->props.brightness = max_brightness;
 
 	platform_set_drvdata(pdev, bl);

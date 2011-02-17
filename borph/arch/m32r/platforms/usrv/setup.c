@@ -63,7 +63,7 @@ static void shutdown_mappi_irq(unsigned int irq)
 
 static struct irq_chip mappi_irq_type =
 {
-	.name = "M32700-IRQ",
+	.typename = "M32700-IRQ",
 	.startup = startup_mappi_irq,
 	.shutdown = shutdown_mappi_irq,
 	.enable = enable_mappi_irq,
@@ -136,7 +136,7 @@ static void shutdown_m32700ut_pld_irq(unsigned int irq)
 
 static struct irq_chip m32700ut_pld_irq_type =
 {
-	.name = "USRV-PLD-IRQ",
+	.typename = "USRV-PLD-IRQ",
 	.startup = startup_m32700ut_pld_irq,
 	.shutdown = shutdown_m32700ut_pld_irq,
 	.enable = enable_m32700ut_pld_irq,

@@ -25,7 +25,6 @@
 #include <linux/kfifo.h>
 #include <linux/delay.h>
 #include <linux/log2.h>
-#include <linux/slab.h>
 #include <asm/unaligned.h>
 #include <net/tcp.h>
 #include <scsi/scsi_cmnd.h>
@@ -471,12 +470,12 @@ static int iscsi_prep_scsi_cmd_pdu(struct iscsi_task *task)
 
 	WARN_ON(hdrlength >= 256);
 	hdr->hlength = hdrlength & 0xFF;
-	hdr->cmdsn = task->cmdsn = cpu_to_be32(session->cmdsn);
 
 	if (session->tt->init_task && session->tt->init_task(task))
 		return -EIO;
 
 	task->state = ISCSI_TASK_RUNNING;
+	hdr->cmdsn = task->cmdsn = cpu_to_be32(session->cmdsn);
 	session->cmdsn++;
 
 	conn->scsicmd_pdus_cnt++;
@@ -518,7 +517,7 @@ static void iscsi_free_task(struct iscsi_task *task)
 	if (conn->login_task == task)
 		return;
 
-	kfifo_in(&session->cmdpool.queue, (void*)&task, sizeof(void*));
+	__kfifo_put(session->cmdpool.queue, (void*)&task, sizeof(void*));
 
 	if (sc) {
 		task->sc = NULL;
@@ -738,7 +737,7 @@ __iscsi_conn_send_pdu(struct iscsi_conn *conn, struct iscsi_hdr *hdr,
 		BUG_ON(conn->c_stage == ISCSI_CONN_INITIAL_STAGE);
 		BUG_ON(conn->c_stage == ISCSI_CONN_STOPPED);
 
-		if (!kfifo_out(&session->cmdpool.queue,
+		if (!__kfifo_get(session->cmdpool.queue,
 				 (void*)&task, sizeof(void*)))
 			return NULL;
 	}
@@ -1568,7 +1567,7 @@ static inline struct iscsi_task *iscsi_alloc_task(struct iscsi_conn *conn,
 {
 	struct iscsi_task *task;
 
-	if (!kfifo_out(&conn->session->cmdpool.queue,
+	if (!__kfifo_get(conn->session->cmdpool.queue,
 			 (void *) &task, sizeof(void *)))
 		return NULL;
 
@@ -1599,7 +1598,7 @@ enum {
 	FAILURE_SESSION_NOT_READY,
 };
 
-static int iscsi_queuecommand_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
+int iscsi_queuecommand(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
 {
 	struct iscsi_cls_session *cls_session;
 	struct Scsi_Host *host;
@@ -1736,8 +1735,6 @@ fault:
 	spin_lock(host->host_lock);
 	return 0;
 }
-
-DEF_SCSI_QCMD(iscsi_queuecommand)
 EXPORT_SYMBOL_GPL(iscsi_queuecommand);
 
 int iscsi_change_queue_depth(struct scsi_device *sdev, int depth, int reason)
@@ -1922,11 +1919,10 @@ static int iscsi_has_ping_timed_out(struct iscsi_conn *conn)
 static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 {
 	enum blk_eh_timer_return rc = BLK_EH_NOT_HANDLED;
-	struct iscsi_task *task = NULL, *running_task;
+	struct iscsi_task *task = NULL;
 	struct iscsi_cls_session *cls_session;
 	struct iscsi_session *session;
 	struct iscsi_conn *conn;
-	int i;
 
 	cls_session = starget_to_session(scsi_target(sc->device));
 	session = cls_session->dd_data;
@@ -1951,15 +1947,8 @@ static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	}
 
 	task = (struct iscsi_task *)sc->SCp.ptr;
-	if (!task) {
-		/*
-		 * Raced with completion. Just reset timer, and let it
-		 * complete normally
-		 */
-		rc = BLK_EH_RESET_TIMER;
+	if (!task)
 		goto done;
-	}
-
 	/*
 	 * If we have sent (at least queued to the network layer) a pdu or
 	 * recvd one for the task since the last timeout ask for
@@ -1967,10 +1956,10 @@ static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	 * we can check if it is the task or connection when we send the
 	 * nop as a ping.
 	 */
-	if (time_after(task->last_xfer, task->last_timeout)) {
+	if (time_after_eq(task->last_xfer, task->last_timeout)) {
 		ISCSI_DBG_EH(session, "Command making progress. Asking "
 			     "scsi-ml for more time to complete. "
-			     "Last data xfer at %lu. Last timeout was at "
+			     "Last data recv at %lu. Last timeout was at "
 			     "%lu\n.", task->last_xfer, task->last_timeout);
 		task->have_checked_conn = false;
 		rc = BLK_EH_RESET_TIMER;
@@ -1986,43 +1975,6 @@ static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	if (iscsi_has_ping_timed_out(conn)) {
 		rc = BLK_EH_RESET_TIMER;
 		goto done;
-	}
-
-	for (i = 0; i < conn->session->cmds_max; i++) {
-		running_task = conn->session->cmds[i];
-		if (!running_task->sc || running_task == task ||
-		     running_task->state != ISCSI_TASK_RUNNING)
-			continue;
-
-		/*
-		 * Only check if cmds started before this one have made
-		 * progress, or this could never fail
-		 */
-		if (time_after(running_task->sc->jiffies_at_alloc,
-			       task->sc->jiffies_at_alloc))
-			continue;
-
-		if (time_after(running_task->last_xfer, task->last_timeout)) {
-			/*
-			 * This task has not made progress, but a task
-			 * started before us has transferred data since
-			 * we started/last-checked. We could be queueing
-			 * too many tasks or the LU is bad.
-			 *
-			 * If the device is bad the cmds ahead of us on
-			 * other devs will complete, and this loop will
-			 * eventually fail starting the scsi eh.
-			 */
-			ISCSI_DBG_EH(session, "Command has not made progress "
-				     "but commands ahead of it have. "
-				     "Asking scsi-ml for more time to "
-				     "complete. Our last xfer vs running task "
-				     "last xfer %lu/%lu. Last check %lu.\n",
-				     task->last_xfer, running_task->last_xfer,
-				     task->last_timeout);
-			rc = BLK_EH_RESET_TIMER;
-			goto done;
-		}
 	}
 
 	/* Assumes nop timeout is shorter than scsi cmd timeout */
@@ -2341,7 +2293,7 @@ EXPORT_SYMBOL_GPL(iscsi_session_recovery_timedout);
  * This function will wait for a relogin, session termination from
  * userspace, or a recovery/replacement timeout.
  */
-int iscsi_eh_session_reset(struct scsi_cmnd *sc)
+static int iscsi_eh_session_reset(struct scsi_cmnd *sc)
 {
 	struct iscsi_cls_session *cls_session;
 	struct iscsi_session *session;
@@ -2392,7 +2344,6 @@ failed:
 	mutex_unlock(&session->eh_mutex);
 	return SUCCESS;
 }
-EXPORT_SYMBOL_GPL(iscsi_eh_session_reset);
 
 static void iscsi_prep_tgt_reset_pdu(struct scsi_cmnd *sc, struct iscsi_tm *hdr)
 {
@@ -2407,7 +2358,8 @@ static void iscsi_prep_tgt_reset_pdu(struct scsi_cmnd *sc, struct iscsi_tm *hdr)
  * iscsi_eh_target_reset - reset target
  * @sc: scsi command
  *
- * This will attempt to send a warm target reset.
+ * This will attempt to send a warm target reset. If that fails
+ * then we will drop the session and attempt ERL0 recovery.
  */
 int iscsi_eh_target_reset(struct scsi_cmnd *sc)
 {
@@ -2479,27 +2431,12 @@ done:
 	ISCSI_DBG_EH(session, "tgt %s reset result = %s\n", session->targetname,
 		     rc == SUCCESS ? "SUCCESS" : "FAILED");
 	mutex_unlock(&session->eh_mutex);
-	return rc;
-}
-EXPORT_SYMBOL_GPL(iscsi_eh_target_reset);
 
-/**
- * iscsi_eh_recover_target - reset target and possibly the session
- * @sc: scsi command
- *
- * This will attempt to send a warm target reset. If that fails,
- * we will escalate to ERL0 session recovery.
- */
-int iscsi_eh_recover_target(struct scsi_cmnd *sc)
-{
-	int rc;
-
-	rc = iscsi_eh_target_reset(sc);
 	if (rc == FAILED)
 		rc = iscsi_eh_session_reset(sc);
 	return rc;
 }
-EXPORT_SYMBOL_GPL(iscsi_eh_recover_target);
+EXPORT_SYMBOL_GPL(iscsi_eh_target_reset);
 
 /*
  * Pre-allocate a pool of @max items of @item_size. By default, the pool
@@ -2524,7 +2461,12 @@ iscsi_pool_init(struct iscsi_pool *q, int max, void ***items, int item_size)
 	if (q->pool == NULL)
 		return -ENOMEM;
 
-	kfifo_init(&q->queue, (void*)q->pool, max * sizeof(void*));
+	q->queue = kfifo_init((void*)q->pool, max * sizeof(void*),
+			      GFP_KERNEL, NULL);
+	if (IS_ERR(q->queue)) {
+		q->queue = NULL;
+		goto enomem;
+	}
 
 	for (i = 0; i < max; i++) {
 		q->pool[i] = kzalloc(item_size, GFP_KERNEL);
@@ -2532,7 +2474,7 @@ iscsi_pool_init(struct iscsi_pool *q, int max, void ***items, int item_size)
 			q->max = i;
 			goto enomem;
 		}
-		kfifo_in(&q->queue, (void*)&q->pool[i], sizeof(void*));
+		__kfifo_put(q->queue, (void*)&q->pool[i], sizeof(void*));
 	}
 
 	if (items) {
@@ -2555,6 +2497,7 @@ void iscsi_pool_free(struct iscsi_pool *q)
 	for (i = 0; i < q->max; i++)
 		kfree(q->pool[i]);
 	kfree(q->pool);
+	kfree(q->queue);
 }
 EXPORT_SYMBOL_GPL(iscsi_pool_free);
 
@@ -2882,7 +2825,7 @@ iscsi_conn_setup(struct iscsi_cls_session *cls_session, int dd_size,
 
 	/* allocate login_task used for the login/text sequences */
 	spin_lock_bh(&session->lock);
-	if (!kfifo_out(&session->cmdpool.queue,
+	if (!__kfifo_get(session->cmdpool.queue,
                          (void*)&conn->login_task,
 			 sizeof(void*))) {
 		spin_unlock_bh(&session->lock);
@@ -2902,7 +2845,7 @@ iscsi_conn_setup(struct iscsi_cls_session *cls_session, int dd_size,
 	return cls_conn;
 
 login_task_data_alloc_fail:
-	kfifo_in(&session->cmdpool.queue, (void*)&conn->login_task,
+	__kfifo_put(session->cmdpool.queue, (void*)&conn->login_task,
 		    sizeof(void*));
 login_task_alloc_fail:
 	iscsi_destroy_conn(cls_conn);
@@ -2965,7 +2908,7 @@ void iscsi_conn_teardown(struct iscsi_cls_conn *cls_conn)
 	free_pages((unsigned long) conn->data,
 		   get_order(ISCSI_DEF_MAX_RECV_SEG_LEN));
 	kfree(conn->persistent_address);
-	kfifo_in(&session->cmdpool.queue, (void*)&conn->login_task,
+	__kfifo_put(session->cmdpool.queue, (void*)&conn->login_task,
 		    sizeof(void*));
 	if (session->leadconn == conn)
 		session->leadconn = NULL;
@@ -3090,15 +3033,14 @@ static void iscsi_start_session_recovery(struct iscsi_session *session,
 		session->state = ISCSI_STATE_TERMINATE;
 	else if (conn->stop_stage != STOP_CONN_RECOVER)
 		session->state = ISCSI_STATE_IN_RECOVERY;
-
-	old_stop_stage = conn->stop_stage;
-	conn->stop_stage = flag;
 	spin_unlock_bh(&session->lock);
 
 	del_timer_sync(&conn->transport_timer);
 	iscsi_suspend_tx(conn);
 
 	spin_lock_bh(&session->lock);
+	old_stop_stage = conn->stop_stage;
+	conn->stop_stage = flag;
 	conn->c_stage = ISCSI_CONN_STOPPED;
 	spin_unlock_bh(&session->lock);
 

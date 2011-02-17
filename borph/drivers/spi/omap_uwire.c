@@ -41,7 +41,6 @@
 #include <linux/interrupt.h>
 #include <linux/err.h>
 #include <linux/clk.h>
-#include <linux/slab.h>
 
 #include <linux/spi/spi.h>
 #include <linux/spi/spi_bitbang.h>

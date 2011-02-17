@@ -25,12 +25,13 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/version.h>
 #include <linux/mutex.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/io.h>
 
 #include <linux/videodev2.h>
@@ -61,6 +62,7 @@ struct pms {
 	int depth;
 	int input;
 	s32 brightness, saturation, hue, contrast;
+	unsigned long in_use;
 	struct mutex lock;
 	int i2c_count;
 	struct i2c_info i2cinfo[64];
@@ -930,9 +932,26 @@ static ssize_t pms_read(struct file *file, char __user *buf,
 	return len;
 }
 
+static int pms_exclusive_open(struct file *file)
+{
+	struct pms *dev = video_drvdata(file);
+
+	return test_and_set_bit(0, &dev->in_use) ? -EBUSY : 0;
+}
+
+static int pms_exclusive_release(struct file *file)
+{
+	struct pms *dev = video_drvdata(file);
+
+	clear_bit(0, &dev->in_use);
+	return 0;
+}
+
 static const struct v4l2_file_operations pms_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= video_ioctl2,
+	.open           = pms_exclusive_open,
+	.release        = pms_exclusive_release,
+	.ioctl		= video_ioctl2,
 	.read           = pms_read,
 };
 

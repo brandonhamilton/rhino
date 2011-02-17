@@ -31,7 +31,7 @@
 #include <linux/string.h>
 #include <linux/crash_dump.h>
 #include <linux/dma-mapping.h>
-#include <linux/bitmap.h>
+#include <linux/bitops.h>
 #include <linux/pci_ids.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
@@ -47,7 +47,6 @@
 #include <asm/rio.h>
 #include <asm/bios_ebda.h>
 #include <asm/x86_init.h>
-#include <asm/iommu_table.h>
 
 #ifdef CONFIG_CALGARY_IOMMU_ENABLED_BY_DEFAULT
 int use_calgary __read_mostly = 1;
@@ -104,16 +103,11 @@ int use_calgary __read_mostly = 0;
 #define PMR_SOFTSTOPFAULT	0x40000000
 #define PMR_HARDSTOP		0x20000000
 
-/*
- * The maximum PHB bus number.
- * x3950M2 (rare): 8 chassis, 48 PHBs per chassis = 384
- * x3950M2: 4 chassis, 48 PHBs per chassis        = 192
- * x3950 (PCIE): 8 chassis, 32 PHBs per chassis   = 256
- * x3950 (PCIX): 8 chassis, 16 PHBs per chassis   = 128
- */
-#define MAX_PHB_BUS_NUM		256
-
-#define PHBS_PER_CALGARY	  4
+#define MAX_NUM_OF_PHBS		8 /* how many PHBs in total? */
+#define MAX_NUM_CHASSIS		8 /* max number of chassis */
+/* MAX_PHB_BUS_NUM is the maximal possible dev->bus->number */
+#define MAX_PHB_BUS_NUM		(MAX_NUM_OF_PHBS * MAX_NUM_CHASSIS * 2)
+#define PHBS_PER_CALGARY	4
 
 /* register offsets in Calgary's internal register space */
 static const unsigned long tar_offsets[] = {
@@ -218,7 +212,7 @@ static void iommu_range_reserve(struct iommu_table *tbl,
 
 	spin_lock_irqsave(&tbl->it_lock, flags);
 
-	bitmap_set(tbl->it_map, index, npages);
+	iommu_area_reserve(tbl->it_map, index, npages);
 
 	spin_unlock_irqrestore(&tbl->it_lock, flags);
 }
@@ -309,7 +303,7 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 
 	spin_lock_irqsave(&tbl->it_lock, flags);
 
-	bitmap_clear(tbl->it_map, entry, npages);
+	iommu_area_free(tbl->it_map, entry, npages);
 
 	spin_unlock_irqrestore(&tbl->it_lock, flags);
 }
@@ -1057,6 +1051,8 @@ static int __init calgary_init_one(struct pci_dev *dev)
 	struct iommu_table *tbl;
 	int ret;
 
+	BUG_ON(dev->bus->number >= MAX_PHB_BUS_NUM);
+
 	bbar = busno_to_bbar(dev->bus->number);
 	ret = calgary_setup_tar(dev, bbar);
 	if (ret)
@@ -1313,7 +1309,7 @@ static void calgary_init_bitmap_from_tce_table(struct iommu_table *tbl)
 /*
  * get_tce_space_from_tar():
  * Function for kdump case. Get the tce tables from first kernel
- * by reading the contents of the base address register of calgary iommu
+ * by reading the contents of the base adress register of calgary iommu
  */
 static void __init get_tce_space_from_tar(void)
 {
@@ -1365,7 +1361,7 @@ static int __init calgary_iommu_init(void)
 	return 0;
 }
 
-int __init detect_calgary(void)
+void __init detect_calgary(void)
 {
 	int bus;
 	void *tbl;
@@ -1379,13 +1375,13 @@ int __init detect_calgary(void)
 	 * another HW IOMMU already, bail out.
 	 */
 	if (no_iommu || iommu_detected)
-		return -ENODEV;
+		return;
 
 	if (!use_calgary)
-		return -ENODEV;
+		return;
 
 	if (!early_pci_allowed())
-		return -ENODEV;
+		return;
 
 	printk(KERN_DEBUG "Calgary: detecting Calgary via BIOS EBDA area\n");
 
@@ -1411,13 +1407,13 @@ int __init detect_calgary(void)
 	if (!rio_table_hdr) {
 		printk(KERN_DEBUG "Calgary: Unable to locate Rio Grande table "
 		       "in EBDA - bailing!\n");
-		return -ENODEV;
+		return;
 	}
 
 	ret = build_detail_arrays();
 	if (ret) {
 		printk(KERN_DEBUG "Calgary: build_detail_arrays ret %d\n", ret);
-		return -ENOMEM;
+		return;
 	}
 
 	specified_table_size = determine_tce_table_size((is_kdump_kernel() ?
@@ -1465,7 +1461,7 @@ int __init detect_calgary(void)
 
 		x86_init.iommu.iommu_init = calgary_iommu_init;
 	}
-	return calgary_found;
+	return;
 
 cleanup:
 	for (--bus; bus >= 0; --bus) {
@@ -1474,7 +1470,6 @@ cleanup:
 		if (info->tce_space)
 			free_tce_table(info->tce_space);
 	}
-	return -ENOMEM;
 }
 
 static int __init calgary_parse_options(char *p)
@@ -1596,5 +1591,3 @@ static int __init calgary_fixup_tce_spaces(void)
  * and before device_initcall.
  */
 rootfs_initcall(calgary_fixup_tce_spaces);
-
-IOMMU_INIT_POST(detect_calgary);

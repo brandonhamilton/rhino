@@ -8,9 +8,6 @@ obj-$(CONFIG_9P_FS) := 9p.o
 	vfs_dir.o \
 	vfs_dentry.o \
 	v9fs.o \
-	fid.o  \
-	xattr.o \
-	xattr_user.o
+	fid.o
 
 9p-$(CONFIG_9P_FSCACHE) += cache.o
-9p-$(CONFIG_9P_FS_POSIX_ACL) += acl.o

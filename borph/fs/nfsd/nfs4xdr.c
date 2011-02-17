@@ -40,16 +40,23 @@
  * at the end of nfs4svc_decode_compoundargs.
  */
 
-#include <linux/slab.h>
+#include <linux/param.h>
+#include <linux/smp.h>
+#include <linux/fs.h>
 #include <linux/namei.h>
-#include <linux/statfs.h>
+#include <linux/vfs.h>
 #include <linux/utsname.h>
+#include <linux/sunrpc/xdr.h>
+#include <linux/sunrpc/svc.h>
+#include <linux/sunrpc/clnt.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfsd/state.h>
+#include <linux/nfsd/xdr4.h>
 #include <linux/nfsd_idmap.h>
+#include <linux/nfs4.h>
 #include <linux/nfs4_acl.h>
+#include <linux/sunrpc/gss_api.h>
 #include <linux/sunrpc/svcauth_gss.h>
-
-#include "xdr4.h"
-#include "vfs.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_XDR
 
@@ -161,10 +168,10 @@ static __be32 *read_buf(struct nfsd4_compoundargs *argp, u32 nbytes)
 	argp->p = page_address(argp->pagelist[0]);
 	argp->pagelist++;
 	if (argp->pagelen < PAGE_SIZE) {
-		argp->end = argp->p + (argp->pagelen>>2);
+		argp->end = p + (argp->pagelen>>2);
 		argp->pagelen = 0;
 	} else {
-		argp->end = argp->p + (PAGE_SIZE>>2);
+		argp->end = p + (PAGE_SIZE>>2);
 		argp->pagelen -= PAGE_SIZE;
 	}
 	memcpy(((char*)p)+avail, argp->p, (nbytes - avail));
@@ -1234,16 +1241,6 @@ nfsd4_decode_sequence(struct nfsd4_compoundargs *argp,
 	DECODE_TAIL;
 }
 
-static __be32 nfsd4_decode_reclaim_complete(struct nfsd4_compoundargs *argp, struct nfsd4_reclaim_complete *rc)
-{
-	DECODE_HEAD;
-
-	READ_BUF(4);
-	READ32(rc->rca_one_fs);
-
-	DECODE_TAIL;
-}
-
 static __be32
 nfsd4_decode_noop(struct nfsd4_compoundargs *argp, void *p)
 {
@@ -1356,7 +1353,7 @@ static nfsd4_dec nfsd41_dec_ops[] = {
 	[OP_TEST_STATEID]	= (nfsd4_dec)nfsd4_decode_notsupp,
 	[OP_WANT_DELEGATION]	= (nfsd4_dec)nfsd4_decode_notsupp,
 	[OP_DESTROY_CLIENTID]	= (nfsd4_dec)nfsd4_decode_notsupp,
-	[OP_RECLAIM_COMPLETE]	= (nfsd4_dec)nfsd4_decode_reclaim_complete,
+	[OP_RECLAIM_COMPLETE]	= (nfsd4_dec)nfsd4_decode_notsupp,
 };
 
 struct nfsd4_minorversion_ops {
@@ -1436,16 +1433,16 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 			argp->p = page_address(argp->pagelist[0]);
 			argp->pagelist++;
 			if (argp->pagelen < PAGE_SIZE) {
-				argp->end = argp->p + (argp->pagelen>>2);
+				argp->end = p + (argp->pagelen>>2);
 				argp->pagelen = 0;
 			} else {
-				argp->end = argp->p + (PAGE_SIZE>>2);
+				argp->end = p + (PAGE_SIZE>>2);
 				argp->pagelen -= PAGE_SIZE;
 			}
 		}
 		op->opnum = ntohl(*argp->p++);
 
-		if (op->opnum >= FIRST_NFS4_OP && op->opnum <= LAST_NFS4_OP)
+		if (op->opnum >= OP_ACCESS && op->opnum < ops->nops)
 			op->status = ops->decoders[op->opnum](argp, &op->u);
 		else {
 			op->opnum = OP_ILLEGAL;
@@ -1539,7 +1536,7 @@ static void write_cinfo(__be32 **p, struct nfsd4_change_info *c)
 	} } while (0);
 
 /* Encode as an array of strings the string given with components
- * separated @sep.
+ * seperated @sep.
  */
 static __be32 nfsd4_encode_components(char sep, char *components,
 				   __be32 **pp, int *buflen)
@@ -1756,10 +1753,6 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 	struct nfs4_acl *acl = NULL;
 	struct nfsd4_compoundres *resp = rqstp->rq_resp;
 	u32 minorversion = resp->cstate.minorversion;
-	struct path path = {
-		.mnt	= exp->ex_path.mnt,
-		.dentry	= dentry,
-	};
 
 	BUG_ON(bmval1 & NFSD_WRITEONLY_ATTRS_WORD1);
 	BUG_ON(bmval0 & ~nfsd_suppattrs0(minorversion));
@@ -1780,7 +1773,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 			FATTR4_WORD0_MAXNAME)) ||
 	    (bmval1 & (FATTR4_WORD1_SPACE_AVAIL | FATTR4_WORD1_SPACE_FREE |
 		       FATTR4_WORD1_SPACE_TOTAL))) {
-		err = vfs_statfs(&path, &statfs);
+		err = vfs_statfs(dentry, &statfs);
 		if (err)
 			goto out_nfserr;
 	}
@@ -1805,23 +1798,19 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 				goto out_nfserr;
 		}
 	}
+	if ((buflen -= 16) < 0)
+		goto out_resource;
 
-	if (bmval2) {
-		if ((buflen -= 16) < 0)
-			goto out_resource;
+	if (unlikely(bmval2)) {
 		WRITE32(3);
 		WRITE32(bmval0);
 		WRITE32(bmval1);
 		WRITE32(bmval2);
-	} else if (bmval1) {
-		if ((buflen -= 12) < 0)
-			goto out_resource;
+	} else if (likely(bmval1)) {
 		WRITE32(2);
 		WRITE32(bmval0);
 		WRITE32(bmval1);
 	} else {
-		if ((buflen -= 8) < 0)
-			goto out_resource;
 		WRITE32(1);
 		WRITE32(bmval0);
 	}
@@ -1832,17 +1821,15 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 		u32 word1 = nfsd_suppattrs1(minorversion);
 		u32 word2 = nfsd_suppattrs2(minorversion);
 
+		if ((buflen -= 12) < 0)
+			goto out_resource;
 		if (!aclsupport)
 			word0 &= ~FATTR4_WORD0_ACL;
 		if (!word2) {
-			if ((buflen -= 12) < 0)
-				goto out_resource;
 			WRITE32(2);
 			WRITE32(word0);
 			WRITE32(word1);
 		} else {
-			if ((buflen -= 16) < 0)
-				goto out_resource;
 			WRITE32(3);
 			WRITE32(word0);
 			WRITE32(word1);
@@ -1920,7 +1907,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 	if (bmval0 & FATTR4_WORD0_LEASE_TIME) {
 		if ((buflen -= 4) < 0)
 			goto out_resource;
-		WRITE32(nfsd4_lease);
+		WRITE32(NFSD_LEASE_TIME);
 	}
 	if (bmval0 & FATTR4_WORD0_RDATTR_ERROR) {
 		if ((buflen -= 4) < 0)
@@ -2142,15 +2129,9 @@ out_acl:
 		 * and this is the root of a cross-mounted filesystem.
 		 */
 		if (ignore_crossmnt == 0 &&
-		    dentry == exp->ex_path.mnt->mnt_root) {
-			struct path path = exp->ex_path;
-			path_get(&path);
-			while (follow_up(&path)) {
-				if (path.dentry != path.mnt->mnt_root)
-					break;
-			}
-			err = vfs_getattr(path.mnt, path.dentry, &stat);
-			path_put(&path);
+		    exp->ex_path.mnt->mnt_root->d_inode == dentry->d_inode) {
+			err = vfs_getattr(exp->ex_path.mnt->mnt_parent,
+				exp->ex_path.mnt->mnt_mountpoint, &stat);
 			if (err)
 				goto out_nfserr;
 		}
@@ -2223,14 +2204,11 @@ nfsd4_encode_dirent_fattr(struct nfsd4_readdir *cd,
 	 * we will not follow the cross mount and will fill the attribtutes
 	 * directly from the mountpoint dentry.
 	 */
-	if (nfsd_mountpoint(dentry, exp)) {
+	if (d_mountpoint(dentry) && !attributes_need_mount(cd->rd_bmval))
+		ignore_crossmnt = 1;
+	else if (d_mountpoint(dentry)) {
 		int err;
 
-		if (!(exp->ex_flags & NFSEXP_V4ROOT)
-				&& !attributes_need_mount(cd->rd_bmval)) {
-			ignore_crossmnt = 1;
-			goto out_encode;
-		}
 		/*
 		 * Why the heck aren't we just using nfsd_lookup??
 		 * Different "."/".." handling?  Something else?
@@ -2246,7 +2224,6 @@ nfsd4_encode_dirent_fattr(struct nfsd4_readdir *cd,
 			goto out_put;
 
 	}
-out_encode:
 	nfserr = nfsd4_encode_fattr(NULL, exp, dentry, p, buflen, cd->rd_bmval,
 					cd->rd_rqstp, ignore_crossmnt);
 out_put:
@@ -2640,7 +2617,7 @@ nfsd4_encode_read(struct nfsd4_compoundres *resp, __be32 nfserr,
 	}
 	read->rd_vlen = v;
 
-	nfserr = nfsd_read_file(read->rd_rqstp, read->rd_fhp, read->rd_filp,
+	nfserr = nfsd_read(read->rd_rqstp, read->rd_fhp, read->rd_filp,
 			read->rd_offset, resp->rqstp->rq_vec, read->rd_vlen,
 			&maxcount);
 
@@ -3327,15 +3304,11 @@ nfs4svc_encode_compoundres(struct svc_rqst *rqstp, __be32 *p, struct nfsd4_compo
 		iov = &rqstp->rq_res.head[0];
 	iov->iov_len = ((char*)resp->p) - (char*)iov->iov_base;
 	BUG_ON(iov->iov_len > PAGE_SIZE);
-	if (nfsd4_has_session(cs)) {
-		if (cs->status != nfserr_replay_cache) {
-			nfsd4_store_cache_entry(resp);
-			dprintk("%s: SET SLOT STATE TO AVAILABLE\n", __func__);
-			cs->slot->sl_inuse = false;
-		}
-		/* Renew the clientid on success and on replay */
-		release_session_client(cs->session);
-		nfsd4_put_session(cs->session);
+	if (nfsd4_has_session(cs) && cs->status != nfserr_replay_cache) {
+		nfsd4_store_cache_entry(resp);
+		dprintk("%s: SET SLOT STATE TO AVAILABLE\n", __func__);
+		resp->cstate.slot->sl_inuse = false;
+		nfsd4_put_session(resp->cstate.session);
 	}
 	return 1;
 }

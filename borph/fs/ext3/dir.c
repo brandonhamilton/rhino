@@ -297,7 +297,7 @@ static void free_rb_tree_fname(struct rb_root *root)
 			kfree (old);
 		}
 		if (!parent)
-			*root = RB_ROOT;
+			root->rb_node = NULL;
 		else if (parent->rb_left == n)
 			parent->rb_left = NULL;
 		else if (parent->rb_right == n)

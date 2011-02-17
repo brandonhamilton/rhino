@@ -49,7 +49,6 @@
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/uwb.h>
-#include <linux/slab.h>
 #include <linux/usb/wusb.h>
 #include <linux/scatterlist.h>
 

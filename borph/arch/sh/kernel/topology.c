@@ -52,11 +52,7 @@ static int __init topology_init(void)
 #endif
 
 	for_each_present_cpu(i) {
-		struct cpu *c = &per_cpu(cpu_devices, i);
-
-		c->hotpluggable = 1;
-
-		ret = register_cpu(c, i);
+		ret = register_cpu(&per_cpu(cpu_devices, i), i);
 		if (unlikely(ret))
 			printk(KERN_WARNING "%s: register_cpu %d failed (%d)\n",
 			       __func__, i, ret);

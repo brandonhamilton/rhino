@@ -7,6 +7,7 @@
  * of the GNU General Public License version 2.
  */
 
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/buffer_head.h>
@@ -49,7 +50,7 @@ static int gfs2_drevalidate(struct dentry *dentry, struct nameidata *nd)
 		ip = GFS2_I(inode);
 	}
 
-	if (sdp->sd_lockstruct.ls_ops->lm_mount == NULL)
+	if (sdp->sd_args.ar_localcaching)
 		goto valid;
 
 	had_lock = (gfs2_glock_is_locked_by_me(dip->i_gl) != NULL);

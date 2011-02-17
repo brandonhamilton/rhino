@@ -50,7 +50,9 @@
 struct fib_nh;
 struct inet_peer;
 struct rtable {
-	struct dst_entry	dst;
+	union {
+		struct dst_entry	dst;
+	} u;
 
 	/* Cache lookup keys */
 	struct flowi		fl;
@@ -99,7 +101,7 @@ struct rt_cache_stat {
         unsigned int out_hlist_search;
 };
 
-extern struct ip_rt_acct __percpu *ip_rt_acct;
+extern struct ip_rt_acct *ip_rt_acct;
 
 struct in_device;
 extern int		ip_rt_init(void);
@@ -110,22 +112,7 @@ extern void		rt_cache_flush_batch(void);
 extern int		__ip_route_output_key(struct net *, struct rtable **, const struct flowi *flp);
 extern int		ip_route_output_key(struct net *, struct rtable **, struct flowi *flp);
 extern int		ip_route_output_flow(struct net *, struct rtable **rp, struct flowi *flp, struct sock *sk, int flags);
-
-extern int ip_route_input_common(struct sk_buff *skb, __be32 dst, __be32 src,
-				 u8 tos, struct net_device *devin, bool noref);
-
-static inline int ip_route_input(struct sk_buff *skb, __be32 dst, __be32 src,
-				 u8 tos, struct net_device *devin)
-{
-	return ip_route_input_common(skb, dst, src, tos, devin, false);
-}
-
-static inline int ip_route_input_noref(struct sk_buff *skb, __be32 dst, __be32 src,
-				       u8 tos, struct net_device *devin)
-{
-	return ip_route_input_common(skb, dst, src, tos, devin, true);
-}
-
+extern int		ip_route_input(struct sk_buff*, __be32 dst, __be32 src, u8 tos, struct net_device *devin);
 extern unsigned short	ip_rt_frag_needed(struct net *net, struct iphdr *iph, unsigned short new_mtu, struct net_device *dev);
 extern void		ip_rt_send_redirect(struct sk_buff *skb);
 
@@ -142,7 +129,7 @@ extern void fib_add_ifaddr(struct in_ifaddr *);
 static inline void ip_rt_put(struct rtable * rt)
 {
 	if (rt)
-		dst_release(&rt->dst);
+		dst_release(&rt->u.dst);
 }
 
 #define IPTOS_RT_MASK	(IPTOS_TOS_MASK & ~3)
@@ -199,8 +186,6 @@ static inline int ip_route_newports(struct rtable **rp, u8 protocol,
 		fl.fl_ip_sport = sport;
 		fl.fl_ip_dport = dport;
 		fl.proto = protocol;
-		if (inet_sk(sk)->transparent)
-			fl.flags |= FLOWI_FLAG_ANYSRC;
 		ip_rt_put(*rp);
 		*rp = NULL;
 		security_sk_classify_flow(sk, &fl);

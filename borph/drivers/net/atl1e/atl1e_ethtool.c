@@ -22,7 +22,6 @@
 
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
-#include <linux/slab.h>
 
 #include "atl1e.h"
 
@@ -338,6 +337,8 @@ static void atl1e_get_wol(struct net_device *netdev,
 		wol->wolopts |= WAKE_MAGIC;
 	if (adapter->wol & AT_WUFC_LNKC)
 		wol->wolopts |= WAKE_PHY;
+
+	return;
 }
 
 static int atl1e_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)

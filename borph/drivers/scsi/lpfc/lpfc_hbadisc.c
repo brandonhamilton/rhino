@@ -20,8 +20,6 @@
  *******************************************************************/
 
 #include <linux/blkdev.h>
-#include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/kthread.h>
 #include <linux/interrupt.h>
@@ -64,7 +62,6 @@ static uint8_t lpfcAlpaArray[] = {
 static void lpfc_disc_timeout_handler(struct lpfc_vport *);
 static void lpfc_disc_flush_list(struct lpfc_vport *vport);
 static void lpfc_unregister_fcfi_cmpl(struct lpfc_hba *, LPFC_MBOXQ_t *);
-static int lpfc_fcf_inuse(struct lpfc_hba *);
 
 void
 lpfc_terminate_rport_io(struct fc_rport *rport)
@@ -162,17 +159,11 @@ lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
 	return;
 }
 
-/**
- * lpfc_dev_loss_tmo_handler - Remote node devloss timeout handler
- * @ndlp: Pointer to remote node object.
- *
- * This function is called from the worker thread when devloss timeout timer
- * expires. For SLI4 host, this routine shall return 1 when at lease one
- * remote node, including this @ndlp, is still in use of FCF; otherwise, this
- * routine shall return 0 when there is no remote node is still in use of FCF
- * when devloss timeout happened to this @ndlp.
- **/
-static int
+/*
+ * This function is called from the worker thread when dev_loss_tmo
+ * expire.
+ */
+static void
 lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 {
 	struct lpfc_rport_data *rdata;
@@ -183,20 +174,16 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 	int  put_node;
 	int  put_rport;
 	int warn_on = 0;
-	int fcf_inuse = 0;
 
 	rport = ndlp->rport;
 
 	if (!rport)
-		return fcf_inuse;
+		return;
 
 	rdata = rport->dd_data;
 	name = (uint8_t *) &ndlp->nlp_portname;
 	vport = ndlp->vport;
 	phba  = vport->phba;
-
-	if (phba->sli_rev == LPFC_SLI_REV4)
-		fcf_inuse = lpfc_fcf_inuse(phba);
 
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_RPORT,
 		"rport devlosstmo:did:x%x type:x%x id:x%x",
@@ -221,7 +208,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 			lpfc_nlp_put(ndlp);
 		if (put_rport)
 			put_device(&rport->dev);
-		return fcf_inuse;
+		return;
 	}
 
 	if (ndlp->nlp_state == NLP_STE_MAPPED_NODE) {
@@ -232,7 +219,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 				 *name, *(name+1), *(name+2), *(name+3),
 				 *(name+4), *(name+5), *(name+6), *(name+7),
 				 ndlp->nlp_DID);
-		return fcf_inuse;
+		return;
 	}
 
 	if (ndlp->nlp_type & NLP_FABRIC) {
@@ -245,7 +232,7 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 			lpfc_nlp_put(ndlp);
 		if (put_rport)
 			put_device(&rport->dev);
-		return fcf_inuse;
+		return;
 	}
 
 	if (ndlp->nlp_sid != NLP_NO_SID) {
@@ -287,79 +274,9 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
 	if (!(vport->load_flag & FC_UNLOADING) &&
 	    !(ndlp->nlp_flag & NLP_DELAY_TMO) &&
 	    !(ndlp->nlp_flag & NLP_NPR_2B_DISC) &&
-	    (ndlp->nlp_state != NLP_STE_UNMAPPED_NODE) &&
-	    (ndlp->nlp_state != NLP_STE_REG_LOGIN_ISSUE) &&
-	    (ndlp->nlp_state != NLP_STE_PRLI_ISSUE))
+	    (ndlp->nlp_state != NLP_STE_UNMAPPED_NODE))
 		lpfc_disc_state_machine(vport, ndlp, NULL, NLP_EVT_DEVICE_RM);
 
-	return fcf_inuse;
-}
-
-/**
- * lpfc_sli4_post_dev_loss_tmo_handler - SLI4 post devloss timeout handler
- * @phba: Pointer to hba context object.
- * @fcf_inuse: SLI4 FCF in-use state reported from devloss timeout handler.
- * @nlp_did: remote node identifer with devloss timeout.
- *
- * This function is called from the worker thread after invoking devloss
- * timeout handler and releasing the reference count for the ndlp with
- * which the devloss timeout was handled for SLI4 host. For the devloss
- * timeout of the last remote node which had been in use of FCF, when this
- * routine is invoked, it shall be guaranteed that none of the remote are
- * in-use of FCF. When devloss timeout to the last remote using the FCF,
- * if the FIP engine is neither in FCF table scan process nor roundrobin
- * failover process, the in-use FCF shall be unregistered. If the FIP
- * engine is in FCF discovery process, the devloss timeout state shall
- * be set for either the FCF table scan process or roundrobin failover
- * process to unregister the in-use FCF.
- **/
-static void
-lpfc_sli4_post_dev_loss_tmo_handler(struct lpfc_hba *phba, int fcf_inuse,
-				    uint32_t nlp_did)
-{
-	/* If devloss timeout happened to a remote node when FCF had no
-	 * longer been in-use, do nothing.
-	 */
-	if (!fcf_inuse)
-		return;
-
-	if ((phba->hba_flag & HBA_FIP_SUPPORT) && !lpfc_fcf_inuse(phba)) {
-		spin_lock_irq(&phba->hbalock);
-		if (phba->fcf.fcf_flag & FCF_DISCOVERY) {
-			if (phba->hba_flag & HBA_DEVLOSS_TMO) {
-				spin_unlock_irq(&phba->hbalock);
-				return;
-			}
-			phba->hba_flag |= HBA_DEVLOSS_TMO;
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2847 Last remote node (x%x) using "
-					"FCF devloss tmo\n", nlp_did);
-		}
-		if (phba->fcf.fcf_flag & FCF_REDISC_PROG) {
-			spin_unlock_irq(&phba->hbalock);
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2868 Devloss tmo to FCF rediscovery "
-					"in progress\n");
-			return;
-		}
-		if (!(phba->hba_flag & (FCF_TS_INPROG | FCF_RR_INPROG))) {
-			spin_unlock_irq(&phba->hbalock);
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2869 Devloss tmo to idle FIP engine, "
-					"unreg in-use FCF and rescan.\n");
-			/* Unregister in-use FCF and rescan */
-			lpfc_unregister_fcf_rescan(phba);
-			return;
-		}
-		spin_unlock_irq(&phba->hbalock);
-		if (phba->hba_flag & FCF_TS_INPROG)
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2870 FCF table scan in progress\n");
-		if (phba->hba_flag & FCF_RR_INPROG)
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2871 FLOGI roundrobin FCF failover "
-					"in progress\n");
-	}
 	lpfc_unregister_unused_fcf(phba);
 }
 
@@ -488,8 +405,6 @@ lpfc_work_list_done(struct lpfc_hba *phba)
 	struct lpfc_work_evt  *evtp = NULL;
 	struct lpfc_nodelist  *ndlp;
 	int free_evt;
-	int fcf_inuse;
-	uint32_t nlp_did;
 
 	spin_lock_irq(&phba->hbalock);
 	while (!list_empty(&phba->work_list)) {
@@ -509,17 +424,12 @@ lpfc_work_list_done(struct lpfc_hba *phba)
 			break;
 		case LPFC_EVT_DEV_LOSS:
 			ndlp = (struct lpfc_nodelist *)(evtp->evt_arg1);
-			fcf_inuse = lpfc_dev_loss_tmo_handler(ndlp);
+			lpfc_dev_loss_tmo_handler(ndlp);
 			free_evt = 0;
 			/* decrement the node reference count held for
 			 * this queued work
 			 */
-			nlp_did = ndlp->nlp_DID;
 			lpfc_nlp_put(ndlp);
-			if (phba->sli_rev == LPFC_SLI_REV4)
-				lpfc_sli4_post_dev_loss_tmo_handler(phba,
-								    fcf_inuse,
-								    nlp_did);
 			break;
 		case LPFC_EVT_ONLINE:
 			if (phba->link_state < LPFC_LINK_DOWN)
@@ -563,10 +473,6 @@ lpfc_work_list_done(struct lpfc_hba *phba)
 		case LPFC_EVT_FASTPATH_MGMT_EVT:
 			lpfc_send_fastpath_evt(phba, evtp);
 			free_evt = 0;
-			break;
-		case LPFC_EVT_RESET_HBA:
-			if (!(phba->pport->load_flag & FC_UNLOADING))
-				lpfc_reset_hba(phba);
 			break;
 		}
 		if (free_evt)
@@ -619,8 +525,6 @@ lpfc_work_done(struct lpfc_hba *phba)
 			spin_unlock_irq(&phba->hbalock);
 			lpfc_sli_hbqbuf_add_hbqs(phba, LPFC_ELS_HBQ);
 		}
-		if (phba->fcf.fcf_flag & FCF_REDISC_EVT)
-			lpfc_sli4_fcf_redisc_event_proc(phba);
 	}
 
 	vports = lpfc_create_vport_work_array(phba);
@@ -675,8 +579,6 @@ lpfc_work_done(struct lpfc_hba *phba)
 							(status &
 							 HA_RXMASK));
 		}
-		if ((phba->sli_rev == LPFC_SLI_REV4) && pring->txq_cnt)
-			lpfc_drain_txq(phba);
 		/*
 		 * Turn on Ring interrupts
 		 */
@@ -794,8 +696,6 @@ lpfc_cleanup_rpis(struct lpfc_vport *vport, int remove)
 					     : NLP_EVT_DEVICE_RECOVERY);
 	}
 	if (phba->sli3_options & LPFC_SLI3_VPORT_TEARDOWN) {
-		if (phba->sli_rev == LPFC_SLI_REV4)
-			lpfc_sli4_unreg_all_rpis(vport);
 		lpfc_mbx_unreg_vpi(vport);
 		spin_lock_irq(shost->host_lock);
 		vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
@@ -806,8 +706,6 @@ lpfc_cleanup_rpis(struct lpfc_vport *vport, int remove)
 void
 lpfc_port_link_failure(struct lpfc_vport *vport)
 {
-	lpfc_vport_set_state(vport, FC_VPORT_LINKDOWN);
-
 	/* Cleanup any outstanding received buffers */
 	lpfc_cleanup_rcv_buffers(vport);
 
@@ -849,19 +747,13 @@ lpfc_linkdown(struct lpfc_hba *phba)
 
 	if (phba->link_state == LPFC_LINK_DOWN)
 		return 0;
-
-	/* Block all SCSI stack I/Os */
-	lpfc_scsi_dev_block(phba);
-
 	spin_lock_irq(&phba->hbalock);
-	phba->fcf.fcf_flag &= ~(FCF_AVAILABLE | FCF_SCAN_DONE);
-	spin_unlock_irq(&phba->hbalock);
+	phba->fcf.fcf_flag &= ~(FCF_AVAILABLE | FCF_DISCOVERED);
 	if (phba->link_state > LPFC_LINK_DOWN) {
 		phba->link_state = LPFC_LINK_DOWN;
-		spin_lock_irq(shost->host_lock);
 		phba->pport->fc_flag &= ~FC_LBIT;
-		spin_unlock_irq(shost->host_lock);
 	}
+	spin_unlock_irq(&phba->hbalock);
 	vports = lpfc_create_vport_work_array(phba);
 	if (vports != NULL)
 		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
@@ -1104,45 +996,37 @@ static void
 lpfc_mbx_cmpl_reg_fcfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	struct lpfc_vport *vport = mboxq->vport;
+	unsigned long flags;
 
 	if (mboxq->u.mb.mbxStatus) {
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_MBOX,
 			 "2017 REG_FCFI mbxStatus error x%x "
 			 "HBA state x%x\n",
 			 mboxq->u.mb.mbxStatus, vport->port_state);
-		goto fail_out;
+		mempool_free(mboxq, phba->mbox_mem_pool);
+		return;
 	}
 
 	/* Start FCoE discovery by sending a FLOGI. */
 	phba->fcf.fcfi = bf_get(lpfc_reg_fcfi_fcfi, &mboxq->u.mqe.un.reg_fcfi);
 	/* Set the FCFI registered flag */
-	spin_lock_irq(&phba->hbalock);
+	spin_lock_irqsave(&phba->hbalock, flags);
 	phba->fcf.fcf_flag |= FCF_REGISTERED;
-	spin_unlock_irq(&phba->hbalock);
-
+	spin_unlock_irqrestore(&phba->hbalock, flags);
 	/* If there is a pending FCoE event, restart FCF table scan. */
-	if (lpfc_check_pending_fcoe_event(phba, LPFC_UNREG_FCF))
-		goto fail_out;
-
-	/* Mark successful completion of FCF table scan */
-	spin_lock_irq(&phba->hbalock);
-	phba->fcf.fcf_flag |= (FCF_SCAN_DONE | FCF_IN_USE);
-	phba->hba_flag &= ~FCF_TS_INPROG;
-	if (vport->port_state != LPFC_FLOGI) {
-		phba->hba_flag |= FCF_RR_INPROG;
-		spin_unlock_irq(&phba->hbalock);
-		lpfc_initial_flogi(vport);
-		goto out;
+	if (lpfc_check_pending_fcoe_event(phba, 1)) {
+		mempool_free(mboxq, phba->mbox_mem_pool);
+		return;
 	}
-	spin_unlock_irq(&phba->hbalock);
-	goto out;
+	spin_lock_irqsave(&phba->hbalock, flags);
+	phba->fcf.fcf_flag |= (FCF_DISCOVERED | FCF_IN_USE);
+	phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+	spin_unlock_irqrestore(&phba->hbalock, flags);
+	if (vport->port_state != LPFC_FLOGI)
+		lpfc_initial_flogi(vport);
 
-fail_out:
-	spin_lock_irq(&phba->hbalock);
-	phba->hba_flag &= ~FCF_RR_INPROG;
-	spin_unlock_irq(&phba->hbalock);
-out:
 	mempool_free(mboxq, phba->mbox_mem_pool);
+	return;
 }
 
 /**
@@ -1157,23 +1041,25 @@ out:
 static uint32_t
 lpfc_fab_name_match(uint8_t *fab_name, struct fcf_record *new_fcf_record)
 {
-	if (fab_name[0] != bf_get(lpfc_fcf_record_fab_name_0, new_fcf_record))
+	if ((fab_name[0] ==
+		bf_get(lpfc_fcf_record_fab_name_0, new_fcf_record)) &&
+	    (fab_name[1] ==
+		bf_get(lpfc_fcf_record_fab_name_1, new_fcf_record)) &&
+	    (fab_name[2] ==
+		bf_get(lpfc_fcf_record_fab_name_2, new_fcf_record)) &&
+	    (fab_name[3] ==
+		bf_get(lpfc_fcf_record_fab_name_3, new_fcf_record)) &&
+	    (fab_name[4] ==
+		bf_get(lpfc_fcf_record_fab_name_4, new_fcf_record)) &&
+	    (fab_name[5] ==
+		bf_get(lpfc_fcf_record_fab_name_5, new_fcf_record)) &&
+	    (fab_name[6] ==
+		bf_get(lpfc_fcf_record_fab_name_6, new_fcf_record)) &&
+	    (fab_name[7] ==
+		bf_get(lpfc_fcf_record_fab_name_7, new_fcf_record)))
+		return 1;
+	else
 		return 0;
-	if (fab_name[1] != bf_get(lpfc_fcf_record_fab_name_1, new_fcf_record))
-		return 0;
-	if (fab_name[2] != bf_get(lpfc_fcf_record_fab_name_2, new_fcf_record))
-		return 0;
-	if (fab_name[3] != bf_get(lpfc_fcf_record_fab_name_3, new_fcf_record))
-		return 0;
-	if (fab_name[4] != bf_get(lpfc_fcf_record_fab_name_4, new_fcf_record))
-		return 0;
-	if (fab_name[5] != bf_get(lpfc_fcf_record_fab_name_5, new_fcf_record))
-		return 0;
-	if (fab_name[6] != bf_get(lpfc_fcf_record_fab_name_6, new_fcf_record))
-		return 0;
-	if (fab_name[7] != bf_get(lpfc_fcf_record_fab_name_7, new_fcf_record))
-		return 0;
-	return 1;
 }
 
 /**
@@ -1188,28 +1074,30 @@ lpfc_fab_name_match(uint8_t *fab_name, struct fcf_record *new_fcf_record)
 static uint32_t
 lpfc_sw_name_match(uint8_t *sw_name, struct fcf_record *new_fcf_record)
 {
-	if (sw_name[0] != bf_get(lpfc_fcf_record_switch_name_0, new_fcf_record))
+	if ((sw_name[0] ==
+		bf_get(lpfc_fcf_record_switch_name_0, new_fcf_record)) &&
+	    (sw_name[1] ==
+		bf_get(lpfc_fcf_record_switch_name_1, new_fcf_record)) &&
+	    (sw_name[2] ==
+		bf_get(lpfc_fcf_record_switch_name_2, new_fcf_record)) &&
+	    (sw_name[3] ==
+		bf_get(lpfc_fcf_record_switch_name_3, new_fcf_record)) &&
+	    (sw_name[4] ==
+		bf_get(lpfc_fcf_record_switch_name_4, new_fcf_record)) &&
+	    (sw_name[5] ==
+		bf_get(lpfc_fcf_record_switch_name_5, new_fcf_record)) &&
+	    (sw_name[6] ==
+		bf_get(lpfc_fcf_record_switch_name_6, new_fcf_record)) &&
+	    (sw_name[7] ==
+		bf_get(lpfc_fcf_record_switch_name_7, new_fcf_record)))
+		return 1;
+	else
 		return 0;
-	if (sw_name[1] != bf_get(lpfc_fcf_record_switch_name_1, new_fcf_record))
-		return 0;
-	if (sw_name[2] != bf_get(lpfc_fcf_record_switch_name_2, new_fcf_record))
-		return 0;
-	if (sw_name[3] != bf_get(lpfc_fcf_record_switch_name_3, new_fcf_record))
-		return 0;
-	if (sw_name[4] != bf_get(lpfc_fcf_record_switch_name_4, new_fcf_record))
-		return 0;
-	if (sw_name[5] != bf_get(lpfc_fcf_record_switch_name_5, new_fcf_record))
-		return 0;
-	if (sw_name[6] != bf_get(lpfc_fcf_record_switch_name_6, new_fcf_record))
-		return 0;
-	if (sw_name[7] != bf_get(lpfc_fcf_record_switch_name_7, new_fcf_record))
-		return 0;
-	return 1;
 }
 
 /**
  * lpfc_mac_addr_match - Check if the fcf mac address match.
- * @mac_addr: pointer to mac address.
+ * @phba: pointer to lpfc hba data structure.
  * @new_fcf_record: pointer to fcf record.
  *
  * This routine compare the fcf record's mac address with HBA's
@@ -1217,112 +1105,82 @@ lpfc_sw_name_match(uint8_t *sw_name, struct fcf_record *new_fcf_record)
  * returns 1 else return 0.
  **/
 static uint32_t
-lpfc_mac_addr_match(uint8_t *mac_addr, struct fcf_record *new_fcf_record)
+lpfc_mac_addr_match(struct lpfc_hba *phba, struct fcf_record *new_fcf_record)
 {
-	if (mac_addr[0] != bf_get(lpfc_fcf_record_mac_0, new_fcf_record))
+	if ((phba->fcf.mac_addr[0] ==
+		bf_get(lpfc_fcf_record_mac_0, new_fcf_record)) &&
+	    (phba->fcf.mac_addr[1] ==
+		bf_get(lpfc_fcf_record_mac_1, new_fcf_record)) &&
+	    (phba->fcf.mac_addr[2] ==
+		bf_get(lpfc_fcf_record_mac_2, new_fcf_record)) &&
+	    (phba->fcf.mac_addr[3] ==
+		bf_get(lpfc_fcf_record_mac_3, new_fcf_record)) &&
+	    (phba->fcf.mac_addr[4] ==
+		bf_get(lpfc_fcf_record_mac_4, new_fcf_record)) &&
+	    (phba->fcf.mac_addr[5] ==
+		bf_get(lpfc_fcf_record_mac_5, new_fcf_record)))
+		return 1;
+	else
 		return 0;
-	if (mac_addr[1] != bf_get(lpfc_fcf_record_mac_1, new_fcf_record))
-		return 0;
-	if (mac_addr[2] != bf_get(lpfc_fcf_record_mac_2, new_fcf_record))
-		return 0;
-	if (mac_addr[3] != bf_get(lpfc_fcf_record_mac_3, new_fcf_record))
-		return 0;
-	if (mac_addr[4] != bf_get(lpfc_fcf_record_mac_4, new_fcf_record))
-		return 0;
-	if (mac_addr[5] != bf_get(lpfc_fcf_record_mac_5, new_fcf_record))
-		return 0;
-	return 1;
-}
-
-static bool
-lpfc_vlan_id_match(uint16_t curr_vlan_id, uint16_t new_vlan_id)
-{
-	return (curr_vlan_id == new_vlan_id);
 }
 
 /**
  * lpfc_copy_fcf_record - Copy fcf information to lpfc_hba.
- * @fcf: pointer to driver fcf record.
+ * @phba: pointer to lpfc hba data structure.
  * @new_fcf_record: pointer to fcf record.
  *
  * This routine copies the FCF information from the FCF
  * record to lpfc_hba data structure.
  **/
 static void
-lpfc_copy_fcf_record(struct lpfc_fcf_rec *fcf_rec,
-		     struct fcf_record *new_fcf_record)
+lpfc_copy_fcf_record(struct lpfc_hba *phba, struct fcf_record *new_fcf_record)
 {
-	/* Fabric name */
-	fcf_rec->fabric_name[0] =
+	phba->fcf.fabric_name[0] =
 		bf_get(lpfc_fcf_record_fab_name_0, new_fcf_record);
-	fcf_rec->fabric_name[1] =
+	phba->fcf.fabric_name[1] =
 		bf_get(lpfc_fcf_record_fab_name_1, new_fcf_record);
-	fcf_rec->fabric_name[2] =
+	phba->fcf.fabric_name[2] =
 		bf_get(lpfc_fcf_record_fab_name_2, new_fcf_record);
-	fcf_rec->fabric_name[3] =
+	phba->fcf.fabric_name[3] =
 		bf_get(lpfc_fcf_record_fab_name_3, new_fcf_record);
-	fcf_rec->fabric_name[4] =
+	phba->fcf.fabric_name[4] =
 		bf_get(lpfc_fcf_record_fab_name_4, new_fcf_record);
-	fcf_rec->fabric_name[5] =
+	phba->fcf.fabric_name[5] =
 		bf_get(lpfc_fcf_record_fab_name_5, new_fcf_record);
-	fcf_rec->fabric_name[6] =
+	phba->fcf.fabric_name[6] =
 		bf_get(lpfc_fcf_record_fab_name_6, new_fcf_record);
-	fcf_rec->fabric_name[7] =
+	phba->fcf.fabric_name[7] =
 		bf_get(lpfc_fcf_record_fab_name_7, new_fcf_record);
-	/* Mac address */
-	fcf_rec->mac_addr[0] = bf_get(lpfc_fcf_record_mac_0, new_fcf_record);
-	fcf_rec->mac_addr[1] = bf_get(lpfc_fcf_record_mac_1, new_fcf_record);
-	fcf_rec->mac_addr[2] = bf_get(lpfc_fcf_record_mac_2, new_fcf_record);
-	fcf_rec->mac_addr[3] = bf_get(lpfc_fcf_record_mac_3, new_fcf_record);
-	fcf_rec->mac_addr[4] = bf_get(lpfc_fcf_record_mac_4, new_fcf_record);
-	fcf_rec->mac_addr[5] = bf_get(lpfc_fcf_record_mac_5, new_fcf_record);
-	/* FCF record index */
-	fcf_rec->fcf_indx = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
-	/* FCF record priority */
-	fcf_rec->priority = new_fcf_record->fip_priority;
-	/* Switch name */
-	fcf_rec->switch_name[0] =
+	phba->fcf.mac_addr[0] =
+		bf_get(lpfc_fcf_record_mac_0, new_fcf_record);
+	phba->fcf.mac_addr[1] =
+		bf_get(lpfc_fcf_record_mac_1, new_fcf_record);
+	phba->fcf.mac_addr[2] =
+		bf_get(lpfc_fcf_record_mac_2, new_fcf_record);
+	phba->fcf.mac_addr[3] =
+		bf_get(lpfc_fcf_record_mac_3, new_fcf_record);
+	phba->fcf.mac_addr[4] =
+		bf_get(lpfc_fcf_record_mac_4, new_fcf_record);
+	phba->fcf.mac_addr[5] =
+		bf_get(lpfc_fcf_record_mac_5, new_fcf_record);
+	phba->fcf.fcf_indx = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
+	phba->fcf.priority = new_fcf_record->fip_priority;
+	phba->fcf.switch_name[0] =
 		bf_get(lpfc_fcf_record_switch_name_0, new_fcf_record);
-	fcf_rec->switch_name[1] =
+	phba->fcf.switch_name[1] =
 		bf_get(lpfc_fcf_record_switch_name_1, new_fcf_record);
-	fcf_rec->switch_name[2] =
+	phba->fcf.switch_name[2] =
 		bf_get(lpfc_fcf_record_switch_name_2, new_fcf_record);
-	fcf_rec->switch_name[3] =
+	phba->fcf.switch_name[3] =
 		bf_get(lpfc_fcf_record_switch_name_3, new_fcf_record);
-	fcf_rec->switch_name[4] =
+	phba->fcf.switch_name[4] =
 		bf_get(lpfc_fcf_record_switch_name_4, new_fcf_record);
-	fcf_rec->switch_name[5] =
+	phba->fcf.switch_name[5] =
 		bf_get(lpfc_fcf_record_switch_name_5, new_fcf_record);
-	fcf_rec->switch_name[6] =
+	phba->fcf.switch_name[6] =
 		bf_get(lpfc_fcf_record_switch_name_6, new_fcf_record);
-	fcf_rec->switch_name[7] =
+	phba->fcf.switch_name[7] =
 		bf_get(lpfc_fcf_record_switch_name_7, new_fcf_record);
-}
-
-/**
- * lpfc_update_fcf_record - Update driver fcf record
- * @phba: pointer to lpfc hba data structure.
- * @fcf_rec: pointer to driver fcf record.
- * @new_fcf_record: pointer to hba fcf record.
- * @addr_mode: address mode to be set to the driver fcf record.
- * @vlan_id: vlan tag to be set to the driver fcf record.
- * @flag: flag bits to be set to the driver fcf record.
- *
- * This routine updates the driver FCF record from the new HBA FCF record
- * together with the address mode, vlan_id, and other informations. This
- * routine is called with the host lock held.
- **/
-static void
-__lpfc_update_fcf_record(struct lpfc_hba *phba, struct lpfc_fcf_rec *fcf_rec,
-		       struct fcf_record *new_fcf_record, uint32_t addr_mode,
-		       uint16_t vlan_id, uint32_t flag)
-{
-	/* Copy the fields from the HBA's FCF record */
-	lpfc_copy_fcf_record(fcf_rec, new_fcf_record);
-	/* Update other fields of driver FCF record */
-	fcf_rec->addr_mode = addr_mode;
-	fcf_rec->vlan_id = vlan_id;
-	fcf_rec->flag |= (flag | RECORD_VALID);
 }
 
 /**
@@ -1337,35 +1195,34 @@ lpfc_register_fcf(struct lpfc_hba *phba)
 {
 	LPFC_MBOXQ_t *fcf_mbxq;
 	int rc;
+	unsigned long flags;
 
-	spin_lock_irq(&phba->hbalock);
+	spin_lock_irqsave(&phba->hbalock, flags);
+
 	/* If the FCF is not availabe do nothing. */
 	if (!(phba->fcf.fcf_flag & FCF_AVAILABLE)) {
-		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
-		spin_unlock_irq(&phba->hbalock);
+		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+		spin_unlock_irqrestore(&phba->hbalock, flags);
 		return;
 	}
 
 	/* The FCF is already registered, start discovery */
 	if (phba->fcf.fcf_flag & FCF_REGISTERED) {
-		phba->fcf.fcf_flag |= (FCF_SCAN_DONE | FCF_IN_USE);
-		phba->hba_flag &= ~FCF_TS_INPROG;
-		if (phba->pport->port_state != LPFC_FLOGI) {
-			phba->hba_flag |= FCF_RR_INPROG;
-			spin_unlock_irq(&phba->hbalock);
+		phba->fcf.fcf_flag |= (FCF_DISCOVERED | FCF_IN_USE);
+		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+		spin_unlock_irqrestore(&phba->hbalock, flags);
+		if (phba->pport->port_state != LPFC_FLOGI)
 			lpfc_initial_flogi(phba->pport);
-			return;
-		}
-		spin_unlock_irq(&phba->hbalock);
 		return;
 	}
-	spin_unlock_irq(&phba->hbalock);
+	spin_unlock_irqrestore(&phba->hbalock, flags);
 
-	fcf_mbxq = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+	fcf_mbxq = mempool_alloc(phba->mbox_mem_pool,
+		GFP_KERNEL);
 	if (!fcf_mbxq) {
-		spin_lock_irq(&phba->hbalock);
-		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
-		spin_unlock_irq(&phba->hbalock);
+		spin_lock_irqsave(&phba->hbalock, flags);
+		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+		spin_unlock_irqrestore(&phba->hbalock, flags);
 		return;
 	}
 
@@ -1374,9 +1231,9 @@ lpfc_register_fcf(struct lpfc_hba *phba)
 	fcf_mbxq->mbox_cmpl = lpfc_mbx_cmpl_reg_fcfi;
 	rc = lpfc_sli_issue_mbox(phba, fcf_mbxq, MBX_NOWAIT);
 	if (rc == MBX_NOT_FINISHED) {
-		spin_lock_irq(&phba->hbalock);
-		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
-		spin_unlock_irq(&phba->hbalock);
+		spin_lock_irqsave(&phba->hbalock, flags);
+		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+		spin_unlock_irqrestore(&phba->hbalock, flags);
 		mempool_free(fcf_mbxq, phba->mbox_mem_pool);
 	}
 
@@ -1389,7 +1246,6 @@ lpfc_register_fcf(struct lpfc_hba *phba)
  * @new_fcf_record: pointer to fcf record.
  * @boot_flag: Indicates if this record used by boot bios.
  * @addr_mode: The address mode to be used by this FCF
- * @vlan_id: The vlan id to be used as vlan tagging by this FCF.
  *
  * This routine compare the fcf record with connect list obtained from the
  * config region to decide if this FCF can be used for SAN discovery. It returns
@@ -1399,7 +1255,7 @@ lpfc_register_fcf(struct lpfc_hba *phba)
  * used for this FCF when the function returns.
  * If the FCF record need to be used with a particular vlan id, the vlan is
  * set in the vlan_id on return of the function. If not VLAN tagging need to
- * be used with the FCF vlan_id will be set to LPFC_FCOE_NULL_VID;
+ * be used with the FCF vlan_id will be set to 0xFFFF;
  **/
 static int
 lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
@@ -1435,7 +1291,7 @@ lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
 		if (phba->valid_vlan)
 			*vlan_id = phba->vlan_id;
 		else
-			*vlan_id = LPFC_FCOE_NULL_VID;
+			*vlan_id = 0xFFFF;
 		return 1;
 	}
 
@@ -1459,12 +1315,11 @@ lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
 		if (fcf_vlan_id)
 			*vlan_id = fcf_vlan_id;
 		else
-			*vlan_id = LPFC_FCOE_NULL_VID;
+			*vlan_id = 0xFFFF;
 		return 1;
 	}
 
-	list_for_each_entry(conn_entry,
-			    &phba->fcf_conn_rec_list, list) {
+	list_for_each_entry(conn_entry, &phba->fcf_conn_rec_list, list) {
 		if (!(conn_entry->conn_rec.flags & FCFCNCT_VALID))
 			continue;
 
@@ -1568,7 +1423,7 @@ lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
 		else if (fcf_vlan_id)
 			*vlan_id = fcf_vlan_id;
 		else
-			*vlan_id = LPFC_FCOE_NULL_VID;
+			*vlan_id = 0xFFFF;
 
 		return 1;
 	}
@@ -1588,111 +1443,94 @@ lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
 int
 lpfc_check_pending_fcoe_event(struct lpfc_hba *phba, uint8_t unreg_fcf)
 {
+	LPFC_MBOXQ_t *mbox;
+	int rc;
 	/*
 	 * If the Link is up and no FCoE events while in the
 	 * FCF discovery, no need to restart FCF discovery.
 	 */
 	if ((phba->link_state  >= LPFC_LINK_UP) &&
-	    (phba->fcoe_eventtag == phba->fcoe_eventtag_at_fcf_scan))
+		(phba->fcoe_eventtag == phba->fcoe_eventtag_at_fcf_scan))
 		return 0;
-
-	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-			"2768 Pending link or FCF event during current "
-			"handling of the previous event: link_state:x%x, "
-			"evt_tag_at_scan:x%x, evt_tag_current:x%x\n",
-			phba->link_state, phba->fcoe_eventtag_at_fcf_scan,
-			phba->fcoe_eventtag);
 
 	spin_lock_irq(&phba->hbalock);
 	phba->fcf.fcf_flag &= ~FCF_AVAILABLE;
 	spin_unlock_irq(&phba->hbalock);
 
-	if (phba->link_state >= LPFC_LINK_UP) {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
-				"2780 Restart FCF table scan due to "
-				"pending FCF event:evt_tag_at_scan:x%x, "
-				"evt_tag_current:x%x\n",
-				phba->fcoe_eventtag_at_fcf_scan,
-				phba->fcoe_eventtag);
-		lpfc_sli4_fcf_scan_read_fcf_rec(phba, LPFC_FCOE_FCF_GET_FIRST);
-	} else {
+	if (phba->link_state >= LPFC_LINK_UP)
+		lpfc_sli4_read_fcf_record(phba, LPFC_FCOE_FCF_GET_FIRST);
+	else {
 		/*
-		 * Do not continue FCF discovery and clear FCF_TS_INPROG
+		 * Do not continue FCF discovery and clear FCF_DISC_INPROGRESS
 		 * flag
 		 */
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
-				"2833 Stop FCF discovery process due to link "
-				"state change (x%x)\n", phba->link_state);
 		spin_lock_irq(&phba->hbalock);
-		phba->hba_flag &= ~(FCF_TS_INPROG | FCF_RR_INPROG);
-		phba->fcf.fcf_flag &= ~(FCF_REDISC_FOV | FCF_DISCOVERY);
+		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
 		spin_unlock_irq(&phba->hbalock);
 	}
 
-	/* Unregister the currently registered FCF if required */
 	if (unreg_fcf) {
 		spin_lock_irq(&phba->hbalock);
 		phba->fcf.fcf_flag &= ~FCF_REGISTERED;
 		spin_unlock_irq(&phba->hbalock);
-		lpfc_sli4_unregister_fcf(phba);
+		mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+		if (!mbox) {
+			lpfc_printf_log(phba, KERN_ERR,
+				LOG_DISCOVERY|LOG_MBOX,
+				"2610 UNREG_FCFI mbox allocation failed\n");
+			return 1;
+		}
+		lpfc_unreg_fcfi(mbox, phba->fcf.fcfi);
+		mbox->vport = phba->pport;
+		mbox->mbox_cmpl = lpfc_unregister_fcfi_cmpl;
+		rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
+		if (rc == MBX_NOT_FINISHED) {
+			lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+				"2611 UNREG_FCFI issue mbox failed\n");
+			mempool_free(mbox, phba->mbox_mem_pool);
+		}
 	}
+
 	return 1;
 }
 
 /**
- * lpfc_sli4_new_fcf_random_select - Randomly select an eligible new fcf record
- * @phba: pointer to lpfc hba data structure.
- * @fcf_cnt: number of eligible fcf record seen so far.
- *
- * This function makes an running random selection decision on FCF record to
- * use through a sequence of @fcf_cnt eligible FCF records with equal
- * probability. To perform integer manunipulation of random numbers with
- * size unit32_t, the lower 16 bits of the 32-bit random number returned
- * from random32() are taken as the random random number generated.
- *
- * Returns true when outcome is for the newly read FCF record should be
- * chosen; otherwise, return false when outcome is for keeping the previously
- * chosen FCF record.
- **/
-static bool
-lpfc_sli4_new_fcf_random_select(struct lpfc_hba *phba, uint32_t fcf_cnt)
-{
-	uint32_t rand_num;
-
-	/* Get 16-bit uniform random number */
-	rand_num = (0xFFFF & random32());
-
-	/* Decision with probability 1/fcf_cnt */
-	if ((fcf_cnt * rand_num) < 0xFFFF)
-		return true;
-	else
-		return false;
-}
-
-/**
- * lpfc_sli4_fcf_rec_mbox_parse - Parse read_fcf mbox command.
+ * lpfc_mbx_cmpl_read_fcf_record - Completion handler for read_fcf mbox.
  * @phba: pointer to lpfc hba data structure.
  * @mboxq: pointer to mailbox object.
- * @next_fcf_index: pointer to holder of next fcf index.
  *
- * This routine parses the non-embedded fcf mailbox command by performing the
- * necessarily error checking, non-embedded read FCF record mailbox command
- * SGE parsing, and endianness swapping.
- *
- * Returns the pointer to the new FCF record in the non-embedded mailbox
- * command DMA memory if successfully, other NULL.
+ * This function iterate through all the fcf records available in
+ * HBA and choose the optimal FCF record for discovery. After finding
+ * the FCF for discovery it register the FCF record and kick start
+ * discovery.
+ * If FCF_IN_USE flag is set in currently used FCF, the routine try to
+ * use a FCF record which match fabric name and mac address of the
+ * currently used FCF record.
+ * If the driver support only one FCF, it will try to use the FCF record
+ * used by BOOT_BIOS.
  */
-static struct fcf_record *
-lpfc_sli4_fcf_rec_mbox_parse(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq,
-			     uint16_t *next_fcf_index)
+void
+lpfc_mbx_cmpl_read_fcf_record(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	void *virt_addr;
 	dma_addr_t phys_addr;
+	uint8_t *bytep;
 	struct lpfc_mbx_sge sge;
 	struct lpfc_mbx_read_fcf_tbl *read_fcf;
 	uint32_t shdr_status, shdr_add_status;
 	union lpfc_sli4_cfg_shdr *shdr;
 	struct fcf_record *new_fcf_record;
+	int rc;
+	uint32_t boot_flag, addr_mode;
+	uint32_t next_fcf_index;
+	unsigned long flags;
+	uint16_t vlan_id;
+
+	/* If there is pending FCoE event restart FCF table scan */
+	if (lpfc_check_pending_fcoe_event(phba, 0)) {
+		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+		return;
+	}
 
 	/* Get the first SGE entry from the non-embedded DMA memory. This
 	 * routine only uses a single SGE.
@@ -1703,551 +1541,134 @@ lpfc_sli4_fcf_rec_mbox_parse(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq,
 		lpfc_printf_log(phba, KERN_ERR, LOG_MBOX,
 				"2524 Failed to get the non-embedded SGE "
 				"virtual address\n");
-		return NULL;
+		goto out;
 	}
 	virt_addr = mboxq->sge_array->addr[0];
 
 	shdr = (union lpfc_sli4_cfg_shdr *)virt_addr;
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
-	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
+	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status,
+				 &shdr->response);
+	/*
+	 * The FCF Record was read and there is no reason for the driver
+	 * to maintain the FCF record data or memory. Instead, just need
+	 * to book keeping the FCFIs can be used.
+	 */
 	if (shdr_status || shdr_add_status) {
-		if (shdr_status == STATUS_FCF_TABLE_EMPTY)
-			lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-					"2726 READ_FCF_RECORD Indicates empty "
-					"FCF table.\n");
-		else
-			lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-					"2521 READ_FCF_RECORD mailbox failed "
-					"with status x%x add_status x%x, "
-					"mbx\n", shdr_status, shdr_add_status);
-		return NULL;
+		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+				"2521 READ_FCF_RECORD mailbox failed "
+				"with status x%x add_status x%x, mbx\n",
+				shdr_status, shdr_add_status);
+		goto out;
 	}
-
-	/* Interpreting the returned information of the FCF record */
+	/* Interpreting the returned information of FCF records */
 	read_fcf = (struct lpfc_mbx_read_fcf_tbl *)virt_addr;
 	lpfc_sli_pcimem_bcopy(read_fcf, read_fcf,
 			      sizeof(struct lpfc_mbx_read_fcf_tbl));
-	*next_fcf_index = bf_get(lpfc_mbx_read_fcf_tbl_nxt_vindx, read_fcf);
+	next_fcf_index = bf_get(lpfc_mbx_read_fcf_tbl_nxt_vindx, read_fcf);
+
 	new_fcf_record = (struct fcf_record *)(virt_addr +
 			  sizeof(struct lpfc_mbx_read_fcf_tbl));
 	lpfc_sli_pcimem_bcopy(new_fcf_record, new_fcf_record,
-				offsetof(struct fcf_record, vlan_bitmap));
-	new_fcf_record->word137 = le32_to_cpu(new_fcf_record->word137);
-	new_fcf_record->word138 = le32_to_cpu(new_fcf_record->word138);
+			      sizeof(struct fcf_record));
+	bytep = virt_addr + sizeof(union lpfc_sli4_cfg_shdr);
 
-	return new_fcf_record;
-}
-
-/**
- * lpfc_sli4_log_fcf_record_info - Log the information of a fcf record
- * @phba: pointer to lpfc hba data structure.
- * @fcf_record: pointer to the fcf record.
- * @vlan_id: the lowest vlan identifier associated to this fcf record.
- * @next_fcf_index: the index to the next fcf record in hba's fcf table.
- *
- * This routine logs the detailed FCF record if the LOG_FIP loggin is
- * enabled.
- **/
-static void
-lpfc_sli4_log_fcf_record_info(struct lpfc_hba *phba,
-			      struct fcf_record *fcf_record,
-			      uint16_t vlan_id,
-			      uint16_t next_fcf_index)
-{
-	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-			"2764 READ_FCF_RECORD:\n"
-			"\tFCF_Index     : x%x\n"
-			"\tFCF_Avail     : x%x\n"
-			"\tFCF_Valid     : x%x\n"
-			"\tFIP_Priority  : x%x\n"
-			"\tMAC_Provider  : x%x\n"
-			"\tLowest VLANID : x%x\n"
-			"\tFCF_MAC Addr  : x%x:%x:%x:%x:%x:%x\n"
-			"\tFabric_Name   : x%x:%x:%x:%x:%x:%x:%x:%x\n"
-			"\tSwitch_Name   : x%x:%x:%x:%x:%x:%x:%x:%x\n"
-			"\tNext_FCF_Index: x%x\n",
-			bf_get(lpfc_fcf_record_fcf_index, fcf_record),
-			bf_get(lpfc_fcf_record_fcf_avail, fcf_record),
-			bf_get(lpfc_fcf_record_fcf_valid, fcf_record),
-			fcf_record->fip_priority,
-			bf_get(lpfc_fcf_record_mac_addr_prov, fcf_record),
-			vlan_id,
-			bf_get(lpfc_fcf_record_mac_0, fcf_record),
-			bf_get(lpfc_fcf_record_mac_1, fcf_record),
-			bf_get(lpfc_fcf_record_mac_2, fcf_record),
-			bf_get(lpfc_fcf_record_mac_3, fcf_record),
-			bf_get(lpfc_fcf_record_mac_4, fcf_record),
-			bf_get(lpfc_fcf_record_mac_5, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_0, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_1, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_2, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_3, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_4, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_5, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_6, fcf_record),
-			bf_get(lpfc_fcf_record_fab_name_7, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_0, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_1, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_2, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_3, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_4, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_5, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_6, fcf_record),
-			bf_get(lpfc_fcf_record_switch_name_7, fcf_record),
-			next_fcf_index);
-}
-
-/**
- lpfc_sli4_fcf_record_match - testing new FCF record for matching existing FCF
- * @phba: pointer to lpfc hba data structure.
- * @fcf_rec: pointer to an existing FCF record.
- * @new_fcf_record: pointer to a new FCF record.
- * @new_vlan_id: vlan id from the new FCF record.
- *
- * This function performs matching test of a new FCF record against an existing
- * FCF record. If the new_vlan_id passed in is LPFC_FCOE_IGNORE_VID, vlan id
- * will not be used as part of the FCF record matching criteria.
- *
- * Returns true if all the fields matching, otherwise returns false.
- */
-static bool
-lpfc_sli4_fcf_record_match(struct lpfc_hba *phba,
-			   struct lpfc_fcf_rec *fcf_rec,
-			   struct fcf_record *new_fcf_record,
-			   uint16_t new_vlan_id)
-{
-	if (new_vlan_id != LPFC_FCOE_IGNORE_VID)
-		if (!lpfc_vlan_id_match(fcf_rec->vlan_id, new_vlan_id))
-			return false;
-	if (!lpfc_mac_addr_match(fcf_rec->mac_addr, new_fcf_record))
-		return false;
-	if (!lpfc_sw_name_match(fcf_rec->switch_name, new_fcf_record))
-		return false;
-	if (!lpfc_fab_name_match(fcf_rec->fabric_name, new_fcf_record))
-		return false;
-	return true;
-}
-
-/**
- * lpfc_sli4_fcf_rr_next_proc - processing next roundrobin fcf
- * @vport: Pointer to vport object.
- * @fcf_index: index to next fcf.
- *
- * This function processing the roundrobin fcf failover to next fcf index.
- * When this function is invoked, there will be a current fcf registered
- * for flogi.
- * Return: 0 for continue retrying flogi on currently registered fcf;
- *         1 for stop flogi on currently registered fcf;
- */
-int lpfc_sli4_fcf_rr_next_proc(struct lpfc_vport *vport, uint16_t fcf_index)
-{
-	struct lpfc_hba *phba = vport->phba;
-	int rc;
-
-	if (fcf_index == LPFC_FCOE_FCF_NEXT_NONE) {
-		spin_lock_irq(&phba->hbalock);
-		if (phba->hba_flag & HBA_DEVLOSS_TMO) {
-			spin_unlock_irq(&phba->hbalock);
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2872 Devloss tmo with no eligible "
-					"FCF, unregister in-use FCF (x%x) "
-					"and rescan FCF table\n",
-					phba->fcf.current_rec.fcf_indx);
-			lpfc_unregister_fcf_rescan(phba);
-			goto stop_flogi_current_fcf;
-		}
-		/* Mark the end to FLOGI roundrobin failover */
-		phba->hba_flag &= ~FCF_RR_INPROG;
-		/* Allow action to new fcf asynchronous event */
-		phba->fcf.fcf_flag &= ~(FCF_AVAILABLE | FCF_SCAN_DONE);
-		spin_unlock_irq(&phba->hbalock);
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-				"2865 No FCF available, stop roundrobin FCF "
-				"failover and change port state:x%x/x%x\n",
-				phba->pport->port_state, LPFC_VPORT_UNKNOWN);
-		phba->pport->port_state = LPFC_VPORT_UNKNOWN;
-		goto stop_flogi_current_fcf;
-	} else {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_ELS,
-				"2794 Try FLOGI roundrobin FCF failover to "
-				"(x%x)\n", fcf_index);
-		rc = lpfc_sli4_fcf_rr_read_fcf_rec(phba, fcf_index);
-		if (rc)
-			lpfc_printf_log(phba, KERN_WARNING, LOG_FIP | LOG_ELS,
-					"2761 FLOGI roundrobin FCF failover "
-					"failed (rc:x%x) to read FCF (x%x)\n",
-					rc, phba->fcf.current_rec.fcf_indx);
-		else
-			goto stop_flogi_current_fcf;
-	}
-	return 0;
-
-stop_flogi_current_fcf:
-	lpfc_can_disctmo(vport);
-	return 1;
-}
-
-/**
- * lpfc_mbx_cmpl_fcf_scan_read_fcf_rec - fcf scan read_fcf mbox cmpl handler.
- * @phba: pointer to lpfc hba data structure.
- * @mboxq: pointer to mailbox object.
- *
- * This function iterates through all the fcf records available in
- * HBA and chooses the optimal FCF record for discovery. After finding
- * the FCF for discovery it registers the FCF record and kicks start
- * discovery.
- * If FCF_IN_USE flag is set in currently used FCF, the routine tries to
- * use an FCF record which matches fabric name and mac address of the
- * currently used FCF record.
- * If the driver supports only one FCF, it will try to use the FCF record
- * used by BOOT_BIOS.
- */
-void
-lpfc_mbx_cmpl_fcf_scan_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
-{
-	struct fcf_record *new_fcf_record;
-	uint32_t boot_flag, addr_mode;
-	uint16_t fcf_index, next_fcf_index;
-	struct lpfc_fcf_rec *fcf_rec = NULL;
-	uint16_t vlan_id;
-	uint32_t seed;
-	bool select_new_fcf;
-	int rc;
-
-	/* If there is pending FCoE event restart FCF table scan */
-	if (lpfc_check_pending_fcoe_event(phba, LPFC_SKIP_UNREG_FCF)) {
-		lpfc_sli4_mbox_cmd_free(phba, mboxq);
-		return;
-	}
-
-	/* Parse the FCF record from the non-embedded mailbox command */
-	new_fcf_record = lpfc_sli4_fcf_rec_mbox_parse(phba, mboxq,
-						      &next_fcf_index);
-	if (!new_fcf_record) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-				"2765 Mailbox command READ_FCF_RECORD "
-				"failed to retrieve a FCF record.\n");
-		/* Let next new FCF event trigger fast failover */
-		spin_lock_irq(&phba->hbalock);
-		phba->hba_flag &= ~FCF_TS_INPROG;
-		spin_unlock_irq(&phba->hbalock);
-		lpfc_sli4_mbox_cmd_free(phba, mboxq);
-		return;
-	}
-
-	/* Check the FCF record against the connection list */
-	rc = lpfc_match_fcf_conn_list(phba, new_fcf_record, &boot_flag,
-				      &addr_mode, &vlan_id);
-
-	/* Log the FCF record information if turned on */
-	lpfc_sli4_log_fcf_record_info(phba, new_fcf_record, vlan_id,
-				      next_fcf_index);
-
+	rc = lpfc_match_fcf_conn_list(phba, new_fcf_record,
+				      &boot_flag, &addr_mode,
+					&vlan_id);
 	/*
 	 * If the fcf record does not match with connect list entries
-	 * read the next entry; otherwise, this is an eligible FCF
-	 * record for roundrobin FCF failover.
+	 * read the next entry.
 	 */
-	if (!rc) {
-		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
-				"2781 FCF (x%x) failed connection "
-				"list check: (x%x/x%x)\n",
-				bf_get(lpfc_fcf_record_fcf_index,
-				       new_fcf_record),
-				bf_get(lpfc_fcf_record_fcf_avail,
-				       new_fcf_record),
-				bf_get(lpfc_fcf_record_fcf_valid,
-				       new_fcf_record));
-		if ((phba->fcf.fcf_flag & FCF_IN_USE) &&
-		    lpfc_sli4_fcf_record_match(phba, &phba->fcf.current_rec,
-		    new_fcf_record, LPFC_FCOE_IGNORE_VID)) {
-			if (bf_get(lpfc_fcf_record_fcf_index, new_fcf_record) !=
-			    phba->fcf.current_rec.fcf_indx) {
-				lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-					"2862 FCF (x%x) matches property "
-					"of in-use FCF (x%x)\n",
-					bf_get(lpfc_fcf_record_fcf_index,
-					       new_fcf_record),
-					phba->fcf.current_rec.fcf_indx);
-				goto read_next_fcf;
-			}
-			/*
-			 * In case the current in-use FCF record becomes
-			 * invalid/unavailable during FCF discovery that
-			 * was not triggered by fast FCF failover process,
-			 * treat it as fast FCF failover.
-			 */
-			if (!(phba->fcf.fcf_flag & FCF_REDISC_PEND) &&
-			    !(phba->fcf.fcf_flag & FCF_REDISC_FOV)) {
-				lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
-						"2835 Invalid in-use FCF "
-						"(x%x), enter FCF failover "
-						"table scan.\n",
-						phba->fcf.current_rec.fcf_indx);
-				spin_lock_irq(&phba->hbalock);
-				phba->fcf.fcf_flag |= FCF_REDISC_FOV;
-				spin_unlock_irq(&phba->hbalock);
-				lpfc_sli4_mbox_cmd_free(phba, mboxq);
-				lpfc_sli4_fcf_scan_read_fcf_rec(phba,
-						LPFC_FCOE_FCF_GET_FIRST);
-				return;
-			}
-		}
+	if (!rc)
 		goto read_next_fcf;
-	} else {
-		fcf_index = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
-		rc = lpfc_sli4_fcf_rr_index_set(phba, fcf_index);
-		if (rc)
-			goto read_next_fcf;
-	}
-
 	/*
 	 * If this is not the first FCF discovery of the HBA, use last
-	 * FCF record for the discovery. The condition that a rescan
-	 * matches the in-use FCF record: fabric name, switch name, mac
-	 * address, and vlan_id.
+	 * FCF record for the discovery.
 	 */
-	spin_lock_irq(&phba->hbalock);
+	spin_lock_irqsave(&phba->hbalock, flags);
 	if (phba->fcf.fcf_flag & FCF_IN_USE) {
-		if (lpfc_sli4_fcf_record_match(phba, &phba->fcf.current_rec,
-		    new_fcf_record, vlan_id)) {
-			if (bf_get(lpfc_fcf_record_fcf_index, new_fcf_record) ==
-			    phba->fcf.current_rec.fcf_indx) {
-				phba->fcf.fcf_flag |= FCF_AVAILABLE;
-				if (phba->fcf.fcf_flag & FCF_REDISC_PEND)
-					/* Stop FCF redisc wait timer */
-					__lpfc_sli4_stop_fcf_redisc_wait_timer(
-									phba);
-				else if (phba->fcf.fcf_flag & FCF_REDISC_FOV)
-					/* Fast failover, mark completed */
-					phba->fcf.fcf_flag &= ~FCF_REDISC_FOV;
-				spin_unlock_irq(&phba->hbalock);
-				lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-						"2836 New FCF matches in-use "
-						"FCF (x%x)\n",
-						phba->fcf.current_rec.fcf_indx);
-				goto out;
-			} else
-				lpfc_printf_log(phba, KERN_ERR, LOG_FIP,
-					"2863 New FCF (x%x) matches "
-					"property of in-use FCF (x%x)\n",
-					bf_get(lpfc_fcf_record_fcf_index,
-					       new_fcf_record),
-					phba->fcf.current_rec.fcf_indx);
+		if (lpfc_fab_name_match(phba->fcf.fabric_name,
+					new_fcf_record) &&
+		    lpfc_sw_name_match(phba->fcf.switch_name,
+					new_fcf_record) &&
+		    lpfc_mac_addr_match(phba, new_fcf_record)) {
+			phba->fcf.fcf_flag |= FCF_AVAILABLE;
+			spin_unlock_irqrestore(&phba->hbalock, flags);
+			goto out;
 		}
-		/*
-		 * Read next FCF record from HBA searching for the matching
-		 * with in-use record only if not during the fast failover
-		 * period. In case of fast failover period, it shall try to
-		 * determine whether the FCF record just read should be the
-		 * next candidate.
-		 */
-		if (!(phba->fcf.fcf_flag & FCF_REDISC_FOV)) {
-			spin_unlock_irq(&phba->hbalock);
-			goto read_next_fcf;
-		}
+		spin_unlock_irqrestore(&phba->hbalock, flags);
+		goto read_next_fcf;
 	}
-	/*
-	 * Update on failover FCF record only if it's in FCF fast-failover
-	 * period; otherwise, update on current FCF record.
-	 */
-	if (phba->fcf.fcf_flag & FCF_REDISC_FOV)
-		fcf_rec = &phba->fcf.failover_rec;
-	else
-		fcf_rec = &phba->fcf.current_rec;
-
 	if (phba->fcf.fcf_flag & FCF_AVAILABLE) {
 		/*
-		 * If the driver FCF record does not have boot flag
-		 * set and new hba fcf record has boot flag set, use
-		 * the new hba fcf record.
+		 * If the current FCF record does not have boot flag
+		 * set and new fcf record has boot flag set, use the
+		 * new fcf record.
 		 */
-		if (boot_flag && !(fcf_rec->flag & BOOT_ENABLE)) {
-			/* Choose this FCF record */
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2837 Update current FCF record "
-					"(x%x) with new FCF record (x%x)\n",
-					fcf_rec->fcf_indx,
-					bf_get(lpfc_fcf_record_fcf_index,
-					new_fcf_record));
-			__lpfc_update_fcf_record(phba, fcf_rec, new_fcf_record,
-					addr_mode, vlan_id, BOOT_ENABLE);
-			spin_unlock_irq(&phba->hbalock);
-			goto read_next_fcf;
-		}
-		/*
-		 * If the driver FCF record has boot flag set and the
-		 * new hba FCF record does not have boot flag, read
-		 * the next FCF record.
-		 */
-		if (!boot_flag && (fcf_rec->flag & BOOT_ENABLE)) {
-			spin_unlock_irq(&phba->hbalock);
-			goto read_next_fcf;
-		}
-		/*
-		 * If the new hba FCF record has lower priority value
-		 * than the driver FCF record, use the new record.
-		 */
-		if (new_fcf_record->fip_priority < fcf_rec->priority) {
-			/* Choose the new FCF record with lower priority */
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2838 Update current FCF record "
-					"(x%x) with new FCF record (x%x)\n",
-					fcf_rec->fcf_indx,
-					bf_get(lpfc_fcf_record_fcf_index,
-					       new_fcf_record));
-			__lpfc_update_fcf_record(phba, fcf_rec, new_fcf_record,
-					addr_mode, vlan_id, 0);
-			/* Reset running random FCF selection count */
-			phba->fcf.eligible_fcf_cnt = 1;
-		} else if (new_fcf_record->fip_priority == fcf_rec->priority) {
-			/* Update running random FCF selection count */
-			phba->fcf.eligible_fcf_cnt++;
-			select_new_fcf = lpfc_sli4_new_fcf_random_select(phba,
-						phba->fcf.eligible_fcf_cnt);
-			if (select_new_fcf) {
-				lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2839 Update current FCF record "
-					"(x%x) with new FCF record (x%x)\n",
-					fcf_rec->fcf_indx,
-					bf_get(lpfc_fcf_record_fcf_index,
-					       new_fcf_record));
-				/* Choose the new FCF by random selection */
-				__lpfc_update_fcf_record(phba, fcf_rec,
-							 new_fcf_record,
-							 addr_mode, vlan_id, 0);
+		if (boot_flag && !(phba->fcf.fcf_flag & FCF_BOOT_ENABLE)) {
+			/* Use this FCF record */
+			lpfc_copy_fcf_record(phba, new_fcf_record);
+			phba->fcf.addr_mode = addr_mode;
+			phba->fcf.fcf_flag |= FCF_BOOT_ENABLE;
+			if (vlan_id != 0xFFFF) {
+				phba->fcf.fcf_flag |= FCF_VALID_VLAN;
+				phba->fcf.vlan_id = vlan_id;
 			}
+			spin_unlock_irqrestore(&phba->hbalock, flags);
+			goto read_next_fcf;
 		}
-		spin_unlock_irq(&phba->hbalock);
+		/*
+		 * If the current FCF record has boot flag set and the
+		 * new FCF record does not have boot flag, read the next
+		 * FCF record.
+		 */
+		if (!boot_flag && (phba->fcf.fcf_flag & FCF_BOOT_ENABLE)) {
+			spin_unlock_irqrestore(&phba->hbalock, flags);
+			goto read_next_fcf;
+		}
+		/*
+		 * If there is a record with lower priority value for
+		 * the current FCF, use that record.
+		 */
+		if (lpfc_fab_name_match(phba->fcf.fabric_name,
+					new_fcf_record) &&
+		    (new_fcf_record->fip_priority < phba->fcf.priority)) {
+			/* Use this FCF record */
+			lpfc_copy_fcf_record(phba, new_fcf_record);
+			phba->fcf.addr_mode = addr_mode;
+			if (vlan_id != 0xFFFF) {
+				phba->fcf.fcf_flag |= FCF_VALID_VLAN;
+				phba->fcf.vlan_id = vlan_id;
+			}
+			spin_unlock_irqrestore(&phba->hbalock, flags);
+			goto read_next_fcf;
+		}
+		spin_unlock_irqrestore(&phba->hbalock, flags);
 		goto read_next_fcf;
 	}
 	/*
-	 * This is the first suitable FCF record, choose this record for
-	 * initial best-fit FCF.
+	 * This is the first available FCF record, use this
+	 * record.
 	 */
-	if (fcf_rec) {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-				"2840 Update initial FCF candidate "
-				"with FCF (x%x)\n",
-				bf_get(lpfc_fcf_record_fcf_index,
-				       new_fcf_record));
-		__lpfc_update_fcf_record(phba, fcf_rec, new_fcf_record,
-					 addr_mode, vlan_id, (boot_flag ?
-					 BOOT_ENABLE : 0));
-		phba->fcf.fcf_flag |= FCF_AVAILABLE;
-		/* Setup initial running random FCF selection count */
-		phba->fcf.eligible_fcf_cnt = 1;
-		/* Seeding the random number generator for random selection */
-		seed = (uint32_t)(0xFFFFFFFF & jiffies);
-		srandom32(seed);
+	lpfc_copy_fcf_record(phba, new_fcf_record);
+	phba->fcf.addr_mode = addr_mode;
+	if (boot_flag)
+		phba->fcf.fcf_flag |= FCF_BOOT_ENABLE;
+	phba->fcf.fcf_flag |= FCF_AVAILABLE;
+	if (vlan_id != 0xFFFF) {
+		phba->fcf.fcf_flag |= FCF_VALID_VLAN;
+		phba->fcf.vlan_id = vlan_id;
 	}
-	spin_unlock_irq(&phba->hbalock);
+	spin_unlock_irqrestore(&phba->hbalock, flags);
 	goto read_next_fcf;
 
 read_next_fcf:
 	lpfc_sli4_mbox_cmd_free(phba, mboxq);
-	if (next_fcf_index == LPFC_FCOE_FCF_NEXT_NONE || next_fcf_index == 0) {
-		if (phba->fcf.fcf_flag & FCF_REDISC_FOV) {
-			/*
-			 * Case of FCF fast failover scan
-			 */
-
-			/*
-			 * It has not found any suitable FCF record, cancel
-			 * FCF scan inprogress, and do nothing
-			 */
-			if (!(phba->fcf.failover_rec.flag & RECORD_VALID)) {
-				lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
-					       "2782 No suitable FCF found: "
-					       "(x%x/x%x)\n",
-					       phba->fcoe_eventtag_at_fcf_scan,
-					       bf_get(lpfc_fcf_record_fcf_index,
-						      new_fcf_record));
-				spin_lock_irq(&phba->hbalock);
-				if (phba->hba_flag & HBA_DEVLOSS_TMO) {
-					phba->hba_flag &= ~FCF_TS_INPROG;
-					spin_unlock_irq(&phba->hbalock);
-					/* Unregister in-use FCF and rescan */
-					lpfc_printf_log(phba, KERN_INFO,
-							LOG_FIP,
-							"2864 On devloss tmo "
-							"unreg in-use FCF and "
-							"rescan FCF table\n");
-					lpfc_unregister_fcf_rescan(phba);
-					return;
-				}
-				/*
-				 * Let next new FCF event trigger fast failover
-				 */
-				phba->hba_flag &= ~FCF_TS_INPROG;
-				spin_unlock_irq(&phba->hbalock);
-				return;
-			}
-			/*
-			 * It has found a suitable FCF record that is not
-			 * the same as in-use FCF record, unregister the
-			 * in-use FCF record, replace the in-use FCF record
-			 * with the new FCF record, mark FCF fast failover
-			 * completed, and then start register the new FCF
-			 * record.
-			 */
-
-			/* Unregister the current in-use FCF record */
-			lpfc_unregister_fcf(phba);
-
-			/* Replace in-use record with the new record */
-			lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-					"2842 Replace in-use FCF (x%x) "
-					"with failover FCF (x%x)\n",
-					phba->fcf.current_rec.fcf_indx,
-					phba->fcf.failover_rec.fcf_indx);
-			memcpy(&phba->fcf.current_rec,
-			       &phba->fcf.failover_rec,
-			       sizeof(struct lpfc_fcf_rec));
-			/*
-			 * Mark the fast FCF failover rediscovery completed
-			 * and the start of the first round of the roundrobin
-			 * FCF failover.
-			 */
-			spin_lock_irq(&phba->hbalock);
-			phba->fcf.fcf_flag &= ~FCF_REDISC_FOV;
-			spin_unlock_irq(&phba->hbalock);
-			/* Register to the new FCF record */
-			lpfc_register_fcf(phba);
-		} else {
-			/*
-			 * In case of transaction period to fast FCF failover,
-			 * do nothing when search to the end of the FCF table.
-			 */
-			if ((phba->fcf.fcf_flag & FCF_REDISC_EVT) ||
-			    (phba->fcf.fcf_flag & FCF_REDISC_PEND))
-				return;
-
-			if (phba->fcf.fcf_flag & FCF_IN_USE) {
-				/*
-				 * In case the current in-use FCF record no
-				 * longer existed during FCF discovery that
-				 * was not triggered by fast FCF failover
-				 * process, treat it as fast FCF failover.
-				 */
-				lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-						"2841 In-use FCF record (x%x) "
-						"not reported, entering fast "
-						"FCF failover mode scanning.\n",
-						phba->fcf.current_rec.fcf_indx);
-				spin_lock_irq(&phba->hbalock);
-				phba->fcf.fcf_flag |= FCF_REDISC_FOV;
-				spin_unlock_irq(&phba->hbalock);
-				lpfc_sli4_mbox_cmd_free(phba, mboxq);
-				lpfc_sli4_fcf_scan_read_fcf_rec(phba,
-						LPFC_FCOE_FCF_GET_FIRST);
-				return;
-			}
-			/* Register to the new FCF record */
-			lpfc_register_fcf(phba);
-		}
-	} else
-		lpfc_sli4_fcf_scan_read_fcf_rec(phba, next_fcf_index);
+	if (next_fcf_index == LPFC_FCOE_FCF_NEXT_NONE || next_fcf_index == 0)
+		lpfc_register_fcf(phba);
+	else
+		lpfc_sli4_read_fcf_record(phba, next_fcf_index);
 	return;
 
 out:
@@ -2255,170 +1676,6 @@ out:
 	lpfc_register_fcf(phba);
 
 	return;
-}
-
-/**
- * lpfc_mbx_cmpl_fcf_rr_read_fcf_rec - fcf roundrobin read_fcf mbox cmpl hdler
- * @phba: pointer to lpfc hba data structure.
- * @mboxq: pointer to mailbox object.
- *
- * This is the callback function for FLOGI failure roundrobin FCF failover
- * read FCF record mailbox command from the eligible FCF record bmask for
- * performing the failover. If the FCF read back is not valid/available, it
- * fails through to retrying FLOGI to the currently registered FCF again.
- * Otherwise, if the FCF read back is valid and available, it will set the
- * newly read FCF record to the failover FCF record, unregister currently
- * registered FCF record, copy the failover FCF record to the current
- * FCF record, and then register the current FCF record before proceeding
- * to trying FLOGI on the new failover FCF.
- */
-void
-lpfc_mbx_cmpl_fcf_rr_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
-{
-	struct fcf_record *new_fcf_record;
-	uint32_t boot_flag, addr_mode;
-	uint16_t next_fcf_index, fcf_index;
-	uint16_t current_fcf_index;
-	uint16_t vlan_id;
-	int rc;
-
-	/* If link state is not up, stop the roundrobin failover process */
-	if (phba->link_state < LPFC_LINK_UP) {
-		spin_lock_irq(&phba->hbalock);
-		phba->fcf.fcf_flag &= ~FCF_DISCOVERY;
-		phba->hba_flag &= ~FCF_RR_INPROG;
-		spin_unlock_irq(&phba->hbalock);
-		goto out;
-	}
-
-	/* Parse the FCF record from the non-embedded mailbox command */
-	new_fcf_record = lpfc_sli4_fcf_rec_mbox_parse(phba, mboxq,
-						      &next_fcf_index);
-	if (!new_fcf_record) {
-		lpfc_printf_log(phba, KERN_WARNING, LOG_FIP,
-				"2766 Mailbox command READ_FCF_RECORD "
-				"failed to retrieve a FCF record.\n");
-		goto error_out;
-	}
-
-	/* Get the needed parameters from FCF record */
-	rc = lpfc_match_fcf_conn_list(phba, new_fcf_record, &boot_flag,
-				      &addr_mode, &vlan_id);
-
-	/* Log the FCF record information if turned on */
-	lpfc_sli4_log_fcf_record_info(phba, new_fcf_record, vlan_id,
-				      next_fcf_index);
-
-	fcf_index = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
-	if (!rc) {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-				"2848 Remove ineligible FCF (x%x) from "
-				"from roundrobin bmask\n", fcf_index);
-		/* Clear roundrobin bmask bit for ineligible FCF */
-		lpfc_sli4_fcf_rr_index_clear(phba, fcf_index);
-		/* Perform next round of roundrobin FCF failover */
-		fcf_index = lpfc_sli4_fcf_rr_next_index_get(phba);
-		rc = lpfc_sli4_fcf_rr_next_proc(phba->pport, fcf_index);
-		if (rc)
-			goto out;
-		goto error_out;
-	}
-
-	if (fcf_index == phba->fcf.current_rec.fcf_indx) {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-				"2760 Perform FLOGI roundrobin FCF failover: "
-				"FCF (x%x) back to FCF (x%x)\n",
-				phba->fcf.current_rec.fcf_indx, fcf_index);
-		/* Wait 500 ms before retrying FLOGI to current FCF */
-		msleep(500);
-		lpfc_initial_flogi(phba->pport);
-		goto out;
-	}
-
-	/* Upload new FCF record to the failover FCF record */
-	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-			"2834 Update current FCF (x%x) with new FCF (x%x)\n",
-			phba->fcf.failover_rec.fcf_indx, fcf_index);
-	spin_lock_irq(&phba->hbalock);
-	__lpfc_update_fcf_record(phba, &phba->fcf.failover_rec,
-				 new_fcf_record, addr_mode, vlan_id,
-				 (boot_flag ? BOOT_ENABLE : 0));
-	spin_unlock_irq(&phba->hbalock);
-
-	current_fcf_index = phba->fcf.current_rec.fcf_indx;
-
-	/* Unregister the current in-use FCF record */
-	lpfc_unregister_fcf(phba);
-
-	/* Replace in-use record with the new record */
-	memcpy(&phba->fcf.current_rec, &phba->fcf.failover_rec,
-	       sizeof(struct lpfc_fcf_rec));
-
-	lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-			"2783 Perform FLOGI roundrobin FCF failover: FCF "
-			"(x%x) to FCF (x%x)\n", current_fcf_index, fcf_index);
-
-error_out:
-	lpfc_register_fcf(phba);
-out:
-	lpfc_sli4_mbox_cmd_free(phba, mboxq);
-}
-
-/**
- * lpfc_mbx_cmpl_read_fcf_rec - read fcf completion handler.
- * @phba: pointer to lpfc hba data structure.
- * @mboxq: pointer to mailbox object.
- *
- * This is the callback function of read FCF record mailbox command for
- * updating the eligible FCF bmask for FLOGI failure roundrobin FCF
- * failover when a new FCF event happened. If the FCF read back is
- * valid/available and it passes the connection list check, it updates
- * the bmask for the eligible FCF record for roundrobin failover.
- */
-void
-lpfc_mbx_cmpl_read_fcf_rec(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
-{
-	struct fcf_record *new_fcf_record;
-	uint32_t boot_flag, addr_mode;
-	uint16_t fcf_index, next_fcf_index;
-	uint16_t vlan_id;
-	int rc;
-
-	/* If link state is not up, no need to proceed */
-	if (phba->link_state < LPFC_LINK_UP)
-		goto out;
-
-	/* If FCF discovery period is over, no need to proceed */
-	if (!(phba->fcf.fcf_flag & FCF_DISCOVERY))
-		goto out;
-
-	/* Parse the FCF record from the non-embedded mailbox command */
-	new_fcf_record = lpfc_sli4_fcf_rec_mbox_parse(phba, mboxq,
-						      &next_fcf_index);
-	if (!new_fcf_record) {
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP,
-				"2767 Mailbox command READ_FCF_RECORD "
-				"failed to retrieve a FCF record.\n");
-		goto out;
-	}
-
-	/* Check the connection list for eligibility */
-	rc = lpfc_match_fcf_conn_list(phba, new_fcf_record, &boot_flag,
-				      &addr_mode, &vlan_id);
-
-	/* Log the FCF record information if turned on */
-	lpfc_sli4_log_fcf_record_info(phba, new_fcf_record, vlan_id,
-				      next_fcf_index);
-
-	if (!rc)
-		goto out;
-
-	/* Update the eligible FCF record index bmask */
-	fcf_index = bf_get(lpfc_fcf_record_fcf_index, new_fcf_record);
-	rc = lpfc_sli4_fcf_rr_index_set(phba, fcf_index);
-
-out:
-	lpfc_sli4_mbox_cmd_free(phba, mboxq);
 }
 
 /**
@@ -2428,13 +1685,10 @@ out:
  *
  * This function handles completion of init vpi mailbox command.
  */
-void
+static void
 lpfc_init_vpi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	struct lpfc_vport *vport = mboxq->vport;
-	struct lpfc_nodelist *ndlp;
-	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
-
 	if (mboxq->u.mb.mbxStatus) {
 		lpfc_printf_vlog(vport, KERN_ERR,
 				LOG_MBOX,
@@ -2444,23 +1698,7 @@ lpfc_init_vpi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
 		return;
 	}
-	spin_lock_irq(shost->host_lock);
 	vport->fc_flag &= ~FC_VPORT_NEEDS_INIT_VPI;
-	spin_unlock_irq(shost->host_lock);
-
-	/* If this port is physical port or FDISC is done, do reg_vpi */
-	if ((phba->pport == vport) || (vport->port_state == LPFC_FDISC)) {
-			ndlp = lpfc_findnode_did(vport, Fabric_DID);
-			if (!ndlp)
-				lpfc_printf_vlog(vport, KERN_ERR,
-					LOG_DISCOVERY,
-					"2731 Cannot find fabric "
-					"controller node\n");
-			else
-				lpfc_register_new_vport(phba, vport, ndlp);
-			mempool_free(mboxq, phba->mbox_mem_pool);
-			return;
-	}
 
 	if (phba->link_flag & LS_NPIV_FAB_SUPPORTED)
 		lpfc_initial_fdisc(vport);
@@ -2469,39 +1707,7 @@ lpfc_init_vpi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_ELS,
 				 "2606 No NPIV Fabric support\n");
 	}
-	mempool_free(mboxq, phba->mbox_mem_pool);
 	return;
-}
-
-/**
- * lpfc_issue_init_vpi - Issue init_vpi mailbox command.
- * @vport: pointer to lpfc_vport data structure.
- *
- * This function issue a init_vpi mailbox command to initialize
- * VPI for the vport.
- */
-void
-lpfc_issue_init_vpi(struct lpfc_vport *vport)
-{
-	LPFC_MBOXQ_t *mboxq;
-	int rc;
-
-	mboxq = mempool_alloc(vport->phba->mbox_mem_pool, GFP_KERNEL);
-	if (!mboxq) {
-		lpfc_printf_vlog(vport, KERN_ERR,
-			LOG_MBOX, "2607 Failed to allocate "
-			"init_vpi mailbox\n");
-		return;
-	}
-	lpfc_init_vpi(vport->phba, mboxq, vport->vpi);
-	mboxq->vport = vport;
-	mboxq->mbox_cmpl = lpfc_init_vpi_cmpl;
-	rc = lpfc_sli_issue_mbox(vport->phba, mboxq, MBX_NOWAIT);
-	if (rc == MBX_NOT_FINISHED) {
-		lpfc_printf_vlog(vport, KERN_ERR,
-			LOG_MBOX, "2608 Failed to issue init_vpi mailbox\n");
-		mempool_free(mboxq, vport->phba->mbox_mem_pool);
-	}
 }
 
 /**
@@ -2516,6 +1722,8 @@ lpfc_start_fdiscs(struct lpfc_hba *phba)
 {
 	struct lpfc_vport **vports;
 	int i;
+	LPFC_MBOXQ_t *mboxq;
+	int rc;
 
 	vports = lpfc_create_vport_work_array(phba);
 	if (vports != NULL) {
@@ -2534,7 +1742,26 @@ lpfc_start_fdiscs(struct lpfc_hba *phba)
 				continue;
 			}
 			if (vports[i]->fc_flag & FC_VPORT_NEEDS_INIT_VPI) {
-				lpfc_issue_init_vpi(vports[i]);
+				mboxq = mempool_alloc(phba->mbox_mem_pool,
+					GFP_KERNEL);
+				if (!mboxq) {
+					lpfc_printf_vlog(vports[i], KERN_ERR,
+					LOG_MBOX, "2607 Failed to allocate "
+					"init_vpi mailbox\n");
+					continue;
+				}
+				lpfc_init_vpi(phba, mboxq, vports[i]->vpi);
+				mboxq->vport = vports[i];
+				mboxq->mbox_cmpl = lpfc_init_vpi_cmpl;
+				rc = lpfc_sli_issue_mbox(phba, mboxq,
+					MBX_NOWAIT);
+				if (rc == MBX_NOT_FINISHED) {
+					lpfc_printf_vlog(vports[i], KERN_ERR,
+					LOG_MBOX, "2608 Failed to issue "
+					"init_vpi mailbox\n");
+					mempool_free(mboxq,
+						phba->mbox_mem_pool);
+				}
 				continue;
 			}
 			if (phba->link_flag & LS_NPIV_FAB_SUPPORTED)
@@ -2557,7 +1784,6 @@ lpfc_mbx_cmpl_reg_vfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	struct lpfc_dmabuf *dmabuf = mboxq->context1;
 	struct lpfc_vport *vport = mboxq->vport;
-	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	if (mboxq->u.mb.mbxStatus) {
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_MBOX,
@@ -2575,11 +1801,7 @@ lpfc_mbx_cmpl_reg_vfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		goto fail_free_mem;
 	}
 	/* The VPI is implicitly registered when the VFI is registered */
-	spin_lock_irq(shost->host_lock);
 	vport->vpi_state |= LPFC_VPI_REGISTERED;
-	vport->fc_flag |= FC_VFI_REGISTERED;
-	vport->fc_flag &= ~FC_VPORT_NEEDS_REG_VPI;
-	spin_unlock_irq(shost->host_lock);
 
 	if (vport->port_state == LPFC_FABRIC_CFG_LINK) {
 		lpfc_start_fdiscs(phba);
@@ -2652,6 +1874,8 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, READ_LA_VAR *la)
 	struct lpfc_dmabuf *mp;
 	int rc;
 	struct fcf_record *fcf_record;
+
+	sparam_mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
 
 	spin_lock_irq(&phba->hbalock);
 	switch (la->UlnkSpeed) {
@@ -2744,24 +1968,18 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, READ_LA_VAR *la)
 	spin_unlock_irq(&phba->hbalock);
 
 	lpfc_linkup(phba);
-	sparam_mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!sparam_mbox)
-		goto out;
-
-	rc = lpfc_read_sparam(phba, sparam_mbox, 0);
-	if (rc) {
-		mempool_free(sparam_mbox, phba->mbox_mem_pool);
-		goto out;
-	}
-	sparam_mbox->vport = vport;
-	sparam_mbox->mbox_cmpl = lpfc_mbx_cmpl_read_sparam;
-	rc = lpfc_sli_issue_mbox(phba, sparam_mbox, MBX_NOWAIT);
-	if (rc == MBX_NOT_FINISHED) {
-		mp = (struct lpfc_dmabuf *) sparam_mbox->context1;
-		lpfc_mbuf_free(phba, mp->virt, mp->phys);
-		kfree(mp);
-		mempool_free(sparam_mbox, phba->mbox_mem_pool);
-		goto out;
+	if (sparam_mbox) {
+		lpfc_read_sparam(phba, sparam_mbox, 0);
+		sparam_mbox->vport = vport;
+		sparam_mbox->mbox_cmpl = lpfc_mbx_cmpl_read_sparam;
+		rc = lpfc_sli_issue_mbox(phba, sparam_mbox, MBX_NOWAIT);
+		if (rc == MBX_NOT_FINISHED) {
+			mp = (struct lpfc_dmabuf *) sparam_mbox->context1;
+			lpfc_mbuf_free(phba, mp->virt, mp->phys);
+			kfree(mp);
+			mempool_free(sparam_mbox, phba->mbox_mem_pool);
+			goto out;
+		}
 	}
 
 	if (!(phba->hba_flag & HBA_FCOE_SUPPORT)) {
@@ -2815,26 +2033,15 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, READ_LA_VAR *la)
 		 * and get the FCF Table.
 		 */
 		spin_lock_irq(&phba->hbalock);
-		if (phba->hba_flag & FCF_TS_INPROG) {
+		if (phba->hba_flag & FCF_DISC_INPROGRESS) {
 			spin_unlock_irq(&phba->hbalock);
 			return;
 		}
-		/* This is the initial FCF discovery scan */
-		phba->fcf.fcf_flag |= FCF_INIT_DISC;
 		spin_unlock_irq(&phba->hbalock);
-		lpfc_printf_log(phba, KERN_INFO, LOG_FIP | LOG_DISCOVERY,
-				"2778 Start FCF table scan at linkup\n");
-		rc = lpfc_sli4_fcf_scan_read_fcf_rec(phba,
-						     LPFC_FCOE_FCF_GET_FIRST);
-		if (rc) {
-			spin_lock_irq(&phba->hbalock);
-			phba->fcf.fcf_flag &= ~FCF_INIT_DISC;
-			spin_unlock_irq(&phba->hbalock);
+		rc = lpfc_sli4_read_fcf_record(phba,
+					LPFC_FCOE_FCF_GET_FIRST);
+		if (rc)
 			goto out;
-		}
-		/* Reset FCF roundrobin bmask for new discovery */
-		memset(phba->fcf.fcf_rr_bmask, 0,
-		       sizeof(*phba->fcf.fcf_rr_bmask));
 	}
 
 	return;
@@ -2920,12 +2127,10 @@ lpfc_mbx_cmpl_read_la(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	}
 
 	phba->fc_eventTag = la->eventTag;
-	spin_lock_irq(&phba->hbalock);
 	if (la->mm)
 		phba->sli.sli_flag |= LPFC_MENLO_MAINT;
 	else
 		phba->sli.sli_flag &= ~LPFC_MENLO_MAINT;
-	spin_unlock_irq(&phba->hbalock);
 
 	phba->link_events++;
 	if (la->attType == AT_LINK_UP && (!la->mm)) {
@@ -3022,36 +2227,11 @@ lpfc_mbx_cmpl_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	struct lpfc_vport  *vport = pmb->vport;
 	struct lpfc_dmabuf *mp = (struct lpfc_dmabuf *) (pmb->context1);
 	struct lpfc_nodelist *ndlp = (struct lpfc_nodelist *) pmb->context2;
-	struct Scsi_Host  *shost = lpfc_shost_from_vport(vport);
 
 	pmb->context1 = NULL;
-	pmb->context2 = NULL;
 
-	if (ndlp->nlp_flag & NLP_REG_LOGIN_SEND)
-		ndlp->nlp_flag &= ~NLP_REG_LOGIN_SEND;
-
-	if (ndlp->nlp_flag &  NLP_IGNR_REG_CMPL ||
-		ndlp->nlp_state != NLP_STE_REG_LOGIN_ISSUE) {
-		/* We rcvd a rscn after issuing this
-		 * mbox reg login, we may have cycled
-		 * back through the state and be
-		 * back at reg login state so this
-		 * mbox needs to be ignored becase
-		 * there is another reg login in
-		 * proccess.
-		 */
-		spin_lock_irq(shost->host_lock);
-		ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
-		spin_unlock_irq(shost->host_lock);
-		if (phba->sli_rev == LPFC_SLI_REV4)
-			lpfc_sli4_free_rpi(phba,
-				pmb->u.mb.un.varRegLogin.rpi);
-
-	} else
-		/* Good status, call state machine */
-		lpfc_disc_state_machine(vport, ndlp, pmb,
-				NLP_EVT_CMPL_REG_LOGIN);
-
+	/* Good status, call state machine */
+	lpfc_disc_state_machine(vport, ndlp, pmb, NLP_EVT_CMPL_REG_LOGIN);
 	lpfc_mbuf_free(phba, mp->virt, mp->phys);
 	kfree(mp);
 	mempool_free(pmb, phba->mbox_mem_pool);
@@ -3073,23 +2253,13 @@ lpfc_mbx_cmpl_unreg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	switch (mb->mbxStatus) {
 	case 0x0011:
 	case 0x0020:
+	case 0x9700:
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_NODE,
 				 "0911 cmpl_unreg_vpi, mb status = 0x%x\n",
 				 mb->mbxStatus);
 		break;
-	/* If VPI is busy, reset the HBA */
-	case 0x9700:
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_NODE,
-			"2798 Unreg_vpi failed vpi 0x%x, mb status = 0x%x\n",
-			vport->vpi, mb->mbxStatus);
-		if (!(phba->pport->load_flag & FC_UNLOADING))
-			lpfc_workq_post_event(phba, NULL, NULL,
-				LPFC_EVT_RESET_HBA);
 	}
-	spin_lock_irq(shost->host_lock);
 	vport->vpi_state &= ~LPFC_VPI_REGISTERED;
-	vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
-	spin_unlock_irq(shost->host_lock);
 	vport->unreg_vpi_cmpl = VPORT_OK;
 	mempool_free(pmb, phba->mbox_mem_pool);
 	/*
@@ -3147,10 +2317,7 @@ lpfc_mbx_cmpl_reg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 		goto out;
 	}
 
-	spin_lock_irq(shost->host_lock);
 	vport->vpi_state |= LPFC_VPI_REGISTERED;
-	vport->fc_flag &= ~FC_VPORT_NEEDS_REG_VPI;
-	spin_unlock_irq(shost->host_lock);
 	vport->num_disc_nodes = 0;
 	/* go thru NPR list and issue ELS PLOGIs */
 	if (vport->fc_npr_cnt)
@@ -3324,7 +2491,6 @@ lpfc_mbx_cmpl_fabric_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	ndlp = (struct lpfc_nodelist *) pmb->context2;
 	pmb->context1 = NULL;
 	pmb->context2 = NULL;
-
 	if (mb->mbxStatus) {
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_MBOX,
 				 "0258 Register Fabric login error: 0x%x\n",
@@ -3360,12 +2526,7 @@ lpfc_mbx_cmpl_fabric_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	lpfc_nlp_set_state(vport, ndlp, NLP_STE_UNMAPPED_NODE);
 
 	if (vport->port_state == LPFC_FABRIC_CFG_LINK) {
-		/* when physical port receive logo donot start
-		 * vport discovery */
-		if (!(vport->fc_flag & FC_LOGO_RCVD_DID_CHNG))
-			lpfc_start_fdiscs(phba);
-		else
-			vport->fc_flag &= ~FC_LOGO_RCVD_DID_CHNG ;
+		lpfc_start_fdiscs(phba);
 		lpfc_do_scr_ns_plogi(phba, vport);
 	}
 
@@ -3393,9 +2554,6 @@ lpfc_mbx_cmpl_ns_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	struct lpfc_dmabuf *mp = (struct lpfc_dmabuf *) (pmb->context1);
 	struct lpfc_nodelist *ndlp = (struct lpfc_nodelist *) pmb->context2;
 	struct lpfc_vport *vport = pmb->vport;
-
-	pmb->context1 = NULL;
-	pmb->context2 = NULL;
 
 	if (mb->mbxStatus) {
 out:
@@ -3427,6 +2585,8 @@ out:
 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
 		return;
 	}
+
+	pmb->context1 = NULL;
 
 	ndlp->nlp_rpi = mb->un.varWords[0];
 	ndlp->nlp_flag |= NLP_RPI_VALID;
@@ -3578,6 +2738,7 @@ lpfc_nlp_state_cleanup(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	if (new_state == NLP_STE_UNMAPPED_NODE) {
+		ndlp->nlp_type &= ~(NLP_FCP_TARGET | NLP_FCP_INITIATOR);
 		ndlp->nlp_flag &= ~NLP_NODEV_REMOVE;
 		ndlp->nlp_type |= NLP_FC_NODE;
 	}
@@ -3761,7 +2922,7 @@ lpfc_initialize_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	kref_init(&ndlp->kref);
 	NLP_INT_NODE_ACT(ndlp);
 	atomic_set(&ndlp->cmd_pending, 0);
-	ndlp->cmd_qdepth = vport->cfg_tgt_queue_depth;
+	ndlp->cmd_qdepth = LPFC_MAX_TGT_QDEPTH;
 }
 
 struct lpfc_nodelist *
@@ -4034,7 +3195,6 @@ lpfc_unreg_rpi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 				mempool_free(mbox, phba->mbox_mem_pool);
 		}
 		lpfc_no_rpi(phba, ndlp);
-
 		ndlp->nlp_rpi = 0;
 		ndlp->nlp_flag &= ~NLP_RPI_VALID;
 		ndlp->nlp_flag &= ~NLP_NPR_ADISC;
@@ -4043,49 +3203,12 @@ lpfc_unreg_rpi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	return 0;
 }
 
-/**
- * lpfc_unreg_hba_rpis - Unregister rpis registered to the hba.
- * @phba: pointer to lpfc hba data structure.
- *
- * This routine is invoked to unregister all the currently registered RPIs
- * to the HBA.
- **/
-void
-lpfc_unreg_hba_rpis(struct lpfc_hba *phba)
-{
-	struct lpfc_vport **vports;
-	struct lpfc_nodelist *ndlp;
-	struct Scsi_Host *shost;
-	int i;
-
-	vports = lpfc_create_vport_work_array(phba);
-	for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
-		shost = lpfc_shost_from_vport(vports[i]);
-		spin_lock_irq(shost->host_lock);
-		list_for_each_entry(ndlp, &vports[i]->fc_nodes, nlp_listp) {
-			if (ndlp->nlp_flag & NLP_RPI_VALID) {
-				/* The mempool_alloc might sleep */
-				spin_unlock_irq(shost->host_lock);
-				lpfc_unreg_rpi(vports[i], ndlp);
-				spin_lock_irq(shost->host_lock);
-			}
-		}
-		spin_unlock_irq(shost->host_lock);
-	}
-	lpfc_destroy_vport_work_array(phba, vports);
-}
-
 void
 lpfc_unreg_all_rpis(struct lpfc_vport *vport)
 {
 	struct lpfc_hba  *phba  = vport->phba;
 	LPFC_MBOXQ_t     *mbox;
 	int rc;
-
-	if (phba->sli_rev == LPFC_SLI_REV4) {
-		lpfc_sli4_unreg_all_rpis(vport);
-		return;
-	}
 
 	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
 	if (mbox) {
@@ -4173,16 +3296,6 @@ lpfc_cleanup_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	}
 
 	spin_lock_irq(&phba->hbalock);
-	/* Cleanup REG_LOGIN completions which are not yet processed */
-	list_for_each_entry(mb, &phba->sli.mboxq_cmpl, list) {
-		if ((mb->u.mb.mbxCommand != MBX_REG_LOGIN64) ||
-			(ndlp != (struct lpfc_nodelist *) mb->context2))
-			continue;
-
-		mb->context2 = NULL;
-		mb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
-	}
-
 	list_for_each_entry_safe(mb, nextmb, &phba->sli.mboxq, list) {
 		if ((mb->u.mb.mbxCommand == MBX_REG_LOGIN64) &&
 		    (ndlp == (struct lpfc_nodelist *) mb->context2)) {
@@ -4192,9 +3305,6 @@ lpfc_cleanup_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 				kfree(mp);
 			}
 			list_del(&mb->list);
-			if (phba->sli_rev == LPFC_SLI_REV4)
-				lpfc_sli4_free_rpi(phba,
-					 mb->u.mb.un.varRegLogin.rpi);
 			mempool_free(mb, phba->mbox_mem_pool);
 			/* We shall not invoke the lpfc_nlp_put to decrement
 			 * the ndlp reference count as we are in the process
@@ -4236,7 +3346,6 @@ lpfc_nlp_remove(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 
 	lpfc_cancel_retry_delay_tmo(vport, ndlp);
 	if ((ndlp->nlp_flag & NLP_DEFER_RM) &&
-		!(ndlp->nlp_flag & NLP_REG_LOGIN_SEND) &&
 	    !(ndlp->nlp_flag & NLP_RPI_VALID)) {
 		/* For this case we need to cleanup the default rpi
 		 * allocated by the firmware.
@@ -4976,7 +4085,6 @@ lpfc_mbx_cmpl_fdmi_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	struct lpfc_vport    *vport = pmb->vport;
 
 	pmb->context1 = NULL;
-	pmb->context2 = NULL;
 
 	ndlp->nlp_rpi = mb->un.varWords[0];
 	ndlp->nlp_flag |= NLP_RPI_VALID;
@@ -5291,7 +4399,6 @@ static void
 lpfc_unregister_vfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	struct lpfc_vport *vport = mboxq->vport;
-	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	if (mboxq->u.mb.mbxStatus) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
@@ -5299,9 +4406,6 @@ lpfc_unregister_vfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 			"HBA state x%x\n",
 			mboxq->u.mb.mbxStatus, vport->port_state);
 	}
-	spin_lock_irq(shost->host_lock);
-	phba->pport->fc_flag &= ~FC_VFI_REGISTERED;
-	spin_unlock_irq(shost->host_lock);
 	mempool_free(mboxq, phba->mbox_mem_pool);
 	return;
 }
@@ -5329,211 +4433,6 @@ lpfc_unregister_fcfi_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 }
 
 /**
- * lpfc_unregister_fcf_prep - Unregister fcf record preparation
- * @phba: Pointer to hba context object.
- *
- * This function prepare the HBA for unregistering the currently registered
- * FCF from the HBA. It performs unregistering, in order, RPIs, VPIs, and
- * VFIs.
- */
-int
-lpfc_unregister_fcf_prep(struct lpfc_hba *phba)
-{
-	LPFC_MBOXQ_t *mbox;
-	struct lpfc_vport **vports;
-	struct lpfc_nodelist *ndlp;
-	struct Scsi_Host *shost;
-	int i, rc;
-
-	/* Unregister RPIs */
-	if (lpfc_fcf_inuse(phba))
-		lpfc_unreg_hba_rpis(phba);
-
-	/* At this point, all discovery is aborted */
-	phba->pport->port_state = LPFC_VPORT_UNKNOWN;
-
-	/* Unregister VPIs */
-	vports = lpfc_create_vport_work_array(phba);
-	if (vports && (phba->sli3_options & LPFC_SLI3_NPIV_ENABLED))
-		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
-			/* Stop FLOGI/FDISC retries */
-			ndlp = lpfc_findnode_did(vports[i], Fabric_DID);
-			if (ndlp)
-				lpfc_cancel_retry_delay_tmo(vports[i], ndlp);
-			lpfc_cleanup_pending_mbox(vports[i]);
-			if (phba->sli_rev == LPFC_SLI_REV4)
-				lpfc_sli4_unreg_all_rpis(vports[i]);
-			lpfc_mbx_unreg_vpi(vports[i]);
-			shost = lpfc_shost_from_vport(vports[i]);
-			spin_lock_irq(shost->host_lock);
-			vports[i]->fc_flag |= FC_VPORT_NEEDS_INIT_VPI;
-			vports[i]->vpi_state &= ~LPFC_VPI_REGISTERED;
-			spin_unlock_irq(shost->host_lock);
-		}
-	lpfc_destroy_vport_work_array(phba, vports);
-
-	/* Cleanup any outstanding ELS commands */
-	lpfc_els_flush_all_cmd(phba);
-
-	/* Unregister VFI */
-	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!mbox) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
-				"2556 UNREG_VFI mbox allocation failed"
-				"HBA state x%x\n", phba->pport->port_state);
-		return -ENOMEM;
-	}
-
-	lpfc_unreg_vfi(mbox, phba->pport);
-	mbox->vport = phba->pport;
-	mbox->mbox_cmpl = lpfc_unregister_vfi_cmpl;
-
-	rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
-	if (rc == MBX_NOT_FINISHED) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
-				"2557 UNREG_VFI issue mbox failed rc x%x "
-				"HBA state x%x\n",
-				rc, phba->pport->port_state);
-		mempool_free(mbox, phba->mbox_mem_pool);
-		return -EIO;
-	}
-
-	shost = lpfc_shost_from_vport(phba->pport);
-	spin_lock_irq(shost->host_lock);
-	phba->pport->fc_flag &= ~FC_VFI_REGISTERED;
-	spin_unlock_irq(shost->host_lock);
-
-	return 0;
-}
-
-/**
- * lpfc_sli4_unregister_fcf - Unregister currently registered FCF record
- * @phba: Pointer to hba context object.
- *
- * This function issues synchronous unregister FCF mailbox command to HBA to
- * unregister the currently registered FCF record. The driver does not reset
- * the driver FCF usage state flags.
- *
- * Return 0 if successfully issued, none-zero otherwise.
- */
-int
-lpfc_sli4_unregister_fcf(struct lpfc_hba *phba)
-{
-	LPFC_MBOXQ_t *mbox;
-	int rc;
-
-	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!mbox) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
-				"2551 UNREG_FCFI mbox allocation failed"
-				"HBA state x%x\n", phba->pport->port_state);
-		return -ENOMEM;
-	}
-	lpfc_unreg_fcfi(mbox, phba->fcf.fcfi);
-	mbox->vport = phba->pport;
-	mbox->mbox_cmpl = lpfc_unregister_fcfi_cmpl;
-	rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
-
-	if (rc == MBX_NOT_FINISHED) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
-				"2552 Unregister FCFI command failed rc x%x "
-				"HBA state x%x\n",
-				rc, phba->pport->port_state);
-		return -EINVAL;
-	}
-	return 0;
-}
-
-/**
- * lpfc_unregister_fcf_rescan - Unregister currently registered fcf and rescan
- * @phba: Pointer to hba context object.
- *
- * This function unregisters the currently reigstered FCF. This function
- * also tries to find another FCF for discovery by rescan the HBA FCF table.
- */
-void
-lpfc_unregister_fcf_rescan(struct lpfc_hba *phba)
-{
-	int rc;
-
-	/* Preparation for unregistering fcf */
-	rc = lpfc_unregister_fcf_prep(phba);
-	if (rc) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY,
-				"2748 Failed to prepare for unregistering "
-				"HBA's FCF record: rc=%d\n", rc);
-		return;
-	}
-
-	/* Now, unregister FCF record and reset HBA FCF state */
-	rc = lpfc_sli4_unregister_fcf(phba);
-	if (rc)
-		return;
-	/* Reset HBA FCF states after successful unregister FCF */
-	phba->fcf.fcf_flag = 0;
-	phba->fcf.current_rec.flag = 0;
-
-	/*
-	 * If driver is not unloading, check if there is any other
-	 * FCF record that can be used for discovery.
-	 */
-	if ((phba->pport->load_flag & FC_UNLOADING) ||
-	    (phba->link_state < LPFC_LINK_UP))
-		return;
-
-	/* This is considered as the initial FCF discovery scan */
-	spin_lock_irq(&phba->hbalock);
-	phba->fcf.fcf_flag |= FCF_INIT_DISC;
-	spin_unlock_irq(&phba->hbalock);
-
-	/* Reset FCF roundrobin bmask for new discovery */
-	memset(phba->fcf.fcf_rr_bmask, 0, sizeof(*phba->fcf.fcf_rr_bmask));
-
-	rc = lpfc_sli4_fcf_scan_read_fcf_rec(phba, LPFC_FCOE_FCF_GET_FIRST);
-
-	if (rc) {
-		spin_lock_irq(&phba->hbalock);
-		phba->fcf.fcf_flag &= ~FCF_INIT_DISC;
-		spin_unlock_irq(&phba->hbalock);
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
-				"2553 lpfc_unregister_unused_fcf failed "
-				"to read FCF record HBA state x%x\n",
-				phba->pport->port_state);
-	}
-}
-
-/**
- * lpfc_unregister_fcf - Unregister the currently registered fcf record
- * @phba: Pointer to hba context object.
- *
- * This function just unregisters the currently reigstered FCF. It does not
- * try to find another FCF for discovery.
- */
-void
-lpfc_unregister_fcf(struct lpfc_hba *phba)
-{
-	int rc;
-
-	/* Preparation for unregistering fcf */
-	rc = lpfc_unregister_fcf_prep(phba);
-	if (rc) {
-		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY,
-				"2749 Failed to prepare for unregistering "
-				"HBA's FCF record: rc=%d\n", rc);
-		return;
-	}
-
-	/* Now, unregister FCF record and reset HBA FCF state */
-	rc = lpfc_sli4_unregister_fcf(phba);
-	if (rc)
-		return;
-	/* Set proper HBA FCF states after successful unregister FCF */
-	spin_lock_irq(&phba->hbalock);
-	phba->fcf.fcf_flag &= ~FCF_REGISTERED;
-	spin_unlock_irq(&phba->hbalock);
-}
-
-/**
  * lpfc_unregister_unused_fcf - Unregister FCF if all devices are disconnected.
  * @phba: Pointer to hba context object.
  *
@@ -5544,17 +4443,21 @@ lpfc_unregister_fcf(struct lpfc_hba *phba)
 void
 lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
 {
-	/*
-	 * If HBA is not running in FIP mode, if HBA does not support
-	 * FCoE, if FCF discovery is ongoing, or if FCF has not been
-	 * registered, do nothing.
-	 */
+	LPFC_MBOXQ_t *mbox;
+	int rc;
+	struct lpfc_vport **vports;
+	int i;
+
 	spin_lock_irq(&phba->hbalock);
+	/*
+	 * If HBA is not running in FIP mode or
+	 * If HBA does not support FCoE or
+	 * If FCF is not registered.
+	 * do nothing.
+	 */
 	if (!(phba->hba_flag & HBA_FCOE_SUPPORT) ||
-	    !(phba->fcf.fcf_flag & FCF_REGISTERED) ||
-	    !(phba->hba_flag & HBA_FIP_SUPPORT) ||
-	    (phba->fcf.fcf_flag & FCF_DISCOVERY) ||
-	    (phba->pport->port_state == LPFC_FLOGI)) {
+		!(phba->fcf.fcf_flag & FCF_REGISTERED) ||
+		(!(phba->hba_flag & HBA_FIP_SUPPORT))) {
 		spin_unlock_irq(&phba->hbalock);
 		return;
 	}
@@ -5563,7 +4466,89 @@ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
 	if (lpfc_fcf_inuse(phba))
 		return;
 
-	lpfc_unregister_fcf_rescan(phba);
+	/* At this point, all discovery is aborted */
+	phba->pport->port_state = LPFC_VPORT_UNKNOWN;
+
+	/* Unregister VPIs */
+	vports = lpfc_create_vport_work_array(phba);
+	if (vports &&
+		(phba->sli3_options & LPFC_SLI3_NPIV_ENABLED))
+		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
+			lpfc_mbx_unreg_vpi(vports[i]);
+			vports[i]->fc_flag |= FC_VPORT_NEEDS_INIT_VPI;
+			vports[i]->vpi_state &= ~LPFC_VPI_REGISTERED;
+		}
+	lpfc_destroy_vport_work_array(phba, vports);
+
+	/* Unregister VFI */
+	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+	if (!mbox) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+			"2556 UNREG_VFI mbox allocation failed"
+			"HBA state x%x\n",
+			phba->pport->port_state);
+		return;
+	}
+
+	lpfc_unreg_vfi(mbox, phba->pport);
+	mbox->vport = phba->pport;
+	mbox->mbox_cmpl = lpfc_unregister_vfi_cmpl;
+
+	rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
+	if (rc == MBX_NOT_FINISHED) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+			"2557 UNREG_VFI issue mbox failed rc x%x "
+			"HBA state x%x\n",
+			rc, phba->pport->port_state);
+		mempool_free(mbox, phba->mbox_mem_pool);
+		return;
+	}
+
+	/* Unregister FCF */
+	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+	if (!mbox) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+			"2551 UNREG_FCFI mbox allocation failed"
+			"HBA state x%x\n",
+			phba->pport->port_state);
+		return;
+	}
+
+	lpfc_unreg_fcfi(mbox, phba->fcf.fcfi);
+	mbox->vport = phba->pport;
+	mbox->mbox_cmpl = lpfc_unregister_fcfi_cmpl;
+	rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
+
+	if (rc == MBX_NOT_FINISHED) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+			"2552 UNREG_FCFI issue mbox failed rc x%x "
+			"HBA state x%x\n",
+			rc, phba->pport->port_state);
+		mempool_free(mbox, phba->mbox_mem_pool);
+		return;
+	}
+
+	spin_lock_irq(&phba->hbalock);
+	phba->fcf.fcf_flag &= ~(FCF_AVAILABLE | FCF_REGISTERED |
+		FCF_DISCOVERED | FCF_BOOT_ENABLE | FCF_IN_USE |
+		FCF_VALID_VLAN);
+	spin_unlock_irq(&phba->hbalock);
+
+	/*
+	 * If driver is not unloading, check if there is any other
+	 * FCF record that can be used for discovery.
+	 */
+	if ((phba->pport->load_flag & FC_UNLOADING) ||
+		(phba->link_state < LPFC_LINK_UP))
+		return;
+
+	rc = lpfc_sli4_read_fcf_record(phba, LPFC_FCOE_FCF_GET_FIRST);
+
+	if (rc)
+		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY|LOG_MBOX,
+			"2553 lpfc_unregister_unused_fcf failed to read FCF"
+			" record HBA state x%x\n",
+			phba->pport->port_state);
 }
 
 /**
@@ -5702,7 +4687,7 @@ lpfc_get_rec_conf23(uint8_t *buff, uint32_t size, uint8_t rec_type)
  * @buff: Buffer containing config region 23 data.
  * @size: Size of the data buffer.
  *
- * This function parses the FCoE config parameters in config region 23 and
+ * This fuction parse the FCoE config parameters in config region 23 and
  * populate driver data structure with the parameters.
  */
 void

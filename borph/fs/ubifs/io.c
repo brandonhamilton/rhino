@@ -51,7 +51,6 @@
  */
 
 #include <linux/crc32.h>
-#include <linux/slab.h>
 #include "ubifs.h"
 
 /**
@@ -61,10 +60,9 @@
  */
 void ubifs_ro_mode(struct ubifs_info *c, int err)
 {
-	if (!c->ro_error) {
-		c->ro_error = 1;
+	if (!c->ro_media) {
+		c->ro_media = 1;
 		c->no_chk_data_crc = 0;
-		c->vfs_sb->s_flags |= MS_RDONLY;
 		ubifs_warn("switched to read-only mode, error %d", err);
 		dbg_dump_stack();
 	}
@@ -356,11 +354,11 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 
 	dbg_io("LEB %d:%d, %d bytes, jhead %s",
 	       wbuf->lnum, wbuf->offs, wbuf->used, dbg_jhead(wbuf->jhead));
+	ubifs_assert(!(c->vfs_sb->s_flags & MS_RDONLY));
 	ubifs_assert(!(wbuf->avail & 7));
 	ubifs_assert(wbuf->offs + c->min_io_size <= c->leb_size);
-	ubifs_assert(!c->ro_media && !c->ro_mount);
 
-	if (c->ro_error)
+	if (c->ro_media)
 		return -EROFS;
 
 	ubifs_pad(c, wbuf->buf + wbuf->used, wbuf->avail);
@@ -440,12 +438,11 @@ int ubifs_bg_wbufs_sync(struct ubifs_info *c)
 {
 	int err, i;
 
-	ubifs_assert(!c->ro_media && !c->ro_mount);
 	if (!c->need_wbuf_sync)
 		return 0;
 	c->need_wbuf_sync = 0;
 
-	if (c->ro_error) {
+	if (c->ro_media) {
 		err = -EROFS;
 		goto out_timers;
 	}
@@ -520,7 +517,6 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	ubifs_assert(!(wbuf->offs & 7) && wbuf->offs <= c->leb_size);
 	ubifs_assert(wbuf->avail > 0 && wbuf->avail <= c->min_io_size);
 	ubifs_assert(mutex_is_locked(&wbuf->io_mutex));
-	ubifs_assert(!c->ro_media && !c->ro_mount);
 
 	if (c->leb_size - wbuf->offs - wbuf->used < aligned_len) {
 		err = -ENOSPC;
@@ -529,7 +525,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 
 	cancel_wbuf_timer_nolock(wbuf);
 
-	if (c->ro_error)
+	if (c->ro_media)
 		return -EROFS;
 
 	if (aligned_len <= wbuf->avail) {
@@ -665,9 +661,8 @@ int ubifs_write_node(struct ubifs_info *c, void *buf, int len, int lnum,
 	       buf_len);
 	ubifs_assert(lnum >= 0 && lnum < c->leb_cnt && offs >= 0);
 	ubifs_assert(offs % c->min_io_size == 0 && offs < c->leb_size);
-	ubifs_assert(!c->ro_media && !c->ro_mount);
 
-	if (c->ro_error)
+	if (c->ro_media)
 		return -EROFS;
 
 	ubifs_prepare_node(c, buf, len, 1);
@@ -818,8 +813,7 @@ int ubifs_read_node(const struct ubifs_info *c, void *buf, int type, int len,
 	return 0;
 
 out:
-	ubifs_err("bad node at LEB %d:%d, LEB mapping status %d", lnum, offs,
-		  ubi_is_mapped(c->ubi, lnum));
+	ubifs_err("bad node at LEB %d:%d", lnum, offs);
 	dbg_dump_node(c, buf);
 	dbg_dump_stack();
 	return -EINVAL;

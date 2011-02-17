@@ -27,11 +27,11 @@
 #include <linux/linkage.h>
 #include <asm/assembler.h>
 #include <mach/io.h>
+#include <plat/control.h>
 
 #include "cm.h"
 #include "prm.h"
 #include "sdrc.h"
-#include "control.h"
 
 #define SDRC_SCRATCHPAD_SEM_V	0xfa00291c
 
@@ -40,7 +40,7 @@
 #define PM_PREPWSTST_CORE_P	0x48306AE8
 #define PM_PREPWSTST_MPU_V	OMAP34XX_PRM_REGADDR(MPU_MOD, \
 				OMAP3430_PM_PREPWSTST)
-#define PM_PWSTCTRL_MPU_P	OMAP3430_PRM_BASE + MPU_MOD + OMAP2_PM_PWSTCTRL
+#define PM_PWSTCTRL_MPU_P	OMAP3430_PRM_BASE + MPU_MOD + PM_PWSTCTRL
 #define CM_IDLEST1_CORE_V	OMAP34XX_CM_REGADDR(CORE_MOD, CM_IDLEST1)
 #define SRAM_BASE_P		0x40200000
 #define CONTROL_STAT		0x480022F0
@@ -60,7 +60,7 @@
 #define SDRC_DLLA_CTRL_V	OMAP34XX_SDRC_REGADDR(SDRC_DLLA_CTRL)
 
         .text
-/* Function to acquire the semaphore in scratchpad */
+/* Function to aquire the semaphore in scratchpad */
 ENTRY(lock_scratchpad_sem)
 	stmfd	sp!, {lr}	@ save registers on stack
 wait_sem:

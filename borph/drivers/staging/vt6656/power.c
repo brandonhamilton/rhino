@@ -19,7 +19,7 @@
  *
  * File: power.c
  *
- * Purpose: Handles 802.11 power management  functions
+ * Purpose: Handles 802.11 power managment  functions
  *
  * Author: Lyndon Chen
  *
@@ -50,13 +50,18 @@
 
 /*---------------------  Static Definitions -------------------------*/
 
+
+
+
 /*---------------------  Static Classes  ----------------------------*/
 
 /*---------------------  Static Variables  --------------------------*/
 static int          msglevel                =MSG_LEVEL_INFO;
 /*---------------------  Static Functions  --------------------------*/
 
+
 /*---------------------  Export Variables  --------------------------*/
+
 
 /*---------------------  Export Functions  --------------------------*/
 
@@ -70,19 +75,23 @@ static int          msglevel                =MSG_LEVEL_INFO;
  *
 -*/
 
-void PSvEnablePowerSaving(void *hDeviceContext,
-			  WORD wListenInterval)
+
+VOID
+PSvEnablePowerSaving(
+    IN HANDLE hDeviceContext,
+    IN WORD wListenInterval
+    )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
     WORD            wAID = pMgmt->wCurrAID | BIT14 | BIT15;
 
-    /* set period of power up before TBTT */
+    // set period of power up before TBTT
     MACvWriteWord(pDevice, MAC_REG_PWBT, C_PWBT);
 
     if (pDevice->eOPMode != OP_MODE_ADHOC) {
-	/* set AID */
-	MACvWriteWord(pDevice, MAC_REG_AIDATIM, wAID);
+        // set AID
+        MACvWriteWord(pDevice, MAC_REG_AIDATIM, wAID);
     } else {
     	// set ATIM Window
         //MACvWriteATIMW(pDevice->PortOffset, pMgmt->wCurrATIMWindow);
@@ -119,7 +128,7 @@ void PSvEnablePowerSaving(void *hDeviceContext,
     pDevice->bEnablePSMode = TRUE;
 
     if (pDevice->eOPMode == OP_MODE_ADHOC) {
-	/* bMgrPrepareBeaconToSend((void *) pDevice, pMgmt); */
+//        bMgrPrepareBeaconToSend((HANDLE)pDevice, pMgmt);
     }
     // We don't send null pkt in ad hoc mode since beacon will handle this.
     else if (pDevice->eOPMode == OP_MODE_INFRASTRUCTURE) {
@@ -129,6 +138,11 @@ void PSvEnablePowerSaving(void *hDeviceContext,
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "PS:Power Saving Mode Enable... \n");
     return;
 }
+
+
+
+
+
 
 /*+
  *
@@ -140,7 +154,10 @@ void PSvEnablePowerSaving(void *hDeviceContext,
  *
 -*/
 
-void PSvDisablePowerSaving(void *hDeviceContext)
+VOID
+PSvDisablePowerSaving(
+    IN HANDLE hDeviceContext
+    )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
 //    PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
@@ -170,6 +187,7 @@ void PSvDisablePowerSaving(void *hDeviceContext)
     return;
 }
 
+
 /*+
  *
  * Routine Description:
@@ -180,9 +198,13 @@ void PSvDisablePowerSaving(void *hDeviceContext)
  *    FALSE, if fail
 -*/
 
-BOOL PSbConsiderPowerDown(void *hDeviceContext,
-			  BOOL bCheckRxDMA,
-			  BOOL bCheckCountToWakeUp)
+
+BOOL
+PSbConsiderPowerDown(
+    IN HANDLE hDeviceContext,
+    IN BOOL bCheckRxDMA,
+    IN BOOL bCheckCountToWakeUp
+    )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
@@ -226,6 +248,8 @@ BOOL PSbConsiderPowerDown(void *hDeviceContext,
     return TRUE;
 }
 
+
+
 /*+
  *
  * Routine Description:
@@ -236,7 +260,12 @@ BOOL PSbConsiderPowerDown(void *hDeviceContext,
  *
 -*/
 
-void PSvSendPSPOLL(void *hDeviceContext)
+
+
+VOID
+PSvSendPSPOLL(
+    IN HANDLE hDeviceContext
+    )
 {
     PSDevice            pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject        pMgmt = &(pDevice->sMgmtObj);
@@ -268,6 +297,8 @@ void PSvSendPSPOLL(void *hDeviceContext)
     return;
 }
 
+
+
 /*+
  *
  * Routine Description:
@@ -277,8 +308,10 @@ void PSvSendPSPOLL(void *hDeviceContext)
  *    None.
  *
 -*/
-
-BOOL PSbSendNullPacket(void *hDeviceContext)
+BOOL
+PSbSendNullPacket(
+    IN HANDLE hDeviceContext
+    )
 {
     PSDevice            pDevice = (PSDevice)hDeviceContext;
     PSTxMgmtPacket      pTxPacket = NULL;
@@ -290,11 +323,17 @@ BOOL PSbSendNullPacket(void *hDeviceContext)
         return FALSE;
     }
 
+//2007-0115-03<Add>by MikeLiu
+#ifdef TxInSleep
      if ((pDevice->bEnablePSMode == FALSE) &&
 	  (pDevice->fTxDataInSleep == FALSE)){
         return FALSE;
     }
-
+#else
+    if (pDevice->bEnablePSMode == FALSE) {
+        return FALSE;
+    }
+#endif
     memset(pMgmt->pbyPSPacketPool, 0, sizeof(STxMgmtPacket) + WLAN_NULLDATA_FR_MAXLEN);
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyPSPacketPool;
     pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
@@ -349,7 +388,10 @@ BOOL PSbSendNullPacket(void *hDeviceContext)
  *
 -*/
 
-BOOL PSbIsNextTBTTWakeUp(void *hDeviceContext)
+BOOL
+PSbIsNextTBTTWakeUp(
+    IN HANDLE hDeviceContext
+    )
 {
 
     PSDevice         pDevice = (PSDevice)hDeviceContext;

@@ -5,7 +5,6 @@
  * Copyright (c) 2004-2006 Herbert Xu <herbert@gondor.apana.org.au>
  */
 
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>

@@ -22,7 +22,6 @@
  * Maxim Osipov <maxim.osipov@siemens.com>
  */
 
-#include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/if_arp.h>
 #include <linux/netdevice.h>

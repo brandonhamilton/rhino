@@ -12,6 +12,7 @@
 
 #include <linux/fs.h>
 #include <linux/workqueue.h>
+#include <linux/slow-work.h>
 #include <linux/dlm.h>
 #include <linux/buffer_head.h>
 
@@ -161,8 +162,6 @@ struct gfs2_glock_operations {
 	void (*go_callback) (struct gfs2_glock *gl);
 	const int go_type;
 	const unsigned long go_min_hold_time;
-	const unsigned long go_flags;
-#define GLOF_ASPACE 1
 };
 
 enum {
@@ -196,7 +195,6 @@ enum {
 	GLF_REPLY_PENDING		= 9,
 	GLF_INITIAL			= 10,
 	GLF_FROZEN			= 11,
-	GLF_QUEUED			= 12,
 };
 
 struct gfs2_glock {
@@ -227,6 +225,7 @@ struct gfs2_glock {
 
 	struct gfs2_sbd *gl_sbd;
 
+	struct inode *gl_aspace;
 	struct list_head gl_ail_list;
 	atomic_t gl_ail_count;
 	struct delayed_work gl_work;
@@ -259,6 +258,7 @@ enum {
 	GIF_INVALID		= 0,
 	GIF_QD_LOCKED		= 1,
 	GIF_SW_PAGED		= 3,
+	GIF_USER                = 4, /* user inode, not metadata addr space */
 };
 
 
@@ -268,6 +268,7 @@ struct gfs2_inode {
 	u64 i_no_formal_ino;
 	u64 i_generation;
 	u64 i_eattr;
+	loff_t i_disksize;
 	unsigned long i_flags;		/* GIF_... */
 	struct gfs2_glock *i_gl; /* Move into i_gh? */
 	struct gfs2_holder i_iopen_gh;
@@ -382,7 +383,7 @@ struct gfs2_journal_extent {
 struct gfs2_jdesc {
 	struct list_head jd_list;
 	struct list_head extent_list;
-	struct work_struct jd_work;
+	struct slow_work jd_work;
 	struct inode *jd_inode;
 	unsigned long jd_flags;
 #define JDF_RECOVERY 1
@@ -416,8 +417,11 @@ struct gfs2_args {
 	char ar_locktable[GFS2_LOCKNAME_LEN];	/* Name of the Lock Table */
 	char ar_hostdata[GFS2_LOCKNAME_LEN];	/* Host specific data */
 	unsigned int ar_spectator:1;		/* Don't get a journal */
+	unsigned int ar_ignore_local_fs:1;	/* Ignore optimisations */
 	unsigned int ar_localflocks:1;		/* Let the VFS do flock|fcntl */
+	unsigned int ar_localcaching:1;		/* Local caching */
 	unsigned int ar_debug:1;		/* Oops on errors */
+	unsigned int ar_upgrade:1;		/* Upgrade ondisk format */
 	unsigned int ar_posix_acl:1;		/* Enable posix acls */
 	unsigned int ar_quota:2;		/* off/account/on */
 	unsigned int ar_suiddir:1;		/* suiddir support */
@@ -435,6 +439,9 @@ struct gfs2_args {
 struct gfs2_tune {
 	spinlock_t gt_spin;
 
+	unsigned int gt_incore_log_blocks;
+	unsigned int gt_log_flush_secs;
+
 	unsigned int gt_logd_secs;
 
 	unsigned int gt_quota_simul_sync; /* Max quotavals to sync at once */
@@ -444,6 +451,7 @@ struct gfs2_tune {
 	unsigned int gt_quota_quantum; /* Secs between syncs to quota file */
 	unsigned int gt_new_files_jdata;
 	unsigned int gt_max_readahead; /* Max bytes to read-ahead from disk */
+	unsigned int gt_stall_secs; /* Detects trouble! */
 	unsigned int gt_complain_secs;
 	unsigned int gt_statfs_quantum;
 	unsigned int gt_statfs_slow;
@@ -455,8 +463,6 @@ enum {
 	SDF_SHUTDOWN		= 2,
 	SDF_NOBARRIERS		= 3,
 	SDF_NORECOVERY		= 4,
-	SDF_DEMOTE		= 5,
-	SDF_NOJOURNALID		= 6,
 };
 
 #define GFS2_FSNAME_LEN		256
@@ -494,7 +500,7 @@ struct gfs2_sb_host {
  */
 
 struct lm_lockstruct {
-	int ls_jid;
+	unsigned int ls_jid;
 	unsigned int ls_first;
 	unsigned int ls_first_done;
 	unsigned int ls_nodir;
@@ -538,8 +544,6 @@ struct gfs2_sbd {
 	struct gfs2_holder sd_live_gh;
 	struct gfs2_glock *sd_rename_gl;
 	struct gfs2_glock *sd_trans_gl;
-	wait_queue_head_t sd_glock_wait;
-	atomic_t sd_glock_disposal;
 
 	/* Inode Stuff */
 
@@ -569,7 +573,6 @@ struct gfs2_sbd {
 	struct list_head sd_rindex_mru_list;
 	struct gfs2_rgrpd *sd_rindex_forward;
 	unsigned int sd_rgrps;
-	unsigned int sd_max_rg_data;
 
 	/* Journal index stuff */
 
@@ -612,9 +615,8 @@ struct gfs2_sbd {
 	unsigned int sd_log_blks_reserved;
 	unsigned int sd_log_commited_buf;
 	unsigned int sd_log_commited_databuf;
-	int sd_log_commited_revoke;
+	unsigned int sd_log_commited_revoke;
 
-	atomic_t sd_log_pinned;
 	unsigned int sd_log_num_buf;
 	unsigned int sd_log_num_revoke;
 	unsigned int sd_log_num_rg;
@@ -626,17 +628,15 @@ struct gfs2_sbd {
 	struct list_head sd_log_le_databuf;
 	struct list_head sd_log_le_ordered;
 
-	atomic_t sd_log_thresh1;
-	atomic_t sd_log_thresh2;
 	atomic_t sd_log_blks_free;
-	wait_queue_head_t sd_log_waitq;
-	wait_queue_head_t sd_logd_waitq;
+	struct mutex sd_log_reserve_mutex;
 
 	u64 sd_log_sequence;
 	unsigned int sd_log_head;
 	unsigned int sd_log_tail;
 	int sd_log_idle;
 
+	unsigned long sd_log_flush_time;
 	struct rw_semaphore sd_log_flush_lock;
 	atomic_t sd_log_in_flight;
 	wait_queue_head_t sd_log_flush_wait;

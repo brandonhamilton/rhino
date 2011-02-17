@@ -62,7 +62,7 @@ struct hfs_btree {
 	unsigned int depth;
 
 	//unsigned int map1_size, map_size;
-	struct mutex tree_lock;
+	struct semaphore tree_lock;
 
 	unsigned int pages_per_bnode;
 	spinlock_t hash_lock;
@@ -121,21 +121,16 @@ struct hfsplus_sb_info {
 	u32 sect_count;
 	int fs_shift;
 
-	/* immutable data from the volume header */
+	/* Stuff in host order from Vol Header */
 	u32 alloc_blksz;
 	int alloc_blksz_shift;
 	u32 total_blocks;
-	u32 data_clump_blocks, rsrc_clump_blocks;
-
-	/* mutable data from the volume header, protected by alloc_mutex */
 	u32 free_blocks;
-	struct mutex alloc_mutex;
-
-	/* mutable data from the volume header, protected by vh_mutex */
+	u32 next_alloc;
 	u32 next_cnid;
 	u32 file_count;
 	u32 folder_count;
-	struct mutex vh_mutex;
+	u32 data_clump_blocks, rsrc_clump_blocks;
 
 	/* Config options */
 	u32 creator;
@@ -148,50 +143,40 @@ struct hfsplus_sb_info {
 	int part, session;
 
 	unsigned long flags;
+
+	struct hlist_head rsrc_inodes;
 };
 
-#define HFSPLUS_SB_WRITEBACKUP	0
-#define HFSPLUS_SB_NODECOMPOSE	1
-#define HFSPLUS_SB_FORCE	2
-#define HFSPLUS_SB_HFSX		3
-#define HFSPLUS_SB_CASEFOLD	4
+#define HFSPLUS_SB_WRITEBACKUP	0x0001
+#define HFSPLUS_SB_NODECOMPOSE	0x0002
+#define HFSPLUS_SB_FORCE	0x0004
+#define HFSPLUS_SB_HFSX		0x0008
+#define HFSPLUS_SB_CASEFOLD	0x0010
 
 
 struct hfsplus_inode_info {
+	struct mutex extents_lock;
+	u32 clump_blocks, alloc_blocks;
+	sector_t fs_blocks;
+	/* Allocation extents from catalog record or volume header */
+	hfsplus_extent_rec first_extents;
+	u32 first_blocks;
+	hfsplus_extent_rec cached_extents;
+	u32 cached_start, cached_blocks;
 	atomic_t opencnt;
 
-	/*
-	 * Extent allocation information, protected by extents_lock.
-	 */
-	u32 first_blocks;
-	u32 clump_blocks;
-	u32 alloc_blocks;
-	u32 cached_start;
-	u32 cached_blocks;
-	hfsplus_extent_rec first_extents;
-	hfsplus_extent_rec cached_extents;
-	unsigned long flags;
-	struct mutex extents_lock;
-
-	/*
-	 * Immutable data.
-	 */
 	struct inode *rsrc_inode;
+	unsigned long flags;
+
 	__be32 create_date;
+	/* Device number in hfsplus_permissions in catalog */
+	u32 dev;
+	/* BSD system and user file flags */
+	u8 rootflags;
+	u8 userflags;
 
-	/*
-	 * Protected by sbi->vh_mutex.
-	 */
-	u32 linkid;
-
-	/*
-	 * Protected by i_mutex.
-	 */
-	sector_t fs_blocks;
-	u8 userflags;		/* BSD user file flags */
 	struct list_head open_dir_list;
 	loff_t phys_size;
-
 	struct inode vfs_inode;
 };
 
@@ -199,8 +184,8 @@ struct hfsplus_inode_info {
 #define HFSPLUS_FLG_EXT_DIRTY	0x0002
 #define HFSPLUS_FLG_EXT_NEW	0x0004
 
-#define HFSPLUS_IS_DATA(inode)   (!(HFSPLUS_I(inode)->flags & HFSPLUS_FLG_RSRC))
-#define HFSPLUS_IS_RSRC(inode)   (HFSPLUS_I(inode)->flags & HFSPLUS_FLG_RSRC)
+#define HFSPLUS_IS_DATA(inode)   (!(HFSPLUS_I(inode).flags & HFSPLUS_FLG_RSRC))
+#define HFSPLUS_IS_RSRC(inode)   (HFSPLUS_I(inode).flags & HFSPLUS_FLG_RSRC)
 
 struct hfs_find_data {
 	/* filled by caller */
@@ -326,7 +311,6 @@ int hfsplus_create_cat(u32, struct inode *, struct qstr *, struct inode *);
 int hfsplus_delete_cat(u32, struct inode *, struct qstr *);
 int hfsplus_rename_cat(u32, struct inode *, struct qstr *,
 		       struct inode *, struct qstr *);
-void hfsplus_cat_set_perms(struct inode *inode, struct hfsplus_perm *perms);
 
 /* dir.c */
 extern const struct inode_operations hfsplus_dir_inode_operations;
@@ -353,7 +337,8 @@ struct inode *hfsplus_new_inode(struct super_block *, int);
 void hfsplus_delete_inode(struct inode *);
 
 /* ioctl.c */
-long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+int hfsplus_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
+		  unsigned long arg);
 int hfsplus_setxattr(struct dentry *dentry, const char *name,
 		     const void *value, size_t size, int flags);
 ssize_t hfsplus_getxattr(struct dentry *dentry, const char *name,
@@ -367,7 +352,6 @@ int hfsplus_show_options(struct seq_file *, struct vfsmount *);
 
 /* super.c */
 struct inode *hfsplus_iget(struct super_block *, unsigned long);
-int hfsplus_sync_fs(struct super_block *sb, int wait);
 
 /* tables.c */
 extern u16 hfsplus_case_fold_table[];
@@ -388,15 +372,26 @@ int hfsplus_read_wrapper(struct super_block *);
 int hfs_part_find(struct super_block *, sector_t *, sector_t *);
 
 /* access macros */
+/*
 static inline struct hfsplus_sb_info *HFSPLUS_SB(struct super_block *sb)
 {
 	return sb->s_fs_info;
 }
-
 static inline struct hfsplus_inode_info *HFSPLUS_I(struct inode *inode)
 {
 	return list_entry(inode, struct hfsplus_inode_info, vfs_inode);
 }
+*/
+#define HFSPLUS_SB(super)	(*(struct hfsplus_sb_info *)(super)->s_fs_info)
+#define HFSPLUS_I(inode)	(*list_entry(inode, struct hfsplus_inode_info, vfs_inode))
+
+#if 1
+#define hfsplus_kmap(p)		({ struct page *__p = (p); kmap(__p); })
+#define hfsplus_kunmap(p)	({ struct page *__p = (p); kunmap(__p); __p; })
+#else
+#define hfsplus_kmap(p)		kmap(p)
+#define hfsplus_kunmap(p)	kunmap(p)
+#endif
 
 #define sb_bread512(sb, sec, data) ({			\
 	struct buffer_head *__bh;			\
@@ -423,5 +418,7 @@ static inline struct hfsplus_inode_info *HFSPLUS_I(struct inode *inode)
 #define hfsp_mt2ut(t)		(struct timespec){ .tv_sec = __hfsp_mt2ut(t) }
 #define hfsp_ut2mt(t)		__hfsp_ut2mt((t).tv_sec)
 #define hfsp_now2mt()		__hfsp_ut2mt(get_seconds())
+
+#define kdev_t_to_nr(x)		(x)
 
 #endif

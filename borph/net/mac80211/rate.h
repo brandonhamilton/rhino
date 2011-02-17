@@ -26,6 +26,10 @@ struct rate_control_ref {
 	struct kref kref;
 };
 
+/* Get a reference to the rate control algorithm. If `name' is NULL, get the
+ * first available algorithm. */
+struct rate_control_ref *rate_control_alloc(const char *name,
+					    struct ieee80211_local *local);
 void rate_control_get_rate(struct ieee80211_sub_if_data *sdata,
 			   struct sta_info *sta,
 			   struct ieee80211_tx_rate_control *txrc);
@@ -40,11 +44,10 @@ static inline void rate_control_tx_status(struct ieee80211_local *local,
 	struct rate_control_ref *ref = local->rate_ctrl;
 	struct ieee80211_sta *ista = &sta->sta;
 	void *priv_sta = sta->rate_ctrl_priv;
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 
-	if (!ref)
-		return;
-
-	ref->ops->tx_status(ref->priv, sband, ista, priv_sta, skb);
+	if (likely(info->flags & IEEE80211_TX_INTFL_RCALGO))
+		ref->ops->tx_status(ref->priv, sband, ista, priv_sta, skb);
 }
 
 
@@ -66,8 +69,7 @@ static inline void rate_control_rate_init(struct sta_info *sta)
 
 static inline void rate_control_rate_update(struct ieee80211_local *local,
 				    struct ieee80211_supported_band *sband,
-				    struct sta_info *sta, u32 changed,
-				    enum nl80211_channel_type oper_chan_type)
+				    struct sta_info *sta, u32 changed)
 {
 	struct rate_control_ref *ref = local->rate_ctrl;
 	struct ieee80211_sta *ista = &sta->sta;
@@ -75,7 +77,7 @@ static inline void rate_control_rate_update(struct ieee80211_local *local,
 
 	if (ref && ref->ops->rate_update)
 		ref->ops->rate_update(ref->priv, sband, ista,
-				      priv_sta, changed, oper_chan_type);
+				      priv_sta, changed);
 }
 
 static inline void *rate_control_alloc_sta(struct rate_control_ref *ref,
@@ -113,8 +115,7 @@ static inline void rate_control_remove_sta_debugfs(struct sta_info *sta)
 #endif
 }
 
-/* Get a reference to the rate control algorithm. If `name' is NULL, get the
- * first available algorithm. */
+/* functions for rate control related to a device */
 int ieee80211_init_rate_ctrl_alg(struct ieee80211_local *local,
 				 const char *name);
 void rate_control_deinitialize(struct ieee80211_local *local);
@@ -143,19 +144,6 @@ static inline int rc80211_minstrel_init(void)
 	return 0;
 }
 static inline void rc80211_minstrel_exit(void)
-{
-}
-#endif
-
-#ifdef CONFIG_MAC80211_RC_MINSTREL_HT
-extern int rc80211_minstrel_ht_init(void);
-extern void rc80211_minstrel_ht_exit(void);
-#else
-static inline int rc80211_minstrel_ht_init(void)
-{
-	return 0;
-}
-static inline void rc80211_minstrel_ht_exit(void)
 {
 }
 #endif

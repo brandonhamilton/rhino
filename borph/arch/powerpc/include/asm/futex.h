@@ -11,7 +11,7 @@
 
 #define __futex_atomic_op(insn, ret, oldval, uaddr, oparg) \
   __asm__ __volatile ( \
-	PPC_RELEASE_BARRIER \
+	LWSYNC_ON_SMP \
 "1:	lwarx	%0,0,%2\n" \
 	insn \
 	PPC405_ERR77(0, %2) \
@@ -90,14 +90,14 @@ futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
 		return -EFAULT;
 
         __asm__ __volatile__ (
-        PPC_RELEASE_BARRIER
+        LWSYNC_ON_SMP
 "1:     lwarx   %0,0,%2         # futex_atomic_cmpxchg_inatomic\n\
         cmpw    0,%0,%3\n\
         bne-    3f\n"
         PPC405_ERR77(0,%2)
 "2:     stwcx.  %4,0,%2\n\
         bne-    1b\n"
-        PPC_ACQUIRE_BARRIER
+        ISYNC_ON_SMP
 "3:	.section .fixup,\"ax\"\n\
 4:	li	%0,%5\n\
 	b	3b\n\

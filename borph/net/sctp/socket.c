@@ -57,8 +57,6 @@
  * be incorporated into the next SCTP release.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/wait.h>
@@ -69,7 +67,6 @@
 #include <linux/poll.h>
 #include <linux/init.h>
 #include <linux/crypto.h>
-#include <linux/slab.h>
 
 #include <net/ip.h>
 #include <net/icmp.h>
@@ -111,12 +108,12 @@ static void sctp_sock_migrate(struct sock *, struct sock *,
 static char *sctp_hmac_alg = SCTP_COOKIE_HMAC_ALG;
 
 extern struct kmem_cache *sctp_bucket_cachep;
-extern long sysctl_sctp_mem[3];
+extern int sysctl_sctp_mem[3];
 extern int sysctl_sctp_rmem[3];
 extern int sysctl_sctp_wmem[3];
 
 static int sctp_memory_pressure;
-static atomic_long_t sctp_memory_allocated;
+static atomic_t sctp_memory_allocated;
 struct percpu_counter sctp_sockets_allocated;
 
 static void sctp_enter_memory_pressure(struct sock *sk)
@@ -918,11 +915,6 @@ SCTP_STATIC int sctp_setsockopt_bindx(struct sock* sk,
 	/* Walk through the addrs buffer and count the number of addresses. */
 	addr_buf = kaddrs;
 	while (walk_size < addrs_size) {
-		if (walk_size + sizeof(sa_family_t) > addrs_size) {
-			kfree(kaddrs);
-			return -EINVAL;
-		}
-
 		sa_addr = (struct sockaddr *)addr_buf;
 		af = sctp_get_af_specific(sa_addr->sa_family);
 
@@ -1009,13 +1001,9 @@ static int __sctp_connect(struct sock* sk,
 	/* Walk through the addrs buffer and count the number of addresses. */
 	addr_buf = kaddrs;
 	while (walk_size < addrs_size) {
-		if (walk_size + sizeof(sa_family_t) > addrs_size) {
-			err = -EINVAL;
-			goto out_free;
-		}
-
 		sa_addr = (union sctp_addr *)addr_buf;
 		af = sctp_get_af_specific(sa_addr->sa.sa_family);
+		port = ntohs(sa_addr->v4.sin_port);
 
 		/* If the address family is not supported or if this address
 		 * causes the address buffer to overflow return EINVAL.
@@ -1024,8 +1012,6 @@ static int __sctp_connect(struct sock* sk,
 			err = -EINVAL;
 			goto out_free;
 		}
-
-		port = ntohs(sa_addr->v4.sin_port);
 
 		/* Save current address so we can work with it */
 		memcpy(&to, sa_addr, af->sockaddr_len);
@@ -2101,7 +2087,8 @@ static int sctp_setsockopt_autoclose(struct sock *sk, char __user *optval,
 	if (copy_from_user(&sp->autoclose, optval, optlen))
 		return -EFAULT;
 	/* make sure it won't exceed MAX_SCHEDULE_TIMEOUT */
-	sp->autoclose = min_t(long, sp->autoclose, MAX_SCHEDULE_TIMEOUT / HZ);
+	if (sp->autoclose > (MAX_SCHEDULE_TIMEOUT / HZ) )
+		sp->autoclose = (__u32)(MAX_SCHEDULE_TIMEOUT / HZ) ;
 
 	return 0;
 }
@@ -2471,8 +2458,9 @@ static int sctp_setsockopt_delayed_ack(struct sock *sk,
 		if (params.sack_delay == 0 && params.sack_freq == 0)
 			return 0;
 	} else if (optlen == sizeof(struct sctp_assoc_value)) {
-		pr_warn("Use of struct sctp_assoc_value in delayed_ack socket option deprecated\n");
-		pr_warn("Use struct sctp_sack_info instead\n");
+		printk(KERN_WARNING "SCTP: Use of struct sctp_assoc_value "
+		       "in delayed_ack socket option deprecated\n");
+		printk(KERN_WARNING "SCTP: Use struct sctp_sack_info instead\n");
 		if (copy_from_user(&params, optval, optlen))
 			return -EFAULT;
 
@@ -2880,8 +2868,10 @@ static int sctp_setsockopt_maxseg(struct sock *sk, char __user *optval, unsigned
 	int val;
 
 	if (optlen == sizeof(int)) {
-		pr_warn("Use of int in maxseg socket option deprecated\n");
-		pr_warn("Use struct sctp_assoc_value instead\n");
+		printk(KERN_WARNING
+		   "SCTP: Use of int in maxseg socket option deprecated\n");
+		printk(KERN_WARNING
+		   "SCTP: Use struct sctp_assoc_value instead\n");
 		if (copy_from_user(&val, optval, optlen))
 			return -EFAULT;
 		params.assoc_id = 0;
@@ -2932,7 +2922,6 @@ static int sctp_setsockopt_peer_primary_addr(struct sock *sk, char __user *optva
 	struct sctp_association	*asoc = NULL;
 	struct sctp_setpeerprim	prim;
 	struct sctp_chunk	*chunk;
-	struct sctp_af		*af;
 	int 			err;
 
 	sp = sctp_sk(sk);
@@ -2959,13 +2948,6 @@ static int sctp_setsockopt_peer_primary_addr(struct sock *sk, char __user *optva
 
 	if (!sctp_state(asoc, ESTABLISHED))
 		return -ENOTCONN;
-
-	af = sctp_get_af_specific(prim.sspp_addr.ss_family);
-	if (!af)
-		return -EINVAL;
-
-	if (!af->addr_valid((union sctp_addr *)&prim.sspp_addr, sp, NULL))
-		return -EADDRNOTAVAIL;
 
 	if (!sctp_assoc_lookup_laddr(asoc, (union sctp_addr *)&prim.sspp_addr))
 		return -EADDRNOTAVAIL;
@@ -3139,8 +3121,10 @@ static int sctp_setsockopt_maxburst(struct sock *sk,
 	int assoc_id = 0;
 
 	if (optlen == sizeof(int)) {
-		pr_warn("Use of int in max_burst socket option deprecated\n");
-		pr_warn("Use struct sctp_assoc_value instead\n");
+		printk(KERN_WARNING
+		   "SCTP: Use of int in max_burst socket option deprecated\n");
+		printk(KERN_WARNING
+		   "SCTP: Use struct sctp_assoc_value instead\n");
 		if (copy_from_user(&val, optval, optlen))
 			return -EFAULT;
 	} else if (optlen == sizeof(struct sctp_assoc_value)) {
@@ -3611,40 +3595,7 @@ out:
 /* The SCTP ioctl handler. */
 SCTP_STATIC int sctp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 {
-	int rc = -ENOTCONN;
-
-	sctp_lock_sock(sk);
-
-	/*
-	 * SEQPACKET-style sockets in LISTENING state are valid, for
-	 * SCTP, so only discard TCP-style sockets in LISTENING state.
-	 */
-	if (sctp_style(sk, TCP) && sctp_sstate(sk, LISTENING))
-		goto out;
-
-	switch (cmd) {
-	case SIOCINQ: {
-		struct sk_buff *skb;
-		unsigned int amount = 0;
-
-		skb = skb_peek(&sk->sk_receive_queue);
-		if (skb != NULL) {
-			/*
-			 * We will only return the amount of this packet since
-			 * that is all that will be read.
-			 */
-			amount = skb->len;
-		}
-		rc = put_user(amount, (int __user *)arg);
-		break;
-	}
-	default:
-		rc = -ENOIOCTLCMD;
-		break;
-	}
-out:
-	sctp_release_sock(sk);
-	return rc;
+	return -ENOIOCTLCMD;
 }
 
 /* This is the function which gets called during socket creation to
@@ -3768,9 +3719,9 @@ SCTP_STATIC int sctp_init_sock(struct sock *sk)
 	sp->hmac = NULL;
 
 	SCTP_DBG_OBJCNT_INC(sock);
+	percpu_counter_inc(&sctp_sockets_allocated);
 
 	local_bh_disable();
-	percpu_counter_inc(&sctp_sockets_allocated);
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
 	local_bh_enable();
 
@@ -3787,8 +3738,8 @@ SCTP_STATIC void sctp_destroy_sock(struct sock *sk)
 	/* Release our hold on the endpoint. */
 	ep = sctp_sk(sk)->ep;
 	sctp_endpoint_free(ep);
-	local_bh_disable();
 	percpu_counter_dec(&sctp_sockets_allocated);
+	local_bh_disable();
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
 	local_bh_enable();
 }
@@ -3903,7 +3854,7 @@ static int sctp_getsockopt_sctp_status(struct sock *sk, int len,
 	}
 
 out:
-	return retval;
+	return (retval);
 }
 
 
@@ -3959,7 +3910,7 @@ static int sctp_getsockopt_peer_addr_info(struct sock *sk, int len,
 	}
 
 out:
-	return retval;
+	return (retval);
 }
 
 /* 7.1.12 Enable/Disable message fragmentation (SCTP_DISABLE_FRAGMENTS)
@@ -4330,8 +4281,9 @@ static int sctp_getsockopt_delayed_ack(struct sock *sk, int len,
 		if (copy_from_user(&params, optval, len))
 			return -EFAULT;
 	} else if (len == sizeof(struct sctp_assoc_value)) {
-		pr_warn("Use of struct sctp_assoc_value in delayed_ack socket option deprecated\n");
-		pr_warn("Use struct sctp_sack_info instead\n");
+		printk(KERN_WARNING "SCTP: Use of struct sctp_assoc_value "
+		       "in delayed_ack socket option deprecated\n");
+		printk(KERN_WARNING "SCTP: Use struct sctp_sack_info instead\n");
 		if (copy_from_user(&params, optval, len))
 			return -EFAULT;
 	} else
@@ -4432,7 +4384,7 @@ static int sctp_getsockopt_peer_addrs(struct sock *sk, int len,
 				transports) {
 		memcpy(&temp, &from->ipaddr, sizeof(temp));
 		sctp_get_pf_specific(sk->sk_family)->addr_v4map(sp, &temp);
-		addrlen = sctp_get_af_specific(temp.sa.sa_family)->sockaddr_len;
+		addrlen = sctp_get_af_specific(sk->sk_family)->sockaddr_len;
 		if (space_left < addrlen)
 			return -ENOMEM;
 		if (copy_to_user(to, &temp, addrlen))
@@ -4977,8 +4929,10 @@ static int sctp_getsockopt_maxseg(struct sock *sk, int len,
 	struct sctp_association *asoc;
 
 	if (len == sizeof(int)) {
-		pr_warn("Use of int in maxseg socket option deprecated\n");
-		pr_warn("Use struct sctp_assoc_value instead\n");
+		printk(KERN_WARNING
+		   "SCTP: Use of int in maxseg socket option deprecated\n");
+		printk(KERN_WARNING
+		   "SCTP: Use struct sctp_assoc_value instead\n");
 		params.assoc_id = 0;
 	} else if (len >= sizeof(struct sctp_assoc_value)) {
 		len = sizeof(struct sctp_assoc_value);
@@ -5053,7 +5007,7 @@ static int sctp_getsockopt_partial_delivery_point(struct sock *sk, int len,
 	if (copy_to_user(optval, &val, len))
 		return -EFAULT;
 
-	return 0;
+	return -ENOTSUPP;
 }
 
 /*
@@ -5069,8 +5023,10 @@ static int sctp_getsockopt_maxburst(struct sock *sk, int len,
 	struct sctp_association *asoc;
 
 	if (len == sizeof(int)) {
-		pr_warn("Use of int in max_burst socket option deprecated\n");
-		pr_warn("Use struct sctp_assoc_value instead\n");
+		printk(KERN_WARNING
+		   "SCTP: Use of int in max_burst socket option deprecated\n");
+		printk(KERN_WARNING
+		   "SCTP: Use struct sctp_assoc_value instead\n");
 		params.assoc_id = 0;
 	} else if (len >= sizeof(struct sctp_assoc_value)) {
 		len = sizeof(struct sctp_assoc_value);
@@ -5477,8 +5433,6 @@ static long sctp_get_port_local(struct sock *sk, union sctp_addr *addr)
 			rover++;
 			if ((rover < low) || (rover > high))
 				rover = low;
-			if (inet_is_reserved_local_port(rover))
-				continue;
 			index = sctp_phashfn(rover);
 			head = &sctp_port_hashtable[index];
 			sctp_spin_lock(&head->lock);
@@ -5525,6 +5479,7 @@ pp_found:
 		 */
 		int reuse = sk->sk_reuse;
 		struct sock *sk2;
+		struct hlist_node *node;
 
 		SCTP_DEBUG_PRINTK("sctp_get_port() found a possible match\n");
 		if (pp->fastreuse && sk->sk_reuse &&
@@ -5613,7 +5568,7 @@ static int sctp_get_port(struct sock *sk, unsigned short snum)
 	/* Note: sk->sk_num gets filled in if ephemeral port request. */
 	ret = sctp_get_port_local(sk, &addr);
 
-	return ret ? 1 : 0;
+	return (ret ? 1 : 0);
 }
 
 /*
@@ -5630,7 +5585,8 @@ SCTP_STATIC int sctp_listen_start(struct sock *sk, int backlog)
 		tfm = crypto_alloc_hash(sctp_hmac_alg, 0, CRYPTO_ALG_ASYNC);
 		if (IS_ERR(tfm)) {
 			if (net_ratelimit()) {
-				pr_info("failed to load transform for %s: %ld\n",
+				printk(KERN_INFO
+				       "SCTP: failed to load transform for %s: %ld\n",
 					sctp_hmac_alg, PTR_ERR(tfm));
 			}
 			return -ENOSYS;
@@ -5744,7 +5700,7 @@ unsigned int sctp_poll(struct file *file, struct socket *sock, poll_table *wait)
 	struct sctp_sock *sp = sctp_sk(sk);
 	unsigned int mask;
 
-	poll_wait(file, sk_sleep(sk), wait);
+	poll_wait(file, sk->sk_sleep, wait);
 
 	/* A TCP-style listening socket becomes readable when the accept queue
 	 * is not empty.
@@ -5759,12 +5715,13 @@ unsigned int sctp_poll(struct file *file, struct socket *sock, poll_table *wait)
 	if (sk->sk_err || !skb_queue_empty(&sk->sk_error_queue))
 		mask |= POLLERR;
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
-		mask |= POLLRDHUP | POLLIN | POLLRDNORM;
+		mask |= POLLRDHUP;
 	if (sk->sk_shutdown == SHUTDOWN_MASK)
 		mask |= POLLHUP;
 
 	/* Is it readable?  Reconsider this code with TCP-style support.  */
-	if (!skb_queue_empty(&sk->sk_receive_queue))
+	if (!skb_queue_empty(&sk->sk_receive_queue) ||
+	    (sk->sk_shutdown & RCV_SHUTDOWN))
 		mask |= POLLIN | POLLRDNORM;
 
 	/* The association is either gone or not ready.  */
@@ -5984,7 +5941,7 @@ static int sctp_wait_for_packet(struct sock * sk, int *err, long *timeo_p)
 	int error;
 	DEFINE_WAIT(wait);
 
-	prepare_to_wait_exclusive(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+	prepare_to_wait_exclusive(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 
 	/* Socket errors? */
 	error = sock_error(sk);
@@ -6021,14 +5978,14 @@ static int sctp_wait_for_packet(struct sock * sk, int *err, long *timeo_p)
 	sctp_lock_sock(sk);
 
 ready:
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 	return 0;
 
 interrupted:
 	error = sock_intr_errno(*timeo_p);
 
 out:
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 	*err = error;
 	return error;
 }
@@ -6102,14 +6059,14 @@ static void __sctp_write_space(struct sctp_association *asoc)
 			wake_up_interruptible(&asoc->wait);
 
 		if (sctp_writeable(sk)) {
-			if (sk_sleep(sk) && waitqueue_active(sk_sleep(sk)))
-				wake_up_interruptible(sk_sleep(sk));
+			if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+				wake_up_interruptible(sk->sk_sleep);
 
 			/* Note that we try to include the Async I/O support
 			 * here by modeling from the current TCP/UDP code.
 			 * We have not tested with it yet.
 			 */
-			if (sock->wq->fasync_list &&
+			if (sock->fasync_list &&
 			    !(sk->sk_shutdown & SEND_SHUTDOWN))
 				sock_wake_async(sock,
 						SOCK_WAKE_SPACE, POLL_OUT);
@@ -6229,19 +6186,6 @@ do_nonblock:
 	goto out;
 }
 
-void sctp_data_ready(struct sock *sk, int len)
-{
-	struct socket_wq *wq;
-
-	rcu_read_lock();
-	wq = rcu_dereference(sk->sk_wq);
-	if (wq_has_sleeper(wq))
-		wake_up_interruptible_sync_poll(&wq->wait, POLLIN |
-						POLLRDNORM | POLLRDBAND);
-	sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_IN);
-	rcu_read_unlock();
-}
-
 /* If socket sndbuf has changed, wake up all per association waiters.  */
 void sctp_write_space(struct sock *sk)
 {
@@ -6350,7 +6294,7 @@ static int sctp_wait_for_accept(struct sock *sk, long timeo)
 
 
 	for (;;) {
-		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
+		prepare_to_wait_exclusive(sk->sk_sleep, &wait,
 					  TASK_INTERRUPTIBLE);
 
 		if (list_empty(&ep->asocs)) {
@@ -6376,7 +6320,7 @@ static int sctp_wait_for_accept(struct sock *sk, long timeo)
 			break;
 	}
 
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 
 	return err;
 }
@@ -6386,7 +6330,7 @@ static void sctp_wait_for_close(struct sock *sk, long timeout)
 	DEFINE_WAIT(wait);
 
 	do {
-		prepare_to_wait(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+		prepare_to_wait(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 		if (list_empty(&sctp_sk(sk)->ep->asocs))
 			break;
 		sctp_release_sock(sk);
@@ -6394,7 +6338,7 @@ static void sctp_wait_for_close(struct sock *sk, long timeout)
 		sctp_lock_sock(sk);
 	} while (!signal_pending(current) && timeout);
 
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 }
 
 static void sctp_skb_set_owner_r_frag(struct sk_buff *skb, struct sock *sk)
@@ -6416,7 +6360,7 @@ void sctp_copy_sock(struct sock *newsk, struct sock *sk,
 		    struct sctp_association *asoc)
 {
 	struct inet_sock *inet = inet_sk(sk);
-	struct inet_sock *newinet;
+	struct inet_sock *newinet = inet_sk(newsk);
 
 	newsk->sk_type = sk->sk_type;
 	newsk->sk_bound_dev_if = sk->sk_bound_dev_if;

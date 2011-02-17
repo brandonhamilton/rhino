@@ -9,7 +9,6 @@
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/dmi.h>
-#include <linux/slab.h>
 
 #include <asm/acpi.h>
 #include <asm/segment.h>
@@ -73,10 +72,16 @@ struct pci_ops pci_root_ops = {
 };
 
 /*
+ * legacy, numa, and acpi all want to call pcibios_scan_root
+ * from their initcalls. This flag prevents that.
+ */
+int pcibios_scanned;
+
+/*
  * This interrupt-safe spinlock protects all accesses to PCI
  * configuration space.
  */
-DEFINE_RAW_SPINLOCK(pci_config_lock);
+DEFINE_SPINLOCK(pci_config_lock);
 
 static int __devinit can_skip_ioresource_align(const struct dmi_system_id *d)
 {
@@ -125,23 +130,6 @@ void __init dmi_check_skip_isa_align(void)
 static void __devinit pcibios_fixup_device_resources(struct pci_dev *dev)
 {
 	struct resource *rom_r = &dev->resource[PCI_ROM_RESOURCE];
-	struct resource *bar_r;
-	int bar;
-
-	if (pci_probe & PCI_NOASSIGN_BARS) {
-		/*
-		* If the BIOS did not assign the BAR, zero out the
-		* resource so the kernel doesn't attmept to assign
-		* it later on in pci_assign_unassigned_resources
-		*/
-		for (bar = 0; bar <= PCI_STD_RESOURCE_END; bar++) {
-			bar_r = &dev->resource[bar];
-			if (bar_r->start == 0 && bar_r->end != 0) {
-				bar_r->flags = 0;
-				bar_r->end = 0;
-			}
-		}
-	}
 
 	if (pci_probe & PCI_NOASSIGN_ROMS) {
 		if (rom_r->parent)
@@ -421,9 +409,15 @@ struct pci_bus * __devinit pcibios_scan_root(int busnum)
 
 	return bus;
 }
-void __init pcibios_set_cache_line_size(void)
+
+int __init pcibios_init(void)
 {
 	struct cpuinfo_x86 *c = &boot_cpu_data;
+
+	if (!raw_pci_ops) {
+		printk(KERN_WARNING "PCI: System does not support PCI\n");
+		return 0;
+	}
 
 	/*
 	 * Set PCI cacheline size to that of the CPU if the CPU has reported it.
@@ -439,16 +433,7 @@ void __init pcibios_set_cache_line_size(void)
  		pci_dfl_cache_line_size = 32 >> 2;
 		printk(KERN_DEBUG "PCI: Unknown cacheline size. Setting to 32 bytes\n");
 	}
-}
 
-int __init pcibios_init(void)
-{
-	if (!raw_pci_ops) {
-		printk(KERN_WARNING "PCI: System does not support PCI\n");
-		return 0;
-	}
-
-	pcibios_set_cache_line_size();
 	pcibios_resource_survey();
 
 	if (pci_bf_sort >= pci_force_bf)
@@ -529,17 +514,11 @@ char * __devinit  pcibios_setup(char *str)
 	} else if (!strcmp(str, "norom")) {
 		pci_probe |= PCI_NOASSIGN_ROMS;
 		return NULL;
-	} else if (!strcmp(str, "nobar")) {
-		pci_probe |= PCI_NOASSIGN_BARS;
-		return NULL;
 	} else if (!strcmp(str, "assign-busses")) {
 		pci_probe |= PCI_ASSIGN_ALL_BUSSES;
 		return NULL;
 	} else if (!strcmp(str, "use_crs")) {
 		pci_probe |= PCI_USE__CRS;
-		return NULL;
-	} else if (!strcmp(str, "nocrs")) {
-		pci_probe |= PCI_ROOT_NO_CRS;
 		return NULL;
 	} else if (!strcmp(str, "earlydump")) {
 		pci_early_dump_regs = 1;

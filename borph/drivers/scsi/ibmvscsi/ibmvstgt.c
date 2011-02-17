@@ -23,7 +23,6 @@
  */
 #include <linux/interrupt.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_transport_srp.h>
@@ -956,7 +955,7 @@ static struct srp_function_template ibmvstgt_transport_functions = {
 	.it_nexus_response = ibmvstgt_it_nexus_response,
 };
 
-static int __init ibmvstgt_init(void)
+static int ibmvstgt_init(void)
 {
 	int err = -ENOMEM;
 
@@ -987,7 +986,7 @@ release_transport:
 	return err;
 }
 
-static void __exit ibmvstgt_exit(void)
+static void ibmvstgt_exit(void)
 {
 	printk("Unregister IBM virtual SCSI driver\n");
 

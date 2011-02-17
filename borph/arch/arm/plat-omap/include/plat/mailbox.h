@@ -3,11 +3,10 @@
 #ifndef MAILBOX_H
 #define MAILBOX_H
 
-#include <linux/spinlock.h>
+#include <linux/wait.h>
 #include <linux/workqueue.h>
+#include <linux/blkdev.h>
 #include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/kfifo.h>
 
 typedef u32 mbox_msg_t;
 struct omap_mbox;
@@ -43,7 +42,7 @@ struct omap_mbox_ops {
 
 struct omap_mbox_queue {
 	spinlock_t		lock;
-	struct kfifo		fifo;
+	struct request_queue	*queue;
 	struct work_struct	work;
 	struct tasklet_struct	tasklet;
 	int	(*callback)(void *);
@@ -53,10 +52,19 @@ struct omap_mbox_queue {
 struct omap_mbox {
 	char			*name;
 	unsigned int		irq;
+
 	struct omap_mbox_queue	*txq, *rxq;
+
 	struct omap_mbox_ops	*ops;
+
+	mbox_msg_t		seq_snd, seq_rcv;
+
 	struct device		*dev;
+
+	struct omap_mbox	*next;
 	void			*priv;
+
+	void			(*err_notify)(void);
 };
 
 int omap_mbox_msg_send(struct omap_mbox *, mbox_msg_t msg);
@@ -65,8 +73,8 @@ void omap_mbox_init_seq(struct omap_mbox *);
 struct omap_mbox *omap_mbox_get(const char *);
 void omap_mbox_put(struct omap_mbox *);
 
-int omap_mbox_register(struct device *parent, struct omap_mbox **);
-int omap_mbox_unregister(void);
+int omap_mbox_register(struct device *parent, struct omap_mbox *);
+int omap_mbox_unregister(struct omap_mbox *);
 
 static inline void omap_mbox_save_ctx(struct omap_mbox *mbox)
 {

@@ -125,36 +125,50 @@ void mconsole_log(struct mc_request *req)
 void mconsole_proc(struct mc_request *req)
 {
 	struct nameidata nd;
-	struct vfsmount *mnt = current->nsproxy->pid_ns->proc_mnt;
+	struct file_system_type *proc;
+	struct super_block *super;
 	struct file *file;
 	int n, err;
 	char *ptr = req->request.data, *buf;
-	mm_segment_t old_fs = get_fs();
 
 	ptr += strlen("proc");
 	ptr = skip_spaces(ptr);
 
-	err = vfs_path_lookup(mnt->mnt_root, mnt, ptr, LOOKUP_FOLLOW, &nd);
-	if (err) {
-		mconsole_reply(req, "Failed to look up file", 1, 0);
+	proc = get_fs_type("proc");
+	if (proc == NULL) {
+		mconsole_reply(req, "procfs not registered", 1, 0);
 		goto out;
 	}
 
-	err = may_open(&nd.path, MAY_READ, O_RDONLY);
-	if (result) {
-		mconsole_reply(req, "Failed to open file", 1, 0);
-		path_put(&nd.path);
+	super = (*proc->get_sb)(proc, 0, NULL, NULL);
+	put_filesystem(proc);
+	if (super == NULL) {
+		mconsole_reply(req, "Failed to get procfs superblock", 1, 0);
 		goto out;
+	}
+	up_write(&super->s_umount);
+
+	nd.path.dentry = super->s_root;
+	nd.path.mnt = NULL;
+	nd.flags = O_RDONLY + 1;
+	nd.last_type = LAST_ROOT;
+
+	/* START: it was experienced that the stability problems are closed
+	 * if commenting out these two calls + the below read cycle. To
+	 * make UML crash again, it was enough to readd either one.*/
+	err = link_path_walk(ptr, &nd);
+	if (err) {
+		mconsole_reply(req, "Failed to look up file", 1, 0);
+		goto out_kill;
 	}
 
 	file = dentry_open(nd.path.dentry, nd.path.mnt, O_RDONLY,
 			   current_cred());
-	err = PTR_ERR(file);
 	if (IS_ERR(file)) {
 		mconsole_reply(req, "Failed to open file", 1, 0);
-		path_put(&nd.path);
-		goto out;
+		goto out_kill;
 	}
+	/*END*/
 
 	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
 	if (buf == NULL) {
@@ -162,13 +176,10 @@ void mconsole_proc(struct mc_request *req)
 		goto out_fput;
 	}
 
-	if (file->f_op->read) {
+	if ((file->f_op != NULL) && (file->f_op->read != NULL)) {
 		do {
-			loff_t pos;
-			set_fs(KERNEL_DS);
-			n = vfs_read(file, buf, PAGE_SIZE - 1, &pos);
-			file_pos_write(file, pos);
-			set_fs(old_fs);
+			n = (*file->f_op->read)(file, buf, PAGE_SIZE - 1,
+						&file->f_pos);
 			if (n >= 0) {
 				buf[n] = '\0';
 				mconsole_reply(req, buf, 0, (n > 0));
@@ -186,6 +197,8 @@ void mconsole_proc(struct mc_request *req)
 	kfree(buf);
  out_fput:
 	fput(file);
+ out_kill:
+	deactivate_super(super);
  out: ;
 }
 #endif
@@ -690,7 +703,7 @@ static void with_console(struct mc_request *req, void (*proc)(void *),
 static void sysrq_proc(void *arg)
 {
 	char *op = arg;
-	handle_sysrq(*op);
+	handle_sysrq(*op, NULL);
 }
 
 void mconsole_sysrq(struct mc_request *req)
@@ -843,7 +856,6 @@ static ssize_t mconsole_proc_write(struct file *file,
 static const struct file_operations mconsole_proc_fops = {
 	.owner		= THIS_MODULE,
 	.write		= mconsole_proc_write,
-	.llseek		= noop_llseek,
 };
 
 static int create_proc_mconsole(void)

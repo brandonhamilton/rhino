@@ -51,7 +51,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/errno.h>
@@ -688,7 +687,17 @@ slhc_toss(struct slcompress *comp)
 	return 0;
 }
 
+
+/* VJ header compression */
+EXPORT_SYMBOL(slhc_init);
+EXPORT_SYMBOL(slhc_free);
+EXPORT_SYMBOL(slhc_remember);
+EXPORT_SYMBOL(slhc_compress);
+EXPORT_SYMBOL(slhc_uncompress);
+EXPORT_SYMBOL(slhc_toss);
+
 #else /* CONFIG_INET */
+
 
 int
 slhc_toss(struct slcompress *comp)
@@ -721,6 +730,7 @@ void
 slhc_free(struct slcompress *comp)
 {
   printk(KERN_DEBUG "Called IP function on non IP-system: slhc_free");
+  return;
 }
 struct slcompress *
 slhc_init(int rslots, int tslots)
@@ -728,10 +738,6 @@ slhc_init(int rslots, int tslots)
   printk(KERN_DEBUG "Called IP function on non IP-system: slhc_init");
   return NULL;
 }
-
-#endif /* CONFIG_INET */
-
-/* VJ header compression */
 EXPORT_SYMBOL(slhc_init);
 EXPORT_SYMBOL(slhc_free);
 EXPORT_SYMBOL(slhc_remember);
@@ -739,4 +745,5 @@ EXPORT_SYMBOL(slhc_compress);
 EXPORT_SYMBOL(slhc_uncompress);
 EXPORT_SYMBOL(slhc_toss);
 
+#endif /* CONFIG_INET */
 MODULE_LICENSE("Dual BSD/GPL");

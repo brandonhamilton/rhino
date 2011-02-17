@@ -21,17 +21,16 @@
 #include <linux/interrupt.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/mtd/physmap.h>
 #include <linux/leds.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <asm/mach/flash.h>
 
 #include <plat/led.h>
 #include <mach/gpio.h>
-#include <plat/flash.h>
 #include <plat/mux.h>
 #include <plat/usb.h>
 #include <plat/dma.h>
@@ -105,9 +104,9 @@ static struct mtd_partition palmtt_partitions[] = {
 	}
 };
 
-static struct physmap_flash_data palmtt_flash_data = {
+static struct flash_platform_data palmtt_flash_data = {
+	.map_name	= "cfi_probe",
 	.width		= 2,
-	.set_vpp	= omap1_set_vpp,
 	.parts		= palmtt_partitions,
 	.nr_parts	= ARRAY_SIZE(palmtt_partitions),
 };
@@ -119,7 +118,7 @@ static struct resource palmtt_flash_resource = {
 };
 
 static struct platform_device palmtt_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "omapflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &palmtt_flash_data,
@@ -307,7 +306,7 @@ static void __init omap_palmtt_init(void)
 
 	spi_register_board_info(palmtt_boardinfo,ARRAY_SIZE(palmtt_boardinfo));
 	omap_serial_init();
-	omap1_usb_init(&palmtt_usb_config);
+	omap_usb_init(&palmtt_usb_config);
 	omap_register_i2c_bus(1, 100, NULL, 0);
 }
 
@@ -317,9 +316,10 @@ static void __init omap_palmtt_map_io(void)
 }
 
 MACHINE_START(OMAP_PALMTT, "OMAP1510 based Palm Tungsten|T")
+	.phys_io	= 0xfff00000,
+	.io_pg_offst	= ((0xfef00000) >> 18) & 0xfffc,
 	.boot_params	= 0x10000100,
 	.map_io		= omap_palmtt_map_io,
-	.reserve	= omap_reserve,
 	.init_irq	= omap_palmtt_init_irq,
 	.init_machine	= omap_palmtt_init,
 	.timer		= &omap_timer,

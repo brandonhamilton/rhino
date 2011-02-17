@@ -11,7 +11,6 @@
 #include <linux/etherdevice.h>
 #include <linux/list.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include "dsa_priv.h"
 
 netdev_tx_t trailer_xmit(struct sk_buff *skb, struct net_device *dev)

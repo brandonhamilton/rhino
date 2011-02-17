@@ -60,10 +60,6 @@
 
 #define AU0828_MAX_INPUT        4
 
-/* au0828 resource types (used for res_get/res_lock etc */
-#define AU0828_RESOURCE_VIDEO 0x01
-#define AU0828_RESOURCE_VBI   0x02
-
 enum au0828_itype {
 	AU0828_VMUX_UNDEFINED = 0,
 	AU0828_VMUX_COMPOSITE,
@@ -119,10 +115,8 @@ enum au0828_dev_state {
 
 struct au0828_fh {
 	struct au0828_dev *dev;
-	unsigned int  resources;
-
+	unsigned int  stream_on:1;	/* Locks streams */
 	struct videobuf_queue        vb_vidq;
-	struct videobuf_queue        vb_vbiq;
 	enum v4l2_buf_type           type;
 };
 
@@ -151,8 +145,7 @@ struct au0828_usb_isoc_ctl {
 	int				tmp_buf_len;
 
 		/* Stores already requested buffers */
-	struct au0828_buffer		*buf;
-	struct au0828_buffer		*vbi_buf;
+	struct au0828_buffer    	*buf;
 
 		/* Stores the number of received fields */
 	int				nfields;
@@ -199,16 +192,14 @@ struct au0828_dev {
 	struct au0828_dvb		dvb;
 
 	/* Analog */
+	struct list_head au0828list;
 	struct v4l2_device v4l2_dev;
 	int users;
-	unsigned int resources;	/* resources in use */
+	unsigned int stream_on:1;	/* Locks streams */
 	struct video_device *vdev;
 	struct video_device *vbi_dev;
 	int width;
 	int height;
-	int vbi_width;
-	int vbi_height;
-	u32 vbi_read;
 	u32 field_size;
 	u32 frame_size;
 	u32 bytesperline;
@@ -229,7 +220,6 @@ struct au0828_dev {
 
 	/* Isoc control struct */
 	struct au0828_dmaqueue vidq;
-	struct au0828_dmaqueue vbiq;
 	struct au0828_usb_isoc_ctl isoc_ctl;
 	spinlock_t slock;
 
@@ -288,9 +278,6 @@ void au0828_analog_unregister(struct au0828_dev *dev);
 /* au0828-dvb.c */
 extern int au0828_dvb_register(struct au0828_dev *dev);
 extern void au0828_dvb_unregister(struct au0828_dev *dev);
-
-/* au0828-vbi.c */
-extern struct videobuf_queue_ops au0828_vbi_qops;
 
 #define dprintk(level, fmt, arg...)\
 	do { if (au0828_debug & level)\

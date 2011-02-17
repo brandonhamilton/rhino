@@ -112,13 +112,8 @@ static inline int debugger_fault_handler(struct pt_regs *regs) { return 0; }
 #endif
 
 extern int set_dabr(unsigned long dabr);
-#ifdef CONFIG_PPC_ADV_DEBUG_REGS
-extern void do_send_trap(struct pt_regs *regs, unsigned long address,
-			 unsigned long error_code, int signal_code, int brkpt);
-#else
 extern void do_dabr(struct pt_regs *regs, unsigned long address,
 		    unsigned long error_code);
-#endif
 extern void print_backtrace(unsigned long *);
 extern void show_regs(struct pt_regs * regs);
 extern void flush_instruction_cache(void);
@@ -154,8 +149,8 @@ extern void enable_kernel_spe(void);
 extern void giveup_spe(struct task_struct *);
 extern void load_up_spe(struct task_struct *);
 extern int fix_alignment(struct pt_regs *);
-extern void cvt_fd(float *from, double *to);
-extern void cvt_df(double *from, float *to);
+extern void cvt_fd(float *from, double *to, struct thread_struct *thread);
+extern void cvt_df(double *from, float *to, struct thread_struct *thread);
 
 #ifndef CONFIG_SMP
 extern void discard_lazy_cpu_state(void);
@@ -237,12 +232,12 @@ __xchg_u32(volatile void *p, unsigned long val)
 	unsigned long prev;
 
 	__asm__ __volatile__(
-	PPC_RELEASE_BARRIER
+	LWSYNC_ON_SMP
 "1:	lwarx	%0,0,%2 \n"
 	PPC405_ERR77(0,%2)
 "	stwcx.	%3,0,%2 \n\
 	bne-	1b"
-	PPC_ACQUIRE_BARRIER
+	ISYNC_ON_SMP
 	: "=&r" (prev), "+m" (*(volatile unsigned int *)p)
 	: "r" (p), "r" (val)
 	: "cc", "memory");
@@ -280,12 +275,12 @@ __xchg_u64(volatile void *p, unsigned long val)
 	unsigned long prev;
 
 	__asm__ __volatile__(
-	PPC_RELEASE_BARRIER
+	LWSYNC_ON_SMP
 "1:	ldarx	%0,0,%2 \n"
 	PPC405_ERR77(0,%2)
 "	stdcx.	%3,0,%2 \n\
 	bne-	1b"
-	PPC_ACQUIRE_BARRIER
+	ISYNC_ON_SMP
 	: "=&r" (prev), "+m" (*(volatile unsigned long *)p)
 	: "r" (p), "r" (val)
 	: "cc", "memory");
@@ -371,14 +366,14 @@ __cmpxchg_u32(volatile unsigned int *p, unsigned long old, unsigned long new)
 	unsigned int prev;
 
 	__asm__ __volatile__ (
-	PPC_RELEASE_BARRIER
+	LWSYNC_ON_SMP
 "1:	lwarx	%0,0,%2		# __cmpxchg_u32\n\
 	cmpw	0,%0,%3\n\
 	bne-	2f\n"
 	PPC405_ERR77(0,%2)
 "	stwcx.	%4,0,%2\n\
 	bne-	1b"
-	PPC_ACQUIRE_BARRIER
+	ISYNC_ON_SMP
 	"\n\
 2:"
 	: "=&r" (prev), "+m" (*p)
@@ -417,13 +412,13 @@ __cmpxchg_u64(volatile unsigned long *p, unsigned long old, unsigned long new)
 	unsigned long prev;
 
 	__asm__ __volatile__ (
-	PPC_RELEASE_BARRIER
+	LWSYNC_ON_SMP
 "1:	ldarx	%0,0,%2		# __cmpxchg_u64\n\
 	cmpd	0,%0,%3\n\
 	bne-	2f\n\
 	stdcx.	%4,0,%2\n\
 	bne-	1b"
-	PPC_ACQUIRE_BARRIER
+	ISYNC_ON_SMP
 	"\n\
 2:"
 	: "=&r" (prev), "+m" (*p)
@@ -515,8 +510,11 @@ __cmpxchg_local(volatile void *ptr, unsigned long old, unsigned long new,
  * powers of 2 writes until it reaches sufficient alignment).
  *
  * Based on this we disable the IP header alignment in network drivers.
+ * We also modify NET_SKB_PAD to be a cacheline in size, thus maintaining
+ * cacheline alignment of buffers.
  */
 #define NET_IP_ALIGN	0
+#define NET_SKB_PAD	L1_CACHE_BYTES
 
 #define cmpxchg64(ptr, o, n)						\
   ({									\
@@ -541,6 +539,10 @@ extern unsigned long add_reloc_offset(unsigned long);
 extern void reloc_got2(unsigned long);
 
 #define PTRRELOC(x)	((typeof(x)) add_reloc_offset((unsigned long)(x)))
+
+#ifdef CONFIG_VIRT_CPU_ACCOUNTING
+extern void account_system_vtime(struct task_struct *);
+#endif
 
 extern struct dentry *powerpc_debugfs_root;
 

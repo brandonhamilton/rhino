@@ -758,10 +758,8 @@ int main(int argc, char **argv)
 		/* setlinebuf(debugfile); */
 	}
 
-	if (flag_reference) {
+	if (flag_reference)
 		read_reference(ref_file);
-		fclose(ref_file);
-	}
 
 	yyparse();
 

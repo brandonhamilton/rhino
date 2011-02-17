@@ -18,7 +18,6 @@
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
-#include <linux/gfp.h>
 
 #include <asm/setup.h>
 #include <asm/uaccess.h>

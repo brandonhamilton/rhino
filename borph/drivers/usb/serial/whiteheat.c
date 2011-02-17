@@ -111,17 +111,17 @@ static int debug;
    separate ID tables, and then a third table that combines them
    just for the purpose of exporting the autoloading information.
 */
-static const struct usb_device_id id_table_std[] = {
+static struct usb_device_id id_table_std [] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static const struct usb_device_id id_table_prerenumeration[] = {
+static struct usb_device_id id_table_prerenumeration [] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static const struct usb_device_id id_table_combined[] = {
+static struct usb_device_id id_table_combined [] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
@@ -655,6 +655,8 @@ static void whiteheat_release(struct usb_serial *serial)
 		}
 		kfree(info);
 	}
+
+	return;
 }
 
 static int whiteheat_open(struct tty_struct *tty, struct usb_serial_port *port)
@@ -953,6 +955,8 @@ static void whiteheat_throttle(struct tty_struct *tty)
 	spin_lock_irq(&info->lock);
 	info->flags |= THROTTLED;
 	spin_unlock_irq(&info->lock);
+
+	return;
 }
 
 
@@ -971,6 +975,8 @@ static void whiteheat_unthrottle(struct tty_struct *tty)
 
 	if (actually_throttled)
 		rx_data_softint(&info->rx_work);
+
+	return;
 }
 
 
@@ -1486,9 +1492,21 @@ static void rx_data_softint(struct work_struct *work)
 		wrap = list_entry(tmp, struct whiteheat_urb_wrap, list);
 		urb = wrap->urb;
 
-		if (tty && urb->actual_length)
-			sent += tty_insert_flip_string(tty,
-				urb->transfer_buffer, urb->actual_length);
+		if (tty && urb->actual_length) {
+			int len = tty_buffer_request_room(tty,
+							urb->actual_length);
+			/* This stuff can go away now I suspect */
+			if (unlikely(len < urb->actual_length)) {
+				spin_lock_irqsave(&info->lock, flags);
+				list_add(tmp, &info->rx_urb_q);
+				spin_unlock_irqrestore(&info->lock, flags);
+				tty_flip_buffer_push(tty);
+				schedule_work(&info->rx_work);
+				goto out;
+			}
+			tty_insert_flip_string(tty, urb->transfer_buffer, len);
+			sent += len;
+		}
 
 		urb->dev = port->serial->dev;
 		result = usb_submit_urb(urb, GFP_ATOMIC);

@@ -10,14 +10,13 @@
  */
 
 #include <linux/of.h>
-#include <linux/memblock.h>
-#include <linux/vmalloc.h>
+#include <linux/lmb.h>
 #include <asm/firmware.h>
 #include <asm/machdep.h>
 #include <asm/pSeries_reconfig.h>
 #include <asm/sparsemem.h>
 
-static int pseries_remove_memblock(unsigned long base, unsigned int memblock_size)
+static int pseries_remove_lmb(unsigned long base, unsigned int lmb_size)
 {
 	unsigned long start, start_pfn;
 	struct zone *zone;
@@ -26,7 +25,7 @@ static int pseries_remove_memblock(unsigned long base, unsigned int memblock_siz
 	start_pfn = base >> PAGE_SHIFT;
 
 	if (!pfn_valid(start_pfn)) {
-		memblock_remove(base, memblock_size);
+		lmb_remove(base, lmb_size);
 		return 0;
 	}
 
@@ -41,26 +40,20 @@ static int pseries_remove_memblock(unsigned long base, unsigned int memblock_siz
 	 * to sysfs "state" file and we can't remove sysfs entries
 	 * while writing to it. So we have to defer it to here.
 	 */
-	ret = __remove_pages(zone, start_pfn, memblock_size >> PAGE_SHIFT);
+	ret = __remove_pages(zone, start_pfn, lmb_size >> PAGE_SHIFT);
 	if (ret)
 		return ret;
 
 	/*
 	 * Update memory regions for memory remove
 	 */
-	memblock_remove(base, memblock_size);
+	lmb_remove(base, lmb_size);
 
 	/*
 	 * Remove htab bolted mappings for this section of memory
 	 */
 	start = (unsigned long)__va(base);
-	ret = remove_section_mapping(start, start + memblock_size);
-
-	/* Ensure all vmalloc mappings are flushed in case they also
-	 * hit that section of memory
-	 */
-	vm_unmap_aliases();
-
+	ret = remove_section_mapping(start, start + lmb_size);
 	return ret;
 }
 
@@ -80,7 +73,7 @@ static int pseries_remove_memory(struct device_node *np)
 		return 0;
 
 	/*
-	 * Find the bae address and size of the memblock
+	 * Find the bae address and size of the lmb
 	 */
 	regs = of_get_property(np, "reg", NULL);
 	if (!regs)
@@ -89,7 +82,7 @@ static int pseries_remove_memory(struct device_node *np)
 	base = *(unsigned long *)regs;
 	lmb_size = regs[3];
 
-	ret = pseries_remove_memblock(base, lmb_size);
+	ret = pseries_remove_lmb(base, lmb_size);
 	return ret;
 }
 
@@ -109,7 +102,7 @@ static int pseries_add_memory(struct device_node *np)
 		return 0;
 
 	/*
-	 * Find the base and size of the memblock
+	 * Find the base and size of the lmb
 	 */
 	regs = of_get_property(np, "reg", NULL);
 	if (!regs)
@@ -121,7 +114,7 @@ static int pseries_add_memory(struct device_node *np)
 	/*
 	 * Update memory region to represent the memory add
 	 */
-	ret = memblock_add(base, lmb_size);
+	ret = lmb_add(base, lmb_size);
 	return (ret < 0) ? -EINVAL : 0;
 }
 
@@ -142,10 +135,10 @@ static int pseries_drconf_memory(unsigned long *base, unsigned int action)
 	}
 
 	if (action == PSERIES_DRCONF_MEM_ADD) {
-		rc = memblock_add(*base, *lmb_size);
+		rc = lmb_add(*base, *lmb_size);
 		rc = (rc < 0) ? -EINVAL : 0;
 	} else if (action == PSERIES_DRCONF_MEM_REMOVE) {
-		rc = pseries_remove_memblock(*base, *lmb_size);
+		rc = pseries_remove_lmb(*base, *lmb_size);
 	} else {
 		rc = -EINVAL;
 	}

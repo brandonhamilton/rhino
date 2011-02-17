@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2010, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -220,7 +220,7 @@ acpi_ds_get_field_names(struct acpi_create_field_info *info,
 			union acpi_parse_object *arg)
 {
 	acpi_status status;
-	u64 position;
+	acpi_integer position;
 
 	ACPI_FUNCTION_TRACE_PTR(ds_get_field_names, info);
 
@@ -240,8 +240,8 @@ acpi_ds_get_field_names(struct acpi_create_field_info *info,
 		switch (arg->common.aml_opcode) {
 		case AML_INT_RESERVEDFIELD_OP:
 
-			position = (u64) info->field_bit_position
-			    + (u64) arg->common.value.size;
+			position = (acpi_integer) info->field_bit_position
+			    + (acpi_integer) arg->common.value.size;
 
 			if (position > ACPI_UINT32_MAX) {
 				ACPI_ERROR((AE_INFO,
@@ -305,8 +305,8 @@ acpi_ds_get_field_names(struct acpi_create_field_info *info,
 
 			/* Keep track of bit position for the next field */
 
-			position = (u64) info->field_bit_position
-			    + (u64) arg->common.value.size;
+			position = (acpi_integer) info->field_bit_position
+			    + (acpi_integer) arg->common.value.size;
 
 			if (position > ACPI_UINT32_MAX) {
 				ACPI_ERROR((AE_INFO,
@@ -323,7 +323,7 @@ acpi_ds_get_field_names(struct acpi_create_field_info *info,
 		default:
 
 			ACPI_ERROR((AE_INFO,
-				    "Invalid opcode in field list: 0x%X",
+				    "Invalid opcode in field list: %X",
 				    arg->common.aml_opcode));
 			return_ACPI_STATUS(AE_AML_BAD_OPCODE);
 		}

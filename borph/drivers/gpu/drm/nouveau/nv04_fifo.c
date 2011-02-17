@@ -27,9 +27,8 @@
 #include "drmP.h"
 #include "drm.h"
 #include "nouveau_drv.h"
-#include "nouveau_ramht.h"
 
-#define NV04_RAMFC(c) (dev_priv->ramfc->pinst + ((c) * NV04_RAMFC__SIZE))
+#define NV04_RAMFC(c) (dev_priv->ramfc_offset + ((c) * NV04_RAMFC__SIZE))
 #define NV04_RAMFC__SIZE 32
 #define NV04_RAMFC_DMA_PUT                                       0x00
 #define NV04_RAMFC_DMA_GET                                       0x04
@@ -39,8 +38,10 @@
 #define NV04_RAMFC_ENGINE                                        0x14
 #define NV04_RAMFC_PULL1_ENGINE                                  0x18
 
-#define RAMFC_WR(offset, val) nv_wo32(chan->ramfc, NV04_RAMFC_##offset, (val))
-#define RAMFC_RD(offset)      nv_ro32(chan->ramfc, NV04_RAMFC_##offset)
+#define RAMFC_WR(offset, val) nv_wo32(dev, chan->ramfc->gpuobj, \
+					 NV04_RAMFC_##offset/4, (val))
+#define RAMFC_RD(offset)      nv_ro32(dev, chan->ramfc->gpuobj, \
+					 NV04_RAMFC_##offset/4)
 
 void
 nv04_fifo_disable(struct drm_device *dev)
@@ -70,35 +71,6 @@ nv04_fifo_reassign(struct drm_device *dev, bool enable)
 	return (reassign == 1);
 }
 
-bool
-nv04_fifo_cache_pull(struct drm_device *dev, bool enable)
-{
-	int pull = nv_mask(dev, NV04_PFIFO_CACHE1_PULL0, 1, enable);
-
-	if (!enable) {
-		/* In some cases the PFIFO puller may be left in an
-		 * inconsistent state if you try to stop it when it's
-		 * busy translating handles. Sometimes you get a
-		 * PFIFO_CACHE_ERROR, sometimes it just fails silently
-		 * sending incorrect instance offsets to PGRAPH after
-		 * it's started up again. To avoid the latter we
-		 * invalidate the most recently calculated instance.
-		 */
-		if (!nv_wait(dev, NV04_PFIFO_CACHE1_PULL0,
-			     NV04_PFIFO_CACHE1_PULL0_HASH_BUSY, 0))
-			NV_ERROR(dev, "Timeout idling the PFIFO puller.\n");
-
-		if (nv_rd32(dev, NV04_PFIFO_CACHE1_PULL0) &
-		    NV04_PFIFO_CACHE1_PULL0_HASH_FAILED)
-			nv_wr32(dev, NV03_PFIFO_INTR_0,
-				NV_PFIFO_INTR_CACHE_ERROR);
-
-		nv_wr32(dev, NV04_PFIFO_CACHE1_HASH, 0);
-	}
-
-	return pull & 1;
-}
-
 int
 nv04_fifo_channel_id(struct drm_device *dev)
 {
@@ -106,44 +78,38 @@ nv04_fifo_channel_id(struct drm_device *dev)
 			NV03_PFIFO_CACHE1_PUSH1_CHID_MASK;
 }
 
-#ifdef __BIG_ENDIAN
-#define DMA_FETCH_ENDIANNESS NV_PFIFO_CACHE1_BIG_ENDIAN
-#else
-#define DMA_FETCH_ENDIANNESS 0
-#endif
-
 int
 nv04_fifo_create_context(struct nouveau_channel *chan)
 {
 	struct drm_device *dev = chan->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	unsigned long flags;
 	int ret;
 
 	ret = nouveau_gpuobj_new_fake(dev, NV04_RAMFC(chan->id), ~0,
 						NV04_RAMFC__SIZE,
 						NVOBJ_FLAG_ZERO_ALLOC |
 						NVOBJ_FLAG_ZERO_FREE,
-						&chan->ramfc);
+						NULL, &chan->ramfc);
 	if (ret)
 		return ret;
 
-	spin_lock_irqsave(&dev_priv->context_switch_lock, flags);
-
 	/* Setup initial state */
+	dev_priv->engine.instmem.prepare_access(dev, true);
 	RAMFC_WR(DMA_PUT, chan->pushbuf_base);
 	RAMFC_WR(DMA_GET, chan->pushbuf_base);
-	RAMFC_WR(DMA_INSTANCE, chan->pushbuf->pinst >> 4);
+	RAMFC_WR(DMA_INSTANCE, chan->pushbuf->instance >> 4);
 	RAMFC_WR(DMA_FETCH, (NV_PFIFO_CACHE1_DMA_FETCH_TRIG_128_BYTES |
 			     NV_PFIFO_CACHE1_DMA_FETCH_SIZE_128_BYTES |
 			     NV_PFIFO_CACHE1_DMA_FETCH_MAX_REQS_8 |
-			     DMA_FETCH_ENDIANNESS));
+#ifdef __BIG_ENDIAN
+			     NV_PFIFO_CACHE1_BIG_ENDIAN |
+#endif
+			     0));
+	dev_priv->engine.instmem.finish_access(dev);
 
 	/* enable the fifo dma operation */
 	nv_wr32(dev, NV04_PFIFO_MODE,
 		nv_rd32(dev, NV04_PFIFO_MODE) | (1 << chan->id));
-
-	spin_unlock_irqrestore(&dev_priv->context_switch_lock, flags);
 	return 0;
 }
 
@@ -155,7 +121,7 @@ nv04_fifo_destroy_context(struct nouveau_channel *chan)
 	nv_wr32(dev, NV04_PFIFO_MODE,
 		nv_rd32(dev, NV04_PFIFO_MODE) & ~(1 << chan->id));
 
-	nouveau_gpuobj_ref(NULL, &chan->ramfc);
+	nouveau_gpuobj_ref_del(dev, &chan->ramfc);
 }
 
 static void
@@ -163,6 +129,8 @@ nv04_fifo_do_load_context(struct drm_device *dev, int chid)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	uint32_t fc = NV04_RAMFC(chid), tmp;
+
+	dev_priv->engine.instmem.prepare_access(dev, false);
 
 	nv_wr32(dev, NV04_PFIFO_CACHE1_DMA_PUT, nv_ri32(dev, fc + 0));
 	nv_wr32(dev, NV04_PFIFO_CACHE1_DMA_GET, nv_ri32(dev, fc + 4));
@@ -173,6 +141,8 @@ nv04_fifo_do_load_context(struct drm_device *dev, int chid)
 	nv_wr32(dev, NV04_PFIFO_CACHE1_DMA_FETCH, nv_ri32(dev, fc + 16));
 	nv_wr32(dev, NV04_PFIFO_CACHE1_ENGINE, nv_ri32(dev, fc + 20));
 	nv_wr32(dev, NV04_PFIFO_CACHE1_PULL1, nv_ri32(dev, fc + 24));
+
+	dev_priv->engine.instmem.finish_access(dev);
 
 	nv_wr32(dev, NV03_PFIFO_CACHE1_GET, 0);
 	nv_wr32(dev, NV03_PFIFO_CACHE1_PUT, 0);
@@ -214,6 +184,7 @@ nv04_fifo_unload_context(struct drm_device *dev)
 		return -EINVAL;
 	}
 
+	dev_priv->engine.instmem.prepare_access(dev, true);
 	RAMFC_WR(DMA_PUT, nv_rd32(dev, NV04_PFIFO_CACHE1_DMA_PUT));
 	RAMFC_WR(DMA_GET, nv_rd32(dev, NV04_PFIFO_CACHE1_DMA_GET));
 	tmp  = nv_rd32(dev, NV04_PFIFO_CACHE1_DMA_DCOUNT) << 16;
@@ -223,6 +194,7 @@ nv04_fifo_unload_context(struct drm_device *dev)
 	RAMFC_WR(DMA_FETCH, nv_rd32(dev, NV04_PFIFO_CACHE1_DMA_FETCH));
 	RAMFC_WR(ENGINE, nv_rd32(dev, NV04_PFIFO_CACHE1_ENGINE));
 	RAMFC_WR(PULL1_ENGINE, nv_rd32(dev, NV04_PFIFO_CACHE1_PULL1));
+	dev_priv->engine.instmem.finish_access(dev);
 
 	nv04_fifo_do_load_context(dev, pfifo->channels - 1);
 	nv_wr32(dev, NV03_PFIFO_CACHE1_PUSH1, pfifo->channels - 1);
@@ -258,10 +230,10 @@ nv04_fifo_init_ramxx(struct drm_device *dev)
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 
 	nv_wr32(dev, NV03_PFIFO_RAMHT, (0x03 << 24) /* search 128 */ |
-				       ((dev_priv->ramht->bits - 9) << 16) |
-				       (dev_priv->ramht->gpuobj->pinst >> 8));
-	nv_wr32(dev, NV03_PFIFO_RAMRO, dev_priv->ramro->pinst >> 8);
-	nv_wr32(dev, NV03_PFIFO_RAMFC, dev_priv->ramfc->pinst >> 8);
+				       ((dev_priv->ramht_bits - 9) << 16) |
+				       (dev_priv->ramht_offset >> 8));
+	nv_wr32(dev, NV03_PFIFO_RAMRO, dev_priv->ramro_offset>>8);
+	nv_wr32(dev, NV03_PFIFO_RAMFC, dev_priv->ramfc_offset >> 8);
 }
 
 static void
@@ -286,7 +258,6 @@ nv04_fifo_init(struct drm_device *dev)
 
 	nv04_fifo_init_intr(dev);
 	pfifo->enable(dev);
-	pfifo->reassign(dev, true);
 
 	for (i = 0; i < dev_priv->engine.fifo.channels; i++) {
 		if (dev_priv->fifos[i]) {

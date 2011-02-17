@@ -126,8 +126,11 @@ void __init init_IRQ(void)
 				0
 			};
 #endif
-	const char * const intc_list[] = {
+	static char *intc_list[] = {
 				"xlnx,xps-intc-1.00.a",
+				"xlnx,opb-intc-1.00.c",
+				"xlnx,opb-intc-1.00.b",
+				"xlnx,opb-intc-1.00.a",
 				NULL
 			};
 
@@ -138,15 +141,12 @@ void __init init_IRQ(void)
 	}
 	BUG_ON(!intc);
 
-	intc_baseaddr = be32_to_cpup(of_get_property(intc,
-								"reg", NULL));
+	intc_baseaddr = *(int *) of_get_property(intc, "reg", NULL);
 	intc_baseaddr = (unsigned long) ioremap(intc_baseaddr, PAGE_SIZE);
-	nr_irq = be32_to_cpup(of_get_property(intc,
-						"xlnx,num-intr-inputs", NULL));
+	nr_irq = *(int *) of_get_property(intc, "xlnx,num-intr-inputs", NULL);
 
 	intr_type =
-		be32_to_cpup(of_get_property(intc,
-						"xlnx,kind-of-intr", NULL));
+		*(int *) of_get_property(intc, "xlnx,kind-of-intr", NULL);
 	if (intr_type >= (1 << (nr_irq + 1)))
 		printk(KERN_INFO " ERROR: Mismatch in kind-of-intr param\n");
 

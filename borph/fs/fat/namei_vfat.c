@@ -309,7 +309,7 @@ static int vfat_create_shortname(struct inode *dir, struct nls_table *nls,
 {
 	struct fat_mount_options *opts = &MSDOS_SB(dir->i_sb)->options;
 	wchar_t *ip, *ext_start, *end, *name_start;
-	unsigned char base[9], ext[4], buf[5], *p;
+	unsigned char base[9], ext[4], buf[8], *p;
 	unsigned char charbuf[NLS_MAX_CHARSET_SIZE];
 	int chl, chi;
 	int sz = 0, extlen, baselen, i, numtail_baselen, numtail2_baselen;
@@ -467,7 +467,7 @@ static int vfat_create_shortname(struct inode *dir, struct nls_table *nls,
 			return 0;
 	}
 
-	i = jiffies;
+	i = jiffies & 0xffff;
 	sz = (jiffies >> 16) & 0x7;
 	if (baselen > 2) {
 		baselen = numtail2_baselen;
@@ -476,7 +476,7 @@ static int vfat_create_shortname(struct inode *dir, struct nls_table *nls,
 	name_res[baselen + 4] = '~';
 	name_res[baselen + 5] = '1' + sz;
 	while (1) {
-		snprintf(buf, sizeof(buf), "%04X", i & 0xffff);
+		sprintf(buf, "%04X", i);
 		memcpy(&name_res[baselen], buf, 4);
 		if (vfat_find_form(dir, name_res) < 0)
 			break;
@@ -502,14 +502,14 @@ xlate_to_uni(const unsigned char *name, int len, unsigned char *outname,
 		*outlen = utf8s_to_utf16s(name, len, (wchar_t *)outname);
 		if (*outlen < 0)
 			return *outlen;
-		else if (*outlen > FAT_LFN_LEN)
+		else if (*outlen > 255)
 			return -ENAMETOOLONG;
 
 		op = &outname[*outlen * sizeof(wchar_t)];
 	} else {
 		if (nls) {
 			for (i = 0, ip = name, op = outname, *outlen = 0;
-			     i < len && *outlen <= FAT_LFN_LEN;
+			     i < len && *outlen <= 255;
 			     *outlen += 1)
 			{
 				if (escape && (*ip == ':')) {
@@ -549,7 +549,7 @@ xlate_to_uni(const unsigned char *name, int len, unsigned char *outname,
 				return -ENAMETOOLONG;
 		} else {
 			for (i = 0, ip = name, op = outname, *outlen = 0;
-			     i < len && *outlen <= FAT_LFN_LEN;
+			     i < len && *outlen <= 255;
 			     i++, *outlen += 1)
 			{
 				*op++ = *ip++;
@@ -701,15 +701,6 @@ static int vfat_find(struct inode *dir, struct qstr *qname,
 	return fat_search_long(dir, qname->name, len, sinfo);
 }
 
-/*
- * (nfsd's) anonymous disconnected dentry?
- * NOTE: !IS_ROOT() is not anonymous (I.e. d_splice_alias() did the job).
- */
-static int vfat_d_anon_disconn(struct dentry *dentry)
-{
-	return IS_ROOT(dentry) && (dentry->d_flags & DCACHE_DISCONNECTED);
-}
-
 static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 				  struct nameidata *nd)
 {
@@ -738,11 +729,11 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 	}
 
 	alias = d_find_alias(inode);
-	if (alias && !vfat_d_anon_disconn(alias)) {
+	if (alias && !(alias->d_flags & DCACHE_DISCONNECTED)) {
 		/*
-		 * This inode has non anonymous-DCACHE_DISCONNECTED
-		 * dentry. This means, the user did ->lookup() by an
-		 * another name (longname vs 8.3 alias of it) in past.
+		 * This inode has non DCACHE_DISCONNECTED dentry. This
+		 * means, the user did ->lookup() by an another name
+		 * (longname vs 8.3 alias of it) in past.
 		 *
 		 * Switch to new one for reason of locality if possible.
 		 */
@@ -752,9 +743,7 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 		iput(inode);
 		unlock_super(sb);
 		return alias;
-	} else
-		dput(alias);
-
+	}
 out:
 	unlock_super(sb);
 	dentry->d_op = sb->s_root->d_op;
@@ -1055,33 +1044,30 @@ static int vfat_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int res;
 
-	lock_super(sb);
 	res = fat_fill_super(sb, data, silent, &vfat_dir_inode_operations, 1);
-	if (res) {
-		unlock_super(sb);
+	if (res)
 		return res;
-	}
 
 	if (MSDOS_SB(sb)->options.name_check != 's')
 		sb->s_root->d_op = &vfat_ci_dentry_ops;
 	else
 		sb->s_root->d_op = &vfat_dentry_ops;
 
-	unlock_super(sb);
 	return 0;
 }
 
-static struct dentry *vfat_mount(struct file_system_type *fs_type,
+static int vfat_get_sb(struct file_system_type *fs_type,
 		       int flags, const char *dev_name,
-		       void *data)
+		       void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, vfat_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, vfat_fill_super,
+			   mnt);
 }
 
 static struct file_system_type vfat_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "vfat",
-	.mount		= vfat_mount,
+	.get_sb		= vfat_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

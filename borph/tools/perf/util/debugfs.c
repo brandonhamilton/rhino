@@ -106,14 +106,16 @@ int debugfs_valid_entry(const char *path)
 	return 0;
 }
 
-/* mount the debugfs somewhere if it's not mounted */
+/* mount the debugfs somewhere */
 
-char *debugfs_mount(const char *mountpoint)
+int debugfs_mount(const char *mountpoint)
 {
+	char mountcmd[128];
+
 	/* see if it's already mounted */
 	if (debugfs_find_mountpoint()) {
 		debugfs_premounted = 1;
-		return debugfs_mountpoint;
+		return 0;
 	}
 
 	/* if not mounted and no argument */
@@ -125,14 +127,13 @@ char *debugfs_mount(const char *mountpoint)
 			mountpoint = "/sys/kernel/debug";
 	}
 
-	if (mount(NULL, mountpoint, "debugfs", 0, NULL) < 0)
-		return NULL;
-
 	/* save the mountpoint */
 	strncpy(debugfs_mountpoint, mountpoint, sizeof(debugfs_mountpoint));
-	debugfs_found = 1;
 
-	return debugfs_mountpoint;
+	/* mount it */
+	snprintf(mountcmd, sizeof(mountcmd),
+		 "/bin/mount -t debugfs debugfs %s", mountpoint);
+	return system(mountcmd);
 }
 
 /* umount the debugfs */

@@ -11,7 +11,6 @@
  */
 
 #include <linux/err.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/device.h>
 #include <linux/scatterlist.h>
@@ -140,10 +139,8 @@ static struct sg_table *sgtable_alloc(const size_t bytes, u32 flags)
 		return ERR_PTR(-ENOMEM);
 
 	err = sg_alloc_table(sgt, nr_entries, GFP_KERNEL);
-	if (err) {
-		kfree(sgt);
+	if (err)
 		return ERR_PTR(err);
-	}
 
 	pr_debug("%s: sgt:%p(%d entries)\n", __func__, sgt, nr_entries);
 
@@ -289,19 +286,16 @@ static struct iovm_struct *alloc_iovm_area(struct iommu *obj, u32 da,
 	prev_end = 0;
 	list_for_each_entry(tmp, &obj->mmap, list) {
 
-		if (prev_end >= start)
-			break;
-
-		if (start + bytes < tmp->da_start)
+		if ((prev_end <= start) && (start + bytes < tmp->da_start))
 			goto found;
 
 		if (flags & IOVMF_DA_ANON)
-			start = roundup(tmp->da_end + 1, alignement);
+			start = roundup(tmp->da_end, alignement);
 
 		prev_end = tmp->da_end;
 	}
 
-	if ((start > prev_end) && (ULONG_MAX - start >= bytes))
+	if ((start >= prev_end) && (ULONG_MAX - start >= bytes))
 		goto found;
 
 	dev_dbg(obj->dev, "%s: no space to fit %08x(%x) flags: %08x\n",

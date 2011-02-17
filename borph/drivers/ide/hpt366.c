@@ -12,7 +12,7 @@
  *
  *
  * HighPoint has its own drivers (open source except for the RAID part)
- * available from http://www.highpoint-tech.com/USA_new/service_support.htm 
+ * available from http://www.highpoint-tech.com/BIOS%20+%20Driver/.
  * This may be useful to anyone wanting to work on this driver, however  do not
  * trust  them too much since the code tends to become less and less meaningful
  * as the time passes... :-/
@@ -128,7 +128,6 @@
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/ide.h>
-#include <linux/slab.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -628,14 +627,14 @@ static u32 get_speed_setting(u8 speed, struct hpt_info *info)
 	return info->timings->clock_table[info->clock][i];
 }
 
-static void hpt3xx_set_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void hpt3xx_set_mode(ide_drive_t *drive, const u8 speed)
 {
+	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	struct hpt_info *info	= hpt3xx_get_info(hwif->dev);
 	struct hpt_timings *t	= info->timings;
 	u8  itr_addr		= 0x40 + (drive->dn * 4);
 	u32 old_itr		= 0;
-	const u8 speed		= drive->dma_mode;
 	u32 new_itr		= get_speed_setting(speed, info);
 	u32 itr_mask		= speed < XFER_MW_DMA_0 ? t->pio_mask :
 				 (speed < XFER_UDMA_0   ? t->dma_mask :
@@ -652,10 +651,9 @@ static void hpt3xx_set_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	pci_write_config_dword(dev, itr_addr, new_itr);
 }
 
-static void hpt3xx_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void hpt3xx_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	drive->dma_mode = drive->pio_mode;
-	hpt3xx_set_mode(hwif, drive);
+	hpt3xx_set_mode(drive, XFER_PIO_0 + pio);
 }
 
 static void hpt3xx_maskproc(ide_drive_t *drive, int mask)
@@ -838,7 +836,7 @@ static void hpt3xxn_set_clock(ide_hwif_t *hwif, u8 mode)
 
 static void hpt3xxn_rw_disk(ide_drive_t *drive, struct request *rq)
 {
-	hpt3xxn_set_clock(drive->hwif, rq_data_dir(rq) ? 0x21 : 0x23);
+	hpt3xxn_set_clock(drive->hwif, rq_data_dir(rq) ? 0x23 : 0x21);
 }
 
 /**
@@ -1173,9 +1171,8 @@ static u8 hpt3xx_cable_detect(ide_hwif_t *hwif)
 		u16 mcr;
 
 		pci_read_config_word(dev, mcr_addr, &mcr);
-		pci_write_config_word(dev, mcr_addr, mcr | 0x8000);
-		/* Debounce, then read cable ID register */
-		udelay(10);
+		pci_write_config_word(dev, mcr_addr, (mcr | 0x8000));
+		/* now read cable id register */
 		pci_read_config_byte(dev, 0x5a, &scr1);
 		pci_write_config_word(dev, mcr_addr, mcr);
 	} else if (chip_type >= HPT370) {
@@ -1186,11 +1183,10 @@ static u8 hpt3xx_cable_detect(ide_hwif_t *hwif)
 		u8 scr2 = 0;
 
 		pci_read_config_byte(dev, 0x5b, &scr2);
-		pci_write_config_byte(dev, 0x5b, scr2 & ~1);
-		/* Debounce, then read cable ID register */
-		udelay(10);
+		pci_write_config_byte(dev, 0x5b, (scr2 & ~1));
+		/* now read cable id register */
 		pci_read_config_byte(dev, 0x5a, &scr1);
-		pci_write_config_byte(dev, 0x5b, scr2);
+		pci_write_config_byte(dev, 0x5b,  scr2);
 	} else
 		pci_read_config_byte(dev, 0x5a, &scr1);
 

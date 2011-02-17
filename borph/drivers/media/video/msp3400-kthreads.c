@@ -22,6 +22,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/freezer.h>
 #include <linux/videodev2.h>
@@ -496,13 +497,13 @@ restart:
 			v4l_dbg(1, msp_debug, client,
 				"thread: no carrier scan\n");
 			state->scan_in_progress = 0;
-			msp_update_volume(state);
+			msp_set_audio(client);
 			continue;
 		}
 
 		/* mute audio */
 		state->scan_in_progress = 1;
-		msp_update_volume(state);
+		msp_set_audio(client);
 
 		msp3400c_set_mode(client, MSP_MODE_AM_DETECT);
 		val1 = val2 = 0;
@@ -634,7 +635,7 @@ no_second:
 		/* unmute */
 		state->scan_in_progress = 0;
 		msp3400c_set_audmode(client);
-		msp_update_volume(state);
+		msp_set_audio(client);
 
 		if (msp_debug)
 			msp3400c_print_mode(client);
@@ -679,13 +680,13 @@ restart:
 			v4l_dbg(1, msp_debug, client,
 				"thread: no carrier scan\n");
 			state->scan_in_progress = 0;
-			msp_update_volume(state);
+			msp_set_audio(client);
 			continue;
 		}
 
 		/* mute audio */
 		state->scan_in_progress = 1;
-		msp_update_volume(state);
+		msp_set_audio(client);
 
 		/* start autodetect. Note: autodetect is not supported for
 		   NTSC-M and radio, hence we force the standard in those
@@ -797,7 +798,7 @@ restart:
 		/* unmute */
 		msp3400c_set_audmode(client);
 		state->scan_in_progress = 0;
-		msp_update_volume(state);
+		msp_set_audio(client);
 
 		/* monitor tv audio mode, the first time don't wait
 		   so long to get a quick stereo/bilingual result */
@@ -974,7 +975,7 @@ restart:
 			v4l_dbg(1, msp_debug, client,
 				"thread: no carrier scan\n");
 			state->scan_in_progress = 0;
-			msp_update_volume(state);
+			msp_set_audio(client);
 			continue;
 		}
 
@@ -1020,7 +1021,7 @@ unmute:
 		}
 
 		/* unmute: dispatch sound to scart output, set scart volume */
-		msp_update_volume(state);
+		msp_set_audio(client);
 
 		/* restore ACB */
 		if (msp_write_dsp(client, 0x13, state->acb))

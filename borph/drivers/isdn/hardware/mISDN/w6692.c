@@ -25,7 +25,6 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/mISDNhw.h>
-#include <linux/slab.h>
 #include "w6692.h"
 
 #define W6692_REV	"2.0"
@@ -530,7 +529,6 @@ W6692_fill_Bfifo(struct w6692_ch *wch)
 	}
 }
 
-#if 0
 static int
 setvolume(struct w6692_ch *wch, int mic, struct sk_buff *skb)
 {
@@ -573,7 +571,6 @@ enable_pots(struct w6692_ch *wch)
 	WriteW6692(card, W_PCTL, card->pctl);
 	return 0;
 }
-#endif
 
 static int
 disable_pots(struct w6692_ch *wch)
@@ -1402,7 +1399,7 @@ w6692_remove_pci(struct pci_dev *pdev)
 		release_card(card);
 	else
 		if (debug)
-			pr_notice("%s: drvdata already removed\n", __func__);
+			pr_notice("%s: drvdata allready removed\n", __func__);
 }
 
 static struct pci_device_id w6692_ids[] = {

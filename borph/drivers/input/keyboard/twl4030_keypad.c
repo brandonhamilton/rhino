@@ -32,7 +32,6 @@
 #include <linux/input.h>
 #include <linux/platform_device.h>
 #include <linux/i2c/twl.h>
-#include <linux/slab.h>
 
 
 /*
@@ -51,12 +50,8 @@
  */
 #define TWL4030_MAX_ROWS	8	/* TWL4030 hard limit */
 #define TWL4030_MAX_COLS	8
-/*
- * Note that we add space for an extra column so that we can handle
- * row lines connected to the gnd (see twl4030_col_xlate()).
- */
-#define TWL4030_ROW_SHIFT	4
-#define TWL4030_KEYMAP_SIZE	(TWL4030_MAX_ROWS << TWL4030_ROW_SHIFT)
+#define TWL4030_ROW_SHIFT	3
+#define TWL4030_KEYMAP_SIZE	(TWL4030_MAX_ROWS * TWL4030_MAX_COLS)
 
 struct twl4030_keypad {
 	unsigned short	keymap[TWL4030_KEYMAP_SIZE];
@@ -186,7 +181,7 @@ static int twl4030_read_kp_matrix_state(struct twl4030_keypad *kp, u16 *state)
 	return ret;
 }
 
-static bool twl4030_is_in_ghost_state(struct twl4030_keypad *kp, u16 *key_state)
+static int twl4030_is_in_ghost_state(struct twl4030_keypad *kp, u16 *key_state)
 {
 	int i;
 	u16 check = 0;
@@ -195,12 +190,12 @@ static bool twl4030_is_in_ghost_state(struct twl4030_keypad *kp, u16 *key_state)
 		u16 col = key_state[i];
 
 		if ((col & check) && hweight16(col) > 1)
-			return true;
+			return 1;
 
 		check |= col;
 	}
 
-	return false;
+	return 0;
 }
 
 static void twl4030_kp_scan(struct twl4030_keypad *kp, bool release_all)
@@ -229,8 +224,7 @@ static void twl4030_kp_scan(struct twl4030_keypad *kp, bool release_all)
 		if (!changed)
 			continue;
 
-		/* Extra column handles "all gnd" rows */
-		for (col = 0; col < kp->n_cols + 1; col++) {
+		for (col = 0; col < kp->n_cols; col++) {
 			int code;
 
 			if (!(changed & (1 << col)))
@@ -258,6 +252,14 @@ static irqreturn_t do_kp_irq(int irq, void *_kp)
 	struct twl4030_keypad *kp = _kp;
 	u8 reg;
 	int ret;
+
+#ifdef CONFIG_LOCKDEP
+	/* WORKAROUND for lockdep forcing IRQF_DISABLED on us, which
+	 * we don't want and can't tolerate.  Although it might be
+	 * friendlier not to borrow this thread context...
+	 */
+	local_irq_enable();
+#endif
 
 	/* Read & Clear TWL4030 pending interrupt */
 	ret = twl4030_kpread(kp, &reg, KEYP_ISR1, 1);
@@ -401,27 +403,27 @@ static int __devinit twl4030_kp_probe(struct platform_device *pdev)
 	 *
 	 * NOTE:  we assume this host is wired to TWL4040 INT1, not INT2 ...
 	 */
-	error = request_threaded_irq(kp->irq, NULL, do_kp_irq,
-			0, pdev->name, kp);
+	error = request_irq(kp->irq, do_kp_irq, 0, pdev->name, kp);
 	if (error) {
 		dev_info(kp->dbg_dev, "request_irq failed for irq no=%d\n",
 			kp->irq);
-		goto err2;
+		goto err3;
 	}
 
 	/* Enable KP and TO interrupts now. */
 	reg = (u8) ~(KEYP_IMR1_KP | KEYP_IMR1_TO);
 	if (twl4030_kpwrite_u8(kp, reg, KEYP_IMR1)) {
 		error = -EIO;
-		goto err3;
+		goto err4;
 	}
 
 	platform_set_drvdata(pdev, kp);
 	return 0;
 
-err3:
+err4:
 	/* mask all events - we don't care about the result */
 	(void) twl4030_kpwrite_u8(kp, 0xff, KEYP_IMR1);
+err3:
 	free_irq(kp->irq, NULL);
 err2:
 	input_unregister_device(input);
@@ -444,6 +446,32 @@ static int __devexit twl4030_kp_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
+static int twl4030_kp_suspend(struct platform_device *pdev, pm_message_t state)
+{
+	struct twl4030_keypad_data *pdata = pdev->dev.platform_data;
+
+	if (pdata->on_suspend)
+		pdata->on_suspend(pdata->pm_state);
+
+	return 0;
+}
+
+static int twl4030_kp_resume(struct platform_device *pdev)
+{
+	struct twl4030_keypad_data *pdata = pdev->dev.platform_data;
+
+	if (pdata->on_resume)
+		pdata->on_resume(pdata->pm_state);
+
+	return 0;
+}
+#else
+#define twl4030_kp_suspend	NULL
+#define twl4030_kp_resume	NULL
+#endif
+
+
 /*
  * NOTE: twl4030 are multi-function devices connected via I2C.
  * So this device is a child of an I2C parent, thus it needs to
@@ -453,6 +481,8 @@ static int __devexit twl4030_kp_remove(struct platform_device *pdev)
 static struct platform_driver twl4030_kp_driver = {
 	.probe		= twl4030_kp_probe,
 	.remove		= __devexit_p(twl4030_kp_remove),
+	.suspend        = twl4030_kp_suspend,
+	.resume         = twl4030_kp_resume,
 	.driver		= {
 		.name	= "twl4030_keypad",
 		.owner	= THIS_MODULE,

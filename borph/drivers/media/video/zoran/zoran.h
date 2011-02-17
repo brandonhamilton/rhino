@@ -33,10 +33,6 @@
 
 #include <media/v4l2-device.h>
 
-#define ZORAN_VIDMODE_PAL	0
-#define ZORAN_VIDMODE_NTSC	1
-#define ZORAN_VIDMODE_SECAM	2
-
 struct zoran_requestbuffers {
 	unsigned long count;	/* Number of buffers for MJPEG grabbing */
 	unsigned long size;	/* Size PER BUFFER in bytes */
@@ -52,7 +48,7 @@ struct zoran_sync {
 struct zoran_status {
 	int input;		/* Input channel, has to be set prior to BUZIOC_G_STATUS */
 	int signal;		/* Returned: 1 if valid video signal detected */
-	int norm;		/* Returned: ZORAN_VIDMODE_PAL or ZORAN_VIDMODE_NTSC */
+	int norm;		/* Returned: VIDEO_MODE_PAL or VIDEO_MODE_NTSC */
 	int color;		/* Returned: 1 if color signal detected */
 };
 
@@ -66,7 +62,7 @@ struct zoran_params {
 	/* Main control parameters */
 
 	int input;		/* Input channel: 0 = Composite, 1 = S-VHS */
-	int norm;		/* Norm: ZORAN_VIDMODE_PAL or ZORAN_VIDMODE_NTSC */
+	int norm;		/* Norm: VIDEO_MODE_PAL or VIDEO_MODE_NTSC */
 	int decimation;		/* decimation of captured video,
 				 * enlargement of video played back.
 				 * Valid values are 1, 2, 4 or 0.
@@ -135,13 +131,13 @@ struct zoran_params {
 /*
 Private IOCTL to set up for displaying MJPEG
 */
-#define BUZIOC_G_PARAMS       _IOR ('v', BASE_VIDIOC_PRIVATE+0,  struct zoran_params)
-#define BUZIOC_S_PARAMS       _IOWR('v', BASE_VIDIOC_PRIVATE+1,  struct zoran_params)
-#define BUZIOC_REQBUFS        _IOWR('v', BASE_VIDIOC_PRIVATE+2,  struct zoran_requestbuffers)
-#define BUZIOC_QBUF_CAPT      _IOW ('v', BASE_VIDIOC_PRIVATE+3,  int)
-#define BUZIOC_QBUF_PLAY      _IOW ('v', BASE_VIDIOC_PRIVATE+4,  int)
-#define BUZIOC_SYNC           _IOR ('v', BASE_VIDIOC_PRIVATE+5,  struct zoran_sync)
-#define BUZIOC_G_STATUS       _IOWR('v', BASE_VIDIOC_PRIVATE+6,  struct zoran_status)
+#define BUZIOC_G_PARAMS       _IOR ('v', BASE_VIDIOCPRIVATE+0,  struct zoran_params)
+#define BUZIOC_S_PARAMS       _IOWR('v', BASE_VIDIOCPRIVATE+1,  struct zoran_params)
+#define BUZIOC_REQBUFS        _IOWR('v', BASE_VIDIOCPRIVATE+2,  struct zoran_requestbuffers)
+#define BUZIOC_QBUF_CAPT      _IOW ('v', BASE_VIDIOCPRIVATE+3,  int)
+#define BUZIOC_QBUF_PLAY      _IOW ('v', BASE_VIDIOCPRIVATE+4,  int)
+#define BUZIOC_SYNC           _IOR ('v', BASE_VIDIOCPRIVATE+5,  struct zoran_sync)
+#define BUZIOC_G_STATUS       _IOWR('v', BASE_VIDIOCPRIVATE+6,  struct zoran_status)
 
 
 #ifdef __KERNEL__
@@ -341,8 +337,10 @@ struct card_info {
 	enum card_type type;
 	char name[32];
 	const char *i2c_decoder;	/* i2c decoder device */
+	const char *mod_decoder;	/* i2c decoder module */
 	const unsigned short *addrs_decoder;
 	const char *i2c_encoder;	/* i2c encoder device */
+	const char *mod_encoder;	/* i2c encoder module */
 	const unsigned short *addrs_encoder;
 	u16 video_vfe, video_codec;			/* videocodec types */
 	u16 audio_chip;					/* audio type */
@@ -388,9 +386,8 @@ struct zoran {
 	struct videocodec *vfe;	/* video front end */
 
 	struct mutex resource_lock;	/* prevent evil stuff */
-	struct mutex other_lock;	/* please merge with above */
 
-	u8 initialized;		/* flag if zoran has been correctly initialized */
+	u8 initialized;		/* flag if zoran has been correctly initalized */
 	int user;		/* number of current users */
 	struct card_info card;
 	struct tvnorm *timing;
@@ -404,7 +401,7 @@ struct zoran {
 	spinlock_t spinlock;	/* Spinlock */
 
 	/* Video for Linux parameters */
-	int input;	/* card's norm and input */
+	int input;	/* card's norm and input - norm=VIDEO_MODE_* */
 	v4l2_std_id norm;
 
 	/* Current buffer params */

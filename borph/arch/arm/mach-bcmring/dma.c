@@ -28,7 +28,6 @@
 #include <linux/interrupt.h>
 #include <linux/irqreturn.h>
 #include <linux/proc_fs.h>
-#include <linux/slab.h>
 
 #include <mach/timer.h>
 
@@ -691,7 +690,7 @@ int dma_init(void)
 
 	memset(&gDMA, 0, sizeof(gDMA));
 
-	sema_init(&gDMA.lock, 0);
+	init_MUTEX_LOCKED(&gDMA.lock);
 	init_waitqueue_head(&gDMA.freeChannelQ);
 
 	/* Initialize the Hardware */
@@ -1574,7 +1573,7 @@ int dma_init_mem_map(DMA_MemMap_t *memMap)
 {
 	memset(memMap, 0, sizeof(*memMap));
 
-	sema_init(&memMap->lock, 1);
+	init_MUTEX(&memMap->lock);
 
 	return 0;
 }
@@ -2221,14 +2220,10 @@ EXPORT_SYMBOL(dma_map_create_descriptor_ring);
 int dma_unmap(DMA_MemMap_t *memMap,	/* Stores state information about the map */
 	      int dirtied	/* non-zero if any of the pages were modified */
     ) {
-
-	int rc = 0;
 	int regionIdx;
 	int segmentIdx;
 	DMA_Region_t *region;
 	DMA_Segment_t *segment;
-
-	down(&memMap->lock);
 
 	for (regionIdx = 0; regionIdx < memMap->numRegionsUsed; regionIdx++) {
 		region = &memMap->region[regionIdx];
@@ -2243,8 +2238,7 @@ int dma_unmap(DMA_MemMap_t *memMap,	/* Stores state information about the map */
 					printk(KERN_ERR
 					       "%s: vmalloc'd pages are not yet supported\n",
 					       __func__);
-					rc = -EINVAL;
-					goto out;
+					return -EINVAL;
 				}
 
 			case DMA_MEM_TYPE_KMALLOC:
@@ -2281,8 +2275,7 @@ int dma_unmap(DMA_MemMap_t *memMap,	/* Stores state information about the map */
 					printk(KERN_ERR
 					       "%s: Unsupported memory type: %d\n",
 					       __func__, region->memType);
-					rc = -EINVAL;
-					goto out;
+					return -EINVAL;
 				}
 			}
 
@@ -2320,10 +2313,9 @@ int dma_unmap(DMA_MemMap_t *memMap,	/* Stores state information about the map */
 	memMap->numRegionsUsed = 0;
 	memMap->inUse = 0;
 
-out:
 	up(&memMap->lock);
 
-	return rc;
+	return 0;
 }
 
 EXPORT_SYMBOL(dma_unmap);

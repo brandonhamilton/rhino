@@ -13,14 +13,6 @@ extra-y     += init_task.o
 CPPFLAGS_vmlinux.lds := -Usparc -m$(BITS)
 extra-y              += vmlinux.lds
 
-ifdef CONFIG_FUNCTION_TRACER
-# Do not profile debug and lowlevel utilities
-CFLAGS_REMOVE_ftrace.o := -pg
-CFLAGS_REMOVE_time_$(BITS).o := -pg
-CFLAGS_REMOVE_perf_event.o := -pg
-CFLAGS_REMOVE_pcr.o := -pg
-endif
-
 obj-$(CONFIG_SPARC32)   += entry.o wof.o wuf.o
 obj-$(CONFIG_SPARC32)   += etrap_32.o
 obj-$(CONFIG_SPARC32)   += rtrap_32.o
@@ -93,7 +85,7 @@ obj-$(CONFIG_KGDB)        += kgdb_$(BITS).o
 
 
 obj-$(CONFIG_DYNAMIC_FTRACE) += ftrace.o
-obj-$(CONFIG_FUNCTION_GRAPH_TRACER) += ftrace.o
+CFLAGS_REMOVE_ftrace.o := -pg
 
 obj-$(CONFIG_EARLYFB) += btext.o
 obj-$(CONFIG_STACKTRACE)     += stacktrace.o
@@ -119,5 +111,3 @@ obj-$(CONFIG_COMPAT)    += $(audit--y)
 
 pc--$(CONFIG_PERF_EVENTS) := perf_event.o
 obj-$(CONFIG_SPARC64)	+= $(pc--y)
-
-obj-$(CONFIG_SPARC64)	+= jump_label.o

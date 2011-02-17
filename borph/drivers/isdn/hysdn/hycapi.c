@@ -11,13 +11,10 @@
  */
 
 #include <linux/module.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/signal.h>
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 
 #define	VER_DRIVER	0
 #define	VER_CARDTYPE	1
@@ -435,16 +432,26 @@ static u16 hycapi_send_message(struct capi_ctr *ctrl, struct sk_buff *skb)
 	return retval;
 }
 
-static int hycapi_proc_show(struct seq_file *m, void *v)
+/*********************************************************************
+hycapi_read_proc
+
+Informations provided in the /proc/capi-entries.
+
+*********************************************************************/
+
+static int hycapi_read_proc(char *page, char **start, off_t off,
+			    int count, int *eof, struct capi_ctr *ctrl)
 {
-	struct capi_ctr *ctrl = m->private;
 	hycapictrl_info *cinfo = (hycapictrl_info *)(ctrl->driverdata);
 	hysdn_card *card = cinfo->card;
+	int len = 0;
 	char *s;
-
-	seq_printf(m, "%-16s %s\n", "name", cinfo->cardname);
-	seq_printf(m, "%-16s 0x%x\n", "io", card->iobase);
-	seq_printf(m, "%-16s %d\n", "irq", card->irq);
+#ifdef HYCAPI_PRINTFNAMES
+	printk(KERN_NOTICE "hycapi_read_proc\n");    
+#endif
+	len += sprintf(page+len, "%-16s %s\n", "name", cinfo->cardname);
+	len += sprintf(page+len, "%-16s 0x%x\n", "io", card->iobase);
+	len += sprintf(page+len, "%-16s %d\n", "irq", card->irq);
     
 	switch (card->brdtype) {
 		case BD_PCCARD:  s = "HYSDN Hycard"; break;
@@ -454,31 +461,23 @@ static int hycapi_proc_show(struct seq_file *m, void *v)
 		case BD_PLEXUS: s = "HYSDN Plexus30"; break;
 		default: s = "???"; break;
 	}
-	seq_printf(m, "%-16s %s\n", "type", s);
+	len += sprintf(page+len, "%-16s %s\n", "type", s);
 	if ((s = cinfo->version[VER_DRIVER]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_driver", s);
+		len += sprintf(page+len, "%-16s %s\n", "ver_driver", s);
 	if ((s = cinfo->version[VER_CARDTYPE]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_cardtype", s);
+		len += sprintf(page+len, "%-16s %s\n", "ver_cardtype", s);
 	if ((s = cinfo->version[VER_SERIAL]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_serial", s);
+		len += sprintf(page+len, "%-16s %s\n", "ver_serial", s);
     
-	seq_printf(m, "%-16s %s\n", "cardname", cinfo->cardname);
+	len += sprintf(page+len, "%-16s %s\n", "cardname", cinfo->cardname);
     
-	return 0;
+	if (off+count >= len)
+		*eof = 1;
+	if (len < off)
+		return 0;
+	*start = page + off;
+	return ((count < len-off) ? count : len-off);
 }
-
-static int hycapi_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hycapi_proc_show, PDE(inode)->data);
-}
-
-static const struct file_operations hycapi_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= hycapi_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 
 /**************************************************************
 hycapi_load_firmware
@@ -775,7 +774,7 @@ hycapi_capi_create(hysdn_card *card)
 		ctrl->load_firmware = hycapi_load_firmware;
 		ctrl->reset_ctr     = hycapi_reset_ctr;
 		ctrl->procinfo      = hycapi_procinfo;
-		ctrl->proc_fops = &hycapi_proc_fops;
+		ctrl->ctr_read_proc = hycapi_read_proc;
 		strcpy(ctrl->name, cinfo->cardname);
 		ctrl->owner = THIS_MODULE;
 

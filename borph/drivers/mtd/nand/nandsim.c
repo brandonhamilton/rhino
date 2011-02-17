@@ -80,9 +80,6 @@
 #ifndef CONFIG_NANDSIM_DBG
 #define CONFIG_NANDSIM_DBG        0
 #endif
-#ifndef CONFIG_NANDSIM_MAX_PARTS
-#define CONFIG_NANDSIM_MAX_PARTS  32
-#endif
 
 static uint first_id_byte  = CONFIG_NANDSIM_FIRST_ID_BYTE;
 static uint second_id_byte = CONFIG_NANDSIM_SECOND_ID_BYTE;
@@ -97,7 +94,7 @@ static uint bus_width      = CONFIG_NANDSIM_BUS_WIDTH;
 static uint do_delays      = CONFIG_NANDSIM_DO_DELAYS;
 static uint log            = CONFIG_NANDSIM_LOG;
 static uint dbg            = CONFIG_NANDSIM_DBG;
-static unsigned long parts[CONFIG_NANDSIM_MAX_PARTS];
+static unsigned long parts[MAX_MTD_DEVICES];
 static unsigned int parts_num;
 static char *badblocks = NULL;
 static char *weakblocks = NULL;
@@ -107,7 +104,6 @@ static char *gravepages = NULL;
 static unsigned int rptwear = 0;
 static unsigned int overridesize = 0;
 static char *cache_file = NULL;
-static unsigned int bbt;
 
 module_param(first_id_byte,  uint, 0400);
 module_param(second_id_byte, uint, 0400);
@@ -131,7 +127,6 @@ module_param(gravepages,     charp, 0400);
 module_param(rptwear,        uint, 0400);
 module_param(overridesize,   uint, 0400);
 module_param(cache_file,     charp, 0400);
-module_param(bbt,	     uint, 0400);
 
 MODULE_PARM_DESC(first_id_byte,  "The first byte returned by NAND Flash 'read ID' command (manufacturer ID)");
 MODULE_PARM_DESC(second_id_byte, "The second byte returned by NAND Flash 'read ID' command (chip ID)");
@@ -140,8 +135,8 @@ MODULE_PARM_DESC(fourth_id_byte, "The fourth byte returned by NAND Flash 'read I
 MODULE_PARM_DESC(access_delay,   "Initial page access delay (microseconds)");
 MODULE_PARM_DESC(programm_delay, "Page programm delay (microseconds");
 MODULE_PARM_DESC(erase_delay,    "Sector erase delay (milliseconds)");
-MODULE_PARM_DESC(output_cycle,   "Word output (from flash) time (nanoseconds)");
-MODULE_PARM_DESC(input_cycle,    "Word input (to flash) time (nanoseconds)");
+MODULE_PARM_DESC(output_cycle,   "Word output (from flash) time (nanodeconds)");
+MODULE_PARM_DESC(input_cycle,    "Word input (to flash) time (nanodeconds)");
 MODULE_PARM_DESC(bus_width,      "Chip's bus width (8- or 16-bit)");
 MODULE_PARM_DESC(do_delays,      "Simulate NAND delays using busy-waits if not zero");
 MODULE_PARM_DESC(log,            "Perform logging if not zero");
@@ -164,10 +159,9 @@ MODULE_PARM_DESC(overridesize,   "Specifies the NAND Flash size overriding the I
 				 "The size is specified in erase blocks and as the exponent of a power of two"
 				 " e.g. 5 means a size of 32 erase blocks");
 MODULE_PARM_DESC(cache_file,     "File to use to cache nand pages instead of memory");
-MODULE_PARM_DESC(bbt,		 "0 OOB, 1 BBT with marker in OOB, 2 BBT with marker in data area");
 
 /* The largest possible page size */
-#define NS_LARGEST_PAGE_SIZE	4096
+#define NS_LARGEST_PAGE_SIZE	2048
 
 /* The prefix for simulator output */
 #define NS_OUTPUT_PREFIX "[nandsim]"
@@ -265,8 +259,7 @@ MODULE_PARM_DESC(bbt,		 "0 OOB, 1 BBT with marker in OOB, 2 BBT with marker in d
 #define OPT_SMARTMEDIA   0x00000010 /* SmartMedia technology chips */
 #define OPT_AUTOINCR     0x00000020 /* page number auto inctimentation is possible */
 #define OPT_PAGE512_8BIT 0x00000040 /* 512-byte page chips with 8-bit bus width */
-#define OPT_PAGE4096     0x00000080 /* 4096-byte page chips */
-#define OPT_LARGEPAGE    (OPT_PAGE2048 | OPT_PAGE4096) /* 2048 & 4096-byte page chips */
+#define OPT_LARGEPAGE    (OPT_PAGE2048) /* 2048-byte page chips */
 #define OPT_SMALLPAGE    (OPT_PAGE256  | OPT_PAGE512)  /* 256 and 512-byte page chips */
 
 /* Remove action bits ftom state */
@@ -294,7 +287,7 @@ union ns_mem {
  * The structure which describes all the internal simulator data.
  */
 struct nandsim {
-	struct mtd_partition partitions[CONFIG_NANDSIM_MAX_PARTS];
+	struct mtd_partition partitions[MAX_MTD_DEVICES];
 	unsigned int nbparts;
 
 	uint busw;              /* flash chip bus width (8 or 16) */
@@ -318,7 +311,7 @@ struct nandsim {
 	union ns_mem buf;
 
 	/* NAND flash "geometry" */
-	struct {
+	struct nandsin_geometry {
 		uint64_t totsz;     /* total flash size, bytes */
 		uint32_t secsz;     /* flash sector (erase block) size, bytes */
 		uint pgsz;          /* NAND flash page size, bytes */
@@ -337,7 +330,7 @@ struct nandsim {
 	} geom;
 
 	/* NAND flash internal registers */
-	struct {
+	struct nandsim_regs {
 		unsigned command; /* the command register */
 		u_char   status;  /* the status register */
 		uint     row;     /* the page number */
@@ -348,7 +341,7 @@ struct nandsim {
 	} regs;
 
 	/* NAND flash lines state */
-        struct {
+        struct ns_lines_status {
                 int ce;  /* chip Enable */
                 int cle; /* command Latch Enable */
                 int ale; /* address Latch Enable */
@@ -556,8 +549,8 @@ static uint64_t divide(uint64_t n, uint32_t d)
  */
 static int init_nandsim(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd->priv;
-	struct nandsim   *ns   = chip->priv;
+	struct nand_chip *chip = (struct nand_chip *)mtd->priv;
+	struct nandsim   *ns   = (struct nandsim *)(chip->priv);
 	int i, ret = 0;
 	uint64_t remains;
 	uint64_t next_offset;
@@ -595,8 +588,6 @@ static int init_nandsim(struct mtd_info *mtd)
 			ns->options |= OPT_PAGE512_8BIT;
 	} else if (ns->geom.pgsz == 2048) {
 		ns->options |= OPT_PAGE2048;
-	} else if (ns->geom.pgsz == 4096) {
-		ns->options |= OPT_PAGE4096;
 	} else {
 		NS_ERR("init_nandsim: unknown page size %u\n", ns->geom.pgsz);
 		return -EIO;
@@ -1880,7 +1871,7 @@ static void switch_state(struct nandsim *ns)
 
 static u_char ns_nand_read_byte(struct mtd_info *mtd)
 {
-	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
+        struct nandsim *ns = (struct nandsim *)((struct nand_chip *)mtd->priv)->priv;
 	u_char outb = 0x00;
 
 	/* Sanity and correctness checks */
@@ -1953,7 +1944,7 @@ static u_char ns_nand_read_byte(struct mtd_info *mtd)
 
 static void ns_nand_write_byte(struct mtd_info *mtd, u_char byte)
 {
-	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
+        struct nandsim *ns = (struct nandsim *)((struct nand_chip *)mtd->priv)->priv;
 
 	/* Sanity and correctness checks */
 	if (!ns->lines.ce) {
@@ -2135,7 +2126,7 @@ static uint16_t ns_nand_read_word(struct mtd_info *mtd)
 
 static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
-	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
+        struct nandsim *ns = (struct nandsim *)((struct nand_chip *)mtd->priv)->priv;
 
 	/* Check that chip is expecting data input */
 	if (!(ns->state & STATE_DATAIN_MASK)) {
@@ -2162,7 +2153,7 @@ static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 
 static void ns_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
+        struct nandsim *ns = (struct nandsim *)((struct nand_chip *)mtd->priv)->priv;
 
 	/* Sanity and correctness checks */
 	if (!ns->lines.ce) {
@@ -2267,18 +2258,6 @@ static int __init ns_init_module(void)
 	/* and 'badblocks' parameters to work */
 	chip->options   |= NAND_SKIP_BBTSCAN;
 
-	switch (bbt) {
-	case 2:
-		 chip->options |= NAND_USE_FLASH_BBT_NO_OOB;
-	case 1:
-		 chip->options |= NAND_USE_FLASH_BBT;
-	case 0:
-		break;
-	default:
-		NS_ERR("bbt has to be 0..2\n");
-		retval = -EINVAL;
-		goto error;
-	}
 	/*
 	 * Perform minimum nandsim structure initialization to handle
 	 * the initial ID read command correctly
@@ -2336,10 +2315,10 @@ static int __init ns_init_module(void)
 	if ((retval = init_nandsim(nsmtd)) != 0)
 		goto err_exit;
 
-	if ((retval = nand_default_bbt(nsmtd)) != 0)
+	if ((retval = parse_badblocks(nand, nsmtd)) != 0)
 		goto err_exit;
 
-	if ((retval = parse_badblocks(nand, nsmtd)) != 0)
+	if ((retval = nand_default_bbt(nsmtd)) != 0)
 		goto err_exit;
 
 	/* Register NAND partitions */
@@ -2367,7 +2346,7 @@ module_init(ns_init_module);
  */
 static void __exit ns_cleanup_module(void)
 {
-	struct nandsim *ns = ((struct nand_chip *)nsmtd->priv)->priv;
+	struct nandsim *ns = (struct nandsim *)(((struct nand_chip *)nsmtd->priv)->priv);
 	int i;
 
 	free_nandsim(ns);    /* Free nandsim private resources */

@@ -111,12 +111,12 @@ next:
 	@ to fault.  Emit the appropriate exception gunk to fix things up.
 	@ ??? For some reason, faults can happen at .Lx2 even with a
 	@ plain LDR instruction.  Weird, but it seems harmless.
-	.pushsection .fixup,"ax"
+	.section .fixup,"ax"
 	.align	2
 .Lfix:	mov	pc, r9			@ let the user eat segfaults
-	.popsection
+	.previous
 
-	.pushsection __ex_table,"a"
+	.section __ex_table,"a"
 	.align	3
 	.long	.Lx1, .Lfix
-	.popsection
+	.previous

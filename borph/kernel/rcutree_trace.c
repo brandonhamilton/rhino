@@ -50,7 +50,7 @@ static void print_one_rcu_data(struct seq_file *m, struct rcu_data *rdp)
 {
 	if (!rdp->beenonline)
 		return;
-	seq_printf(m, "%3d%cc=%lu g=%lu pq=%d pqc=%lu qp=%d",
+	seq_printf(m, "%3d%cc=%ld g=%ld pq=%d pqc=%ld qp=%d",
 		   rdp->cpu,
 		   cpu_is_offline(rdp->cpu) ? '!' : ' ',
 		   rdp->completed, rdp->gpnum,
@@ -64,9 +64,7 @@ static void print_one_rcu_data(struct seq_file *m, struct rcu_data *rdp)
 		   rdp->dynticks_fqs);
 #endif /* #ifdef CONFIG_NO_HZ */
 	seq_printf(m, " of=%lu ri=%lu", rdp->offline_fqs, rdp->resched_ipi);
-	seq_printf(m, " ql=%ld b=%ld", rdp->qlen, rdp->blimit);
-	seq_printf(m, " ci=%lu co=%lu ca=%lu\n",
-		   rdp->n_cbs_invoked, rdp->n_cbs_orphaned, rdp->n_cbs_adopted);
+	seq_printf(m, " ql=%ld b=%ld\n", rdp->qlen, rdp->blimit);
 }
 
 #define PRINT_RCU_DATA(name, func, m) \
@@ -107,7 +105,7 @@ static void print_one_rcu_data_csv(struct seq_file *m, struct rcu_data *rdp)
 {
 	if (!rdp->beenonline)
 		return;
-	seq_printf(m, "%d,%s,%lu,%lu,%d,%lu,%d",
+	seq_printf(m, "%d,%s,%ld,%ld,%d,%ld,%d",
 		   rdp->cpu,
 		   cpu_is_offline(rdp->cpu) ? "\"N\"" : "\"Y\"",
 		   rdp->completed, rdp->gpnum,
@@ -121,9 +119,7 @@ static void print_one_rcu_data_csv(struct seq_file *m, struct rcu_data *rdp)
 		   rdp->dynticks_fqs);
 #endif /* #ifdef CONFIG_NO_HZ */
 	seq_printf(m, ",%lu,%lu", rdp->offline_fqs, rdp->resched_ipi);
-	seq_printf(m, ",%ld,%ld", rdp->qlen, rdp->blimit);
-	seq_printf(m, ",%lu,%lu,%lu\n",
-		   rdp->n_cbs_invoked, rdp->n_cbs_orphaned, rdp->n_cbs_adopted);
+	seq_printf(m, ",%ld,%ld\n", rdp->qlen, rdp->blimit);
 }
 
 static int show_rcudata_csv(struct seq_file *m, void *unused)
@@ -132,7 +128,7 @@ static int show_rcudata_csv(struct seq_file *m, void *unused)
 #ifdef CONFIG_NO_HZ
 	seq_puts(m, "\"dt\",\"dt nesting\",\"dn\",\"df\",");
 #endif /* #ifdef CONFIG_NO_HZ */
-	seq_puts(m, "\"of\",\"ri\",\"ql\",\"b\",\"ci\",\"co\",\"ca\"\n");
+	seq_puts(m, "\"of\",\"ri\",\"ql\",\"b\"\n");
 #ifdef CONFIG_TREE_PREEMPT_RCU
 	seq_puts(m, "\"rcu_preempt:\"\n");
 	PRINT_RCU_DATA(rcu_preempt_data, print_one_rcu_data_csv, m);
@@ -159,13 +155,13 @@ static const struct file_operations rcudata_csv_fops = {
 
 static void print_one_rcu_state(struct seq_file *m, struct rcu_state *rsp)
 {
-	unsigned long gpnum;
+	long gpnum;
 	int level = 0;
 	int phase;
 	struct rcu_node *rnp;
 
 	gpnum = rsp->gpnum;
-	seq_printf(m, "c=%lu g=%lu s=%d jfq=%ld j=%x "
+	seq_printf(m, "c=%ld g=%ld s=%d jfq=%ld j=%x "
 		      "nfqs=%lu/nfqsng=%lu(%lu) fqlh=%lu oqlen=%ld\n",
 		   rsp->completed, gpnum, rsp->signaled,
 		   (long)(rsp->jiffies_force_qs - jiffies),
@@ -219,12 +215,12 @@ static const struct file_operations rcuhier_fops = {
 static int show_rcugp(struct seq_file *m, void *unused)
 {
 #ifdef CONFIG_TREE_PREEMPT_RCU
-	seq_printf(m, "rcu_preempt: completed=%ld  gpnum=%lu\n",
+	seq_printf(m, "rcu_preempt: completed=%ld  gpnum=%ld\n",
 		   rcu_preempt_state.completed, rcu_preempt_state.gpnum);
 #endif /* #ifdef CONFIG_TREE_PREEMPT_RCU */
-	seq_printf(m, "rcu_sched: completed=%ld  gpnum=%lu\n",
+	seq_printf(m, "rcu_sched: completed=%ld  gpnum=%ld\n",
 		   rcu_sched_state.completed, rcu_sched_state.gpnum);
-	seq_printf(m, "rcu_bh: completed=%ld  gpnum=%lu\n",
+	seq_printf(m, "rcu_bh: completed=%ld  gpnum=%ld\n",
 		   rcu_bh_state.completed, rcu_bh_state.gpnum);
 	return 0;
 }
@@ -245,13 +241,11 @@ static const struct file_operations rcugp_fops = {
 static void print_one_rcu_pending(struct seq_file *m, struct rcu_data *rdp)
 {
 	seq_printf(m, "%3d%cnp=%ld "
-		   "qsp=%ld rpq=%ld cbr=%ld cng=%ld "
-		   "gpc=%ld gps=%ld nf=%ld nn=%ld\n",
+		   "qsp=%ld cbr=%ld cng=%ld gpc=%ld gps=%ld nf=%ld nn=%ld\n",
 		   rdp->cpu,
 		   cpu_is_offline(rdp->cpu) ? '!' : ' ',
 		   rdp->n_rcu_pending,
 		   rdp->n_rp_qs_pending,
-		   rdp->n_rp_report_qs,
 		   rdp->n_rp_cb_ready,
 		   rdp->n_rp_cpu_needs_gp,
 		   rdp->n_rp_gp_completed,
@@ -266,7 +260,7 @@ static void print_rcu_pendings(struct seq_file *m, struct rcu_state *rsp)
 	struct rcu_data *rdp;
 
 	for_each_possible_cpu(cpu) {
-		rdp = per_cpu_ptr(rsp->rda, cpu);
+		rdp = rsp->rda[cpu];
 		if (rdp->beenonline)
 			print_one_rcu_pending(m, rdp);
 	}

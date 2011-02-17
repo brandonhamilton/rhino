@@ -67,15 +67,9 @@
 #define MACH_LEMOTE_ML2F7      3
 #define MACH_LEMOTE_YL2F89     4
 #define MACH_DEXXON_GDIUM2F10  5
-#define MACH_LEMOTE_NAS        6
-#define MACH_LEMOTE_LL2F       7
-#define MACH_LOONGSON_END      8
+#define MACH_LOONGSON_END      6
 
-/*
- * Valid machtype for group INGENIC
- */
-#define  MACH_INGENIC_JZ4730	0	/* JZ4730 SOC		*/
-#define  MACH_INGENIC_JZ4740	1	/* JZ4740 SOC		*/
+#define CL_SIZE			COMMAND_LINE_SIZE
 
 extern char *system_type;
 const char *get_system_type(void);
@@ -113,7 +107,7 @@ extern void free_init_pages(const char *what,
 /*
  * Initial kernel command line, usually setup by prom_init()
  */
-extern char arcs_cmdline[COMMAND_LINE_SIZE];
+extern char arcs_cmdline[CL_SIZE];
 
 /*
  * Registers a0, a1, a3 and a4 as passed to the kernel entry by firmware
@@ -124,17 +118,5 @@ extern unsigned long fw_arg0, fw_arg1, fw_arg2, fw_arg3;
  * Platform memory detection hook called by setup_arch
  */
 extern void plat_mem_setup(void);
-
-#ifdef CONFIG_SWIOTLB
-/*
- * Optional platform hook to call swiotlb_setup().
- */
-extern void plat_swiotlb_setup(void);
-
-#else
-
-static inline void plat_swiotlb_setup(void) {}
-
-#endif /* CONFIG_SWIOTLB */
 
 #endif /* _ASM_BOOTINFO_H */

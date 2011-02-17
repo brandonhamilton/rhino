@@ -18,7 +18,6 @@
  */
 
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/jiffies.h>
 #include <asm/irq.h>
@@ -987,7 +986,7 @@ void __init iop13xx_pci_init(void)
 		iop13xx_atux_setup();
 	}
 
-	hook_fault_code(16+6, iop13xx_pci_abort, SIGBUS, 0,
+	hook_fault_code(16+6, iop13xx_pci_abort, SIGBUS,
 			"imprecise external abort");
 }
 

@@ -20,7 +20,6 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/if_vlan.h>
-#include <linux/slab.h>
 
 #include <net/pkt_cls.h>
 #include <net/ip.h>
@@ -65,134 +64,109 @@ static inline u32 addr_fold(void *addr)
 	return (a & 0xFFFFFFFF) ^ (BITS_PER_LONG > 32 ? a >> 32 : 0);
 }
 
-static u32 flow_get_src(struct sk_buff *skb)
+static u32 flow_get_src(const struct sk_buff *skb)
 {
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
-		if (pskb_network_may_pull(skb, sizeof(struct iphdr)))
-			return ntohl(ip_hdr(skb)->saddr);
-		break;
+		return ntohl(ip_hdr(skb)->saddr);
 	case htons(ETH_P_IPV6):
-		if (pskb_network_may_pull(skb, sizeof(struct ipv6hdr)))
-			return ntohl(ipv6_hdr(skb)->saddr.s6_addr32[3]);
-		break;
+		return ntohl(ipv6_hdr(skb)->saddr.s6_addr32[3]);
+	default:
+		return addr_fold(skb->sk);
 	}
-
-	return addr_fold(skb->sk);
 }
 
-static u32 flow_get_dst(struct sk_buff *skb)
+static u32 flow_get_dst(const struct sk_buff *skb)
 {
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
-		if (pskb_network_may_pull(skb, sizeof(struct iphdr)))
-			return ntohl(ip_hdr(skb)->daddr);
-		break;
+		return ntohl(ip_hdr(skb)->daddr);
 	case htons(ETH_P_IPV6):
-		if (pskb_network_may_pull(skb, sizeof(struct ipv6hdr)))
-			return ntohl(ipv6_hdr(skb)->daddr.s6_addr32[3]);
-		break;
+		return ntohl(ipv6_hdr(skb)->daddr.s6_addr32[3]);
+	default:
+		return addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
 	}
-
-	return addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
 }
 
-static u32 flow_get_proto(struct sk_buff *skb)
+static u32 flow_get_proto(const struct sk_buff *skb)
 {
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
-		return pskb_network_may_pull(skb, sizeof(struct iphdr)) ?
-		       ip_hdr(skb)->protocol : 0;
+		return ip_hdr(skb)->protocol;
 	case htons(ETH_P_IPV6):
-		return pskb_network_may_pull(skb, sizeof(struct ipv6hdr)) ?
-		       ipv6_hdr(skb)->nexthdr : 0;
+		return ipv6_hdr(skb)->nexthdr;
 	default:
 		return 0;
 	}
 }
 
-static u32 flow_get_proto_src(struct sk_buff *skb)
+static int has_ports(u8 protocol)
 {
-	switch (skb->protocol) {
-	case htons(ETH_P_IP): {
-		struct iphdr *iph;
-		int poff;
-
-		if (!pskb_network_may_pull(skb, sizeof(*iph)))
-			break;
-		iph = ip_hdr(skb);
-		if (iph->frag_off & htons(IP_MF|IP_OFFSET))
-			break;
-		poff = proto_ports_offset(iph->protocol);
-		if (poff >= 0 &&
-		    pskb_network_may_pull(skb, iph->ihl * 4 + 2 + poff)) {
-			iph = ip_hdr(skb);
-			return ntohs(*(__be16 *)((void *)iph + iph->ihl * 4 +
-						 poff));
-		}
-		break;
+	switch (protocol) {
+	case IPPROTO_TCP:
+	case IPPROTO_UDP:
+	case IPPROTO_UDPLITE:
+	case IPPROTO_SCTP:
+	case IPPROTO_DCCP:
+	case IPPROTO_ESP:
+		return 1;
+	default:
+		return 0;
 	}
-	case htons(ETH_P_IPV6): {
-		struct ipv6hdr *iph;
-		int poff;
-
-		if (!pskb_network_may_pull(skb, sizeof(*iph)))
-			break;
-		iph = ipv6_hdr(skb);
-		poff = proto_ports_offset(iph->nexthdr);
-		if (poff >= 0 &&
-		    pskb_network_may_pull(skb, sizeof(*iph) + poff + 2)) {
-			iph = ipv6_hdr(skb);
-			return ntohs(*(__be16 *)((void *)iph + sizeof(*iph) +
-						 poff));
-		}
-		break;
-	}
-	}
-
-	return addr_fold(skb->sk);
 }
 
-static u32 flow_get_proto_dst(struct sk_buff *skb)
+static u32 flow_get_proto_src(const struct sk_buff *skb)
 {
+	u32 res = 0;
+
 	switch (skb->protocol) {
 	case htons(ETH_P_IP): {
-		struct iphdr *iph;
-		int poff;
+		struct iphdr *iph = ip_hdr(skb);
 
-		if (!pskb_network_may_pull(skb, sizeof(*iph)))
-			break;
-		iph = ip_hdr(skb);
-		if (iph->frag_off & htons(IP_MF|IP_OFFSET))
-			break;
-		poff = proto_ports_offset(iph->protocol);
-		if (poff >= 0 &&
-		    pskb_network_may_pull(skb, iph->ihl * 4 + 4 + poff)) {
-			iph = ip_hdr(skb);
-			return ntohs(*(__be16 *)((void *)iph + iph->ihl * 4 +
-						 2 + poff));
-		}
+		if (!(iph->frag_off&htons(IP_MF|IP_OFFSET)) &&
+		    has_ports(iph->protocol))
+			res = ntohs(*(__be16 *)((void *)iph + iph->ihl * 4));
 		break;
 	}
 	case htons(ETH_P_IPV6): {
-		struct ipv6hdr *iph;
-		int poff;
+		struct ipv6hdr *iph = ipv6_hdr(skb);
 
-		if (!pskb_network_may_pull(skb, sizeof(*iph)))
-			break;
-		iph = ipv6_hdr(skb);
-		poff = proto_ports_offset(iph->nexthdr);
-		if (poff >= 0 &&
-		    pskb_network_may_pull(skb, sizeof(*iph) + poff + 4)) {
-			iph = ipv6_hdr(skb);
-			return ntohs(*(__be16 *)((void *)iph + sizeof(*iph) +
-						 poff + 2));
-		}
+		if (has_ports(iph->nexthdr))
+			res = ntohs(*(__be16 *)&iph[1]);
 		break;
 	}
+	default:
+		res = addr_fold(skb->sk);
 	}
 
-	return addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
+	return res;
+}
+
+static u32 flow_get_proto_dst(const struct sk_buff *skb)
+{
+	u32 res = 0;
+
+	switch (skb->protocol) {
+	case htons(ETH_P_IP): {
+		struct iphdr *iph = ip_hdr(skb);
+
+		if (!(iph->frag_off&htons(IP_MF|IP_OFFSET)) &&
+		    has_ports(iph->protocol))
+			res = ntohs(*(__be16 *)((void *)iph + iph->ihl * 4 + 2));
+		break;
+	}
+	case htons(ETH_P_IPV6): {
+		struct ipv6hdr *iph = ipv6_hdr(skb);
+
+		if (has_ports(iph->nexthdr))
+			res = ntohs(*(__be16 *)((void *)&iph[1] + 2));
+		break;
+	}
+	default:
+		res = addr_fold(skb_dst(skb)) ^ (__force u16)skb->protocol;
+	}
+
+	return res;
 }
 
 static u32 flow_get_iif(const struct sk_buff *skb)
@@ -236,7 +210,7 @@ static u32 flow_get_nfct(const struct sk_buff *skb)
 })
 #endif
 
-static u32 flow_get_nfct_src(struct sk_buff *skb)
+static u32 flow_get_nfct_src(const struct sk_buff *skb)
 {
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
@@ -248,7 +222,7 @@ fallback:
 	return flow_get_src(skb);
 }
 
-static u32 flow_get_nfct_dst(struct sk_buff *skb)
+static u32 flow_get_nfct_dst(const struct sk_buff *skb)
 {
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
@@ -260,14 +234,14 @@ fallback:
 	return flow_get_dst(skb);
 }
 
-static u32 flow_get_nfct_proto_src(struct sk_buff *skb)
+static u32 flow_get_nfct_proto_src(const struct sk_buff *skb)
 {
 	return ntohs(CTTUPLE(skb, src.u.all));
 fallback:
 	return flow_get_proto_src(skb);
 }
 
-static u32 flow_get_nfct_proto_dst(struct sk_buff *skb)
+static u32 flow_get_nfct_proto_dst(const struct sk_buff *skb)
 {
 	return ntohs(CTTUPLE(skb, dst.u.all));
 fallback:
@@ -306,12 +280,7 @@ static u32 flow_get_vlan_tag(const struct sk_buff *skb)
 	return tag & VLAN_VID_MASK;
 }
 
-static u32 flow_get_rxhash(struct sk_buff *skb)
-{
-	return skb_get_rxhash(skb);
-}
-
-static u32 flow_key_get(struct sk_buff *skb, int key)
+static u32 flow_key_get(const struct sk_buff *skb, int key)
 {
 	switch (key) {
 	case FLOW_KEY_SRC:
@@ -348,8 +317,6 @@ static u32 flow_key_get(struct sk_buff *skb, int key)
 		return flow_get_skgid(skb);
 	case FLOW_KEY_VLAN_TAG:
 		return flow_get_vlan_tag(skb);
-	case FLOW_KEY_RXHASH:
-		return flow_get_rxhash(skb);
 	default:
 		WARN_ON(1);
 		return 0;
@@ -634,6 +601,7 @@ static unsigned long flow_get(struct tcf_proto *tp, u32 handle)
 
 static void flow_put(struct tcf_proto *tp, unsigned long f)
 {
+	return;
 }
 
 static int flow_dump(struct tcf_proto *tp, unsigned long fh,

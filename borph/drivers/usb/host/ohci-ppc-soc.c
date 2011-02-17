@@ -41,14 +41,14 @@ static int usb_hcd_ppc_soc_probe(const struct hc_driver *driver,
 
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!res) {
-		pr_debug("%s: no irq\n", __FILE__);
+		pr_debug(__FILE__ ": no irq\n");
 		return -ENODEV;
 	}
 	irq = res->start;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
-		pr_debug("%s: no reg addr\n", __FILE__);
+		pr_debug(__FILE__ ": no reg addr\n");
 		return -ENODEV;
 	}
 
@@ -59,14 +59,14 @@ static int usb_hcd_ppc_soc_probe(const struct hc_driver *driver,
 	hcd->rsrc_len = res->end - res->start + 1;
 
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len, hcd_name)) {
-		pr_debug("%s: request_mem_region failed\n", __FILE__);
+		pr_debug(__FILE__ ": request_mem_region failed\n");
 		retval = -EBUSY;
 		goto err1;
 	}
 
 	hcd->regs = ioremap(hcd->rsrc_start, hcd->rsrc_len);
 	if (!hcd->regs) {
-		pr_debug("%s: ioremap failed\n", __FILE__);
+		pr_debug(__FILE__ ": ioremap failed\n");
 		retval = -ENOMEM;
 		goto err2;
 	}

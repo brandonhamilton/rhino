@@ -36,7 +36,7 @@
 #include <linux/ioport.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/reboot.h>
@@ -54,7 +54,6 @@
 #define DAC960_GAM_MINOR	252
 
 
-static DEFINE_MUTEX(DAC960_mutex);
 static DAC960_Controller_T *DAC960_Controllers[DAC960_MaxControllers];
 static int DAC960_ControllerCount;
 static struct proc_dir_entry *DAC960_ProcDirectoryEntry;
@@ -80,28 +79,23 @@ static int DAC960_open(struct block_device *bdev, fmode_t mode)
 	struct gendisk *disk = bdev->bd_disk;
 	DAC960_Controller_T *p = disk->queue->queuedata;
 	int drive_nr = (long)disk->private_data;
-	int ret = -ENXIO;
 
-	mutex_lock(&DAC960_mutex);
 	if (p->FirmwareType == DAC960_V1_Controller) {
 		if (p->V1.LogicalDriveInformation[drive_nr].
 		    LogicalDriveState == DAC960_V1_LogicalDrive_Offline)
-			goto out;
+			return -ENXIO;
 	} else {
 		DAC960_V2_LogicalDeviceInfo_T *i =
 			p->V2.LogicalDeviceInformation[drive_nr];
 		if (!i || i->LogicalDeviceState == DAC960_V2_LogicalDevice_Offline)
-			goto out;
+			return -ENXIO;
 	}
 
 	check_disk_change(bdev);
 
 	if (!get_capacity(p->disks[drive_nr]))
-		goto out;
-	ret = 0;
-out:
-	mutex_unlock(&DAC960_mutex);
-	return ret;
+		return -ENXIO;
+	return 0;
 }
 
 static int DAC960_getgeo(struct block_device *bdev, struct hd_geometry *geo)
@@ -2539,8 +2533,9 @@ static bool DAC960_RegisterBlockDevice(DAC960_Controller_T *Controller)
   	Controller->RequestQueue[n] = RequestQueue;
   	blk_queue_bounce_limit(RequestQueue, Controller->BounceBufferLimit);
   	RequestQueue->queuedata = Controller;
-	blk_queue_max_segments(RequestQueue, Controller->DriverScatterGatherLimit);
-	blk_queue_max_hw_sectors(RequestQueue, Controller->MaxBlocksPerCommand);
+  	blk_queue_max_hw_segments(RequestQueue, Controller->DriverScatterGatherLimit);
+	blk_queue_max_phys_segments(RequestQueue, Controller->DriverScatterGatherLimit);
+	blk_queue_max_sectors(RequestQueue, Controller->MaxBlocksPerCommand);
 	disk->queue = RequestQueue;
 	sprintf(disk->disk_name, "rd/c%dd%d", Controller->ControllerNumber, n);
 	disk->major = MajorNumber;
@@ -6626,7 +6621,7 @@ static long DAC960_gam_ioctl(struct file *file, unsigned int Request,
   long ErrorCode = 0;
   if (!capable(CAP_SYS_ADMIN)) return -EACCES;
 
-  mutex_lock(&DAC960_mutex);
+  lock_kernel();
   switch (Request)
     {
     case DAC960_IOCTL_GET_CONTROLLER_COUNT:
@@ -7057,14 +7052,13 @@ static long DAC960_gam_ioctl(struct file *file, unsigned int Request,
       default:
 	ErrorCode = -ENOTTY;
     }
-  mutex_unlock(&DAC960_mutex);
+  unlock_kernel();
   return ErrorCode;
 }
 
 static const struct file_operations DAC960_gam_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= DAC960_gam_ioctl,
-	.llseek		= noop_llseek,
+	.unlocked_ioctl	= DAC960_gam_ioctl
 };
 
 static struct miscdevice DAC960_gam_dev = {
@@ -7107,7 +7101,7 @@ static struct DAC960_privdata DAC960_BA_privdata = {
 
 static struct DAC960_privdata DAC960_LP_privdata = {
 	.HardwareType =		DAC960_LP_Controller,
-	.FirmwareType 	=	DAC960_V2_Controller,
+	.FirmwareType 	=	DAC960_LP_Controller,
 	.InterruptHandler =	DAC960_LP_InterruptHandler,
 	.MemoryWindowSize =	DAC960_LP_RegisterWindowSize,
 };
@@ -7140,7 +7134,7 @@ static struct DAC960_privdata DAC960_P_privdata = {
 	.MemoryWindowSize =	DAC960_PD_RegisterWindowSize,
 };
 
-static const struct pci_device_id DAC960_id_table[] = {
+static struct pci_device_id DAC960_id_table[] = {
 	{
 		.vendor 	= PCI_VENDOR_ID_MYLEX,
 		.device		= PCI_DEVICE_ID_MYLEX_DAC960_GEM,

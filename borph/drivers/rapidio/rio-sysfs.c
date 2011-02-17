@@ -40,6 +40,9 @@ static ssize_t routes_show(struct device *dev, struct device_attribute *attr, ch
 	char *str = buf;
 	int i;
 
+	if (!rdev->rswitch)
+		goto out;
+
 	for (i = 0; i < RIO_MAX_ROUTE_ENTRIES(rdev->net->hport->sys_size);
 			i++) {
 		if (rdev->rswitch->route_table[i] == RIO_INVALID_ROUTE)
@@ -49,6 +52,7 @@ static ssize_t routes_show(struct device *dev, struct device_attribute *attr, ch
 			    rdev->rswitch->route_table[i]);
 	}
 
+      out:
 	return (str - buf);
 }
 
@@ -59,14 +63,12 @@ struct device_attribute rio_dev_attrs[] = {
 	__ATTR_RO(asm_did),
 	__ATTR_RO(asm_vid),
 	__ATTR_RO(asm_rev),
+	__ATTR_RO(routes),
 	__ATTR_NULL,
 };
 
-static DEVICE_ATTR(routes, S_IRUGO, routes_show, NULL);
-
 static ssize_t
-rio_read_config(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
+rio_read_config(struct kobject *kobj, struct bin_attribute *bin_attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct rio_dev *dev =
@@ -137,8 +139,7 @@ rio_read_config(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-rio_write_config(struct file *filp, struct kobject *kobj,
-		 struct bin_attribute *bin_attr,
+rio_write_config(struct kobject *kobj, struct bin_attribute *bin_attr,
 		 char *buf, loff_t off, size_t count)
 {
 	struct rio_dev *dev =
@@ -215,17 +216,7 @@ int rio_create_sysfs_dev_files(struct rio_dev *rdev)
 {
 	int err = 0;
 
-	err = device_create_bin_file(&rdev->dev, &rio_config_attr);
-
-	if (!err && rdev->rswitch) {
-		err = device_create_file(&rdev->dev, &dev_attr_routes);
-		if (!err && rdev->rswitch->sw_sysfs)
-			err = rdev->rswitch->sw_sysfs(rdev, RIO_SW_SYSFS_CREATE);
-	}
-
-	if (err)
-		pr_warning("RIO: Failed to create attribute file(s) for %s\n",
-			   rio_name(rdev));
+	err = sysfs_create_bin_file(&rdev->dev.kobj, &rio_config_attr);
 
 	return err;
 }
@@ -238,10 +229,5 @@ int rio_create_sysfs_dev_files(struct rio_dev *rdev)
  */
 void rio_remove_sysfs_dev_files(struct rio_dev *rdev)
 {
-	device_remove_bin_file(&rdev->dev, &rio_config_attr);
-	if (rdev->rswitch) {
-		device_remove_file(&rdev->dev, &dev_attr_routes);
-		if (rdev->rswitch->sw_sysfs)
-			rdev->rswitch->sw_sysfs(rdev, RIO_SW_SYSFS_REMOVE);
-	}
+	sysfs_remove_bin_file(&rdev->dev.kobj, &rio_config_attr);
 }

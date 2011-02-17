@@ -850,6 +850,7 @@ static int tcm825x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *did)
 {
 	struct tcm825x_sensor *sensor = &tcm825x;
+	int rval;
 
 	if (i2c_get_clientdata(client))
 		return -EBUSY;
@@ -870,7 +871,11 @@ static int tcm825x_probe(struct i2c_client *client,
 	sensor->pix.height = tcm825x_sizes[QVGA].height;
 	sensor->pix.pixelformat = V4L2_PIX_FMT_RGB565;
 
-	return v4l2_int_device_register(sensor->v4l2_int_device);
+	rval = v4l2_int_device_register(sensor->v4l2_int_device);
+	if (rval)
+		i2c_set_clientdata(client, NULL);
+
+	return rval;
 }
 
 static int tcm825x_remove(struct i2c_client *client)
@@ -881,6 +886,7 @@ static int tcm825x_remove(struct i2c_client *client)
 		return -ENODEV;	/* our client isn't attached */
 
 	v4l2_int_device_unregister(sensor->v4l2_int_device);
+	i2c_set_clientdata(client, NULL);
 
 	return 0;
 }

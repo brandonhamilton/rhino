@@ -24,6 +24,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/delay.h>
@@ -41,7 +42,7 @@
 #include "musb_core.h"
 
 #ifdef CONFIG_MACH_DAVINCI_EVM
-#define GPIO_nVBUS_DRV		160
+#define GPIO_nVBUS_DRV		144
 #endif
 
 #include "davinci.h"
@@ -273,7 +274,7 @@ static irqreturn_t davinci_interrupt(int irq, void *__hci)
 	/* NOTE: DaVinci shadows the Mentor IRQs.  Don't manage them through
 	 * the Mentor registers (except for setup), use the TI ones and EOI.
 	 *
-	 * Docs describe irq "vector" registers associated with the CPPI and
+	 * Docs describe irq "vector" registers asociated with the CPPI and
 	 * USB EOI registers.  These hold a bitmask corresponding to the
 	 * current IRQ, not an irq handler address.  Would using those bits
 	 * resolve some of the races observed in this dispatch code??
@@ -376,7 +377,7 @@ int musb_platform_set_mode(struct musb *musb, u8 mode)
 	return -EIO;
 }
 
-int __init musb_platform_init(struct musb *musb, void *board_data)
+int __init musb_platform_init(struct musb *musb)
 {
 	void __iomem	*tibase = musb->ctrl_base;
 	u32		revision;
@@ -444,9 +445,6 @@ int __init musb_platform_init(struct musb *musb, void *board_data)
 	return 0;
 
 fail:
-	clk_disable(musb->clock);
-
-	otg_put_transceiver(musb->xceiv);
 	usb_nop_xceiv_unregister();
 	return -ENODEV;
 }
@@ -497,7 +495,6 @@ int musb_platform_exit(struct musb *musb)
 
 	clk_disable(musb->clock);
 
-	otg_put_transceiver(musb->xceiv);
 	usb_nop_xceiv_unregister();
 
 	return 0;

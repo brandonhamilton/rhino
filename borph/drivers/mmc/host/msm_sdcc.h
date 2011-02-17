@@ -171,7 +171,6 @@ struct msmsdcc_dma_data {
 	int				channel;
 	struct msmsdcc_host		*host;
 	int				busy; /* Set if DM is busy */
-	int				active;
 };
 
 struct msmsdcc_pio_data {
@@ -214,7 +213,7 @@ struct msmsdcc_host {
 	struct clk		*clk;		/* main MMC bus clock */
 	struct clk		*pclk;		/* SDCC peripheral bus clock */
 	unsigned int		clks_on;	/* set if clocks are enabled */
-	struct timer_list	busclk_timer;
+	struct timer_list	command_timer;
 
 	unsigned int		eject;		/* eject state */
 
@@ -225,7 +224,7 @@ struct msmsdcc_host {
 
 	u32			pwr;
 	u32			saved_irq0mask;	/* MMCIMASK0 reg value */
-	struct msm_mmc_platform_data *plat;
+	struct mmc_platform_data *plat;
 
 	struct timer_list	timer;
 	unsigned int		oldstat;
@@ -234,14 +233,6 @@ struct msmsdcc_host {
 	struct msmsdcc_pio_data	pio;
 	int			cmdpoll;
 	struct msmsdcc_stats	stats;
-
-	/* Command parameters */
-	unsigned int		cmd_timeout;
-	unsigned int		cmd_pio_irqmask;
-	unsigned int		cmd_datactrl;
-	struct mmc_command	*cmd_cmd;
-	u32			cmd_c;
-
 };
 
 #endif

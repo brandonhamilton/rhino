@@ -32,9 +32,10 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/ss.h>
 
 #include <asm/hardware/scoop.h>
@@ -64,7 +65,7 @@ static int (*sa11x0_pcmcia_hw_init[])(struct device *dev) = {
 #endif
 };
 
-static int __devinit sa11x0_drv_pcmcia_probe(struct platform_device *dev)
+static int sa11x0_drv_pcmcia_probe(struct platform_device *dev)
 {
 	int i, ret = -ENODEV;
 
@@ -94,6 +95,17 @@ static int sa11x0_drv_pcmcia_remove(struct platform_device *dev)
 	return 0;
 }
 
+static int sa11x0_drv_pcmcia_suspend(struct platform_device *dev,
+				     pm_message_t state)
+{
+	return pcmcia_socket_dev_suspend(&dev->dev);
+}
+
+static int sa11x0_drv_pcmcia_resume(struct platform_device *dev)
+{
+	return pcmcia_socket_dev_resume(&dev->dev);
+}
+
 static struct platform_driver sa11x0_pcmcia_driver = {
 	.driver = {
 		.name		= "sa11x0-pcmcia",
@@ -101,6 +113,8 @@ static struct platform_driver sa11x0_pcmcia_driver = {
 	},
 	.probe		= sa11x0_drv_pcmcia_probe,
 	.remove		= sa11x0_drv_pcmcia_remove,
+	.suspend 	= sa11x0_drv_pcmcia_suspend,
+	.resume 	= sa11x0_drv_pcmcia_resume,
 };
 
 /* sa11x0_pcmcia_init()

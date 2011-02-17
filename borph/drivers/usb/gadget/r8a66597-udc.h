@@ -91,7 +91,7 @@ struct r8a66597_ep {
 
 struct r8a66597 {
 	spinlock_t		lock;
-	void __iomem		*reg;
+	unsigned long		reg;
 
 #ifdef CONFIG_HAVE_CLK
 	struct clk *clk;
@@ -127,7 +127,7 @@ struct r8a66597 {
 
 static inline u16 r8a66597_read(struct r8a66597 *r8a66597, unsigned long offset)
 {
-	return ioread16(r8a66597->reg + offset);
+	return inw(r8a66597->reg + offset);
 }
 
 static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
@@ -135,8 +135,8 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 				      unsigned char *buf,
 				      int len)
 {
-	void __iomem *fifoaddr = r8a66597->reg + offset;
-	unsigned int data = 0;
+	unsigned long fifoaddr = r8a66597->reg + offset;
+	unsigned int data;
 	int i;
 
 	if (r8a66597->pdata->on_chip) {
@@ -144,7 +144,7 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 
 		/* aligned buf case */
 		if (len >= 4 && !((unsigned long)buf & 0x03)) {
-			ioread32_rep(fifoaddr, buf, len / 4);
+			insl(fifoaddr, buf, len / 4);
 			buf += len & ~0x03;
 			len &= 0x03;
 		}
@@ -152,7 +152,7 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 		/* unaligned buf case */
 		for (i = 0; i < len; i++) {
 			if (!(i & 0x03))
-				data = ioread32(fifoaddr);
+				data = inl(fifoaddr);
 
 			buf[i] = (data >> ((i & 0x03) * 8)) & 0xff;
 		}
@@ -161,7 +161,7 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 
 		/* aligned buf case */
 		if (len >= 2 && !((unsigned long)buf & 0x01)) {
-			ioread16_rep(fifoaddr, buf, len / 2);
+			insw(fifoaddr, buf, len / 2);
 			buf += len & ~0x01;
 			len &= 0x01;
 		}
@@ -169,7 +169,7 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 		/* unaligned buf case */
 		for (i = 0; i < len; i++) {
 			if (!(i & 0x01))
-				data = ioread16(fifoaddr);
+				data = inw(fifoaddr);
 
 			buf[i] = (data >> ((i & 0x01) * 8)) & 0xff;
 		}
@@ -179,7 +179,7 @@ static inline void r8a66597_read_fifo(struct r8a66597 *r8a66597,
 static inline void r8a66597_write(struct r8a66597 *r8a66597, u16 val,
 				  unsigned long offset)
 {
-	iowrite16(val, r8a66597->reg + offset);
+	outw(val, r8a66597->reg + offset);
 }
 
 static inline void r8a66597_write_fifo(struct r8a66597 *r8a66597,
@@ -187,21 +187,21 @@ static inline void r8a66597_write_fifo(struct r8a66597 *r8a66597,
 				       unsigned char *buf,
 				       int len)
 {
-	void __iomem *fifoaddr = r8a66597->reg + offset;
+	unsigned long fifoaddr = r8a66597->reg + offset;
 	int adj = 0;
 	int i;
 
 	if (r8a66597->pdata->on_chip) {
 		/* 32-bit access only if buf is 32-bit aligned */
 		if (len >= 4 && !((unsigned long)buf & 0x03)) {
-			iowrite32_rep(fifoaddr, buf, len / 4);
+			outsl(fifoaddr, buf, len / 4);
 			buf += len & ~0x03;
 			len &= 0x03;
 		}
 	} else {
 		/* 16-bit access only if buf is 16-bit aligned */
 		if (len >= 2 && !((unsigned long)buf & 0x01)) {
-			iowrite16_rep(fifoaddr, buf, len / 2);
+			outsw(fifoaddr, buf, len / 2);
 			buf += len & ~0x01;
 			len &= 0x01;
 		}
@@ -216,7 +216,7 @@ static inline void r8a66597_write_fifo(struct r8a66597 *r8a66597,
 	}
 
 	for (i = 0; i < len; i++)
-		iowrite8(buf[i], fifoaddr + adj - (i & adj));
+		outb(buf[i], fifoaddr + adj - (i & adj));
 }
 
 static inline void r8a66597_mdfy(struct r8a66597 *r8a66597,

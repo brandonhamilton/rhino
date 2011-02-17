@@ -25,7 +25,6 @@
 #define debug(format, arg...) pr_debug("hid-pidff: " format "\n" , ## arg)
 
 #include <linux/input.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 
 #include <linux/hid.h>

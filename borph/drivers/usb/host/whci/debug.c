@@ -15,7 +15,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -30,7 +29,7 @@ struct whc_dbg {
 	struct dentry *pzl_f;
 };
 
-static void qset_print(struct seq_file *s, struct whc_qset *qset)
+void qset_print(struct seq_file *s, struct whc_qset *qset)
 {
 	static const char *qh_type[] = {
 		"ctrl", "isoc", "bulk", "intr", "rsvd", "rsvd", "rsvd", "lpintr", };

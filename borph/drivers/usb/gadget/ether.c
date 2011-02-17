@@ -102,6 +102,10 @@ static inline bool has_rndis(void)
 #endif
 }
 
+static char manufacturer[50];
+
+static u16 vendorID;
+
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -210,8 +214,6 @@ static const struct usb_descriptor_header *otg_desc[] = {
 #define STRING_MANUFACTURER_IDX		0
 #define STRING_PRODUCT_IDX		1
 
-static char manufacturer[50];
-
 static struct usb_string strings_dev[] = {
 	[STRING_MANUFACTURER_IDX].s = manufacturer,
 	[STRING_PRODUCT_IDX].s = PREFIX DRIVER_DESC,
@@ -251,6 +253,7 @@ static int __init rndis_do_config(struct usb_configuration *c)
 
 static struct usb_configuration rndis_config_driver = {
 	.label			= "RNDIS",
+	.bind			= rndis_do_config,
 	.bConfigurationValue	= 2,
 	/* .iConfiguration = DYNAMIC */
 	.bmAttributes		= USB_CONFIG_ATT_SELFPOWER,
@@ -258,7 +261,7 @@ static struct usb_configuration rndis_config_driver = {
 
 /*-------------------------------------------------------------------------*/
 
-#ifdef CONFIG_USB_ETH_EEM
+#ifdef USB_ETH_EEM
 static int use_eem = 1;
 #else
 static int use_eem;
@@ -288,6 +291,7 @@ static int __init eth_do_config(struct usb_configuration *c)
 
 static struct usb_configuration eth_config_driver = {
 	/* .label = f(hardware) */
+	.bind			= eth_do_config,
 	.bConfigurationValue	= 1,
 	/* .iConfiguration = DYNAMIC */
 	.bmAttributes		= USB_CONFIG_ATT_SELFPOWER,
@@ -332,6 +336,8 @@ static int __init eth_bind(struct usb_composite_dev *cdev)
 		device_desc.bNumConfigurations = 2;
 	}
 
+	vendorID = device_desc.idVendor;
+
 	gcnum = usb_gadget_controller_number(gadget);
 	if (gcnum >= 0)
 		device_desc.bcdDevice = cpu_to_le16(0x0300 | gcnum);
@@ -371,13 +377,12 @@ static int __init eth_bind(struct usb_composite_dev *cdev)
 
 	/* register our configuration(s); RNDIS first, if it's used */
 	if (has_rndis()) {
-		status = usb_add_config(cdev, &rndis_config_driver,
-				rndis_do_config);
+		status = usb_add_config(cdev, &rndis_config_driver);
 		if (status < 0)
 			goto fail;
 	}
 
-	status = usb_add_config(cdev, &eth_config_driver, eth_do_config);
+	status = usb_add_config(cdev, &eth_config_driver);
 	if (status < 0)
 		goto fail;
 
@@ -401,6 +406,7 @@ static struct usb_composite_driver eth_driver = {
 	.name		= "g_ether",
 	.dev		= &device_desc,
 	.strings	= dev_strings,
+	.bind		= eth_bind,
 	.unbind		= __exit_p(eth_unbind),
 };
 
@@ -410,7 +416,7 @@ MODULE_LICENSE("GPL");
 
 static int __init init(void)
 {
-	return usb_composite_probe(&eth_driver, eth_bind);
+	return usb_composite_register(&eth_driver);
 }
 module_init(init);
 

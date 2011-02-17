@@ -78,6 +78,7 @@ static char lancestr[] = "LANCE";
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -93,7 +94,6 @@ static char lancestr[] = "LANCE";
 #include <linux/dma-mapping.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/gfp.h>
 
 #include <asm/system.h>
 #include <asm/io.h>
@@ -250,7 +250,7 @@ struct lance_private {
 	int		rx_new, tx_new;
 	int		rx_old, tx_old;
 
-	struct platform_device *ledma;	/* If set this points to ledma	*/
+	struct of_device *ledma;	/* If set this points to ledma	*/
 	char		tpe;		/* cable-selection is TPE	*/
 	char		auto_select;	/* cable-selection by carrier	*/
 	char		burst_sizes;	/* ledma SBus burst sizes	*/
@@ -265,8 +265,8 @@ struct lance_private {
 	char	       	       *name;
 	dma_addr_t		init_block_dvma;
 	struct net_device      *dev;		  /* Backpointer	*/
-	struct platform_device       *op;
-	struct platform_device       *lebuffer;
+	struct of_device       *op;
+	struct of_device       *lebuffer;
 	struct timer_list       multicast_timer;
 };
 
@@ -1003,7 +1003,7 @@ static int lance_reset(struct net_device *dev)
 	}
 	lp->init_ring(dev);
 	load_csrs(lp);
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	status = init_restart_lance(lp);
 	return status;
 }
@@ -1054,7 +1054,7 @@ static void lance_piocopy_from_skb(void __iomem *dest, unsigned char *src, int l
 		}
 		src = (char *) p16;
 		break;
-	}
+	};
 	if (len >= 2) {
 		u16 val = src[0] << 8 | src[1];
 		sbus_writew(val, piobuf);
@@ -1160,6 +1160,7 @@ static int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_unlock_irq(&lp->lock);
 
+	dev->trans_start = jiffies;
 	dev_kfree_skb(skb);
 
 	return NETDEV_TX_OK;
@@ -1169,8 +1170,9 @@ static int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 static void lance_load_multicast(struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *dmi = dev->mc_list;
 	char *addrs;
+	int i;
 	u32 crc;
 	u32 val;
 
@@ -1194,8 +1196,9 @@ static void lance_load_multicast(struct net_device *dev)
 		return;
 
 	/* Add addresses */
-	netdev_for_each_mc_addr(ha, dev) {
-		addrs = ha->addr;
+	for (i = 0; i < dev->mc_count; i++) {
+		addrs = dmi->dmi_addr;
+		dmi   = dmi->next;
 
 		/* multicast address? */
 		if (!(*addrs & 1))
@@ -1272,7 +1275,7 @@ static void lance_free_hwresources(struct lance_private *lp)
 	if (lp->lregs)
 		of_iounmap(&lp->op->resource[0], lp->lregs, LANCE_REG_SIZE);
 	if (lp->dregs) {
-		struct platform_device *ledma = lp->ledma;
+		struct of_device *ledma = lp->ledma;
 
 		of_iounmap(&ledma->resource[0], lp->dregs,
 			   resource_size(&ledma->resource[0]));
@@ -1319,11 +1322,11 @@ static const struct net_device_ops sparc_lance_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
-static int __devinit sparc_lance_probe_one(struct platform_device *op,
-					   struct platform_device *ledma,
-					   struct platform_device *lebuffer)
+static int __devinit sparc_lance_probe_one(struct of_device *op,
+					   struct of_device *ledma,
+					   struct of_device *lebuffer)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	static unsigned version_printed;
 	struct lance_private *lp;
 	struct net_device *dev;
@@ -1410,7 +1413,7 @@ static int __devinit sparc_lance_probe_one(struct platform_device *op,
 
 	lp->burst_sizes = 0;
 	if (lp->ledma) {
-		struct device_node *ledma_dp = ledma->dev.of_node;
+		struct device_node *ledma_dp = ledma->node;
 		struct device_node *sbus_dp;
 		unsigned int sbmask;
 		const char *prop;
@@ -1474,7 +1477,7 @@ no_link_test:
 	dev->ethtool_ops = &sparc_lance_ethtool_ops;
 	dev->netdev_ops = &sparc_lance_ops;
 
-	dev->irq = op->archdata.irqs[0];
+	dev->irq = op->irqs[0];
 
 	/* We cannot sleep if the chip is busy during a
 	 * multicast list update event, because such events
@@ -1483,7 +1486,7 @@ no_link_test:
 	 */
 	init_timer(&lp->multicast_timer);
 	lp->multicast_timer.data = (unsigned long) dev;
-	lp->multicast_timer.function = lance_set_multicast_retry;
+	lp->multicast_timer.function = &lance_set_multicast_retry;
 
 	if (register_netdev(dev)) {
 		printk(KERN_ERR "SunLance: Cannot register device.\n");
@@ -1503,10 +1506,10 @@ fail:
 	return -ENODEV;
 }
 
-static int __devinit sunlance_sbus_probe(struct platform_device *op, const struct of_device_id *match)
+static int __devinit sunlance_sbus_probe(struct of_device *op, const struct of_device_id *match)
 {
-	struct platform_device *parent = to_platform_device(op->dev.parent);
-	struct device_node *parent_dp = parent->dev.of_node;
+	struct of_device *parent = to_of_device(op->dev.parent);
+	struct device_node *parent_dp = parent->node;
 	int err;
 
 	if (!strcmp(parent_dp->name, "ledma")) {
@@ -1519,7 +1522,7 @@ static int __devinit sunlance_sbus_probe(struct platform_device *op, const struc
 	return err;
 }
 
-static int __devexit sunlance_sbus_remove(struct platform_device *op)
+static int __devexit sunlance_sbus_remove(struct of_device *op)
 {
 	struct lance_private *lp = dev_get_drvdata(&op->dev);
 	struct net_device *net_dev = lp->dev;
@@ -1545,11 +1548,8 @@ static const struct of_device_id sunlance_sbus_match[] = {
 MODULE_DEVICE_TABLE(of, sunlance_sbus_match);
 
 static struct of_platform_driver sunlance_sbus_driver = {
-	.driver = {
-		.name = "sunlance",
-		.owner = THIS_MODULE,
-		.of_match_table = sunlance_sbus_match,
-	},
+	.name		= "sunlance",
+	.match_table	= sunlance_sbus_match,
 	.probe		= sunlance_sbus_probe,
 	.remove		= __devexit_p(sunlance_sbus_remove),
 };
@@ -1558,12 +1558,12 @@ static struct of_platform_driver sunlance_sbus_driver = {
 /* Find all the lance cards on the system and initialize them */
 static int __init sparc_lance_init(void)
 {
-	return of_register_platform_driver(&sunlance_sbus_driver);
+	return of_register_driver(&sunlance_sbus_driver, &of_bus_type);
 }
 
 static void __exit sparc_lance_exit(void)
 {
-	of_unregister_platform_driver(&sunlance_sbus_driver);
+	of_unregister_driver(&sunlance_sbus_driver);
 }
 
 module_init(sparc_lance_init);

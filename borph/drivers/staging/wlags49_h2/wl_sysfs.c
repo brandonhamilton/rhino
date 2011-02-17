@@ -46,8 +46,7 @@ static ssize_t show_tallies(struct device *d, struct device_attribute *attr,
     if (dev_isalive(dev)) {
 	wl_lock(lp, &flags);
 
-	ret = wl_get_tallies(lp, &tallies);
-	if (ret == 0) {
+	if ((ret = wl_get_tallies(lp, &tallies)) == 0) {
 		wl_unlock(lp, &flags);
 		ret = snprintf(buf, PAGE_SIZE,
 		    "TxUnicastFrames:           %u\n"

@@ -174,7 +174,7 @@ static void sonic_tx_timeout(struct net_device *dev)
 	/* Try to restart the adaptor. */
 	sonic_init(dev);
 	lp->stats.tx_errors++;
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue(dev);
 }
 
@@ -262,6 +262,8 @@ static int sonic_send_packet(struct sk_buff *skb, struct net_device *dev)
 		printk("sonic_send_packet: issuing Tx command\n");
 
 	SONIC_WRITE(SONIC_CMD, SONIC_CR_TXP);
+
+	dev->trans_start = jiffies;
 
 	return NETDEV_TX_OK;
 }
@@ -529,7 +531,7 @@ static void sonic_multicast_list(struct net_device *dev)
 {
 	struct sonic_local *lp = netdev_priv(dev);
 	unsigned int rcr;
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *dmi = dev->mc_list;
 	unsigned char *addr;
 	int i;
 
@@ -539,22 +541,19 @@ static void sonic_multicast_list(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC) {	/* set promiscuous mode */
 		rcr |= SONIC_RCR_PRO;
 	} else {
-		if ((dev->flags & IFF_ALLMULTI) ||
-		    (netdev_mc_count(dev) > 15)) {
+		if ((dev->flags & IFF_ALLMULTI) || (dev->mc_count > 15)) {
 			rcr |= SONIC_RCR_AMC;
 		} else {
 			if (sonic_debug > 2)
-				printk("sonic_multicast_list: mc_count %d\n",
-				       netdev_mc_count(dev));
+				printk("sonic_multicast_list: mc_count %d\n", dev->mc_count);
 			sonic_set_cam_enable(dev, 1);  /* always enable our own address */
-			i = 1;
-			netdev_for_each_mc_addr(ha, dev) {
-				addr = ha->addr;
+			for (i = 1; i <= dev->mc_count; i++) {
+				addr = dmi->dmi_addr;
+				dmi = dmi->next;
 				sonic_cda_put(dev, i, SONIC_CD_CAP0, addr[1] << 8 | addr[0]);
 				sonic_cda_put(dev, i, SONIC_CD_CAP1, addr[3] << 8 | addr[2]);
 				sonic_cda_put(dev, i, SONIC_CD_CAP2, addr[5] << 8 | addr[4]);
 				sonic_set_cam_enable(dev, sonic_get_cam_enable(dev) | (1 << i));
-				i++;
 			}
 			SONIC_WRITE(SONIC_CDC, 16);
 			/* issue Load CAM command */

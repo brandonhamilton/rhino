@@ -26,7 +26,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 
 #include <sound/initval.h>
 #include <sound/control.h>
@@ -56,7 +55,7 @@ static const char card_name[] = "LX6464ES";
 
 #define PCI_DEVICE_ID_PLX_LX6464ES		PCI_DEVICE_ID_PLX_9056
 
-static DEFINE_PCI_DEVICE_TABLE(snd_lx6464es_ids) = {
+static struct pci_device_id snd_lx6464es_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_LX6464ES),
 	  .subvendor = PCI_VENDOR_ID_DIGIGRAM,
 	  .subdevice = PCI_SUBDEVICE_ID_DIGIGRAM_LX6464ES_SERIAL_SUBSYSTEM
@@ -425,7 +424,7 @@ exit:
 static void lx_trigger_start(struct lx6464es *chip, struct lx_stream *lx_stream)
 {
 	struct snd_pcm_substream *substream = lx_stream->stream;
-	const unsigned int is_capture = lx_stream->is_capture;
+	const int is_capture = lx_stream->is_capture;
 
 	int err;
 
@@ -473,7 +472,7 @@ static void lx_trigger_start(struct lx6464es *chip, struct lx_stream *lx_stream)
 
 static void lx_trigger_stop(struct lx6464es *chip, struct lx_stream *lx_stream)
 {
-	const unsigned int is_capture = lx_stream->is_capture;
+	const int is_capture = lx_stream->is_capture;
 	int err;
 
 	snd_printd(LXP "stopping: stopping stream\n");

@@ -40,7 +40,7 @@ static void zap_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 			page_remove_rmap(page);
 			page_cache_release(page);
 			update_hiwater_rss(mm);
-			dec_mm_counter(mm, MM_FILEPAGES);
+			dec_mm_counter(mm, file_rss);
 		}
 	} else {
 		if (!pte_file(pte))
@@ -125,6 +125,7 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 {
 	struct mm_struct *mm = current->mm;
 	struct address_space *mapping;
+	unsigned long end = start + size;
 	struct vm_area_struct *vma;
 	int err = -EINVAL;
 	int has_write_lock = 0;
@@ -139,10 +140,6 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 
 	/* Does the address range wrap, or is the span zero-sized? */
 	if (start + size <= start)
-		return err;
-
-	/* Does pgoff wrap? */
-	if (pgoff + (size >> PAGE_SHIFT) < pgoff)
 		return err;
 
 	/* Can we represent this offset inside this architecture's pte's? */
@@ -171,7 +168,7 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	if (!(vma->vm_flags & VM_CAN_NONLINEAR))
 		goto out;
 
-	if (start < vma->vm_start || start + size > vma->vm_end)
+	if (end <= start || start < vma->vm_start || end > vma->vm_end)
 		goto out;
 
 	/* Must set VM_NONLINEAR before any pages are populated. */

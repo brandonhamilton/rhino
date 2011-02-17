@@ -1,3 +1,8 @@
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+
+mainmenu "Linux/Xtensa Kernel Configuration"
+
 config FRAME_POINTER
 	def_bool n
 
@@ -42,6 +47,9 @@ config NO_IOPORT
 config HZ
 	int
 	default 100
+
+config GENERIC_TIME
+	def_bool y
 
 source "init/Kconfig"
 source "kernel/Kconfig.freezer"

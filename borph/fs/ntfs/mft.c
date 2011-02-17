@@ -21,7 +21,6 @@
  */
 
 #include <linux/buffer_head.h>
-#include <linux/slab.h>
 #include <linux/swap.h>
 
 #include "attrib.h"

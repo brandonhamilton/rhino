@@ -91,7 +91,7 @@ struct pci_pbm_info {
 	char				*name;
 
 	/* OBP specific information. */
-	struct platform_device		*op;
+	struct of_device		*op;
 	u64				ino_bitmap;
 
 	/* PBM I/O and Memory space resources. */

@@ -66,7 +66,7 @@ static int usb_console_setup(struct console *co, char *options)
 	struct usb_serial_port *port;
 	int retval;
 	struct tty_struct *tty = NULL;
-	struct ktermios dummy;
+	struct ktermios *termios = NULL, dummy;
 
 	dbg("%s", __func__);
 
@@ -141,14 +141,15 @@ static int usb_console_setup(struct console *co, char *options)
 				goto reset_open_count;
 			}
 			kref_init(&tty->kref);
-			tty_port_tty_set(&port->port, tty);
-			tty->driver = usb_serial_tty_driver;
-			tty->index = co->index;
-			if (tty_init_termios(tty)) {
+			termios = kzalloc(sizeof(*termios), GFP_KERNEL);
+			if (!termios) {
 				retval = -ENOMEM;
 				err("no more memory");
 				goto free_tty;
 			}
+			memset(&dummy, 0, sizeof(struct ktermios));
+			tty->termios = termios;
+			tty_port_tty_set(&port->port, tty);
 		}
 
 		/* only call the device specific open if this
@@ -160,16 +161,16 @@ static int usb_console_setup(struct console *co, char *options)
 
 		if (retval) {
 			err("could not open USB console port");
-			goto fail;
+			goto free_termios;
 		}
 
 		if (serial->type->set_termios) {
-			tty->termios->c_cflag = cflag;
-			tty_termios_encode_baud_rate(tty->termios, baud, baud);
-			memset(&dummy, 0, sizeof(struct ktermios));
+			termios->c_cflag = cflag;
+			tty_termios_encode_baud_rate(termios, baud, baud);
 			serial->type->set_termios(tty, port, &dummy);
 
 			tty_port_tty_set(&port->port, NULL);
+			kfree(termios);
 			kfree(tty);
 		}
 		set_bit(ASYNCB_INITIALIZED, &port->port.flags);
@@ -179,12 +180,13 @@ static int usb_console_setup(struct console *co, char *options)
 	--port->port.count;
 	/* The console is special in terms of closing the device so
 	 * indicate this port is now acting as a system console. */
-	port->port.console = 1;
+	port->console = 1;
 
 	mutex_unlock(&serial->disc_mutex);
 	return retval;
 
- fail:
+ free_termios:
+	kfree(termios);
 	tty_port_tty_set(&port->port, NULL);
  free_tty:
 	kfree(tty);
@@ -214,7 +216,7 @@ static void usb_console_write(struct console *co,
 
 	dbg("%s - port %d, %d byte(s)", __func__, port->number, count);
 
-	if (!port->port.console) {
+	if (!port->console) {
 		dbg("%s - port not opened", __func__);
 		return;
 	}
@@ -310,7 +312,7 @@ void usb_serial_console_exit(void)
 {
 	if (usbcons_info.port) {
 		unregister_console(&usbcons);
-		usbcons_info.port->port.console = 0;
+		usbcons_info.port->console = 0;
 		usbcons_info.port = NULL;
 	}
 }

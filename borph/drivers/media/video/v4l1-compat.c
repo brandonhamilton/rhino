@@ -645,16 +645,9 @@ static noinline long v4l1_compat_get_picture(
 		goto done;
 	}
 
-	if (fmt->fmt.pix.width)
-	{
-		pict->depth   = ((fmt->fmt.pix.bytesperline << 3)
-				 + (fmt->fmt.pix.width - 1))
-				 / fmt->fmt.pix.width;
-	} else {
-		err = -EINVAL;
-		goto done;
-	}
-
+	pict->depth   = ((fmt->fmt.pix.bytesperline << 3)
+			 + (fmt->fmt.pix.width - 1))
+			 / fmt->fmt.pix.width;
 	pict->palette = pixelformat_to_palette(
 		fmt->fmt.pix.pixelformat);
 done:

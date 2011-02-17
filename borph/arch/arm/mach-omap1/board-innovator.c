@@ -22,17 +22,16 @@
 #include <linux/delay.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/mtd/physmap.h>
 #include <linux/input.h>
 #include <linux/smc91x.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
+#include <asm/mach/flash.h>
 #include <asm/mach/map.h>
 
 #include <plat/mux.h>
-#include <plat/flash.h>
 #include <plat/fpga.h>
 #include <mach/gpio.h>
 #include <plat/tc.h>
@@ -95,9 +94,9 @@ static struct mtd_partition innovator_partitions[] = {
 	}
 };
 
-static struct physmap_flash_data innovator_flash_data = {
+static struct flash_platform_data innovator_flash_data = {
+	.map_name	= "cfi_probe",
 	.width		= 2,
-	.set_vpp	= omap1_set_vpp,
 	.parts		= innovator_partitions,
 	.nr_parts	= ARRAY_SIZE(innovator_partitions),
 };
@@ -109,7 +108,7 @@ static struct resource innovator_flash_resource = {
 };
 
 static struct platform_device innovator_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "omapflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &innovator_flash_data,
@@ -422,13 +421,13 @@ static void __init innovator_init(void)
 
 #ifdef CONFIG_ARCH_OMAP15XX
 	if (cpu_is_omap1510()) {
-		omap1_usb_init(&innovator1510_usb_config);
+		omap_usb_init(&innovator1510_usb_config);
 		innovator_config[1].data = &innovator1510_lcd_config;
 	}
 #endif
 #ifdef CONFIG_ARCH_OMAP16XX
 	if (cpu_is_omap1610()) {
-		omap1_usb_init(&h2_usb_config);
+		omap_usb_init(&h2_usb_config);
 		innovator_config[1].data = &innovator1610_lcd_config;
 	}
 #endif
@@ -459,9 +458,10 @@ static void __init innovator_map_io(void)
 
 MACHINE_START(OMAP_INNOVATOR, "TI-Innovator")
 	/* Maintainer: MontaVista Software, Inc. */
+	.phys_io	= 0xfff00000,
+	.io_pg_offst	= ((0xfef00000) >> 18) & 0xfffc,
 	.boot_params	= 0x10000100,
 	.map_io		= innovator_map_io,
-	.reserve	= omap_reserve,
 	.init_irq	= innovator_init_irq,
 	.init_machine	= innovator_init,
 	.timer		= &omap_timer,

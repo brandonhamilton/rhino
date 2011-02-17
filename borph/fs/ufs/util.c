@@ -113,17 +113,21 @@ void ubh_mark_buffer_uptodate (struct ufs_buffer_head * ubh, int flag)
 	}
 }
 
-void ubh_sync_block(struct ufs_buffer_head *ubh)
+void ubh_ll_rw_block(int rw, struct ufs_buffer_head *ubh)
 {
-	if (ubh) {
-		unsigned i;
+	if (!ubh)
+		return;
 
-		for (i = 0; i < ubh->count; i++)
-			write_dirty_buffer(ubh->bh[i], WRITE);
+	ll_rw_block(rw, ubh->count, ubh->bh);
+}
 
-		for (i = 0; i < ubh->count; i++)
-			wait_on_buffer(ubh->bh[i]);
-	}
+void ubh_wait_on_buffer (struct ufs_buffer_head * ubh)
+{
+	unsigned i;
+	if (!ubh)
+		return;
+	for ( i = 0; i < ubh->count; i++ )
+		wait_on_buffer (ubh->bh[i]);
 }
 
 void ubh_bforget (struct ufs_buffer_head * ubh)

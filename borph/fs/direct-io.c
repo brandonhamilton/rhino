@@ -53,6 +53,13 @@
  *
  * If blkfactor is zero then the user's request was aligned to the filesystem's
  * blocksize.
+ *
+ * lock_type is DIO_LOCKING for regular files on direct-IO-naive filesystems.
+ * This determines whether we need to do the fancy locking which prevents
+ * direct-IO from being able to read uninitialised disk blocks.  If its zero
+ * (blockdev) this locking is not done, and if it is DIO_OWN_LOCKING i_mutex is
+ * not held for the entire direct write (taken briefly, initially, during a
+ * direct read though, but its never held for the duration of a direct-IO).
  */
 
 struct dio {
@@ -61,7 +68,7 @@ struct dio {
 	struct inode *inode;
 	int rw;
 	loff_t i_size;			/* i_size when submitted */
-	int flags;			/* doesn't change */
+	int lock_type;			/* doesn't change */
 	unsigned blkbits;		/* doesn't change */
 	unsigned blkfactor;		/* When we're using an alignment which
 					   is finer than the filesystem's soft
@@ -82,8 +89,6 @@ struct dio {
 	int reap_counter;		/* rate limit reaping */
 	get_block_t *get_block;		/* block mapping function */
 	dio_iodone_t *end_io;		/* IO completion function */
-	dio_submit_t *submit_io;	/* IO submition function */
-	loff_t logical_offset_in_bio;	/* current first logical block in bio */
 	sector_t final_block_in_bio;	/* current final block in bio + 1 */
 	sector_t next_block_for_io;	/* next block to be put under IO,
 					   in dio_blocks units */
@@ -98,19 +103,6 @@ struct dio {
 	unsigned cur_page_offset;	/* Offset into it, in bytes */
 	unsigned cur_page_len;		/* Nr of bytes at cur_page_offset */
 	sector_t cur_page_block;	/* Where it starts */
-	loff_t cur_page_fs_offset;	/* Offset in file */
-
-	/* BIO completion state */
-	spinlock_t bio_lock;		/* protects BIO fields below */
-	unsigned long refcount;		/* direct_io_worker() and bios */
-	struct bio *bio_list;		/* singly linked via bi_private */
-	struct task_struct *waiter;	/* waiting task (NULL if none) */
-
-	/* AIO related stuff */
-	struct kiocb *iocb;		/* kiocb */
-	int is_async;			/* is IO async ? */
-	int io_error;			/* IO error in completion path */
-	ssize_t result;                 /* IO result */
 
 	/*
 	 * Page fetching state. These variables belong to dio_refill_pages().
@@ -123,16 +115,22 @@ struct dio {
 	 * Page queue.  These variables belong to dio_refill_pages() and
 	 * dio_get_page().
 	 */
+	struct page *pages[DIO_PAGES];	/* page buffer */
 	unsigned head;			/* next page to process */
 	unsigned tail;			/* last valid page + 1 */
 	int page_errors;		/* errno from get_user_pages() */
 
-	/*
-	 * pages[] (and any fields placed after it) are not zeroed out at
-	 * allocation time.  Don't add new fields after pages[] unless you
-	 * wish that they not be zeroed.
-	 */
-	struct page *pages[DIO_PAGES];	/* page buffer */
+	/* BIO completion state */
+	spinlock_t bio_lock;		/* protects BIO fields below */
+	unsigned long refcount;		/* direct_io_worker() and bios */
+	struct bio *bio_list;		/* singly linked via bi_private */
+	struct task_struct *waiter;	/* waiting task (NULL if none) */
+
+	/* AIO related stuff */
+	struct kiocb *iocb;		/* kiocb */
+	int is_async;			/* is IO async ? */
+	int io_error;			/* IO error in completion path */
+	ssize_t result;                 /* IO result */
 };
 
 /*
@@ -218,7 +216,7 @@ static struct page *dio_get_page(struct dio *dio)
  * filesystems can use it to hold additional state between get_block calls and
  * dio_complete.
  */
-static ssize_t dio_complete(struct dio *dio, loff_t offset, ssize_t ret, bool is_async)
+static int dio_complete(struct dio *dio, loff_t offset, int ret)
 {
 	ssize_t transferred = 0;
 
@@ -239,23 +237,19 @@ static ssize_t dio_complete(struct dio *dio, loff_t offset, ssize_t ret, bool is
 			transferred = dio->i_size - offset;
 	}
 
+	if (dio->end_io && dio->result)
+		dio->end_io(dio->iocb, offset, transferred,
+			    dio->map_bh.b_private);
+	if (dio->lock_type == DIO_LOCKING)
+		/* lockdep: non-owner release */
+		up_read_non_owner(&dio->inode->i_alloc_sem);
+
 	if (ret == 0)
 		ret = dio->page_errors;
 	if (ret == 0)
 		ret = dio->io_error;
 	if (ret == 0)
 		ret = transferred;
-
-	if (dio->end_io && dio->result) {
-		dio->end_io(dio->iocb, offset, transferred,
-			    dio->map_bh.b_private, ret, is_async);
-	} else if (is_async) {
-		aio_complete(dio->iocb, ret, 0);
-	}
-
-	if (dio->flags & DIO_LOCKING)
-		/* lockdep: non-owner release */
-		up_read_non_owner(&dio->inode->i_alloc_sem);
 
 	return ret;
 }
@@ -280,7 +274,8 @@ static void dio_bio_end_aio(struct bio *bio, int error)
 	spin_unlock_irqrestore(&dio->bio_lock, flags);
 
 	if (remaining == 0) {
-		dio_complete(dio, dio->iocb->ki_pos, 0, true);
+		int ret = dio_complete(dio, dio->iocb->ki_pos, 0);
+		aio_complete(dio->iocb, ret, 0);
 		kfree(dio);
 	}
 }
@@ -305,26 +300,6 @@ static void dio_bio_end_io(struct bio *bio, int error)
 	spin_unlock_irqrestore(&dio->bio_lock, flags);
 }
 
-/**
- * dio_end_io - handle the end io action for the given bio
- * @bio: The direct io bio thats being completed
- * @error: Error if there was one
- *
- * This is meant to be called by any filesystem that uses their own dio_submit_t
- * so that the DIO specific endio actions are dealt with after the filesystem
- * has done it's completion work.
- */
-void dio_end_io(struct bio *bio, int error)
-{
-	struct dio *dio = bio->bi_private;
-
-	if (dio->is_async)
-		dio_bio_end_aio(bio, error);
-	else
-		dio_bio_end_io(bio, error);
-}
-EXPORT_SYMBOL_GPL(dio_end_io);
-
 static int
 dio_bio_alloc(struct dio *dio, struct block_device *bdev,
 		sector_t first_sector, int nr_vecs)
@@ -341,7 +316,6 @@ dio_bio_alloc(struct dio *dio, struct block_device *bdev,
 		bio->bi_end_io = dio_bio_end_io;
 
 	dio->bio = bio;
-	dio->logical_offset_in_bio = dio->cur_page_fs_offset;
 	return 0;
 }
 
@@ -366,15 +340,10 @@ static void dio_bio_submit(struct dio *dio)
 	if (dio->is_async && dio->rw == READ)
 		bio_set_pages_dirty(bio);
 
-	if (dio->submit_io)
-		dio->submit_io(dio->rw, bio, dio->inode,
-			       dio->logical_offset_in_bio);
-	else
-		submit_bio(dio->rw, bio);
+	submit_bio(dio->rw, bio);
 
 	dio->bio = NULL;
 	dio->boundary = 0;
-	dio->logical_offset_in_bio = 0;
 }
 
 /*
@@ -546,24 +515,21 @@ static int get_more_blocks(struct dio *dio)
 		map_bh->b_state = 0;
 		map_bh->b_size = fs_count << dio->inode->i_blkbits;
 
-		/*
-		 * For writes inside i_size on a DIO_SKIP_HOLES filesystem we
-		 * forbid block creations: only overwrites are permitted.
-		 * We will return early to the caller once we see an
-		 * unmapped buffer head returned, and the caller will fall
-		 * back to buffered I/O.
-		 *
-		 * Otherwise the decision is left to the get_blocks method,
-		 * which may decide to handle it or also return an unmapped
-		 * buffer head.
-		 */
 		create = dio->rw & WRITE;
-		if (dio->flags & DIO_SKIP_HOLES) {
+		if (dio->lock_type == DIO_LOCKING) {
 			if (dio->block_in_file < (i_size_read(dio->inode) >>
 							dio->blkbits))
 				create = 0;
+		} else if (dio->lock_type == DIO_NO_LOCKING) {
+			create = 0;
 		}
 
+		/*
+		 * For writes inside i_size we forbid block creations: only
+		 * overwrites are permitted.  We fall back to buffered writes
+		 * at a higher level for inside-i_size block-instantiating
+		 * writes.
+		 */
 		ret = (*dio->get_block)(dio->inode, fs_startblk,
 						map_bh, create);
 	}
@@ -634,32 +600,16 @@ static int dio_send_cur_page(struct dio *dio)
 	int ret = 0;
 
 	if (dio->bio) {
-		loff_t cur_offset = dio->cur_page_fs_offset;
-		loff_t bio_next_offset = dio->logical_offset_in_bio +
-			dio->bio->bi_size;
-
 		/*
-		 * See whether this new request is contiguous with the old.
-		 *
-		 * Btrfs cannot handl having logically non-contiguous requests
-		 * submitted.  For exmple if you have
-		 *
-		 * Logical:  [0-4095][HOLE][8192-12287]
-		 * Phyiscal: [0-4095]      [4096-8181]
-		 *
-		 * We cannot submit those pages together as one BIO.  So if our
-		 * current logical offset in the file does not equal what would
-		 * be the next logical offset in the bio, submit the bio we
-		 * have.
+		 * See whether this new request is contiguous with the old
 		 */
-		if (dio->final_block_in_bio != dio->cur_page_block ||
-		    cur_offset != bio_next_offset)
+		if (dio->final_block_in_bio != dio->cur_page_block)
 			dio_bio_submit(dio);
 		/*
 		 * Submit now if the underlying fs is about to perform a
 		 * metadata read
 		 */
-		else if (dio->boundary)
+		if (dio->boundary)
 			dio_bio_submit(dio);
 	}
 
@@ -748,7 +698,6 @@ submit_page_section(struct dio *dio, struct page *page,
 	dio->cur_page_offset = offset;
 	dio->cur_page_len = len;
 	dio->cur_page_block = blocknr;
-	dio->cur_page_fs_offset = dio->block_in_file << dio->blkbits;
 out:
 	return ret;
 }
@@ -983,7 +932,7 @@ static ssize_t
 direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode, 
 	const struct iovec *iov, loff_t offset, unsigned long nr_segs, 
 	unsigned blkbits, get_block_t get_block, dio_iodone_t end_io,
-	dio_submit_t submit_io, struct dio *dio)
+	struct dio *dio)
 {
 	unsigned long user_addr; 
 	unsigned long flags;
@@ -1000,7 +949,6 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 
 	dio->get_block = get_block;
 	dio->end_io = end_io;
-	dio->submit_io = submit_io;
 	dio->final_block_in_bio = -1;
 	dio->next_block_for_io = -1;
 
@@ -1057,7 +1005,7 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 		}
 	} /* end iovec loop */
 
-	if (ret == -ENOTBLK) {
+	if (ret == -ENOTBLK && (rw & WRITE)) {
 		/*
 		 * The remaining part of the request will be
 		 * be handled by buffered I/O when we return
@@ -1091,7 +1039,7 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 	 * we can let i_mutex go now that its achieved its purpose
 	 * of protecting us from looking up uninitialized blocks.
 	 */
-	if (rw == READ && (dio->flags & DIO_LOCKING))
+	if ((rw == READ) && (dio->lock_type == DIO_LOCKING))
 		mutex_unlock(&dio->inode->i_mutex);
 
 	/*
@@ -1128,7 +1076,7 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 	spin_unlock_irqrestore(&dio->bio_lock, flags);
 
 	if (ret2 == 0) {
-		ret = dio_complete(dio, offset, ret, false);
+		ret = dio_complete(dio, offset, ret);
 		kfree(dio);
 	} else
 		BUG_ON(ret != -EIOCBQUEUED);
@@ -1138,28 +1086,30 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
 
 /*
  * This is a library function for use by filesystem drivers.
+ * The locking rules are governed by the dio_lock_type parameter.
  *
- * The locking rules are governed by the flags parameter:
- *  - if the flags value contains DIO_LOCKING we use a fancy locking
- *    scheme for dumb filesystems.
- *    For writes this function is called under i_mutex and returns with
- *    i_mutex held, for reads, i_mutex is not held on entry, but it is
- *    taken and dropped again before returning.
- *    For reads and writes i_alloc_sem is taken in shared mode and released
- *    on I/O completion (which may happen asynchronously after returning to
- *    the caller).
+ * DIO_NO_LOCKING (no locking, for raw block device access)
+ * For writes, i_mutex is not held on entry; it is never taken.
  *
- *  - if the flags value does NOT contain DIO_LOCKING we don't use any
- *    internal locking but rather rely on the filesystem to synchronize
- *    direct I/O reads/writes versus each other and truncate.
- *    For reads and writes both i_mutex and i_alloc_sem are not held on
- *    entry and are never taken.
+ * DIO_LOCKING (simple locking for regular files)
+ * For writes we are called under i_mutex and return with i_mutex held, even
+ * though it is internally dropped.
+ * For reads, i_mutex is not held on entry, but it is taken and dropped before
+ * returning.
+ *
+ * DIO_OWN_LOCKING (filesystem provides synchronisation and handling of
+ *	uninitialised data, allowing parallel direct readers and writers)
+ * For writes we are called without i_mutex, return without it, never touch it.
+ * For reads we are called under i_mutex and return with i_mutex held, even
+ * though it may be internally dropped.
+ *
+ * Additional i_alloc_sem locking requirements described inline below.
  */
 ssize_t
 __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	struct block_device *bdev, const struct iovec *iov, loff_t offset, 
 	unsigned long nr_segs, get_block_t get_block, dio_iodone_t end_io,
-	dio_submit_t submit_io,	int flags)
+	int dio_lock_type)
 {
 	int seg;
 	size_t size;
@@ -1170,6 +1120,8 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	ssize_t retval = -EINVAL;
 	loff_t end = offset;
 	struct dio *dio;
+	int release_i_mutex = 0;
+	int acquire_i_mutex = 0;
 
 	if (rw & WRITE)
 		rw = WRITE_ODIRECT_PLUG;
@@ -1199,41 +1151,48 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 		}
 	}
 
-	dio = kmalloc(sizeof(*dio), GFP_KERNEL);
+	dio = kzalloc(sizeof(*dio), GFP_KERNEL);
 	retval = -ENOMEM;
 	if (!dio)
 		goto out;
-	/*
-	 * Believe it or not, zeroing out the page array caused a .5%
-	 * performance regression in a database benchmark.  So, we take
-	 * care to only zero out what's needed.
-	 */
-	memset(dio, 0, offsetof(struct dio, pages));
 
-	dio->flags = flags;
-	if (dio->flags & DIO_LOCKING) {
+	/*
+	 * For block device access DIO_NO_LOCKING is used,
+	 *	neither readers nor writers do any locking at all
+	 * For regular files using DIO_LOCKING,
+	 *	readers need to grab i_mutex and i_alloc_sem
+	 *	writers need to grab i_alloc_sem only (i_mutex is already held)
+	 * For regular files using DIO_OWN_LOCKING,
+	 *	neither readers nor writers take any locks here
+	 */
+	dio->lock_type = dio_lock_type;
+	if (dio_lock_type != DIO_NO_LOCKING) {
 		/* watch out for a 0 len io from a tricksy fs */
 		if (rw == READ && end > offset) {
-			struct address_space *mapping =
-					iocb->ki_filp->f_mapping;
+			struct address_space *mapping;
 
-			/* will be released by direct_io_worker */
-			mutex_lock(&inode->i_mutex);
+			mapping = iocb->ki_filp->f_mapping;
+			if (dio_lock_type != DIO_OWN_LOCKING) {
+				mutex_lock(&inode->i_mutex);
+				release_i_mutex = 1;
+			}
 
 			retval = filemap_write_and_wait_range(mapping, offset,
 							      end - 1);
 			if (retval) {
-				mutex_unlock(&inode->i_mutex);
 				kfree(dio);
 				goto out;
 			}
+
+			if (dio_lock_type == DIO_OWN_LOCKING) {
+				mutex_unlock(&inode->i_mutex);
+				acquire_i_mutex = 1;
+			}
 		}
 
-		/*
-		 * Will be released at I/O completion, possibly in a
-		 * different thread.
-		 */
-		down_read_non_owner(&inode->i_alloc_sem);
+		if (dio_lock_type == DIO_LOCKING)
+			/* lockdep: not the owner will release it */
+			down_read_non_owner(&inode->i_alloc_sem);
 	}
 
 	/*
@@ -1246,10 +1205,29 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 		(end > i_size_read(inode)));
 
 	retval = direct_io_worker(rw, iocb, inode, iov, offset,
-				nr_segs, blkbits, get_block, end_io,
-				submit_io, dio);
+				nr_segs, blkbits, get_block, end_io, dio);
+
+	/*
+	 * In case of error extending write may have instantiated a few
+	 * blocks outside i_size. Trim these off again for DIO_LOCKING.
+	 * NOTE: DIO_NO_LOCK/DIO_OWN_LOCK callers have to handle this by
+	 * it's own meaner.
+	 */
+	if (unlikely(retval < 0 && (rw & WRITE))) {
+		loff_t isize = i_size_read(inode);
+
+		if (end > isize && dio_lock_type == DIO_LOCKING)
+			vmtruncate(inode, isize);
+	}
+
+	if (rw == READ && dio_lock_type == DIO_LOCKING)
+		release_i_mutex = 0;
 
 out:
+	if (release_i_mutex)
+		mutex_unlock(&inode->i_mutex);
+	else if (acquire_i_mutex)
+		mutex_lock(&inode->i_mutex);
 	return retval;
 }
 EXPORT_SYMBOL(__blockdev_direct_IO);

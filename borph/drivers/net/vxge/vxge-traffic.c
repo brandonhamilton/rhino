@@ -7,22 +7,15 @@
  * system is licensed under the GPL.
  * See the file COPYING in this distribution for more information.
  *
- * vxge-traffic.c: Driver for Exar Corp's X3100 Series 10GbE PCIe I/O
+ * vxge-traffic.c: Driver for Neterion Inc's X3100 Series 10GbE PCIe I/O
  *                 Virtualized Server Adapter.
- * Copyright(c) 2002-2010 Exar Corp.
+ * Copyright(c) 2002-2009 Neterion Inc.
  ******************************************************************************/
 #include <linux/etherdevice.h>
 
 #include "vxge-traffic.h"
 #include "vxge-config.h"
 #include "vxge-main.h"
-
-static enum vxge_hw_status
-__vxge_hw_device_handle_error(struct __vxge_hw_device *hldev,
-			      u32 vp_id, enum vxge_hw_event type);
-static enum vxge_hw_status
-__vxge_hw_vpath_alarm_process(struct __vxge_hw_virtualpath *vpath,
-			      u32 skip_alarms);
 
 /*
  * vxge_hw_vpath_intr_enable - Enable vpath interrupts.
@@ -238,8 +231,11 @@ void vxge_hw_channel_msix_mask(struct __vxge_hw_channel *channel, int msix_id)
 {
 
 	__vxge_hw_pio_mem_write32_upper(
-		(u32)vxge_bVALn(vxge_mBIT(msix_id >> 2), 0, 32),
+		(u32)vxge_bVALn(vxge_mBIT(channel->first_vp_id+(msix_id/4)),
+			0, 32),
 		&channel->common_reg->set_msix_mask_vect[msix_id%4]);
+
+	return;
 }
 
 /**
@@ -256,8 +252,11 @@ vxge_hw_channel_msix_unmask(struct __vxge_hw_channel *channel, int msix_id)
 {
 
 	__vxge_hw_pio_mem_write32_upper(
-		(u32)vxge_bVALn(vxge_mBIT(msix_id >> 2), 0, 32),
+		(u32)vxge_bVALn(vxge_mBIT(channel->first_vp_id+(msix_id/4)),
+			0, 32),
 		&channel->common_reg->clear_msix_mask_vect[msix_id%4]);
+
+	return;
 }
 
 /**
@@ -332,6 +331,8 @@ void vxge_hw_device_intr_enable(struct __vxge_hw_device *hldev)
 	val64 = readq(&hldev->common_reg->titan_general_int_status);
 
 	vxge_hw_device_unmask_all(hldev);
+
+	return;
 }
 
 /**
@@ -363,6 +364,8 @@ void vxge_hw_device_intr_disable(struct __vxge_hw_device *hldev)
 		vxge_hw_vpath_intr_disable(
 			VXGE_HW_VIRTUAL_PATH_HANDLE(&hldev->virtual_paths[i]));
 	}
+
+	return;
 }
 
 /**
@@ -382,6 +385,8 @@ void vxge_hw_device_mask_all(struct __vxge_hw_device *hldev)
 
 	__vxge_hw_pio_mem_write32_upper((u32)vxge_bVALn(val64, 0, 32),
 				&hldev->common_reg->titan_mask_all_int);
+
+	return;
 }
 
 /**
@@ -401,6 +406,8 @@ void vxge_hw_device_unmask_all(struct __vxge_hw_device *hldev)
 
 	__vxge_hw_pio_mem_write32_upper((u32)vxge_bVALn(val64, 0, 32),
 			&hldev->common_reg->titan_mask_all_int);
+
+	return;
 }
 
 /**
@@ -520,7 +527,7 @@ exit:
  * Link up indication handler. The function is invoked by HW when
  * Titan indicates that the link is up for programmable amount of time.
  */
-static enum vxge_hw_status
+enum vxge_hw_status
 __vxge_hw_device_handle_link_up_ind(struct __vxge_hw_device *hldev)
 {
 	/*
@@ -545,7 +552,7 @@ exit:
  * Link down indication handler. The function is invoked by HW when
  * Titan indicates that the link is down.
  */
-static enum vxge_hw_status
+enum vxge_hw_status
 __vxge_hw_device_handle_link_down_ind(struct __vxge_hw_device *hldev)
 {
 	/*
@@ -571,7 +578,7 @@ exit:
  *
  * Handle error.
  */
-static enum vxge_hw_status
+enum vxge_hw_status
 __vxge_hw_device_handle_error(
 		struct __vxge_hw_device *hldev,
 		u32 vp_id,
@@ -642,6 +649,8 @@ void vxge_hw_device_clear_tx_rx(struct __vxge_hw_device *hldev)
 				 hldev->tim_int_mask1[VXGE_HW_VPATH_INTR_RX]),
 				&hldev->common_reg->tim_int_status1);
 	}
+
+	return;
 }
 
 /*
@@ -653,7 +662,7 @@ void vxge_hw_device_clear_tx_rx(struct __vxge_hw_device *hldev)
  * it swaps the reserve and free arrays.
  *
  */
-static enum vxge_hw_status
+enum vxge_hw_status
 vxge_hw_channel_dtr_alloc(struct __vxge_hw_channel *channel, void **dtrh)
 {
 	void **tmp_arr;
@@ -699,8 +708,7 @@ _alloc_after_swap:
  * Posts a dtr to work array.
  *
  */
-static void vxge_hw_channel_dtr_post(struct __vxge_hw_channel *channel,
-				     void *dtrh)
+void vxge_hw_channel_dtr_post(struct __vxge_hw_channel *channel, void *dtrh)
 {
 	vxge_assert(channel->work_arr[channel->post_index] == NULL);
 
@@ -870,7 +878,7 @@ void vxge_hw_ring_rxd_post_post(struct __vxge_hw_ring *ring, void *rxdh)
 
 	channel = &ring->channel;
 
-	rxdp->control_0	= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
+	rxdp->control_0	|= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
 
 	if (ring->stats->common_stats.usage_cnt > 0)
 		ring->stats->common_stats.usage_cnt--;
@@ -894,7 +902,7 @@ void vxge_hw_ring_rxd_post(struct __vxge_hw_ring *ring, void *rxdh)
 	channel = &ring->channel;
 
 	wmb();
-	rxdp->control_0	= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
+	rxdp->control_0	|= VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
 
 	vxge_hw_channel_dtr_post(channel, rxdh);
 
@@ -958,7 +966,6 @@ enum vxge_hw_status vxge_hw_ring_rxd_next_completed(
 	struct __vxge_hw_channel *channel;
 	struct vxge_hw_ring_rxd_1 *rxdp;
 	enum vxge_hw_status status = VXGE_HW_OK;
-	u64 control_0, own;
 
 	channel = &ring->channel;
 
@@ -970,18 +977,16 @@ enum vxge_hw_status vxge_hw_ring_rxd_next_completed(
 		goto exit;
 	}
 
-	control_0 = rxdp->control_0;
-	own = control_0 & VXGE_HW_RING_RXD_LIST_OWN_ADAPTER;
-	*t_code	= (u8)VXGE_HW_RING_RXD_T_CODE_GET(control_0);
-
 	/* check whether it is not the end */
-	if (!own || ((*t_code == VXGE_HW_RING_T_CODE_FRM_DROP) && own)) {
+	if (!(rxdp->control_0 &	VXGE_HW_RING_RXD_LIST_OWN_ADAPTER)) {
 
 		vxge_assert(((struct vxge_hw_ring_rxd_1 *)rxdp)->host_control !=
 				0);
 
 		++ring->cmpl_cnt;
 		vxge_hw_channel_dtr_complete(channel);
+
+		*t_code	= (u8)VXGE_HW_RING_RXD_T_CODE_GET(rxdp->control_0);
 
 		vxge_assert(*t_code != VXGE_HW_RING_RXD_T_CODE_UNUSED);
 
@@ -1030,13 +1035,12 @@ enum vxge_hw_status vxge_hw_ring_handle_tcode(
 	 * such as unknown UPV6 header), Drop it !!!
 	 */
 
-	if (t_code ==  VXGE_HW_RING_T_CODE_OK ||
-		t_code == VXGE_HW_RING_T_CODE_L3_PKT_ERR) {
+	if (t_code == 0 || t_code == 5) {
 		status = VXGE_HW_OK;
 		goto exit;
 	}
 
-	if (t_code > VXGE_HW_RING_T_CODE_MULTI_ERR) {
+	if (t_code > 0xF) {
 		status = VXGE_HW_ERR_INVALID_TCODE;
 		goto exit;
 	}
@@ -1666,6 +1670,37 @@ exit:
 }
 
 /**
+ * vxge_hw_vpath_vid_get_next - Get the next vid entry for this vpath
+ *               from vlan id table.
+ * @vp: Vpath handle.
+ * @vid: Buffer to return vlan id
+ *
+ * Returns the next vlan id in the list for this vpath.
+ * see also: vxge_hw_vpath_vid_get
+ *
+ */
+enum vxge_hw_status
+vxge_hw_vpath_vid_get_next(struct __vxge_hw_vpath_handle *vp, u64 *vid)
+{
+	u64 data;
+	enum vxge_hw_status status = VXGE_HW_OK;
+
+	if (vp == NULL) {
+		status = VXGE_HW_ERR_INVALID_HANDLE;
+		goto exit;
+	}
+
+	status = __vxge_hw_vpath_rts_table_get(vp,
+			VXGE_HW_RTS_ACCESS_STEER_CTRL_ACTION_LIST_NEXT_ENTRY,
+			VXGE_HW_RTS_ACCESS_STEER_CTRL_DATA_STRUCT_SEL_VID,
+			0, vid, &data);
+
+	*vid = VXGE_HW_RTS_ACCESS_STEER_DATA0_GET_VLAN_ID(*vid);
+exit:
+	return status;
+}
+
+/**
  * vxge_hw_vpath_vid_delete - Delete the vlan id entry for this vpath
  *               to vlan id table.
  * @vp: Vpath handle.
@@ -1875,9 +1910,9 @@ exit:
  * Process vpath alarms.
  *
  */
-static enum vxge_hw_status
-__vxge_hw_vpath_alarm_process(struct __vxge_hw_virtualpath *vpath,
-			      u32 skip_alarms)
+enum vxge_hw_status __vxge_hw_vpath_alarm_process(
+			struct __vxge_hw_virtualpath *vpath,
+			u32 skip_alarms)
 {
 	u64 val64;
 	u64 alarm_status;
@@ -2181,24 +2216,29 @@ exit:
  * This API will associate a given MSIX vector numbers with the four TIM
  * interrupts and alarm interrupt.
  */
-void
+enum vxge_hw_status
 vxge_hw_vpath_msix_set(struct __vxge_hw_vpath_handle *vp, int *tim_msix_id,
 		       int alarm_msix_id)
 {
 	u64 val64;
 	struct __vxge_hw_virtualpath *vpath = vp->vpath;
 	struct vxge_hw_vpath_reg __iomem *vp_reg = vpath->vp_reg;
-	u32 vp_id = vp->vpath->vp_id;
+	u32 first_vp_id = vpath->hldev->first_vp_id;
 
 	val64 =  VXGE_HW_INTERRUPT_CFG0_GROUP0_MSIX_FOR_TXTI(
-		  (vp_id * 4) + tim_msix_id[0]) |
+		  (first_vp_id * 4) + tim_msix_id[0]) |
 		 VXGE_HW_INTERRUPT_CFG0_GROUP1_MSIX_FOR_TXTI(
-		  (vp_id * 4) + tim_msix_id[1]);
+		  (first_vp_id * 4) + tim_msix_id[1]) |
+		 VXGE_HW_INTERRUPT_CFG0_GROUP2_MSIX_FOR_TXTI(
+			(first_vp_id * 4) + tim_msix_id[2]);
+
+		val64 |= VXGE_HW_INTERRUPT_CFG0_GROUP3_MSIX_FOR_TXTI(
+			(first_vp_id * 4) + tim_msix_id[3]);
 
 	writeq(val64, &vp_reg->interrupt_cfg0);
 
 	writeq(VXGE_HW_INTERRUPT_CFG2_ALARM_MAP_TO_MSG(
-			(vpath->hldev->first_vp_id * 4) + alarm_msix_id),
+			(first_vp_id * 4) + alarm_msix_id),
 			&vp_reg->interrupt_cfg2);
 
 	if (vpath->hldev->config.intr_mode ==
@@ -2218,6 +2258,8 @@ vxge_hw_vpath_msix_set(struct __vxge_hw_vpath_handle *vp, int *tim_msix_id,
 				VXGE_HW_ONE_SHOT_VECT3_EN_ONE_SHOT_VECT3_EN,
 				0, 32), &vp_reg->one_shot_vect3_en);
 	}
+
+	return VXGE_HW_OK;
 }
 
 /**
@@ -2237,8 +2279,45 @@ vxge_hw_vpath_msix_mask(struct __vxge_hw_vpath_handle *vp, int msix_id)
 {
 	struct __vxge_hw_device *hldev = vp->vpath->hldev;
 	__vxge_hw_pio_mem_write32_upper(
-		(u32) vxge_bVALn(vxge_mBIT(msix_id  >> 2), 0, 32),
+		(u32) vxge_bVALn(vxge_mBIT(hldev->first_vp_id +
+			(msix_id  / 4)), 0, 32),
 		&hldev->common_reg->set_msix_mask_vect[msix_id % 4]);
+
+	return;
+}
+
+/**
+ * vxge_hw_vpath_msix_clear - Clear MSIX Vector.
+ * @vp: Virtual Path handle.
+ * @msix_id:  MSI ID
+ *
+ * The function clears the msix interrupt for the given msix_id
+ *
+ * Returns: 0,
+ * Otherwise, VXGE_HW_ERR_WRONG_IRQ if the msix index is out of range
+ * status.
+ * See also:
+ */
+void
+vxge_hw_vpath_msix_clear(struct __vxge_hw_vpath_handle *vp, int msix_id)
+{
+	struct __vxge_hw_device *hldev = vp->vpath->hldev;
+	if (hldev->config.intr_mode ==
+			VXGE_HW_INTR_MODE_MSIX_ONE_SHOT) {
+		__vxge_hw_pio_mem_write32_upper(
+			(u32)vxge_bVALn(vxge_mBIT(hldev->first_vp_id +
+				(msix_id/4)), 0, 32),
+				&hldev->common_reg->
+					clr_msix_one_shot_vec[msix_id%4]);
+	} else {
+		__vxge_hw_pio_mem_write32_upper(
+			(u32)vxge_bVALn(vxge_mBIT(hldev->first_vp_id +
+				(msix_id/4)), 0, 32),
+				&hldev->common_reg->
+					clear_msix_mask_vect[msix_id%4]);
+	}
+
+	return;
 }
 
 /**
@@ -2258,8 +2337,29 @@ vxge_hw_vpath_msix_unmask(struct __vxge_hw_vpath_handle *vp, int msix_id)
 {
 	struct __vxge_hw_device *hldev = vp->vpath->hldev;
 	__vxge_hw_pio_mem_write32_upper(
-			(u32)vxge_bVALn(vxge_mBIT(msix_id >> 2), 0, 32),
+			(u32)vxge_bVALn(vxge_mBIT(hldev->first_vp_id +
+			(msix_id/4)), 0, 32),
 			&hldev->common_reg->clear_msix_mask_vect[msix_id%4]);
+
+	return;
+}
+
+/**
+ * vxge_hw_vpath_msix_mask_all - Mask all MSIX vectors for the vpath.
+ * @vp: Virtual Path handle.
+ *
+ * The function masks all msix interrupt for the given vpath
+ *
+ */
+void
+vxge_hw_vpath_msix_mask_all(struct __vxge_hw_vpath_handle *vp)
+{
+
+	__vxge_hw_pio_mem_write32_upper(
+		(u32)vxge_bVALn(vxge_mBIT(vp->vpath->vp_id), 0, 32),
+		&vp->vpath->hldev->common_reg->set_msix_mask_all_vect);
+
+	return;
 }
 
 /**
@@ -2298,6 +2398,8 @@ void vxge_hw_vpath_inta_mask_tx_rx(struct __vxge_hw_vpath_handle *vp)
 			tim_int_mask1[VXGE_HW_VPATH_INTR_RX] | val64),
 			&hldev->common_reg->tim_int_mask1);
 	}
+
+	return;
 }
 
 /**
@@ -2334,6 +2436,8 @@ void vxge_hw_vpath_inta_unmask_tx_rx(struct __vxge_hw_vpath_handle *vp)
 			  tim_int_mask1[VXGE_HW_VPATH_INTR_RX])) & val64,
 			&hldev->common_reg->tim_int_mask1);
 	}
+
+	return;
 }
 
 /**
@@ -2397,12 +2501,14 @@ enum vxge_hw_status vxge_hw_vpath_poll_rx(struct __vxge_hw_ring *ring)
  * the same.
  * @fifo: Handle to the fifo object used for non offload send
  *
- * The function polls the Tx for the completed descriptors and calls
+ * The function	polls the Tx for the completed	descriptors and	calls
  * the driver via supplied completion callback.
  *
  * Returns: VXGE_HW_OK, if the polling is completed successful.
  * VXGE_HW_COMPLETIONS_REMAIN: There are still more completed
  * descriptors available which are yet to be processed.
+ *
+ * See also: vxge_hw_vpath_poll_tx().
  */
 enum vxge_hw_status vxge_hw_vpath_poll_tx(struct __vxge_hw_fifo *fifo,
 					struct sk_buff ***skb_ptr, int nr_skb,

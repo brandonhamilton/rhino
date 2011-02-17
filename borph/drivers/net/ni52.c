@@ -109,6 +109,7 @@ static int fifo = 0x8;	/* don't change */
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -185,6 +186,7 @@ static void    ni52_xmt_int(struct net_device *dev);
 static void    ni52_rnr_int(struct net_device *dev);
 
 struct priv {
+	struct net_device_stats stats;
 	char __iomem *base;
 	char __iomem *mapped;
 	char __iomem *memtop;
@@ -594,8 +596,8 @@ static int init586(struct net_device *dev)
 	struct iasetup_cmd_struct __iomem *ias_cmd;
 	struct tdr_cmd_struct __iomem *tdr_cmd;
 	struct mcsetup_cmd_struct __iomem *mc_cmd;
-	struct netdev_hw_addr *ha;
-	int num_addrs = netdev_mc_count(dev);
+	struct dev_mc_list *dmi = dev->mc_list;
+	int num_addrs = dev->mc_count;
 
 	ptr = p->scb + 1;
 
@@ -722,9 +724,9 @@ static int init586(struct net_device *dev)
 		writew(0xffff, &mc_cmd->cmd_link);
 		writew(num_addrs * 6, &mc_cmd->mc_cnt);
 
-		i = 0;
-		netdev_for_each_mc_addr(ha, dev)
-			memcpy_toio(mc_cmd->mc_list[i++], ha->addr, 6);
+		for (i = 0; i < num_addrs; i++, dmi = dmi->next)
+			memcpy_toio(mc_cmd->mc_list[i],
+							dmi->dmi_addr, 6);
 
 		writew(make16(mc_cmd), &p->scb->cbl_offset);
 		writeb(CUC_START, &p->scb->cmd_cuc);
@@ -971,10 +973,10 @@ static void ni52_rcv_int(struct net_device *dev)
 					memcpy_fromio(skb->data, p->base + readl(&rbd->buffer), totlen);
 					skb->protocol = eth_type_trans(skb, dev);
 					netif_rx(skb);
-					dev->stats.rx_packets++;
-					dev->stats.rx_bytes += totlen;
+					p->stats.rx_packets++;
+					p->stats.rx_bytes += totlen;
 				} else
-					dev->stats.rx_dropped++;
+					p->stats.rx_dropped++;
 			} else {
 				int rstat;
 				 /* free all RBD's until RBD_LAST is set */
@@ -992,12 +994,12 @@ static void ni52_rcv_int(struct net_device *dev)
 				writew(0, &rbd->status);
 				printk(KERN_ERR "%s: received oversized frame! length: %d\n",
 					dev->name, totlen);
-				dev->stats.rx_dropped++;
+				p->stats.rx_dropped++;
 			 }
 		} else {/* frame !(ok), only with 'save-bad-frames' */
 			printk(KERN_ERR "%s: oops! rfd-error-status: %04x\n",
 				dev->name, status);
-			dev->stats.rx_errors++;
+			p->stats.rx_errors++;
 		}
 		writeb(0, &p->rfd_top->stat_high);
 		writeb(RFD_SUSP, &p->rfd_top->last); /* maybe exchange by RFD_LAST */
@@ -1042,7 +1044,7 @@ static void ni52_rnr_int(struct net_device *dev)
 {
 	struct priv *p = netdev_priv(dev);
 
-	dev->stats.rx_errors++;
+	p->stats.rx_errors++;
 
 	wait_for_scb_cmd(dev);		/* wait for the last cmd, WAIT_4_FULLSTAT?? */
 	writeb(RUC_ABORT, &p->scb->cmd_ruc); /* usually the RU is in the 'no resource'-state .. abort it now. */
@@ -1075,29 +1077,29 @@ static void ni52_xmt_int(struct net_device *dev)
 		printk(KERN_ERR "%s: strange .. xmit-int without a 'COMPLETE'\n", dev->name);
 
 	if (status & STAT_OK) {
-		dev->stats.tx_packets++;
-		dev->stats.collisions += (status & TCMD_MAXCOLLMASK);
+		p->stats.tx_packets++;
+		p->stats.collisions += (status & TCMD_MAXCOLLMASK);
 	} else {
-		dev->stats.tx_errors++;
+		p->stats.tx_errors++;
 		if (status & TCMD_LATECOLL) {
 			printk(KERN_ERR "%s: late collision detected.\n",
 				dev->name);
-			dev->stats.collisions++;
+			p->stats.collisions++;
 		} else if (status & TCMD_NOCARRIER) {
-			dev->stats.tx_carrier_errors++;
+			p->stats.tx_carrier_errors++;
 			printk(KERN_ERR "%s: no carrier detected.\n",
 				dev->name);
 		} else if (status & TCMD_LOSTCTS)
 			printk(KERN_ERR "%s: loss of CTS detected.\n",
 				dev->name);
 		else if (status & TCMD_UNDERRUN) {
-			dev->stats.tx_fifo_errors++;
+			p->stats.tx_fifo_errors++;
 			printk(KERN_ERR "%s: DMA underrun detected.\n",
 				dev->name);
 		} else if (status & TCMD_MAXCOLL) {
 			printk(KERN_ERR "%s: Max. collisions exceeded.\n",
 				dev->name);
-			dev->stats.collisions += 16;
+			p->stats.collisions += 16;
 		}
 	}
 #if (NUM_XMIT_BUFFS > 1)
@@ -1146,7 +1148,7 @@ static void ni52_timeout(struct net_device *dev)
 		writeb(CUC_START, &p->scb->cmd_cuc);
 		ni_attn586();
 		wait_for_scb_cmd(dev);
-		dev->trans_start = jiffies; /* prevent tx timeout */
+		dev->trans_start = jiffies;
 		return 0;
 	}
 #endif
@@ -1164,7 +1166,7 @@ static void ni52_timeout(struct net_device *dev)
 		ni52_close(dev);
 		ni52_open(dev);
 	}
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 }
 
 /******************************************************
@@ -1217,6 +1219,7 @@ static netdev_tx_t ni52_send_packet(struct sk_buff *skb,
 			writeb(CUC_START, &p->scb->cmd_cuc);
 		}
 		ni_attn586();
+		dev->trans_start = jiffies;
 		if (!i)
 			dev_kfree_skb(skb);
 		wait_for_scb_cmd(dev);
@@ -1238,6 +1241,7 @@ static netdev_tx_t ni52_send_packet(struct sk_buff *skb,
 	writew(0, &p->nop_cmds[next_nop]->cmd_status);
 
 	writew(make16(p->xmit_cmds[0]), &p->nop_cmds[p->nop_point]->cmd_link);
+	dev->trans_start = jiffies;
 	p->nop_point = next_nop;
 	dev_kfree_skb(skb);
 #	endif
@@ -1253,6 +1257,7 @@ static netdev_tx_t ni52_send_packet(struct sk_buff *skb,
 	writew(0, &p->nop_cmds[next_nop]->cmd_status);
 	writew(make16(p->xmit_cmds[p->xmit_count]),
 				&p->nop_cmds[p->xmit_count]->cmd_link);
+	dev->trans_start = jiffies;
 	p->xmit_count = next_nop;
 	{
 		unsigned long flags;
@@ -1285,12 +1290,12 @@ static struct net_device_stats *ni52_get_stats(struct net_device *dev)
 	ovrn = readw(&p->scb->ovrn_errs);
 	writew(0, &p->scb->ovrn_errs);
 
-	dev->stats.rx_crc_errors += crc;
-	dev->stats.rx_fifo_errors += ovrn;
-	dev->stats.rx_frame_errors += aln;
-	dev->stats.rx_dropped += rsc;
+	p->stats.rx_crc_errors += crc;
+	p->stats.rx_fifo_errors += ovrn;
+	p->stats.rx_frame_errors += aln;
+	p->stats.rx_dropped += rsc;
 
-	return &dev->stats;
+	return &p->stats;
 }
 
 /********************************************************

@@ -16,10 +16,13 @@
  * http://www.gnu.org/copyleft/gpl.html
  */
 
-		.macro	addruart, rp, rv
-		mov	\rp,      #0x00070000
-		add	\rv, \rp, #0xf0000000	@ virtual base
-		add	\rp, \rp, #0x80000000	@ physical base
+		.macro	addruart,rx
+		mrc	p15, 0, \rx, c1, c0
+		tst	\rx, #1			@ MMU enabled?
+		moveq	\rx, #0x80000000	@ physical base address
+		addeq	\rx, \rx, #0x00070000
+		movne	\rx, #0xf0000000	@ virtual base
+		addne	\rx, \rx, #0x00070000
 		.endm
 
 		.macro	senduart,rd,rx

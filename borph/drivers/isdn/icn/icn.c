@@ -12,7 +12,6 @@
 #include "icn.h"
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 
 static int portbase = ICN_BASEADDR;
@@ -1627,7 +1626,7 @@ __setup("icn=", icn_setup);
 static int __init icn_init(void)
 {
 	char *p;
-	char rev[20];
+	char rev[10];
 
 	memset(&dev, 0, sizeof(icn_dev));
 	dev.memaddr = (membase & 0x0ffc000);
@@ -1637,10 +1636,9 @@ static int __init icn_init(void)
 	spin_lock_init(&dev.devlock);
 
 	if ((p = strchr(revision, ':'))) {
-		strncpy(rev, p + 1, 20);
+		strcpy(rev, p + 1);
 		p = strchr(rev, '$');
-		if (p)
-			*p = 0;
+		*p = 0;
 	} else
 		strcpy(rev, " ??? ");
 	printk(KERN_NOTICE "ICN-ISDN-driver Rev%smem=0x%08lx\n", rev,

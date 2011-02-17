@@ -15,7 +15,6 @@
 #include <linux/pci.h>
 #include <linux/pci_hotplug.h>
 #include <linux/proc_fs.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/mutex.h>
 

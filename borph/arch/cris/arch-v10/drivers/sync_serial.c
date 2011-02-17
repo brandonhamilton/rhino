@@ -17,10 +17,11 @@
 #include <linux/errno.h>
 #include <linux/major.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/poll.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/timer.h>
 #include <asm/irq.h>
 #include <asm/dma.h>
@@ -149,7 +150,6 @@ struct sync_port {
 };
 
 
-static DEFINE_MUTEX(sync_serial_mutex);
 static int etrax_sync_serial_init(void);
 static void initialize_port(int portnbr);
 static inline int sync_data_avail(struct sync_port *port);
@@ -158,7 +158,7 @@ static int sync_serial_open(struct inode *inode, struct file *file);
 static int sync_serial_release(struct inode *inode, struct file *file);
 static unsigned int sync_serial_poll(struct file *filp, poll_table *wait);
 
-static int sync_serial_ioctl(struct file *file,
+static int sync_serial_ioctl(struct inode *inode, struct file *file,
 	unsigned int cmd, unsigned long arg);
 static ssize_t sync_serial_write(struct file *file, const char *buf,
 	size_t count, loff_t *ppos);
@@ -245,14 +245,13 @@ static unsigned sync_serial_prescale_shadow;
 #define NUMBER_OF_PORTS 2
 
 static const struct file_operations sync_serial_fops = {
-	.owner		= THIS_MODULE,
-	.write		= sync_serial_write,
-	.read		= sync_serial_read,
-	.poll		= sync_serial_poll,
-	.unlocked_ioctl	= sync_serial_ioctl,
-	.open		= sync_serial_open,
-	.release	= sync_serial_release,
-	.llseek		= noop_llseek,
+	.owner   = THIS_MODULE,
+	.write   = sync_serial_write,
+	.read    = sync_serial_read,
+	.poll    = sync_serial_poll,
+	.ioctl   = sync_serial_ioctl,
+	.open    = sync_serial_open,
+	.release = sync_serial_release
 };
 
 static int __init etrax_sync_serial_init(void)
@@ -447,7 +446,7 @@ static int sync_serial_open(struct inode *inode, struct file *file)
 	int mode;
 	int err = -EBUSY;
 
-	mutex_lock(&sync_serial_mutex);
+	lock_kernel();
 	DEBUG(printk(KERN_DEBUG "Open sync serial port %d\n", dev));
 
 	if (dev < 0 || dev >= NUMBER_OF_PORTS || !ports[dev].enabled) {
@@ -628,7 +627,7 @@ static int sync_serial_open(struct inode *inode, struct file *file)
 	ret = 0;
 	
 out:
-	mutex_unlock(&sync_serial_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -680,7 +679,7 @@ static unsigned int sync_serial_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
-static int sync_serial_ioctl_unlocked(struct file *file,
+static int sync_serial_ioctl(struct inode *inode, struct file *file,
 		  unsigned int cmd, unsigned long arg)
 {
 	int return_val = 0;
@@ -956,18 +955,6 @@ static int sync_serial_ioctl_unlocked(struct file *file,
 	}
 	local_irq_restore(flags);
 	return return_val;
-}
-
-static long sync_serial_ioctl(struct file *file,
-			      unsigned int cmd, unsigned long arg)
-{
-	long ret;
-
-	mutex_lock(&sync_serial_mutex);
-	ret = sync_serial_ioctl_unlocked(file, cmd, arg);
-	mutex_unlock(&sync_serial_mutex);
-
-	return ret;
 }
 
 

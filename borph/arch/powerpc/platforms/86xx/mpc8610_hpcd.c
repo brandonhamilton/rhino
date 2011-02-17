@@ -83,8 +83,7 @@ static struct of_device_id __initdata mpc8610_ids[] = {
 	{ .compatible = "fsl,mpc8610-immr", },
 	{ .compatible = "fsl,mpc8610-guts", },
 	{ .compatible = "simple-bus", },
-	/* So that the DMA channel nodes can be probed individually: */
-	{ .compatible = "fsl,eloplus-dma", },
+	{ .compatible = "gianfar", },
 	{}
 };
 

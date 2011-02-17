@@ -55,9 +55,8 @@
 #include <asm/cpu.h>
 #include <asm/idle.h>
 #include <asm/syscalls.h>
+#include <asm/ds.h>
 #include <asm/debugreg.h>
-
-#include <trace/events/power.h>
 
 asmlinkage void ret_from_fork(void) __asm__("ret_from_fork");
 
@@ -113,8 +112,6 @@ void cpu_idle(void)
 			stop_critical_timings();
 			pm_idle();
 			start_critical_timings();
-
-			trace_power_end(smp_processor_id());
 		}
 		tick_nohz_restart_sched_tick();
 		preempt_enable_no_resched();
@@ -142,16 +139,16 @@ void __show_regs(struct pt_regs *regs, int all)
 
 	show_regs_common();
 
-	printk(KERN_DEFAULT "EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
+	printk("EIP: %04x:[<%08lx>] EFLAGS: %08lx CPU: %d\n",
 			(u16)regs->cs, regs->ip, regs->flags,
 			smp_processor_id());
 	print_symbol("EIP is at %s\n", regs->ip);
 
-	printk(KERN_DEFAULT "EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
+	printk("EAX: %08lx EBX: %08lx ECX: %08lx EDX: %08lx\n",
 		regs->ax, regs->bx, regs->cx, regs->dx);
-	printk(KERN_DEFAULT "ESI: %08lx EDI: %08lx EBP: %08lx ESP: %08lx\n",
+	printk("ESI: %08lx EDI: %08lx EBP: %08lx ESP: %08lx\n",
 		regs->si, regs->di, regs->bp, sp);
-	printk(KERN_DEFAULT " DS: %04x ES: %04x FS: %04x GS: %04x SS: %04x\n",
+	printk(" DS: %04x ES: %04x FS: %04x GS: %04x SS: %04x\n",
 	       (u16)regs->ds, (u16)regs->es, (u16)regs->fs, gs, ss);
 
 	if (!all)
@@ -161,21 +158,60 @@ void __show_regs(struct pt_regs *regs, int all)
 	cr2 = read_cr2();
 	cr3 = read_cr3();
 	cr4 = read_cr4_safe();
-	printk(KERN_DEFAULT "CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
+	printk("CR0: %08lx CR2: %08lx CR3: %08lx CR4: %08lx\n",
 			cr0, cr2, cr3, cr4);
 
 	get_debugreg(d0, 0);
 	get_debugreg(d1, 1);
 	get_debugreg(d2, 2);
 	get_debugreg(d3, 3);
-	printk(KERN_DEFAULT "DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
+	printk("DR0: %08lx DR1: %08lx DR2: %08lx DR3: %08lx\n",
 			d0, d1, d2, d3);
 
 	get_debugreg(d6, 6);
 	get_debugreg(d7, 7);
-	printk(KERN_DEFAULT "DR6: %08lx DR7: %08lx\n",
+	printk("DR6: %08lx DR7: %08lx\n",
 			d6, d7);
 }
+
+void show_regs(struct pt_regs *regs)
+{
+	show_registers(regs);
+	show_trace(NULL, regs, &regs->sp, regs->bp);
+}
+
+/*
+ * This gets run with %bx containing the
+ * function to call, and %dx containing
+ * the "args".
+ */
+extern void kernel_thread_helper(void);
+
+/*
+ * Create a kernel thread
+ */
+int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
+{
+	struct pt_regs regs;
+
+	memset(&regs, 0, sizeof(regs));
+
+	regs.bx = (unsigned long) fn;
+	regs.dx = (unsigned long) arg;
+
+	regs.ds = __USER_DS;
+	regs.es = __USER_DS;
+	regs.fs = __KERNEL_PERCPU;
+	regs.gs = __KERNEL_STACK_CANARY;
+	regs.orig_ax = -1;
+	regs.ip = (unsigned long) kernel_thread_helper;
+	regs.cs = __KERNEL_CS | get_kernel_rpl();
+	regs.flags = X86_EFLAGS_IF | X86_EFLAGS_SF | X86_EFLAGS_PF | 0x2;
+
+	/* Ok, create the new process.. */
+	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
+}
+EXPORT_SYMBOL(kernel_thread);
 
 void release_thread(struct task_struct *dead_task)
 {
@@ -241,6 +277,13 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 		kfree(p->thread.io_bitmap_ptr);
 		p->thread.io_bitmap_max = 0;
 	}
+
+	clear_tsk_thread_flag(p, TIF_DS_AREA_MSR);
+	p->thread.ds_ctx = NULL;
+
+	clear_tsk_thread_flag(p, TIF_DEBUGCTLMSR);
+	p->thread.debugctlmsr = 0;
+
 	return err;
 }
 
@@ -313,7 +356,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 
 	/* we're going to use this soon, after a few expensive things */
 	if (preload_fpu)
-		prefetch(next->fpu.state);
+		prefetch(next->xstate);
 
 	/*
 	 * Reload esp0.
@@ -379,6 +422,46 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	percpu_write(current_task, next_p);
 
 	return prev_p;
+}
+
+int sys_clone(struct pt_regs *regs)
+{
+	unsigned long clone_flags;
+	unsigned long newsp;
+	int __user *parent_tidptr, *child_tidptr;
+
+	clone_flags = regs->bx;
+	newsp = regs->cx;
+	parent_tidptr = (int __user *)regs->dx;
+	child_tidptr = (int __user *)regs->di;
+	if (!newsp)
+		newsp = regs->sp;
+	return do_fork(clone_flags, newsp, regs, 0, parent_tidptr, child_tidptr);
+}
+
+/*
+ * sys_execve() executes a new program.
+ */
+int sys_execve(struct pt_regs *regs)
+{
+	int error;
+	char *filename;
+
+	filename = getname((char __user *) regs->bx);
+	error = PTR_ERR(filename);
+	if (IS_ERR(filename))
+		goto out;
+	error = do_execve(filename,
+			(char __user * __user *) regs->cx,
+			(char __user * __user *) regs->dx,
+			regs);
+	if (error == 0) {
+		/* Make sure we don't return using sysenter.. */
+		set_thread_flag(TIF_IRET);
+	}
+	putname(filename);
+out:
+	return error;
 }
 
 #define top_esp                (THREAD_SIZE - sizeof(unsigned long))

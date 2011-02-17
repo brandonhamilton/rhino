@@ -16,7 +16,6 @@
 #include <linux/delay.h>
 #include <linux/rio.h>
 #include <linux/rio_drv.h>
-#include <linux/slab.h>
 #include <linux/rio_ids.h>
 
 #include <linux/netdevice.h>
@@ -384,7 +383,7 @@ static void rionet_remove(struct rio_dev *rdev)
 	free_pages((unsigned long)rionet_active, rdev->net->hport->sys_size ?
 					__ilog2(sizeof(void *)) + 4 : 0);
 	unregister_netdev(ndev);
-	free_netdev(ndev);
+	kfree(ndev);
 
 	list_for_each_entry_safe(peer, tmp, &rionet_peers, node) {
 		list_del(&peer->node);

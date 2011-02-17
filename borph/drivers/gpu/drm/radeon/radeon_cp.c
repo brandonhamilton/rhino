@@ -417,9 +417,8 @@ static int radeon_do_wait_for_idle(drm_radeon_private_t * dev_priv)
 	return -EBUSY;
 }
 
-static void radeon_init_pipes(struct drm_device *dev)
+static void radeon_init_pipes(drm_radeon_private_t *dev_priv)
 {
-	drm_radeon_private_t *dev_priv = dev->dev_private;
 	uint32_t gb_tile_config, gb_pipe_sel = 0;
 
 	if ((dev_priv->flags & RADEON_FAMILY_MASK) == CHIP_RV530) {
@@ -435,19 +434,13 @@ static void radeon_init_pipes(struct drm_device *dev)
 	if ((dev_priv->flags & RADEON_FAMILY_MASK) >= CHIP_R420) {
 		gb_pipe_sel = RADEON_READ(R400_GB_PIPE_SELECT);
 		dev_priv->num_gb_pipes = ((gb_pipe_sel >> 12) & 0x3) + 1;
-		/* SE cards have 1 pipe */
-		if ((dev->pdev->device == 0x5e4c) ||
-		    (dev->pdev->device == 0x5e4f))
-			dev_priv->num_gb_pipes = 1;
 	} else {
 		/* R3xx */
-		if (((dev_priv->flags & RADEON_FAMILY_MASK) == CHIP_R300 &&
-		     dev->pdev->device != 0x4144) ||
-		    ((dev_priv->flags & RADEON_FAMILY_MASK) == CHIP_R350 &&
-		     dev->pdev->device != 0x4148)) {
+		if (((dev_priv->flags & RADEON_FAMILY_MASK) == CHIP_R300) ||
+		    ((dev_priv->flags & RADEON_FAMILY_MASK) == CHIP_R350)) {
 			dev_priv->num_gb_pipes = 2;
 		} else {
-			/* RV3xx/R300 AD/R350 AH */
+			/* R3Vxx */
 			dev_priv->num_gb_pipes = 1;
 		}
 	}
@@ -743,7 +736,7 @@ static int radeon_do_engine_reset(struct drm_device * dev)
 
 	/* setup the raster pipes */
 	if ((dev_priv->flags & RADEON_FAMILY_MASK) >= CHIP_R300)
-	    radeon_init_pipes(dev);
+	    radeon_init_pipes(dev_priv);
 
 	/* Reset the CP ring */
 	radeon_do_cp_reset(dev_priv);
@@ -1651,7 +1644,6 @@ static int radeon_do_resume_cp(struct drm_device *dev, struct drm_file *file_pri
 	radeon_cp_load_microcode(dev_priv);
 	radeon_cp_init_ring_buffer(dev, dev_priv, file_priv);
 
-	dev_priv->have_z_offset = 0;
 	radeon_do_engine_reset(dev);
 	radeon_irq_set_state(dev, RADEON_SW_INT_ENABLE, 1);
 
@@ -2120,8 +2112,8 @@ int radeon_driver_load(struct drm_device *dev, unsigned long flags)
 	else
 		dev_priv->flags |= RADEON_IS_PCI;
 
-	ret = drm_addmap(dev, pci_resource_start(dev->pdev, 2),
-			 pci_resource_len(dev->pdev, 2), _DRM_REGISTERS,
+	ret = drm_addmap(dev, drm_get_resource_start(dev, 2),
+			 drm_get_resource_len(dev, 2), _DRM_REGISTERS,
 			 _DRM_READ_ONLY | _DRM_DRIVER, &dev_priv->mmio);
 	if (ret != 0)
 		return ret;
@@ -2153,7 +2145,6 @@ int radeon_master_create(struct drm_device *dev, struct drm_master *master)
 			 &master_priv->sarea);
 	if (ret) {
 		DRM_ERROR("SAREA setup failed\n");
-		kfree(master_priv);
 		return ret;
 	}
 	master_priv->sarea_priv = master_priv->sarea->handle + sizeof(struct drm_sarea);
@@ -2194,9 +2185,9 @@ int radeon_driver_firstopen(struct drm_device *dev)
 
 	dev_priv->gart_info.table_size = RADEON_PCIGART_TABLE_SIZE;
 
-	dev_priv->fb_aper_offset = pci_resource_start(dev->pdev, 0);
+	dev_priv->fb_aper_offset = drm_get_resource_start(dev, 0);
 	ret = drm_addmap(dev, dev_priv->fb_aper_offset,
-			 pci_resource_len(dev->pdev, 0), _DRM_FRAME_BUFFER,
+			 drm_get_resource_len(dev, 0), _DRM_FRAME_BUFFER,
 			 _DRM_WRITE_COMBINING, &map);
 	if (ret != 0)
 		return ret;

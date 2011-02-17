@@ -3,7 +3,6 @@
 #ifndef	__ASM_ARCH_OMAP_USB_H
 #define	__ASM_ARCH_OMAP_USB_H
 
-#include <linux/usb/musb.h>
 #include <plat/board.h>
 
 #define OMAP3_HS_USB_PORTS	3
@@ -13,33 +12,14 @@ enum ehci_hcd_omap_mode {
 	EHCI_HCD_OMAP_MODE_TLL,
 };
 
-enum ohci_omap3_port_mode {
-	OMAP_OHCI_PORT_MODE_UNUSED,
-	OMAP_OHCI_PORT_MODE_PHY_6PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_PHY_6PIN_DPDM,
-	OMAP_OHCI_PORT_MODE_PHY_3PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_PHY_4PIN_DPDM,
-	OMAP_OHCI_PORT_MODE_TLL_6PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_TLL_6PIN_DPDM,
-	OMAP_OHCI_PORT_MODE_TLL_3PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_TLL_4PIN_DPDM,
-	OMAP_OHCI_PORT_MODE_TLL_2PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_TLL_2PIN_DPDM,
-};
-
 struct ehci_hcd_omap_platform_data {
 	enum ehci_hcd_omap_mode		port_mode[OMAP3_HS_USB_PORTS];
 	unsigned			phy_reset:1;
 
 	/* have to be valid if phy_reset is true and portx is in phy mode */
 	int	reset_gpio_port[OMAP3_HS_USB_PORTS];
-};
-
-struct ohci_hcd_omap_platform_data {
-	enum ohci_omap3_port_mode	port_mode[OMAP3_HS_USB_PORTS];
-
-	/* Set this to true for ES2.x silicon */
-	unsigned			es2_compatibility:1;
+	/* flag for aux regulators */
+	u8	aux[OMAP3_HS_USB_PORTS];
 };
 
 /*-------------------------------------------------------------------------*/
@@ -64,51 +44,16 @@ struct ohci_hcd_omap_platform_data {
 #define UDC_BASE			OMAP2_UDC_BASE
 #define OMAP_OHCI_BASE			OMAP2_OHCI_BASE
 
-struct omap_musb_board_data {
-	u8	interface_type;
-	u8	mode;
-	u16	power;
-	unsigned extvbus:1;
-};
+extern void usb_musb_init(void);
 
-enum musb_interface    {MUSB_INTERFACE_ULPI, MUSB_INTERFACE_UTMI};
+extern void usb_ehci_init(struct ehci_hcd_omap_platform_data *pdata);
 
-extern void usb_musb_init(struct omap_musb_board_data *board_data);
-
-extern void usb_ehci_init(const struct ehci_hcd_omap_platform_data *pdata);
-
-extern void usb_ohci_init(const struct ohci_hcd_omap_platform_data *pdata);
+/* This is needed for OMAP3 errata 1.164: enabled autoidle can prevent sleep */
+extern void usb_musb_disable_autoidle(void);
 
 #endif
 
-
-/*
- * FIXME correct answer depends on hmc_mode,
- * as does (on omap1) any nonzero value for config->otg port number
- */
-#ifdef	CONFIG_USB_GADGET_OMAP
-#define	is_usb0_device(config)	1
-#else
-#define	is_usb0_device(config)	0
-#endif
-
-void omap_otg_init(struct omap_usb_config *config);
-
-#if defined(CONFIG_USB) || defined(CONFIG_USB_MODULE)
-void omap1_usb_init(struct omap_usb_config *pdata);
-#else
-static inline void omap1_usb_init(struct omap_usb_config *pdata)
-{
-}
-#endif
-
-#if defined(CONFIG_ARCH_OMAP_OTG) || defined(CONFIG_ARCH_OMAP_OTG_MODULE)
-void omap2_usbfs_init(struct omap_usb_config *pdata);
-#else
-static inline void omap2_usbfs_init(struct omap_usb_config *pdata)
-{
-}
-#endif
+void omap_usb_init(struct omap_usb_config *pdata);
 
 /*-------------------------------------------------------------------------*/
 
@@ -218,46 +163,83 @@ static inline void omap2_usbfs_init(struct omap_usb_config *pdata)
 #	define	USBT2TLL5PI		(1 << 17)
 #	define	USB0PUENACTLOI		(1 << 16)
 #	define	USBSTANDBYCTRL		(1 << 15)
-/* AM35x */
-/* USB 2.0 PHY Control */
-#define CONF2_PHY_GPIOMODE	(1 << 23)
-#define CONF2_OTGMODE		(3 << 14)
-#define CONF2_NO_OVERRIDE	(0 << 14)
-#define CONF2_FORCE_HOST	(1 << 14)
-#define CONF2_FORCE_DEVICE	(2 << 14)
-#define CONF2_FORCE_HOST_VBUS_LOW (3 << 14)
-#define CONF2_SESENDEN		(1 << 13)
-#define CONF2_VBDTCTEN		(1 << 12)
-#define CONF2_REFFREQ_24MHZ	(2 << 8)
-#define CONF2_REFFREQ_26MHZ	(7 << 8)
-#define CONF2_REFFREQ_13MHZ	(6 << 8)
-#define CONF2_REFFREQ		(0xf << 8)
-#define CONF2_PHYCLKGD		(1 << 7)
-#define CONF2_VBUSSENSE		(1 << 6)
-#define CONF2_PHY_PLLON		(1 << 5)
-#define CONF2_RESET		(1 << 4)
-#define CONF2_PHYPWRDN		(1 << 3)
-#define CONF2_OTGPWRDN		(1 << 2)
-#define CONF2_DATPOL		(1 << 1)
+/* AM3517 */
+/* USB 2.0 OTG module registers */
+#define USB_REVISION_REG	0x00
+#define USB_CTRL_REG		0x04
+#define USB_STAT_REG		0x08
+#define USB_EMULATION_REG	0x0c
+/* 0x10 Reserved */
+#define USB_AUTOREQ_REG		0x14
+#define USB_SRP_FIX_TIME_REG	0x18
+#define USB_TEARDOWN_REG	0x1c
+#define EP_INTR_SRC_REG		0x20
+#define EP_INTR_SRC_SET_REG	0x24
+#define EP_INTR_SRC_CLEAR_REG	0x28
+#define EP_INTR_MASK_REG	0x2c
+#define EP_INTR_MASK_SET_REG	0x30
+#define EP_INTR_MASK_CLEAR_REG	0x34
+#define EP_INTR_SRC_MASKED_REG	0x38
+#define CORE_INTR_SRC_REG	0x40
+#define CORE_INTR_SRC_SET_REG	0x44
+#define CORE_INTR_SRC_CLEAR_REG	0x48
+#define CORE_INTR_MASK_REG	0x4c
+#define CORE_INTR_MASK_SET_REG	0x50
+#define CORE_INTR_MASK_CLEAR_REG 0x54
+#define CORE_INTR_SRC_MASKED_REG 0x58
+/* 0x5c Reserved */
+#define USB_END_OF_INTR_REG	0x60
+#define MOP_SOP_INTR_ENABLE	0x64
+/* 0x68-0x6c Reserved */
+#define USB_TX_MODE_REG		0x70	/* Transparent, CDC, [Generic] RNDIS */
+#define USB_RX_MODE_REG		0x74	/* Transparent, CDC, [Generic] RNDIS */
+#define EP_COUNT_MODE_REG	0x78
+#define USB_GENERIC_RNDIS_EP_SIZE_REG(n) (0x80 + (((n) - 1) << 2))
 
-#if defined(CONFIG_ARCH_OMAP1) && defined(CONFIG_USB)
-u32 omap1_usb0_init(unsigned nwires, unsigned is_device);
-u32 omap1_usb1_init(unsigned nwires);
-u32 omap1_usb2_init(unsigned nwires, unsigned alt_pingroup);
-#else
-static inline u32 omap1_usb0_init(unsigned nwires, unsigned is_device)
-{
-	return 0;
-}
-static inline u32 omap1_usb1_init(unsigned nwires)
-{
-	return 0;
+#define QUEUE_THRESHOLD_INTR_ENABLE_REG	0xc0
+#define	QUEUE_63_THRESHOLD_REG	0xc4
+#define QUEUE_63_THRESHOLD_INTR_CLEAR_REG 0xc8
+#define	QUEUE_65_THRESHOLD_REG	0xd4
+#define QUEUE_65_THRESHOLD_INTR_CLEAR_REG 0xd8
 
-}
-static inline u32 omap1_usb2_init(unsigned nwires, unsigned alt_pingroup)
-{
-	return 0;
-}
-#endif
+/* Control register bits */
+#define USB_SOFT_RESET_MASK	1
+
+/* Mode register bits */
+#define USB_MODE_SHIFT(n)	((((n) - 1) << 1))
+#define USB_MODE_MASK(n)	(3 << USB_MODE_SHIFT(n))
+#define USB_RX_MODE_SHIFT(n)	USB_MODE_SHIFT(n)
+#define USB_TX_MODE_SHIFT(n)	USB_MODE_SHIFT(n)
+#define USB_RX_MODE_MASK(n)	USB_MODE_MASK(n)
+#define USB_TX_MODE_MASK(n)	USB_MODE_MASK(n)
+#define USB_TRANSPARENT_MODE	0
+#define USB_RNDIS_MODE		1
+#define USB_CDC_MODE		2
+#define USB_GENERIC_RNDIS_MODE	3
+
+/* AutoReq register bits */
+#define USB_RX_AUTOREQ_SHIFT(n) (((n) - 1) << 1)
+#define USB_RX_AUTOREQ_MASK(n)	(3 << USB_RX_AUTOREQ_SHIFT(n))
+#define USB_NO_AUTOREQ		0
+#define USB_AUTOREQ_ALL_BUT_EOP 1
+#define USB_AUTOREQ_ALWAYS	3
+
+/* Teardown register bits */
+#define USB_TX_TDOWN_SHIFT(n)	(16 + (n))
+#define USB_TX_TDOWN_MASK(n)	(1 << USB_TX_TDOWN_SHIFT(n))
+#define USB_RX_TDOWN_SHIFT(n)	(n)
+#define USB_RX_TDOWN_MASK(n)	(1 << USB_RX_TDOWN_SHIFT(n))
+
+/* USB interrupt register bits */
+#define USB_INTR_USB_SHIFT	16
+#define USB_INTR_USB_MASK	(0x1ff << USB_INTR_USB_SHIFT) /* 8 Mentor */
+					/* interrupts and DRVVBUS interrupt */
+#define USB_INTR_DRVVBUS	0x100
+#define USB_INTR_RX_SHIFT	16
+#define USB_INTR_TX_SHIFT	0
+
+#define USB_MENTOR_CORE_OFFSET	0x400
+
+#define USB_CPPI41_NUM_CH	15
 
 #endif	/* __ASM_ARCH_OMAP_USB_H */

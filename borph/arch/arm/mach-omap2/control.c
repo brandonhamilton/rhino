@@ -16,18 +16,15 @@
 #include <linux/io.h>
 
 #include <plat/common.h>
+#include <plat/control.h>
 #include <plat/sdrc.h>
-
 #include "cm-regbits-34xx.h"
 #include "prm-regbits-34xx.h"
 #include "cm.h"
 #include "prm.h"
 #include "sdrc.h"
-#include "pm.h"
-#include "control.h"
 
 static void __iomem *omap2_ctrl_base;
-static void __iomem *omap4_ctrl_pad_base;
 
 #if defined(CONFIG_ARCH_OMAP3) && defined(CONFIG_PM)
 struct omap3_scratchpad {
@@ -140,21 +137,10 @@ static struct omap3_control_regs control_context;
 #endif /* CONFIG_ARCH_OMAP3 && CONFIG_PM */
 
 #define OMAP_CTRL_REGADDR(reg)		(omap2_ctrl_base + (reg))
-#define OMAP4_CTRL_PAD_REGADDR(reg)	(omap4_ctrl_pad_base + (reg))
 
 void __init omap2_set_globals_control(struct omap_globals *omap2_globals)
 {
-	/* Static mapping, never released */
-	if (omap2_globals->ctrl) {
-		omap2_ctrl_base = ioremap(omap2_globals->ctrl, SZ_4K);
-		WARN_ON(!omap2_ctrl_base);
-	}
-
-	/* Static mapping, never released */
-	if (omap2_globals->ctrl_pad) {
-		omap4_ctrl_pad_base = ioremap(omap2_globals->ctrl_pad, SZ_4K);
-		WARN_ON(!omap4_ctrl_pad_base);
-	}
+	omap2_ctrl_base = omap2_globals->ctrl;
 }
 
 void __iomem *omap_ctrl_base_get(void)
@@ -166,48 +152,37 @@ u8 omap_ctrl_readb(u16 offset)
 {
 	return __raw_readb(OMAP_CTRL_REGADDR(offset));
 }
+EXPORT_SYMBOL(omap_ctrl_readb);
 
 u16 omap_ctrl_readw(u16 offset)
 {
 	return __raw_readw(OMAP_CTRL_REGADDR(offset));
 }
+EXPORT_SYMBOL(omap_ctrl_readw);
 
 u32 omap_ctrl_readl(u16 offset)
 {
 	return __raw_readl(OMAP_CTRL_REGADDR(offset));
 }
+EXPORT_SYMBOL(omap_ctrl_readl);
 
 void omap_ctrl_writeb(u8 val, u16 offset)
 {
 	__raw_writeb(val, OMAP_CTRL_REGADDR(offset));
 }
+EXPORT_SYMBOL(omap_ctrl_writeb);
 
 void omap_ctrl_writew(u16 val, u16 offset)
 {
 	__raw_writew(val, OMAP_CTRL_REGADDR(offset));
 }
+EXPORT_SYMBOL(omap_ctrl_writew);
 
 void omap_ctrl_writel(u32 val, u16 offset)
 {
 	__raw_writel(val, OMAP_CTRL_REGADDR(offset));
 }
-
-/*
- * On OMAP4 control pad are not addressable from control
- * core base. So the common omap_ctrl_read/write APIs breaks
- * Hence export separate APIs to manage the omap4 pad control
- * registers. This APIs will work only for OMAP4
- */
-
-u32 omap4_ctrl_pad_readl(u16 offset)
-{
-	return __raw_readl(OMAP4_CTRL_PAD_REGADDR(offset));
-}
-
-void omap4_ctrl_pad_writel(u32 val, u16 offset)
-{
-	__raw_writel(val, OMAP4_CTRL_PAD_REGADDR(offset));
-}
+EXPORT_SYMBOL(omap_ctrl_writel);
 
 #if defined(CONFIG_ARCH_OMAP3) && defined(CONFIG_PM)
 /*
@@ -217,23 +192,22 @@ void omap4_ctrl_pad_writel(u32 val, u16 offset)
 void omap3_clear_scratchpad_contents(void)
 {
 	u32 max_offset = OMAP343X_SCRATCHPAD_ROM_OFFSET;
-	void __iomem *v_addr;
+	u32 *v_addr;
 	u32 offset = 0;
 	v_addr = OMAP2_L4_IO_ADDRESS(OMAP343X_SCRATCHPAD_ROM);
 	if (prm_read_mod_reg(OMAP3430_GR_MOD, OMAP3_PRM_RSTST_OFFSET) &
-	    OMAP3430_GLOBAL_COLD_RST_MASK) {
+		OMAP3430_GLOBAL_COLD_RST) {
 		for ( ; offset <= max_offset; offset += 0x4)
 			__raw_writel(0x0, (v_addr + offset));
-		prm_set_mod_reg_bits(OMAP3430_GLOBAL_COLD_RST_MASK,
-				     OMAP3430_GR_MOD,
-				     OMAP3_PRM_RSTST_OFFSET);
+		prm_set_mod_reg_bits(OMAP3430_GLOBAL_COLD_RST, OMAP3430_GR_MOD,
+			OMAP3_PRM_RSTST_OFFSET);
 	}
 }
 
 /* Populate the scratchpad structure with restore structure */
 void omap3_save_scratchpad_contents(void)
 {
-	void  __iomem *scratchpad_address;
+	void * __iomem scratchpad_address;
 	u32 arm_context_addr;
 	struct omap3_scratchpad scratchpad_contents;
 	struct omap3_scratchpad_prcm_block prcm_block_contents;
@@ -241,8 +215,7 @@ void omap3_save_scratchpad_contents(void)
 
 	/* Populate the Scratchpad contents */
 	scratchpad_contents.boot_config_ptr = 0x0;
-	if (omap_rev() != OMAP3430_REV_ES3_0 &&
-					omap_rev() != OMAP3430_REV_ES3_1)
+	if (!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_le_3_0())
 		scratchpad_contents.public_restore_ptr =
 			virt_to_phys(get_restore_pointer());
 	else
@@ -303,7 +276,9 @@ void omap3_save_scratchpad_contents(void)
 	 * of AUTO_CNT = 1 prior to any transition to OFF mode.
 	 */
 	if ((omap_type() != OMAP2_DEVICE_TYPE_GP)
-			&& (omap_rev() >= OMAP3430_REV_ES3_0))
+		&& ((!cpu_is_omap3630() && cpu_is_omap34xx() && omap_rev_ge_3_0())
+			|| cpu_is_omap3505() || cpu_is_omap3517()
+			|| cpu_is_omap3630()))
 		sdrc_block_contents.power = (sdrc_read_reg(SDRC_POWER) &
 				~(SDRC_POWER_AUTOCOUNT_MASK|
 				SDRC_POWER_CLKCTRL_MASK)) |

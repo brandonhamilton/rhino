@@ -34,6 +34,7 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/genhd.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
@@ -164,12 +165,12 @@ unsigned long read_timer(void)
 	unsigned long t, flags;
 	int i;
 
-	raw_spin_lock_irqsave(&i8253_lock, flags);
+	spin_lock_irqsave(&i8253_lock, flags);
 	t = jiffies * 11932;
 	outb_p(0, 0x43);
 	i = inb_p(0x40);
 	i |= inb(0x40) << 8;
-	raw_spin_unlock_irqrestore(&i8253_lock, flags);
+	spin_unlock_irqrestore(&i8253_lock, flags);
 	return(t - i);
 }
 #endif
@@ -627,7 +628,7 @@ repeat:
 		req_data_dir(req) == READ ? "read" : "writ",
 		cyl, head, sec, nsect, req->buffer);
 #endif
-	if (req->cmd_type == REQ_TYPE_FS) {
+	if (blk_fs_request(req)) {
 		switch (rq_data_dir(req)) {
 		case READ:
 			hd_out(disk, nsect, sec, head, cyl, ATA_CMD_PIO_READ,
@@ -718,7 +719,7 @@ static int __init hd_init(void)
 		return -ENOMEM;
 	}
 
-	blk_queue_max_hw_sectors(hd_queue, 255);
+	blk_queue_max_sectors(hd_queue, 255);
 	init_timer(&device_timer);
 	device_timer.function = hd_times_out;
 	blk_queue_logical_block_size(hd_queue, 512);

@@ -29,8 +29,8 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <linux/dma-mapping.h>
-#include <linux/gfp.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -40,6 +40,7 @@
 #include <asm/dma.h>
 
 #include "bf5xx-i2s-pcm.h"
+#include "bf5xx-i2s.h"
 #include "bf5xx-sport.h"
 
 static void bf5xx_dma_irq(void *data)
@@ -206,7 +207,8 @@ static int bf5xx_pcm_preallocate_dma_buffer(struct snd_pcm *pcm, int stream)
 	buf->area = dma_alloc_coherent(pcm->card->dev, size,
 			&buf->addr, GFP_KERNEL);
 	if (!buf->area) {
-		pr_err("Failed to allocate dma memory - Please increase uncached DMA memory region\n");
+		pr_err("Failed to allocate dma memory \
+			Please increase uncached DMA memory region\n");
 		return -ENOMEM;
 	}
 	buf->bytes = size;
@@ -256,14 +258,14 @@ int bf5xx_pcm_i2s_new(struct snd_card *card, struct snd_soc_dai *dai,
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
-	if (dai->driver->playback.channels_min) {
+	if (dai->playback.channels_min) {
 		ret = bf5xx_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret)
 			goto out;
 	}
 
-	if (dai->driver->capture.channels_min) {
+	if (dai->capture.channels_min) {
 		ret = bf5xx_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_CAPTURE);
 		if (ret)
@@ -273,44 +275,25 @@ int bf5xx_pcm_i2s_new(struct snd_card *card, struct snd_soc_dai *dai,
 	return ret;
 }
 
-static struct snd_soc_platform_driver bf5xx_i2s_soc_platform = {
-	.ops		= &bf5xx_pcm_i2s_ops,
+struct snd_soc_platform bf5xx_i2s_soc_platform = {
+	.name		= "bf5xx-audio",
+	.pcm_ops 	= &bf5xx_pcm_i2s_ops,
 	.pcm_new	= bf5xx_pcm_i2s_new,
 	.pcm_free	= bf5xx_pcm_free_dma_buffers,
 };
+EXPORT_SYMBOL_GPL(bf5xx_i2s_soc_platform);
 
-static int __devinit bfin_i2s_soc_platform_probe(struct platform_device *pdev)
+static int __init bfin_i2s_init(void)
 {
-	return snd_soc_register_platform(&pdev->dev, &bf5xx_i2s_soc_platform);
+	return snd_soc_register_platform(&bf5xx_i2s_soc_platform);
 }
+module_init(bfin_i2s_init);
 
-static int __devexit bfin_i2s_soc_platform_remove(struct platform_device *pdev)
+static void __exit bfin_i2s_exit(void)
 {
-	snd_soc_unregister_platform(&pdev->dev);
-	return 0;
+	snd_soc_unregister_platform(&bf5xx_i2s_soc_platform);
 }
-
-static struct platform_driver bfin_i2s_pcm_driver = {
-	.driver = {
-			.name = "bfin-pcm-audio",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = bfin_i2s_soc_platform_probe,
-	.remove = __devexit_p(bfin_i2s_soc_platform_remove),
-};
-
-static int __init snd_bfin_i2s_pcm_init(void)
-{
-	return platform_driver_register(&bfin_i2s_pcm_driver);
-}
-module_init(snd_bfin_i2s_pcm_init);
-
-static void __exit snd_bfin_i2s_pcm_exit(void)
-{
-	platform_driver_unregister(&bfin_i2s_pcm_driver);
-}
-module_exit(snd_bfin_i2s_pcm_exit);
+module_exit(bfin_i2s_exit);
 
 MODULE_AUTHOR("Cliff Cai");
 MODULE_DESCRIPTION("ADI Blackfin I2S PCM DMA module");

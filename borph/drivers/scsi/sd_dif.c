@@ -375,19 +375,20 @@ int sd_dif_prepare(struct request *rq, sector_t hw_sector, unsigned int sector_s
 	unsigned int i, j;
 	u32 phys, virt;
 
+	/* Already remapped? */
+	if (rq->cmd_flags & REQ_INTEGRITY)
+		return 0;
+
 	sdkp = rq->bio->bi_bdev->bd_disk->private_data;
 
 	if (sdkp->protection_type == SD_DIF_TYPE3_PROTECTION)
 		return 0;
 
+	rq->cmd_flags |= REQ_INTEGRITY;
 	phys = hw_sector & 0xffffffff;
 
 	__rq_for_each_bio(bio, rq) {
 		struct bio_vec *iv;
-
-		/* Already remapped? */
-		if (bio_flagged(bio, BIO_MAPPED_INTEGRITY))
-			break;
 
 		virt = bio->bi_integrity->bip_sector & 0xffffffff;
 
@@ -407,8 +408,6 @@ int sd_dif_prepare(struct request *rq, sector_t hw_sector, unsigned int sector_s
 
 			kunmap_atomic(sdt, KM_USER0);
 		}
-
-		bio->bi_flags |= BIO_MAPPED_INTEGRITY;
 	}
 
 	return 0;

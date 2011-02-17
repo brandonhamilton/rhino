@@ -31,7 +31,6 @@
 #define _NETLABEL_H
 
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/net.h>
 #include <linux/skbuff.h>
 #include <linux/in.h>

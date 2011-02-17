@@ -30,6 +30,7 @@ struct serio {
 	char phys[32];
 
 	bool manual_bind;
+	bool registered;	/* port has been fully registered with driver core */
 
 	struct serio_device_id id;
 
@@ -41,9 +42,7 @@ struct serio {
 	int (*start)(struct serio *);
 	void (*stop)(struct serio *);
 
-	struct serio *parent;
-	struct list_head child_node;	/* Entry in parent->children list */
-	struct list_head children;
+	struct serio *parent, *child;
 	unsigned int depth;		/* level of nesting in serio hierarchy */
 
 	struct serio_driver *drv;	/* accessed from interrupt, must be protected by serio->lock and serio->sem */
@@ -56,9 +55,10 @@ struct serio {
 #define to_serio_port(d)	container_of(d, struct serio, dev)
 
 struct serio_driver {
-	const char *description;
+	void *private;
+	char *description;
 
-	const struct serio_device_id *id_table;
+	struct serio_device_id *id_table;
 	bool manual_bind;
 
 	void (*write_wakeup)(struct serio *);
@@ -136,6 +136,25 @@ static inline void serio_continue_rx(struct serio *serio)
 	spin_unlock_irq(&serio->lock);
 }
 
+/*
+ * Use the following functions to pin serio's driver in process context
+ */
+static inline int serio_pin_driver(struct serio *serio)
+{
+	return mutex_lock_interruptible(&serio->drv_mutex);
+}
+
+static inline void serio_pin_driver_uninterruptible(struct serio *serio)
+{
+	mutex_lock(&serio->drv_mutex);
+}
+
+static inline void serio_unpin_driver(struct serio *serio)
+{
+	mutex_unlock(&serio->drv_mutex);
+}
+
+
 #endif
 
 /*
@@ -197,7 +216,5 @@ static inline void serio_continue_rx(struct serio *serio)
 #define SERIO_TOUCHIT213	0x38
 #define SERIO_W8001	0x39
 #define SERIO_DYNAPRO	0x3a
-#define SERIO_HAMPSHIRE	0x3b
-#define SERIO_PS2MULT	0x3c
 
 #endif

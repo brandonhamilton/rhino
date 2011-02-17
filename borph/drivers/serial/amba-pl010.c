@@ -47,7 +47,6 @@
 #include <linux/amba/bus.h>
 #include <linux/amba/serial.h>
 #include <linux/clk.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 
@@ -472,15 +471,6 @@ pl010_set_termios(struct uart_port *port, struct ktermios *termios,
 	spin_unlock_irqrestore(&uap->port.lock, flags);
 }
 
-static void pl010_set_ldisc(struct uart_port *port, int new)
-{
-	if (new == N_PPS) {
-		port->flags |= UPF_HARDPPS_CD;
-		pl010_enable_ms(port);
-	} else
-		port->flags &= ~UPF_HARDPPS_CD;
-}
-
 static const char *pl010_type(struct uart_port *port)
 {
 	return port->type == PORT_AMBA ? "AMBA" : NULL;
@@ -541,7 +531,6 @@ static struct uart_ops amba_pl010_pops = {
 	.startup	= pl010_startup,
 	.shutdown	= pl010_shutdown,
 	.set_termios	= pl010_set_termios,
-	.set_ldisc	= pl010_set_ldisc,
 	.type		= pl010_type,
 	.release_port	= pl010_release_port,
 	.request_port	= pl010_request_port,
@@ -777,7 +766,7 @@ static int pl010_resume(struct amba_device *dev)
 	return 0;
 }
 
-static struct amba_id pl010_ids[] = {
+static struct amba_id pl010_ids[] __initdata = {
 	{
 		.id	= 0x00041010,
 		.mask	= 0x000fffff,

@@ -15,7 +15,6 @@
 #include <linux/io.h>
 #include <linux/spinlock.h>
 #include <linux/atmel-ssc.h>
-#include <linux/slab.h>
 
 /* Serialize access to ssc_list and user count */
 static DEFINE_SPINLOCK(user_lock);

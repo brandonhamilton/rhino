@@ -26,7 +26,6 @@
  */
 
 #include <linux/crc16.h>
-#include <linux/slab.h>
 #include "ubifs.h"
 
 /**
@@ -646,7 +645,7 @@ static struct ubifs_pnode *pnode_lookup(struct ubifs_info *c, int i)
 		shft -= UBIFS_LPT_FANOUT_SHIFT;
 		nnode = ubifs_get_nnode(c, nnode, iip);
 		if (IS_ERR(nnode))
-			return ERR_CAST(nnode);
+			return ERR_PTR(PTR_ERR(nnode));
 	}
 	iip = ((i >> shft) & (UBIFS_LPT_FANOUT - 1));
 	return ubifs_get_pnode(c, nnode, iip);
@@ -705,9 +704,6 @@ static int make_tree_dirty(struct ubifs_info *c)
 	struct ubifs_pnode *pnode;
 
 	pnode = pnode_lookup(c, 0);
-	if (IS_ERR(pnode))
-		return PTR_ERR(pnode);
-
 	while (pnode) {
 		do_make_pnode_dirty(c, pnode);
 		pnode = next_pnode_to_dirty(c, pnode);

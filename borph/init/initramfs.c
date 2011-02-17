@@ -413,7 +413,7 @@ static unsigned my_inptr;   /* index of next byte to be processed in inbuf */
 
 static char * __init unpack_to_rootfs(char *buf, unsigned len)
 {
-	int written, res;
+	int written;
 	decompress_fn decompress;
 	const char *compress_name;
 	static __initdata char msg_buf[64];
@@ -445,20 +445,17 @@ static char * __init unpack_to_rootfs(char *buf, unsigned len)
 		}
 		this_header = 0;
 		decompress = decompress_method(buf, len, &compress_name);
-		if (decompress) {
-			res = decompress(buf, len, NULL, flush_buffer, NULL,
+		if (decompress)
+			decompress(buf, len, NULL, flush_buffer, NULL,
 				   &my_inptr, error);
-			if (res)
-				error("decompressor failed");
-		} else if (compress_name) {
+		else if (compress_name) {
 			if (!message) {
 				snprintf(msg_buf, sizeof msg_buf,
 					 "compression method %s not configured",
 					 compress_name);
 				message = msg_buf;
 			}
-		} else
-			error("junk in compressed archive");
+		}
 		if (state != Reset)
 			error("junk in compressed archive");
 		this_header = saved_offset + my_inptr;
@@ -483,8 +480,7 @@ static int __init retain_initrd_param(char *str)
 }
 __setup("retain_initrd", retain_initrd_param);
 
-extern char __initramfs_start[];
-extern unsigned long __initramfs_size;
+extern char __initramfs_start[], __initramfs_end[];
 #include <linux/initrd.h>
 #include <linux/kexec.h>
 
@@ -527,9 +523,9 @@ static void __init clean_rootfs(void)
 	int fd;
 	void *buf;
 	struct linux_dirent64 *dirp;
-	int num;
+	int count;
 
-	fd = sys_open((const char __user __force *) "/", O_RDONLY, 0);
+	fd = sys_open("/", O_RDONLY, 0);
 	WARN_ON(fd < 0);
 	if (fd < 0)
 		return;
@@ -541,9 +537,9 @@ static void __init clean_rootfs(void)
 	}
 
 	dirp = buf;
-	num = sys_getdents64(fd, dirp, BUF_SIZE);
-	while (num > 0) {
-		while (num > 0) {
+	count = sys_getdents64(fd, dirp, BUF_SIZE);
+	while (count > 0) {
+		while (count > 0) {
 			struct stat st;
 			int ret;
 
@@ -556,12 +552,12 @@ static void __init clean_rootfs(void)
 					sys_unlink(dirp->d_name);
 			}
 
-			num -= dirp->d_reclen;
+			count -= dirp->d_reclen;
 			dirp = (void *)dirp + dirp->d_reclen;
 		}
 		dirp = buf;
 		memset(buf, 0, BUF_SIZE);
-		num = sys_getdents64(fd, dirp, BUF_SIZE);
+		count = sys_getdents64(fd, dirp, BUF_SIZE);
 	}
 
 	sys_close(fd);
@@ -571,7 +567,8 @@ static void __init clean_rootfs(void)
 
 static int __init populate_rootfs(void)
 {
-	char *err = unpack_to_rootfs(__initramfs_start, __initramfs_size);
+	char *err = unpack_to_rootfs(__initramfs_start,
+			 __initramfs_end - __initramfs_start);
 	if (err)
 		panic(err);	/* Failed to decompress INTERNAL initramfs */
 	if (initrd_start) {
@@ -585,12 +582,12 @@ static int __init populate_rootfs(void)
 			return 0;
 		} else {
 			clean_rootfs();
-			unpack_to_rootfs(__initramfs_start, __initramfs_size);
+			unpack_to_rootfs(__initramfs_start,
+				 __initramfs_end - __initramfs_start);
 		}
 		printk(KERN_INFO "rootfs image is not initramfs (%s)"
 				"; looks like an initrd\n", err);
-		fd = sys_open((const char __user __force *) "/initrd.image",
-			      O_WRONLY|O_CREAT, 0700);
+		fd = sys_open("/initrd.image", O_WRONLY|O_CREAT, 0700);
 		if (fd >= 0) {
 			sys_write(fd, (char *)initrd_start,
 					initrd_end - initrd_start);

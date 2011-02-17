@@ -15,7 +15,6 @@
 #include <linux/module.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
-#include <linux/slab.h>
 
 #include "dlm_internal.h"
 #include "lock.h"
@@ -257,7 +256,7 @@ static int print_format3_lock(struct seq_file *s, struct dlm_lkb *lkb,
 			lkb->lkb_status,
 			lkb->lkb_grmode,
 			lkb->lkb_rqmode,
-			lkb->lkb_bastmode,
+			lkb->lkb_highbast,
 			rsb_lookup,
 			lkb->lkb_wait_type,
 			lkb->lkb_lvbseq,
@@ -643,8 +642,7 @@ static ssize_t waiters_read(struct file *file, char __user *userbuf,
 static const struct file_operations waiters_fops = {
 	.owner   = THIS_MODULE,
 	.open    = waiters_open,
-	.read    = waiters_read,
-	.llseek  = default_llseek,
+	.read    = waiters_read
 };
 
 void dlm_delete_debug_file(struct dlm_ls *ls)

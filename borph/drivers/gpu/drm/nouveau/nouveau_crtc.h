@@ -40,8 +40,6 @@ struct nouveau_crtc {
 	int sharpness;
 	int last_dpms;
 
-	int cursor_saved_x, cursor_saved_y;
-
 	struct {
 		int cpp;
 		bool blanked;

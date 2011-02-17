@@ -18,7 +18,6 @@
 #include <linux/gpio.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
-#include <linux/mtd/onenand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/io.h>
 #include <asm/sizes.h>
@@ -32,12 +31,13 @@
 #include <mach/setup.h>
 #include <mach/nand.h>
 #include <mach/fsmc.h>
+#include "clock.h"
 
 /* Initial value for SRC control register: all timers use MXTAL/8 source */
 #define SRC_CR_INIT_MASK	0x00007fff
 #define SRC_CR_INIT_VAL		0x2aaa8000
 
-/* These addresses span 16MB, so use three individual pages */
+/* These adresses span 16MB, so use three individual pages */
 static struct resource nhk8815_nand_resources[] = {
 	{
 		.name = "nand_addr",
@@ -149,7 +149,7 @@ static struct mtd_partition nhk8815_onenand_partitions[] = {
 	}
 };
 
-static struct onenand_platform_data nhk8815_onenand_data = {
+static struct flash_platform_data nhk8815_onenand_data = {
 	.parts		= nhk8815_onenand_partitions,
 	.nr_parts	= ARRAY_SIZE(nhk8815_onenand_partitions),
 };
@@ -163,7 +163,7 @@ static struct resource nhk8815_onenand_resource[] = {
 };
 
 static struct platform_device nhk8815_onenand_device = {
-	.name		= "onenand-flash",
+	.name		= "onenand",
 	.id		= -1,
 	.dev		= {
 		.platform_data	= &nhk8815_onenand_data,
@@ -174,10 +174,10 @@ static struct platform_device nhk8815_onenand_device = {
 
 static void __init nhk8815_onenand_init(void)
 {
-#ifdef CONFIG_MTD_ONENAND
+#ifdef CONFIG_ONENAND
        /* Set up SMCS0 for OneNand */
-	writel(0x000030db, FSMC_BCR(0));
-	writel(0x02100551, FSMC_BTR(0));
+       writel(0x000030db, FSMC_BCR0);
+       writel(0x02100551, FSMC_BTR0);
 #endif
 }
 
@@ -199,6 +199,11 @@ static struct amba_device uart1_device = {
 static struct amba_device *amba_devs[] __initdata = {
 	&uart0_device,
 	&uart1_device,
+};
+
+/* We have a fixed clock alone, by now */
+static struct clk nhk8815_clk_48 = {
+	.rate = 48*1000*1000,
 };
 
 static struct resource nhk8815_eth_resources[] = {
@@ -270,12 +275,16 @@ static void __init nhk8815_platform_init(void)
 	platform_add_devices(nhk8815_platform_devices,
 			     ARRAY_SIZE(nhk8815_platform_devices));
 
-	for (i = 0; i < ARRAY_SIZE(amba_devs); i++)
+	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
+		nmdk_clk_create(&nhk8815_clk_48, amba_devs[i]->dev.init_name);
 		amba_device_register(amba_devs[i], &iomem_resource);
+	}
 }
 
 MACHINE_START(NOMADIK, "NHK8815")
 	/* Maintainer: ST MicroElectronics */
+	.phys_io	= NOMADIK_UART0_BASE,
+	.io_pg_offst	= (IO_ADDRESS(NOMADIK_UART0_BASE) >> 18) & 0xfffc,
 	.boot_params	= 0x100,
 	.map_io		= cpu8815_map_io,
 	.init_irq	= cpu8815_init_irq,

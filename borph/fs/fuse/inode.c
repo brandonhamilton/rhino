@@ -122,10 +122,8 @@ void fuse_send_forget(struct fuse_conn *fc, struct fuse_req *req,
 	fuse_request_send_noreply(fc, req);
 }
 
-static void fuse_evict_inode(struct inode *inode)
+static void fuse_clear_inode(struct inode *inode)
 {
-	truncate_inode_pages(&inode->i_data, 0);
-	end_writeback(inode);
 	if (inode->i_sb->s_flags & MS_ACTIVE) {
 		struct fuse_conn *fc = get_fuse_conn(inode);
 		struct fuse_inode *fi = get_fuse_inode(inode);
@@ -738,7 +736,7 @@ static const struct export_operations fuse_export_operations = {
 static const struct super_operations fuse_super_operations = {
 	.alloc_inode    = fuse_alloc_inode,
 	.destroy_inode  = fuse_destroy_inode,
-	.evict_inode	= fuse_evict_inode,
+	.clear_inode	= fuse_clear_inode,
 	.drop_inode	= generic_delete_inode,
 	.remount_fs	= fuse_remount_fs,
 	.put_super	= fuse_put_super,
@@ -852,7 +850,7 @@ static void fuse_send_init(struct fuse_conn *fc, struct fuse_req *req)
 	req->in.args[0].size = sizeof(*arg);
 	req->in.args[0].value = arg;
 	req->out.numargs = 1;
-	/* Variable length argument used for backward compatibility
+	/* Variable length arguement used for backward compatibility
 	   with interface version < 7.5.  Rest of init_out is zeroed
 	   by do_get_request(), so a short reply is not a problem */
 	req->out.argvar = 1;
@@ -1041,11 +1039,11 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	return err;
 }
 
-static struct dentry *fuse_mount(struct file_system_type *fs_type,
+static int fuse_get_sb(struct file_system_type *fs_type,
 		       int flags, const char *dev_name,
-		       void *raw_data)
+		       void *raw_data, struct vfsmount *mnt)
 {
-	return mount_nodev(fs_type, flags, raw_data, fuse_fill_super);
+	return get_sb_nodev(fs_type, flags, raw_data, fuse_fill_super, mnt);
 }
 
 static void fuse_kill_sb_anon(struct super_block *sb)
@@ -1065,16 +1063,17 @@ static struct file_system_type fuse_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "fuse",
 	.fs_flags	= FS_HAS_SUBTYPE,
-	.mount		= fuse_mount,
+	.get_sb		= fuse_get_sb,
 	.kill_sb	= fuse_kill_sb_anon,
 };
 
 #ifdef CONFIG_BLOCK
-static struct dentry *fuse_mount_blk(struct file_system_type *fs_type,
+static int fuse_get_sb_blk(struct file_system_type *fs_type,
 			   int flags, const char *dev_name,
-			   void *raw_data)
+			   void *raw_data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, raw_data, fuse_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, raw_data, fuse_fill_super,
+			   mnt);
 }
 
 static void fuse_kill_sb_blk(struct super_block *sb)
@@ -1093,7 +1092,7 @@ static void fuse_kill_sb_blk(struct super_block *sb)
 static struct file_system_type fuseblk_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "fuseblk",
-	.mount		= fuse_mount_blk,
+	.get_sb		= fuse_get_sb_blk,
 	.kill_sb	= fuse_kill_sb_blk,
 	.fs_flags	= FS_REQUIRES_DEV | FS_HAS_SUBTYPE,
 };

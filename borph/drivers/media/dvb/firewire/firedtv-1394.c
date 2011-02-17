@@ -15,7 +15,6 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
@@ -58,7 +57,7 @@ static void rawiso_activity_cb(struct hpsb_iso *iso)
 	num = hpsb_iso_n_ready(iso);
 
 	if (!fdtv) {
-		pr_err("received at unknown iso channel\n");
+		dev_err(fdtv->device, "received at unknown iso channel\n");
 		goto out;
 	}
 
@@ -91,14 +90,13 @@ static inline struct node_entry *node_of(struct firedtv *fdtv)
 	return container_of(fdtv->device, struct unit_directory, device)->ne;
 }
 
-static int node_lock(struct firedtv *fdtv, u64 addr, void *data)
+static int node_lock(struct firedtv *fdtv, u64 addr, __be32 data[])
 {
-	quadlet_t *d = data;
 	int ret;
 
-	ret = hpsb_node_lock(node_of(fdtv), addr,
-			     EXTCODE_COMPARE_SWAP, &d[1], d[0]);
-	d[0] = d[1];
+	ret = hpsb_node_lock(node_of(fdtv), addr, EXTCODE_COMPARE_SWAP,
+		(__force quadlet_t *)&data[1], (__force quadlet_t)data[0]);
+	data[0] = data[1];
 
 	return ret;
 }
@@ -194,13 +192,9 @@ static int node_probe(struct device *dev)
 	int kv_len, err;
 	void *kv_str;
 
-	if (ud->model_name_kv) {
-		kv_len = (ud->model_name_kv->value.leaf.len - 2) * 4;
-		kv_str = CSR1212_TEXTUAL_DESCRIPTOR_LEAF_DATA(ud->model_name_kv);
-	} else {
-		kv_len = 0;
-		kv_str = NULL;
-	}
+	kv_len = (ud->model_name_kv->value.leaf.len - 2) * sizeof(quadlet_t);
+	kv_str = CSR1212_TEXTUAL_DESCRIPTOR_LEAF_DATA(ud->model_name_kv);
+
 	fdtv = fdtv_alloc(dev, &fdtv_1394_backend, kv_str, kv_len);
 	if (!fdtv)
 		return -ENOMEM;

@@ -34,7 +34,6 @@
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <asm/mach/flash.h>
 #include <plat/gpmc.h>
@@ -113,24 +112,10 @@ static int omap2_onenand_wait(struct mtd_info *mtd, int state)
 	unsigned long timeout;
 	u32 syscfg;
 
-	if (state == FL_RESETING || state == FL_PREPARING_ERASE ||
-	    state == FL_VERIFYING_ERASE) {
-		int i = 21;
-		unsigned int intr_flags = ONENAND_INT_MASTER;
+	if (state == FL_RESETING) {
+		int i;
 
-		switch (state) {
-		case FL_RESETING:
-			intr_flags |= ONENAND_INT_RESET;
-			break;
-		case FL_PREPARING_ERASE:
-			intr_flags |= ONENAND_INT_ERASE;
-			break;
-		case FL_VERIFYING_ERASE:
-			i = 101;
-			break;
-		}
-
-		while (--i) {
+		for (i = 0; i < 20; i++) {
 			udelay(1);
 			intr = read_reg(c, ONENAND_REG_INTERRUPT);
 			if (intr & ONENAND_INT_MASTER)
@@ -141,7 +126,7 @@ static int omap2_onenand_wait(struct mtd_info *mtd, int state)
 			wait_err("controller error", state, ctrl, intr);
 			return -EIO;
 		}
-		if ((intr & intr_flags) != intr_flags) {
+		if (!(intr & ONENAND_INT_RESET)) {
 			wait_err("timeout", state, ctrl, intr);
 			return -EIO;
 		}
@@ -309,7 +294,7 @@ static int omap3_onenand_read_bufferram(struct mtd_info *mtd, int area,
 		goto out_copy;
 
 	/* panic_write() may be in an interrupt context */
-	if (in_interrupt() || oops_in_progress)
+	if (in_interrupt())
 		goto out_copy;
 
 	if (buf >= high_memory) {
@@ -386,7 +371,7 @@ static int omap3_onenand_write_bufferram(struct mtd_info *mtd, int area,
 		goto out_copy;
 
 	/* panic_write() may be in an interrupt context */
-	if (in_interrupt() || oops_in_progress)
+	if (in_interrupt())
 		goto out_copy;
 
 	if (buf >= high_memory) {
@@ -403,7 +388,7 @@ static int omap3_onenand_write_bufferram(struct mtd_info *mtd, int area,
 
 	dma_src = dma_map_single(&c->pdev->dev, buf, count, DMA_TO_DEVICE);
 	dma_dst = c->phys_base + bram_offset;
-	if (dma_mapping_error(&c->pdev->dev, dma_src)) {
+	if (dma_mapping_error(&c->pdev->dev, dma_dst)) {
 		dev_err(&c->pdev->dev,
 			"Couldn't DMA map a %d byte buffer\n",
 			count);
@@ -426,7 +411,7 @@ static int omap3_onenand_write_bufferram(struct mtd_info *mtd, int area,
 		if (*done)
 			break;
 
-	dma_unmap_single(&c->pdev->dev, dma_src, count, DMA_TO_DEVICE);
+	dma_unmap_single(&c->pdev->dev, dma_dst, count, DMA_TO_DEVICE);
 
 	if (!*done) {
 		dev_err(&c->pdev->dev, "timeout waiting for DMA\n");
@@ -521,7 +506,7 @@ static int omap2_onenand_write_bufferram(struct mtd_info *mtd, int area,
 	dma_src = dma_map_single(&c->pdev->dev, (void *) buffer, count,
 				 DMA_TO_DEVICE);
 	dma_dst = c->phys_base + bram_offset;
-	if (dma_mapping_error(&c->pdev->dev, dma_src)) {
+	if (dma_mapping_error(&c->pdev->dev, dma_dst)) {
 		dev_err(&c->pdev->dev,
 			"Couldn't DMA map a %d byte buffer\n",
 			count);
@@ -539,7 +524,7 @@ static int omap2_onenand_write_bufferram(struct mtd_info *mtd, int area,
 	omap_start_dma(c->dma_channel);
 	wait_for_completion(&c->dma_done);
 
-	dma_unmap_single(&c->pdev->dev, dma_src, count, DMA_TO_DEVICE);
+	dma_unmap_single(&c->pdev->dev, dma_dst, count, DMA_TO_DEVICE);
 
 	return 0;
 }

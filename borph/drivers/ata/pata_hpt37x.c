@@ -24,7 +24,7 @@
 #include <linux/libata.h>
 
 #define DRV_NAME	"pata_hpt37x"
-#define DRV_VERSION	"0.6.15"
+#define DRV_VERSION	"0.6.14"
 
 struct hpt_clock {
 	u8	xfer_speed;
@@ -39,24 +39,25 @@ struct hpt_chip {
 
 /* key for bus clock timings
  * bit
- * 0:3    data_high_time. Inactive time of DIOW_/DIOR_ for PIO and MW DMA.
- *        cycles = value + 1
- * 4:8    data_low_time. Active time of DIOW_/DIOR_ for PIO and MW DMA.
- *        cycles = value + 1
- * 9:12   cmd_high_time. Inactive time of DIOW_/DIOR_ during task file
+ * 0:3    data_high_time. inactive time of DIOW_/DIOR_ for PIO and MW
+ *        DMA. cycles = value + 1
+ * 4:8    data_low_time. active time of DIOW_/DIOR_ for PIO and MW
+ *        DMA. cycles = value + 1
+ * 9:12   cmd_high_time. inactive time of DIOW_/DIOR_ during task file
  *        register access.
- * 13:17  cmd_low_time. Active time of DIOW_/DIOR_ during task file
+ * 13:17  cmd_low_time. active time of DIOW_/DIOR_ during task file
  *        register access.
- * 18:20  udma_cycle_time. Clock cycles for UDMA xfer.
- * 21     CLK frequency for UDMA: 0=ATA clock, 1=dual ATA clock.
- * 22:24  pre_high_time. Time to initialize 1st cycle for PIO and MW DMA xfer.
- * 25:27  cmd_pre_high_time. Time to initialize 1st PIO cycle for task file
+ * 18:21  udma_cycle_time. clock freq and clock cycles for UDMA xfer.
+ *        during task file register access.
+ * 22:24  pre_high_time. time to initialize 1st cycle for PIO and MW DMA
+ *        xfer.
+ * 25:27  cmd_pre_high_time. time to initialize 1st PIO cycle for task
  *        register access.
- * 28     UDMA enable.
- * 29     DMA  enable.
- * 30     PIO_MST enable. If set, the chip is in bus master mode during
- *        PIO xfer.
- * 31     FIFO enable. Only for PIO.
+ * 28     UDMA enable
+ * 29     DMA enable
+ * 30     PIO_MST enable. if set, the chip is in bus master mode during
+ *        PIO.
+ * 31     FIFO enable.
  */
 
 static struct hpt_clock hpt37x_timings_33[] = {
@@ -282,7 +283,7 @@ static unsigned long hpt370_filter(struct ata_device *adev, unsigned long mask)
 		if (hpt_dma_blacklisted(adev, "UDMA100", bad_ata100_5))
 			mask &= ~(0xE0 << ATA_SHIFT_UDMA);
 	}
-	return mask;
+	return ata_bmdma_mode_filter(adev, mask);
 }
 
 /**
@@ -298,7 +299,7 @@ static unsigned long hpt370a_filter(struct ata_device *adev, unsigned long mask)
 		if (hpt_dma_blacklisted(adev, "UDMA100", bad_ata100_5))
 			mask &= ~(0xE0 << ATA_SHIFT_UDMA);
 	}
-	return mask;
+	return ata_bmdma_mode_filter(adev, mask);
 }
 
 /**
@@ -383,12 +384,20 @@ static int hpt37x_pre_reset(struct ata_link *link, unsigned long deadline)
 	return ata_sff_prereset(link, deadline);
 }
 
-static void hpt370_set_mode(struct ata_port *ap, struct ata_device *adev,
-			    u8 mode)
+/**
+ *	hpt370_set_piomode		-	PIO setup
+ *	@ap: ATA interface
+ *	@adev: device on the interface
+ *
+ *	Perform PIO mode setup.
+ */
+
+static void hpt370_set_piomode(struct ata_port *ap, struct ata_device *adev)
 {
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 	u32 addr1, addr2;
-	u32 reg, timing, mask;
+	u32 reg;
+	u32 mode;
 	u8 fast;
 
 	addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
@@ -400,31 +409,11 @@ static void hpt370_set_mode(struct ata_port *ap, struct ata_device *adev,
 	fast |= 0x01;
 	pci_write_config_byte(pdev, addr2, fast);
 
-	/* Determine timing mask and find matching mode entry */
-	if (mode < XFER_MW_DMA_0)
-		mask = 0xcfc3ffff;
-	else if (mode < XFER_UDMA_0)
-		mask = 0x31c001ff;
-	else
-		mask = 0x303c0000;
-
-	timing = hpt37x_find_mode(ap, mode);
-
 	pci_read_config_dword(pdev, addr1, &reg);
-	reg = (reg & ~mask) | (timing & mask);
-	pci_write_config_dword(pdev, addr1, reg);
-}
-/**
- *	hpt370_set_piomode		-	PIO setup
- *	@ap: ATA interface
- *	@adev: device on the interface
- *
- *	Perform PIO mode setup.
- */
-
-static void hpt370_set_piomode(struct ata_port *ap, struct ata_device *adev)
-{
-	hpt370_set_mode(ap, adev, adev->pio_mode);
+	mode = hpt37x_find_mode(ap, adev->pio_mode);
+	mode &= 0xCFC3FFFF;	/* Leave DMA bits alone */
+	reg &= ~0xCFC3FFFF;	/* Strip timing bits */
+	pci_write_config_dword(pdev, addr1, reg | mode);
 }
 
 /**
@@ -432,12 +421,33 @@ static void hpt370_set_piomode(struct ata_port *ap, struct ata_device *adev)
  *	@ap: ATA interface
  *	@adev: Device being configured
  *
- *	Set up the channel for MWDMA or UDMA modes.
+ *	Set up the channel for MWDMA or UDMA modes. Much the same as with
+ *	PIO, load the mode number and then set MWDMA or UDMA flag.
  */
 
 static void hpt370_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 {
-	hpt370_set_mode(ap, adev, adev->dma_mode);
+	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
+	u32 addr1, addr2;
+	u32 reg, mode, mask;
+	u8 fast;
+
+	addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
+	addr2 = 0x51 + 4 * ap->port_no;
+
+	/* Fast interrupt prediction disable, hold off interrupt disable */
+	pci_read_config_byte(pdev, addr2, &fast);
+	fast &= ~0x02;
+	fast |= 0x01;
+	pci_write_config_byte(pdev, addr2, fast);
+
+	mask = adev->dma_mode < XFER_UDMA_0 ? 0x31C001FF : 0x303C0000;
+
+	pci_read_config_dword(pdev, addr1, &reg);
+	mode = hpt37x_find_mode(ap, adev->dma_mode);
+	mode &= mask;
+	reg &= ~mask;
+	pci_write_config_dword(pdev, addr1, reg | mode);
 }
 
 /**
@@ -451,61 +461,29 @@ static void hpt370_bmdma_stop(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	void __iomem *bmdma = ap->ioaddr.bmdma_addr;
-	u8 dma_stat = ioread8(bmdma + ATA_DMA_STATUS);
+	u8 dma_stat = ioread8(ap->ioaddr.bmdma_addr + 2);
 	u8 dma_cmd;
+	void __iomem *bmdma = ap->ioaddr.bmdma_addr;
 
-	if (dma_stat & ATA_DMA_ACTIVE) {
+	if (dma_stat & 0x01) {
 		udelay(20);
-		dma_stat = ioread8(bmdma + ATA_DMA_STATUS);
+		dma_stat = ioread8(bmdma + 2);
 	}
-	if (dma_stat & ATA_DMA_ACTIVE) {
+	if (dma_stat & 0x01) {
 		/* Clear the engine */
 		pci_write_config_byte(pdev, 0x50 + 4 * ap->port_no, 0x37);
 		udelay(10);
 		/* Stop DMA */
-		dma_cmd = ioread8(bmdma + ATA_DMA_CMD);
-		iowrite8(dma_cmd & ~ATA_DMA_START, bmdma + ATA_DMA_CMD);
+		dma_cmd = ioread8(bmdma );
+		iowrite8(dma_cmd & 0xFE, bmdma);
 		/* Clear Error */
-		dma_stat = ioread8(bmdma + ATA_DMA_STATUS);
-		iowrite8(dma_stat | ATA_DMA_INTR | ATA_DMA_ERR,
-			 bmdma + ATA_DMA_STATUS);
+		dma_stat = ioread8(bmdma + 2);
+		iowrite8(dma_stat | 0x06 , bmdma + 2);
 		/* Clear the engine */
 		pci_write_config_byte(pdev, 0x50 + 4 * ap->port_no, 0x37);
 		udelay(10);
 	}
 	ata_bmdma_stop(qc);
-}
-
-static void hpt372_set_mode(struct ata_port *ap, struct ata_device *adev,
-			    u8 mode)
-{
-	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	u32 addr1, addr2;
-	u32 reg, timing, mask;
-	u8 fast;
-
-	addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
-	addr2 = 0x51 + 4 * ap->port_no;
-
-	/* Fast interrupt prediction disable, hold off interrupt disable */
-	pci_read_config_byte(pdev, addr2, &fast);
-	fast &= ~0x07;
-	pci_write_config_byte(pdev, addr2, fast);
-
-	/* Determine timing mask and find matching mode entry */
-	if (mode < XFER_MW_DMA_0)
-		mask = 0xcfc3ffff;
-	else if (mode < XFER_UDMA_0)
-		mask = 0x31c001ff;
-	else
-		mask = 0x303c0000;
-
-	timing = hpt37x_find_mode(ap, mode);
-
-	pci_read_config_dword(pdev, addr1, &reg);
-	reg = (reg & ~mask) | (timing & mask);
-	pci_write_config_dword(pdev, addr1, reg);
 }
 
 /**
@@ -518,7 +496,27 @@ static void hpt372_set_mode(struct ata_port *ap, struct ata_device *adev,
 
 static void hpt372_set_piomode(struct ata_port *ap, struct ata_device *adev)
 {
-	hpt372_set_mode(ap, adev, adev->pio_mode);
+	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
+	u32 addr1, addr2;
+	u32 reg;
+	u32 mode;
+	u8 fast;
+
+	addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
+	addr2 = 0x51 + 4 * ap->port_no;
+
+	/* Fast interrupt prediction disable, hold off interrupt disable */
+	pci_read_config_byte(pdev, addr2, &fast);
+	fast &= ~0x07;
+	pci_write_config_byte(pdev, addr2, fast);
+
+	pci_read_config_dword(pdev, addr1, &reg);
+	mode = hpt37x_find_mode(ap, adev->pio_mode);
+
+	printk("Find mode for %d reports %X\n", adev->pio_mode, mode);
+	mode &= 0xCFC3FFFF;	/* Leave DMA bits alone */
+	reg &= ~0xCFC3FFFF;	/* Strip timing bits */
+	pci_write_config_dword(pdev, addr1, reg | mode);
 }
 
 /**
@@ -526,12 +524,33 @@ static void hpt372_set_piomode(struct ata_port *ap, struct ata_device *adev)
  *	@ap: ATA interface
  *	@adev: Device being configured
  *
- *	Set up the channel for MWDMA or UDMA modes.
+ *	Set up the channel for MWDMA or UDMA modes. Much the same as with
+ *	PIO, load the mode number and then set MWDMA or UDMA flag.
  */
 
 static void hpt372_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 {
-	hpt372_set_mode(ap, adev, adev->dma_mode);
+	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
+	u32 addr1, addr2;
+	u32 reg, mode, mask;
+	u8 fast;
+
+	addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
+	addr2 = 0x51 + 4 * ap->port_no;
+
+	/* Fast interrupt prediction disable, hold off interrupt disable */
+	pci_read_config_byte(pdev, addr2, &fast);
+	fast &= ~0x07;
+	pci_write_config_byte(pdev, addr2, fast);
+
+	mask = adev->dma_mode < XFER_UDMA_0 ? 0x31C001FF : 0x303C0000;
+
+	pci_read_config_dword(pdev, addr1, &reg);
+	mode = hpt37x_find_mode(ap, adev->dma_mode);
+	printk("Find mode for DMA %d reports %X\n", adev->dma_mode, mode);
+	mode &= mask;
+	reg &= ~mask;
+	pci_write_config_dword(pdev, addr1, reg | mode);
 }
 
 /**
@@ -987,7 +1006,7 @@ static int hpt37x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	/* Now kick off ATA set up */
-	return ata_pci_bmdma_init_one(dev, ppi, &hpt37x_sht, private_data, 0);
+	return ata_pci_sff_init_one(dev, ppi, &hpt37x_sht, private_data);
 }
 
 static const struct pci_device_id hpt37x[] = {

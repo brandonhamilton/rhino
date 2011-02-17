@@ -13,10 +13,17 @@
 #include <linux/ioport.h>
 #include <linux/genalloc.h>
 #include <linux/string.h> /* memcpy */
+#include <asm/page.h> /* PAGE_SHIFT */
 #include <asm/cputype.h>
 #include <asm/mach/map.h>
 #include <mach/memory.h>
 #include "tcm.h"
+
+/* Scream and warn about misuse */
+#if !defined(ITCM_OFFSET) || !defined(ITCM_END) || \
+    !defined(DTCM_OFFSET) || !defined(DTCM_END)
+#error "TCM support selected but offsets not defined!"
+#endif
 
 static struct gen_pool *tcm_pool;
 
@@ -24,24 +31,20 @@ static struct gen_pool *tcm_pool;
 extern char __itcm_start, __sitcm_text, __eitcm_text;
 extern char __dtcm_start, __sdtcm_data, __edtcm_data;
 
-/* These will be increased as we run */
-u32 dtcm_end = DTCM_OFFSET;
-u32 itcm_end = ITCM_OFFSET;
-
 /*
  * TCM memory resources
  */
 static struct resource dtcm_res = {
 	.name = "DTCM RAM",
 	.start = DTCM_OFFSET,
-	.end = DTCM_OFFSET,
+	.end = DTCM_END,
 	.flags = IORESOURCE_MEM
 };
 
 static struct resource itcm_res = {
 	.name = "ITCM RAM",
 	.start = ITCM_OFFSET,
-	.end = ITCM_OFFSET,
+	.end = ITCM_END,
 	.flags = IORESOURCE_MEM
 };
 
@@ -49,8 +52,8 @@ static struct map_desc dtcm_iomap[] __initdata = {
 	{
 		.virtual	= DTCM_OFFSET,
 		.pfn		= __phys_to_pfn(DTCM_OFFSET),
-		.length		= 0,
-		.type		= MT_MEMORY_DTCM
+		.length		= (DTCM_END - DTCM_OFFSET + 1),
+		.type		= MT_UNCACHED
 	}
 };
 
@@ -58,8 +61,8 @@ static struct map_desc itcm_iomap[] __initdata = {
 	{
 		.virtual	= ITCM_OFFSET,
 		.pfn		= __phys_to_pfn(ITCM_OFFSET),
-		.length		= 0,
-		.type		= MT_MEMORY_ITCM
+		.length		= (ITCM_END - ITCM_OFFSET + 1),
+		.type		= MT_UNCACHED
 	}
 };
 
@@ -90,23 +93,13 @@ void tcm_free(void *addr, size_t len)
 }
 EXPORT_SYMBOL(tcm_free);
 
-static int __init setup_tcm_bank(u8 type, u8 bank, u8 banks,
-				  u32 *offset)
+
+static void __init setup_tcm_bank(u8 type, u32 offset, u32 expected_size)
 {
 	const int tcm_sizes[16] = { 0, -1, -1, 4, 8, 16, 32, 64, 128,
 				    256, 512, 1024, -1, -1, -1, -1 };
 	u32 tcm_region;
 	int tcm_size;
-
-	/*
-	 * If there are more than one TCM bank of this type,
-	 * select the TCM bank to operate on in the TCM selection
-	 * register.
-	 */
-	if (banks > 1)
-		asm("mcr	p15, 0, %0, c9, c2, 0"
-		    : /* No output operands */
-		    : "r" (bank));
 
 	/* Read the special TCM region register c9, 0 */
 	if (!type)
@@ -118,24 +111,26 @@ static int __init setup_tcm_bank(u8 type, u8 bank, u8 banks,
 
 	tcm_size = tcm_sizes[(tcm_region >> 2) & 0x0f];
 	if (tcm_size < 0) {
-		pr_err("CPU: %sTCM%d of unknown size\n",
-		       type ? "I" : "D", bank);
-		return -EINVAL;
-	} else if (tcm_size > 32) {
-		pr_err("CPU: %sTCM%d larger than 32k found\n",
-		       type ? "I" : "D", bank);
-		return -EINVAL;
+		pr_err("CPU: %sTCM of unknown size!\n",
+			type ? "I" : "D");
 	} else {
-		pr_info("CPU: found %sTCM%d %dk @ %08x, %senabled\n",
+		pr_info("CPU: found %sTCM %dk @ %08x, %senabled\n",
 			type ? "I" : "D",
-			bank,
 			tcm_size,
 			(tcm_region & 0xfffff000U),
 			(tcm_region & 1) ? "" : "not ");
 	}
 
+	if (tcm_size != expected_size) {
+		pr_crit("CPU: %sTCM was detected %dk but expected %dk!\n",
+		       type ? "I" : "D",
+		       tcm_size,
+		       expected_size);
+		/* Adjust to the expected size? what can we do... */
+	}
+
 	/* Force move the TCM bank to where we want it, enable */
-	tcm_region = *offset | (tcm_region & 0x00000ffeU) | 1;
+	tcm_region = offset | (tcm_region & 0x00000ffeU) | 1;
 
 	if (!type)
 		asm("mcr	p15, 0, %0, c9, c1, 0"
@@ -146,15 +141,10 @@ static int __init setup_tcm_bank(u8 type, u8 bank, u8 banks,
 		    : /* No output operands */
 		    : "r" (tcm_region));
 
-	/* Increase offset */
-	*offset += (tcm_size << 10);
-
-	pr_info("CPU: moved %sTCM%d %dk to %08x, enabled\n",
-		type ? "I" : "D",
-		bank,
-		tcm_size,
-		(tcm_region & 0xfffff000U));
-	return 0;
+	pr_debug("CPU: moved %sTCM %dk to %08x, enabled\n",
+		 type ? "I" : "D",
+		 tcm_size,
+		 (tcm_region & 0xfffff000U));
 }
 
 /*
@@ -163,52 +153,34 @@ static int __init setup_tcm_bank(u8 type, u8 bank, u8 banks,
 void __init tcm_init(void)
 {
 	u32 tcm_status = read_cpuid_tcmstatus();
-	u8 dtcm_banks = (tcm_status >> 16) & 0x03;
-	u8 itcm_banks = (tcm_status & 0x03);
 	char *start;
 	char *end;
 	char *ram;
-	int ret;
-	int i;
 
 	/* Setup DTCM if present */
-	if (dtcm_banks > 0) {
-		for (i = 0; i < dtcm_banks; i++) {
-			ret = setup_tcm_bank(0, i, dtcm_banks, &dtcm_end);
-			if (ret)
-				return;
-		}
-		dtcm_res.end = dtcm_end - 1;
+	if (tcm_status & (1 << 16)) {
+		setup_tcm_bank(0, DTCM_OFFSET,
+			       (DTCM_END - DTCM_OFFSET + 1) >> 10);
 		request_resource(&iomem_resource, &dtcm_res);
-		dtcm_iomap[0].length = dtcm_end - DTCM_OFFSET;
 		iotable_init(dtcm_iomap, 1);
 		/* Copy data from RAM to DTCM */
 		start = &__sdtcm_data;
 		end   = &__edtcm_data;
 		ram   = &__dtcm_start;
-		/* This means you compiled more code than fits into DTCM */
-		BUG_ON((end - start) > (dtcm_end - DTCM_OFFSET));
 		memcpy(start, ram, (end-start));
 		pr_debug("CPU DTCM: copied data from %p - %p\n", start, end);
 	}
 
 	/* Setup ITCM if present */
-	if (itcm_banks > 0) {
-		for (i = 0; i < itcm_banks; i++) {
-			ret = setup_tcm_bank(1, i, itcm_banks, &itcm_end);
-			if (ret)
-				return;
-		}
-		itcm_res.end = itcm_end - 1;
+	if (tcm_status & 1) {
+		setup_tcm_bank(1, ITCM_OFFSET,
+			       (ITCM_END - ITCM_OFFSET + 1) >> 10);
 		request_resource(&iomem_resource, &itcm_res);
-		itcm_iomap[0].length = itcm_end - ITCM_OFFSET;
 		iotable_init(itcm_iomap, 1);
 		/* Copy code from RAM to ITCM */
 		start = &__sitcm_text;
 		end   = &__eitcm_text;
 		ram   = &__itcm_start;
-		/* This means you compiled more code than fits into ITCM */
-		BUG_ON((end - start) > (itcm_end - ITCM_OFFSET));
 		memcpy(start, ram, (end-start));
 		pr_debug("CPU ITCM: copied code from %p - %p\n", start, end);
 	}
@@ -236,10 +208,10 @@ static int __init setup_tcm_pool(void)
 	pr_debug("Setting up TCM memory pool\n");
 
 	/* Add the rest of DTCM to the TCM pool */
-	if (tcm_status & (0x03 << 16)) {
-		if (dtcm_pool_start < dtcm_end) {
+	if (tcm_status & (1 << 16)) {
+		if (dtcm_pool_start < DTCM_END) {
 			ret = gen_pool_add(tcm_pool, dtcm_pool_start,
-					   dtcm_end - dtcm_pool_start, -1);
+					   DTCM_END - dtcm_pool_start + 1, -1);
 			if (ret) {
 				pr_err("CPU DTCM: could not add DTCM " \
 				       "remainder to pool!\n");
@@ -247,16 +219,16 @@ static int __init setup_tcm_pool(void)
 			}
 			pr_debug("CPU DTCM: Added %08x bytes @ %08x to " \
 				 "the TCM memory pool\n",
-				 dtcm_end - dtcm_pool_start,
+				 DTCM_END - dtcm_pool_start + 1,
 				 dtcm_pool_start);
 		}
 	}
 
 	/* Add the rest of ITCM to the TCM pool */
-	if (tcm_status & 0x03) {
-		if (itcm_pool_start < itcm_end) {
+	if (tcm_status & 1) {
+		if (itcm_pool_start < ITCM_END) {
 			ret = gen_pool_add(tcm_pool, itcm_pool_start,
-					   itcm_end - itcm_pool_start, -1);
+					   ITCM_END - itcm_pool_start + 1, -1);
 			if (ret) {
 				pr_err("CPU ITCM: could not add ITCM " \
 				       "remainder to pool!\n");
@@ -264,7 +236,7 @@ static int __init setup_tcm_pool(void)
 			}
 			pr_debug("CPU ITCM: Added %08x bytes @ %08x to " \
 				 "the TCM memory pool\n",
-				 itcm_end - itcm_pool_start,
+				 ITCM_END - itcm_pool_start + 1,
 				 itcm_pool_start);
 		}
 	}

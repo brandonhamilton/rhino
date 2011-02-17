@@ -20,7 +20,6 @@
 #include <linux/phy.h>
 #include <linux/phy_fixed.h>
 #include <linux/err.h>
-#include <linux/slab.h>
 
 #define MII_REGS_NUM 29
 

@@ -22,7 +22,6 @@
 #include <linux/ctype.h>
 #include <linux/mutex.h>
 #include <linux/perf_event.h>
-#include <linux/slab.h>
 
 #include "trace.h"
 #include "trace_output.h"
@@ -212,9 +211,8 @@ static int filter_pred_pchar(struct filter_pred *pred, void *event,
 {
 	char **addr = (char **)(event + pred->offset);
 	int cmp, match;
-	int len = strlen(*addr) + 1;	/* including tailing '\0' */
 
-	cmp = pred->regex.match(*addr, &pred->regex, len);
+	cmp = pred->regex.match(*addr, &pred->regex, pred->regex.field_len);
 
 	match = cmp ^ pred->not;
 
@@ -253,18 +251,7 @@ static int filter_pred_none(struct filter_pred *pred, void *event,
 	return 0;
 }
 
-/*
- * regex_match_foo - Basic regex callbacks
- *
- * @str: the string to be searched
- * @r:   the regex structure containing the pattern string
- * @len: the length of the string to be searched (including '\0')
- *
- * Note:
- * - @str might not be NULL-terminated if it's of type DYN_STRING
- *   or STATIC_STRING
- */
-
+/* Basic regex callbacks */
 static int regex_match_full(char *str, struct regex *r, int len)
 {
 	if (strncmp(str, r->pattern, len) == 0)
@@ -274,24 +261,23 @@ static int regex_match_full(char *str, struct regex *r, int len)
 
 static int regex_match_front(char *str, struct regex *r, int len)
 {
-	if (strncmp(str, r->pattern, r->len) == 0)
+	if (strncmp(str, r->pattern, len) == 0)
 		return 1;
 	return 0;
 }
 
 static int regex_match_middle(char *str, struct regex *r, int len)
 {
-	if (strnstr(str, r->pattern, len))
+	if (strstr(str, r->pattern))
 		return 1;
 	return 0;
 }
 
 static int regex_match_end(char *str, struct regex *r, int len)
 {
-	int strlen = len - 1;
+	char *ptr = strstr(str, r->pattern);
 
-	if (strlen >= r->len &&
-	    memcmp(str + strlen - r->len, r->pattern, r->len) == 0)
+	if (ptr && (ptr[r->len] == 0))
 		return 1;
 	return 0;
 }
@@ -497,30 +483,16 @@ void print_subsystem_event_filter(struct event_subsystem *system,
 }
 
 static struct ftrace_event_field *
-__find_event_field(struct list_head *head, char *name)
+find_event_field(struct ftrace_event_call *call, char *name)
 {
 	struct ftrace_event_field *field;
 
-	list_for_each_entry(field, head, link) {
+	list_for_each_entry(field, &call->fields, link) {
 		if (!strcmp(field->name, name))
 			return field;
 	}
 
 	return NULL;
-}
-
-static struct ftrace_event_field *
-find_event_field(struct ftrace_event_call *call, char *name)
-{
-	struct ftrace_event_field *field;
-	struct list_head *head;
-
-	field = __find_event_field(&ftrace_common_fields, name);
-	if (field)
-		return field;
-
-	head = trace_get_fields(call);
-	return __find_event_field(head, name);
 }
 
 static void filter_free_pred(struct filter_pred *pred)
@@ -559,7 +531,7 @@ static void filter_disable_preds(struct ftrace_event_call *call)
 	struct event_filter *filter = call->filter;
 	int i;
 
-	call->flags &= ~TRACE_EVENT_FL_FILTERED;
+	call->filter_active = 0;
 	filter->n_preds = 0;
 
 	for (i = 0; i < MAX_FILTER_PRED; i++)
@@ -586,7 +558,7 @@ void destroy_preds(struct ftrace_event_call *call)
 {
 	__free_preds(call->filter);
 	call->filter = NULL;
-	call->flags &= ~TRACE_EVENT_FL_FILTERED;
+	call->filter_active = 0;
 }
 
 static struct event_filter *__alloc_preds(void)
@@ -625,7 +597,7 @@ static int init_preds(struct ftrace_event_call *call)
 	if (call->filter)
 		return 0;
 
-	call->flags &= ~TRACE_EVENT_FL_FILTERED;
+	call->filter_active = 0;
 	call->filter = __alloc_preds();
 	if (IS_ERR(call->filter))
 		return PTR_ERR(call->filter);
@@ -639,7 +611,10 @@ static int init_subsystem_preds(struct event_subsystem *system)
 	int err;
 
 	list_for_each_entry(call, &ftrace_events, list) {
-		if (strcmp(call->class->system, system->name) != 0)
+		if (!call->define_fields)
+			continue;
+
+		if (strcmp(call->system, system->name) != 0)
 			continue;
 
 		err = init_preds(call);
@@ -655,7 +630,10 @@ static void filter_free_subsystem_preds(struct event_subsystem *system)
 	struct ftrace_event_call *call;
 
 	list_for_each_entry(call, &ftrace_events, list) {
-		if (strcmp(call->class->system, system->name) != 0)
+		if (!call->define_fields)
+			continue;
+
+		if (strcmp(call->system, system->name) != 0)
 			continue;
 
 		filter_disable_preds(call);
@@ -803,8 +781,10 @@ static int filter_add_pred(struct filter_parse_state *ps,
 			pred->regex.field_len = field->size;
 		} else if (field->filter_type == FILTER_DYN_STRING)
 			fn = filter_pred_strloc;
-		else
+		else {
 			fn = filter_pred_pchar;
+			pred->regex.field_len = strlen(pred->regex.pattern);
+		}
 	} else {
 		if (field->is_signed)
 			ret = strict_strtoll(pred->regex.pattern, 0, &val);
@@ -1257,7 +1237,10 @@ static int replace_system_preds(struct event_subsystem *system,
 	list_for_each_entry(call, &ftrace_events, list) {
 		struct event_filter *filter = call->filter;
 
-		if (strcmp(call->class->system, system->name) != 0)
+		if (!call->define_fields)
+			continue;
+
+		if (strcmp(call->system, system->name) != 0)
 			continue;
 
 		/* try to see if the filter can be applied */
@@ -1271,7 +1254,7 @@ static int replace_system_preds(struct event_subsystem *system,
 		if (err)
 			filter_disable_preds(call);
 		else {
-			call->flags |= TRACE_EVENT_FL_FILTERED;
+			call->filter_active = 1;
 			replace_filter_string(filter, filter_string);
 		}
 		fail = false;
@@ -1320,7 +1303,7 @@ int apply_event_filter(struct ftrace_event_call *call, char *filter_string)
 	if (err)
 		append_filter_err(ps, call->filter);
 	else
-		call->flags |= TRACE_EVENT_FL_FILTERED;
+		call->filter_active = 1;
 out:
 	filter_opstack_clear(ps);
 	postfix_clear(ps);
@@ -1377,7 +1360,7 @@ out_unlock:
 	return err;
 }
 
-#ifdef CONFIG_PERF_EVENTS
+#ifdef CONFIG_EVENT_PROFILE
 
 void ftrace_profile_free_filter(struct perf_event *event)
 {
@@ -1398,12 +1381,12 @@ int ftrace_profile_set_filter(struct perf_event *event, int event_id,
 	mutex_lock(&event_mutex);
 
 	list_for_each_entry(call, &ftrace_events, list) {
-		if (call->event.type == event_id)
+		if (call->id == event_id)
 			break;
 	}
 
 	err = -EINVAL;
-	if (&call->list == &ftrace_events)
+	if (!call)
 		goto out_unlock;
 
 	err = -EEXIST;
@@ -1445,5 +1428,5 @@ out_unlock:
 	return err;
 }
 
-#endif /* CONFIG_PERF_EVENTS */
+#endif /* CONFIG_EVENT_PROFILE */
 

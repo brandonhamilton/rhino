@@ -572,10 +572,9 @@ static void cmd640_set_mode(ide_drive_t *drive, unsigned int index,
 	program_drive_counts(drive, index);
 }
 
-static void cmd640_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void cmd640_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	unsigned int index = 0, cycle_time;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 	u8 b;
 
 	switch (pio) {
@@ -606,7 +605,7 @@ static void cmd640_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 }
 #endif /* CONFIG_BLK_DEV_CMD640_ENHANCED */
 
-static void __init cmd640_init_dev(ide_drive_t *drive)
+static void cmd640_init_dev(ide_drive_t *drive)
 {
 	unsigned int i = drive->hwif->channel * 2 + (drive->dn & 1);
 
@@ -633,10 +632,12 @@ static void __init cmd640_init_dev(ide_drive_t *drive)
 
 static int cmd640_test_irq(ide_hwif_t *hwif)
 {
+	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	int irq_reg		= hwif->channel ? ARTTIM23 : CFR;
-	u8  irq_mask		= hwif->channel ? ARTTIM23_IDE23INTR :
+	u8  irq_stat, irq_mask	= hwif->channel ? ARTTIM23_IDE23INTR :
 						  CFR_IDE01INTR;
-	u8  irq_stat		= get_cmd640_reg(irq_reg);
+
+	pci_read_config_byte(dev, irq_reg, &irq_stat);
 
 	return (irq_stat & irq_mask) ? 1 : 0;
 }

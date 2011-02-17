@@ -1,10 +1,7 @@
 /*
- * XDR standard data types and function declarations
+ * include/linux/sunrpc/xdr.h
  *
  * Copyright (C) 1995-1997 Olaf Kirch <okir@monad.swb.de>
- *
- * Based on:
- *   RFC 4506 "XDR: External Data Representation Standard", May 2006
  */
 
 #ifndef _SUNRPC_XDR_H_
@@ -65,6 +62,7 @@ struct xdr_buf {
 
 	unsigned int	buflen,		/* Total length of storage buffer */
 			len;		/* Length of XDR encoded message */
+
 };
 
 /*
@@ -108,7 +106,6 @@ void	xdr_encode_pages(struct xdr_buf *, struct page **, unsigned int,
 			 unsigned int);
 void	xdr_inline_pages(struct xdr_buf *, unsigned int,
 			 struct page **, unsigned int, unsigned int);
-void	xdr_terminate_string(struct xdr_buf *, const u32);
 
 static inline __be32 *xdr_encode_array(__be32 *p, const void *s, unsigned int len)
 {
@@ -130,13 +127,6 @@ xdr_decode_hyper(__be32 *p, __u64 *valp)
 {
 	*valp = get_unaligned_be64(p);
 	return p + 2;
-}
-
-static inline __be32 *
-xdr_decode_opaque_fixed(__be32 *p, void *ptr, unsigned int len)
-{
-	memcpy(ptr, p, len);
-	return p + XDR_QUADLEN(len);
 }
 
 /*
@@ -188,7 +178,7 @@ struct xdr_array2_desc {
 };
 
 extern int xdr_decode_array2(struct xdr_buf *buf, unsigned int base,
-			     struct xdr_array2_desc *desc);
+                             struct xdr_array2_desc *desc);
 extern int xdr_encode_array2(struct xdr_buf *buf, unsigned int base,
 			     struct xdr_array2_desc *desc);
 
@@ -208,7 +198,6 @@ extern __be32 *xdr_reserve_space(struct xdr_stream *xdr, size_t nbytes);
 extern void xdr_write_pages(struct xdr_stream *xdr, struct page **pages,
 		unsigned int base, unsigned int len);
 extern void xdr_init_decode(struct xdr_stream *xdr, struct xdr_buf *buf, __be32 *p);
-extern __be32 *xdr_inline_peek(struct xdr_stream *xdr, size_t nbytes);
 extern __be32 *xdr_inline_decode(struct xdr_stream *xdr, size_t nbytes);
 extern void xdr_read_pages(struct xdr_stream *xdr, unsigned int len);
 extern void xdr_enter_page(struct xdr_stream *xdr, unsigned int len);

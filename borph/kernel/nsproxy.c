@@ -13,7 +13,6 @@
  *             Pavel Emelianov <xemul@openvz.org>
  */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/nsproxy.h>
 #include <linux/init_task.h>
@@ -25,18 +24,7 @@
 
 static struct kmem_cache *nsproxy_cachep;
 
-struct nsproxy init_nsproxy = {
-	.count	= ATOMIC_INIT(1),
-	.uts_ns	= &init_uts_ns,
-#if defined(CONFIG_POSIX_MQUEUE) || defined(CONFIG_SYSVIPC)
-	.ipc_ns	= &init_ipc_ns,
-#endif
-	.mnt_ns	= NULL,
-	.pid_ns	= &init_pid_ns,
-#ifdef CONFIG_NET
-	.net_ns	= &init_net,
-#endif
-};
+struct nsproxy init_nsproxy = INIT_NSPROXY(init_nsproxy);
 
 static inline struct nsproxy *create_nsproxy(void)
 {

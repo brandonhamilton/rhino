@@ -61,8 +61,6 @@
     Test and make sure PCI latency is now correct for all cases.
 */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define DRV_NAME	"dmfe"
 #define DRV_VERSION	"1.36.4"
 #define DRV_RELDATE	"2002-01-17"
@@ -74,6 +72,7 @@
 #include <linux/ptrace.h>
 #include <linux/errno.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
@@ -92,10 +91,6 @@
 #include <asm/dma.h>
 #include <asm/uaccess.h>
 #include <asm/irq.h>
-
-#ifdef CONFIG_TULIP_DM910X
-#include <linux/of.h>
-#endif
 
 
 /* Board/System/Debug information/definition ---------------- */
@@ -150,17 +145,16 @@
 #define DMFE_TX_TIMEOUT ((3*HZ)/2)	/* tx packet time-out time 1.5 s" */
 #define DMFE_TX_KICK 	(HZ/2)	/* tx packet Kick-out time 0.5 s" */
 
-#define DMFE_DBUG(dbug_now, msg, value)			\
-	do {						\
-		if (dmfe_debug || (dbug_now))		\
-			pr_err("%s %lx\n",		\
-			       (msg), (long) (value));	\
+#define DMFE_DBUG(dbug_now, msg, value) \
+	do { \
+ 		if (dmfe_debug || (dbug_now)) \
+			printk(KERN_ERR DRV_NAME ": %s %lx\n",\
+ 				(msg), (long) (value)); \
 	} while (0)
 
-#define SHOW_MEDIA_TYPE(mode)				\
-	pr_info("Change Speed to %sMhz %s duplex\n" ,	\
-		(mode & 1) ? "100":"10",		\
-		(mode & 4) ? "full":"half");
+#define SHOW_MEDIA_TYPE(mode) \
+	printk (KERN_INFO DRV_NAME ": Change Speed to %sMhz %s duplex\n" , \
+		(mode & 1) ? "100":"10", (mode & 4) ? "full":"half");
 
 
 /* CR9 definition: SROM/MII */
@@ -329,8 +323,8 @@ static void poll_dmfe (struct net_device *dev);
 static void dmfe_descriptor_init(struct dmfe_board_info *, unsigned long);
 static void allocate_rx_buffer(struct dmfe_board_info *);
 static void update_cr6(u32, unsigned long);
-static void send_filter_frame(struct DEVICE *);
-static void dm9132_id_table(struct DEVICE *);
+static void send_filter_frame(struct DEVICE * ,int);
+static void dm9132_id_table(struct DEVICE * ,int);
 static u16 phy_read(unsigned long, u8, u8, u32);
 static void phy_write(unsigned long, u8, u8, u16, u32);
 static void phy_write_1bit(unsigned long, u32);
@@ -383,22 +377,6 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 	if (!printed_version++)
 		printk(version);
 
-	/*
-	 *	SPARC on-board DM910x chips should be handled by the main
-	 *	tulip driver, except for early DM9100s.
-	 */
-#ifdef CONFIG_TULIP_DM910X
-	if ((ent->driver_data == PCI_DM9100_ID && pdev->revision >= 0x30) ||
-	    ent->driver_data == PCI_DM9102_ID) {
-		struct device_node *dp = pci_device_to_OF_node(pdev);
-
-		if (dp && of_get_property(dp, "local-mac-address", NULL)) {
-			pr_info("skipping on-board DM910x (use tulip)\n");
-			return -ENODEV;
-		}
-	}
-#endif
-
 	/* Init network device */
 	dev = alloc_etherdev(sizeof(*db));
 	if (dev == NULL)
@@ -406,7 +384,8 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
-		pr_warning("32-bit PCI DMA not available\n");
+		printk(KERN_WARNING DRV_NAME
+			": 32-bit PCI DMA not available.\n");
 		err = -ENODEV;
 		goto err_out_free;
 	}
@@ -417,13 +396,13 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 		goto err_out_free;
 
 	if (!pci_resource_start(pdev, 0)) {
-		pr_err("I/O base is zero\n");
+		printk(KERN_ERR DRV_NAME ": I/O base is zero\n");
 		err = -ENODEV;
 		goto err_out_disable;
 	}
 
 	if (pci_resource_len(pdev, 0) < (CHK_IO_SIZE(pdev)) ) {
-		pr_err("Allocated I/O size too small\n");
+		printk(KERN_ERR DRV_NAME ": Allocated I/O size too small\n");
 		err = -ENODEV;
 		goto err_out_disable;
 	}
@@ -438,7 +417,7 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 #endif
 
 	if (pci_request_regions(pdev, DRV_NAME)) {
-		pr_err("Failed to request PCI regions\n");
+		printk(KERN_ERR DRV_NAME ": Failed to request PCI regions\n");
 		err = -ENODEV;
 		goto err_out_disable;
 	}
@@ -497,9 +476,12 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 	if (err)
 		goto err_out_free_buf;
 
-	dev_info(&dev->dev, "Davicom DM%04lx at pci%s, %pM, irq %d\n",
-		 ent->driver_data >> 16,
-		 pci_name(pdev), dev->dev_addr, dev->irq);
+	printk(KERN_INFO "%s: Davicom DM%04lx at pci%s, %pM, irq %d.\n",
+	       dev->name,
+	       ent->driver_data >> 16,
+	       pci_name(pdev),
+	       dev->dev_addr,
+	       dev->irq);
 
 	pci_set_master(pdev);
 
@@ -589,7 +571,7 @@ static int dmfe_open(struct DEVICE *dev)
 		db->dm910x_chk_mode = 1;	/* Enter the check mode */
 	}
 
-	/* Initialize DM910X board */
+	/* Initilize DM910X board */
 	dmfe_init_dm910x(dev);
 
 	/* Active System Interface */
@@ -599,16 +581,16 @@ static int dmfe_open(struct DEVICE *dev)
 	init_timer(&db->timer);
 	db->timer.expires = DMFE_TIMER_WUT + HZ * 2;
 	db->timer.data = (unsigned long)dev;
-	db->timer.function = dmfe_timer;
+	db->timer.function = &dmfe_timer;
 	add_timer(&db->timer);
 
 	return 0;
 }
 
 
-/*	Initialize DM910X board
+/*	Initilize DM910X board
  *	Reset DM910X board
- *	Initialize TX/Rx descriptor chain structure
+ *	Initilize TX/Rx descriptor chain structure
  *	Send the set-up frame
  *	Enable Tx/Rx machine
  */
@@ -649,7 +631,7 @@ static void dmfe_init_dm910x(struct DEVICE *dev)
 	if ( !(db->media_mode & DMFE_AUTO) )
 		db->op_mode = db->media_mode; 	/* Force Mode */
 
-	/* Initialize Transmit/Receive decriptor and CR3/4 */
+	/* Initiliaze Transmit/Receive decriptor and CR3/4 */
 	dmfe_descriptor_init(db, ioaddr);
 
 	/* Init CR6 to program DM910x operation */
@@ -657,9 +639,9 @@ static void dmfe_init_dm910x(struct DEVICE *dev)
 
 	/* Send setup frame */
 	if (db->chip_id == PCI_DM9132_ID)
-		dm9132_id_table(dev);	/* DM9132 */
+		dm9132_id_table(dev, dev->mc_count);	/* DM9132 */
 	else
-		send_filter_frame(dev);	/* DM9102/DM9102A */
+		send_filter_frame(dev, dev->mc_count);	/* DM9102/DM9102A */
 
 	/* Init CR7, interrupt active bit */
 	db->cr7_data = CR7_DEFAULT;
@@ -688,22 +670,23 @@ static netdev_tx_t dmfe_start_xmit(struct sk_buff *skb,
 
 	DMFE_DBUG(0, "dmfe_start_xmit", 0);
 
+	/* Resource flag check */
+	netif_stop_queue(dev);
+
 	/* Too large packet check */
 	if (skb->len > MAX_PACKET_SIZE) {
-		pr_err("big packet = %d\n", (u16)skb->len);
+		printk(KERN_ERR DRV_NAME ": big packet = %d\n", (u16)skb->len);
 		dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
-
-	/* Resource flag check */
-	netif_stop_queue(dev);
 
 	spin_lock_irqsave(&db->lock, flags);
 
 	/* No Tx resource check, it never happen nromally */
 	if (db->tx_queue_cnt >= TX_FREE_DESC_CNT) {
 		spin_unlock_irqrestore(&db->lock, flags);
-		pr_err("No Tx resource %ld\n", db->tx_queue_cnt);
+		printk(KERN_ERR DRV_NAME ": No Tx resource %ld\n",
+		       db->tx_queue_cnt);
 		return NETDEV_TX_BUSY;
 	}
 
@@ -775,11 +758,12 @@ static int dmfe_stop(struct DEVICE *dev)
 
 #if 0
 	/* show statistic counter */
-	printk("FU:%lx EC:%lx LC:%lx NC:%lx LOC:%lx TXJT:%lx RESET:%lx RCR8:%lx FAL:%lx TT:%lx\n",
-	       db->tx_fifo_underrun, db->tx_excessive_collision,
-	       db->tx_late_collision, db->tx_no_carrier, db->tx_loss_carrier,
-	       db->tx_jabber_timeout, db->reset_count, db->reset_cr8,
-	       db->reset_fatal, db->reset_TXtimeout);
+	printk(DRV_NAME ": FU:%lx EC:%lx LC:%lx NC:%lx"
+		" LOC:%lx TXJT:%lx RESET:%lx RCR8:%lx FAL:%lx TT:%lx\n",
+		db->tx_fifo_underrun, db->tx_excessive_collision,
+		db->tx_late_collision, db->tx_no_carrier, db->tx_loss_carrier,
+		db->tx_jabber_timeout, db->reset_count, db->reset_cr8,
+		db->reset_fatal, db->reset_TXtimeout);
 #endif
 
 	return 0;
@@ -880,7 +864,7 @@ static void dmfe_free_tx_pkt(struct DEVICE *dev, struct dmfe_board_info * db)
 	txptr = db->tx_remove_ptr;
 	while(db->tx_packet_cnt) {
 		tdes0 = le32_to_cpu(txptr->tdes0);
-		pr_debug("tdes0=%x\n", tdes0);
+		/* printk(DRV_NAME ": tdes0=%x\n", tdes0); */
 		if (tdes0 & 0x80000000)
 			break;
 
@@ -890,7 +874,7 @@ static void dmfe_free_tx_pkt(struct DEVICE *dev, struct dmfe_board_info * db)
 
 		/* Transmit statistic counter */
 		if ( tdes0 != 0x7fffffff ) {
-			pr_debug("tdes0=%x\n", tdes0);
+			/* printk(DRV_NAME ": tdes0=%x\n", tdes0); */
 			dev->stats.collisions += (tdes0 >> 3) & 0xf;
 			dev->stats.tx_bytes += le32_to_cpu(txptr->tdes1) & 0x7ff;
 			if (tdes0 & TDES0_ERR_MASK) {
@@ -987,7 +971,7 @@ static void dmfe_rx_packet(struct DEVICE *dev, struct dmfe_board_info * db)
 			/* error summary bit check */
 			if (rdes0 & 0x8000) {
 				/* This is a error packet */
-				pr_debug("rdes0: %x\n", rdes0);
+				//printk(DRV_NAME ": rdes0: %lx\n", rdes0);
 				dev->stats.rx_errors++;
 				if (rdes0 & 1)
 					dev->stats.rx_fifo_errors++;
@@ -1051,7 +1035,6 @@ static void dmfe_set_filter_mode(struct DEVICE * dev)
 {
 	struct dmfe_board_info *db = netdev_priv(dev);
 	unsigned long flags;
-	int mc_count = netdev_mc_count(dev);
 
 	DMFE_DBUG(0, "dmfe_set_filter_mode()", 0);
 	spin_lock_irqsave(&db->lock, flags);
@@ -1064,19 +1047,19 @@ static void dmfe_set_filter_mode(struct DEVICE * dev)
 		return;
 	}
 
-	if (dev->flags & IFF_ALLMULTI || mc_count > DMFE_MAX_MULTICAST) {
-		DMFE_DBUG(0, "Pass all multicast address", mc_count);
+	if (dev->flags & IFF_ALLMULTI || dev->mc_count > DMFE_MAX_MULTICAST) {
+		DMFE_DBUG(0, "Pass all multicast address", dev->mc_count);
 		db->cr6_data &= ~(CR6_PM | CR6_PBF);
 		db->cr6_data |= CR6_PAM;
 		spin_unlock_irqrestore(&db->lock, flags);
 		return;
 	}
 
-	DMFE_DBUG(0, "Set multicast address", mc_count);
+	DMFE_DBUG(0, "Set multicast address", dev->mc_count);
 	if (db->chip_id == PCI_DM9132_ID)
-		dm9132_id_table(dev);	/* DM9132 */
+		dm9132_id_table(dev, dev->mc_count);	/* DM9132 */
 	else
-		send_filter_frame(dev);	/* DM9102/DM9102A */
+		send_filter_frame(dev, dev->mc_count); 	/* DM9102/DM9102A */
 	spin_unlock_irqrestore(&db->lock, flags);
 }
 
@@ -1118,6 +1101,7 @@ static void dmfe_ethtool_get_wol(struct net_device *dev,
 
 	wolinfo->supported = WAKE_PHY | WAKE_MAGIC;
 	wolinfo->wolopts = db->wol_mode;
+	return;
 }
 
 
@@ -1179,14 +1163,15 @@ static void dmfe_timer(unsigned long data)
 
 	/* TX polling kick monitor */
 	if ( db->tx_packet_cnt &&
-	     time_after(jiffies, dev_trans_start(dev) + DMFE_TX_KICK) ) {
+	     time_after(jiffies, dev->trans_start + DMFE_TX_KICK) ) {
 		outl(0x1, dev->base_addr + DCR1);   /* Tx polling again */
 
 		/* TX Timeout */
-		if (time_after(jiffies, dev_trans_start(dev) + DMFE_TX_TIMEOUT) ) {
+		if ( time_after(jiffies, dev->trans_start + DMFE_TX_TIMEOUT) ) {
 			db->reset_TXtimeout++;
 			db->wait_reset = 1;
-			dev_warn(&dev->dev, "Tx timeout - resetting\n");
+			printk(KERN_WARNING "%s: Tx timeout - resetting\n",
+			       dev->name);
 		}
 	}
 
@@ -1288,7 +1273,7 @@ static void dmfe_timer(unsigned long data)
  *	Stop DM910X board
  *	Free Tx/Rx allocated memory
  *	Reset DM910X board
- *	Re-initialize DM910X board
+ *	Re-initilize DM910X board
  */
 
 static void dmfe_dynamic_reset(struct DEVICE *dev)
@@ -1316,7 +1301,7 @@ static void dmfe_dynamic_reset(struct DEVICE *dev)
 	netif_carrier_off(dev);
 	db->wait_reset = 0;
 
-	/* Re-initialize DM910X board */
+	/* Re-initilize DM910X board */
 	dmfe_init_dm910x(dev);
 
 	/* Restart upper layer interface */
@@ -1447,12 +1432,12 @@ static void update_cr6(u32 cr6_data, unsigned long ioaddr)
 
 /*
  *	Send a setup frame for DM9132
- *	This setup frame initialize DM910X address filter mode
+ *	This setup frame initilize DM910X address filter mode
 */
 
-static void dm9132_id_table(struct DEVICE *dev)
+static void dm9132_id_table(struct DEVICE *dev, int mc_cnt)
 {
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *mcptr;
 	u16 * addrptr;
 	unsigned long ioaddr = dev->base_addr+0xc0;		/* ID Table */
 	u32 hash_val;
@@ -1470,14 +1455,15 @@ static void dm9132_id_table(struct DEVICE *dev)
 	ioaddr += 4;
 
 	/* Clear Hash Table */
-	memset(hash_table, 0, sizeof(hash_table));
+	for (i = 0; i < 4; i++)
+		hash_table[i] = 0x0;
 
 	/* broadcast address */
 	hash_table[3] = 0x8000;
 
 	/* the multicast address in Hash Table : 64 bits */
-	netdev_for_each_mc_addr(ha, dev) {
-		hash_val = cal_CRC((char *) ha->addr, 6, 0) & 0x3f;
+	for (mcptr = dev->mc_list, i = 0; i < mc_cnt; i++, mcptr = mcptr->next) {
+		hash_val = cal_CRC( (char *) mcptr->dmi_addr, 6, 0) & 0x3f;
 		hash_table[hash_val / 16] |= (u16) 1 << (hash_val % 16);
 	}
 
@@ -1489,13 +1475,13 @@ static void dm9132_id_table(struct DEVICE *dev)
 
 /*
  *	Send a setup frame for DM9102/DM9102A
- *	This setup frame initialize DM910X address filter mode
+ *	This setup frame initilize DM910X address filter mode
  */
 
-static void send_filter_frame(struct DEVICE *dev)
+static void send_filter_frame(struct DEVICE *dev, int mc_cnt)
 {
 	struct dmfe_board_info *db = netdev_priv(dev);
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *mcptr;
 	struct tx_desc *txptr;
 	u16 * addrptr;
 	u32 * suptr;
@@ -1518,14 +1504,14 @@ static void send_filter_frame(struct DEVICE *dev)
 	*suptr++ = 0xffff;
 
 	/* fit the multicast address */
-	netdev_for_each_mc_addr(ha, dev) {
-		addrptr = (u16 *) ha->addr;
+	for (mcptr = dev->mc_list, i = 0; i < mc_cnt; i++, mcptr = mcptr->next) {
+		addrptr = (u16 *) mcptr->dmi_addr;
 		*suptr++ = addrptr[0];
 		*suptr++ = addrptr[1];
 		*suptr++ = addrptr[2];
 	}
 
-	for (i = netdev_mc_count(dev); i < 14; i++) {
+	for (; i<14; i++) {
 		*suptr++ = 0xffff;
 		*suptr++ = 0xffff;
 		*suptr++ = 0xffff;
@@ -1639,7 +1625,7 @@ static u8 dmfe_sense_speed(struct dmfe_board_info * db)
 		else 				/* DM9102/DM9102A */
 			phy_mode = phy_read(db->ioaddr,
 				    db->phy_addr, 17, db->chip_id) & 0xf000;
-		pr_debug("Phy_mode %x\n", phy_mode);
+		/* printk(DRV_NAME ": Phy_mode %x ",phy_mode); */
 		switch (phy_mode) {
 		case 0x1000: db->op_mode = DMFE_10MHF; break;
 		case 0x2000: db->op_mode = DMFE_10MFD; break;
@@ -2082,7 +2068,7 @@ static void dmfe_HPNA_remote_cmd_chk(struct dmfe_board_info * db)
 
 
 
-static DEFINE_PCI_DEVICE_TABLE(dmfe_pci_tbl) = {
+static struct pci_device_id dmfe_pci_tbl[] = {
 	{ 0x1282, 0x9132, PCI_ANY_ID, PCI_ANY_ID, 0, 0, PCI_DM9132_ID },
 	{ 0x1282, 0x9102, PCI_ANY_ID, PCI_ANY_ID, 0, 0, PCI_DM9102_ID },
 	{ 0x1282, 0x9100, PCI_ANY_ID, PCI_ANY_ID, 0, 0, PCI_DM9100_ID },
@@ -2142,7 +2128,7 @@ static int dmfe_resume(struct pci_dev *pci_dev)
 	pci_set_power_state(pci_dev, PCI_D0);
 	pci_restore_state(pci_dev);
 
-	/* Re-initialize DM910X board */
+	/* Re-initilize DM910X board */
 	dmfe_init_dm910x(dev);
 
 	/* Disable WOL */
@@ -2196,7 +2182,7 @@ MODULE_PARM_DESC(SF_mode, "Davicom DM9xxx special function "
 
 /*	Description:
  *	when user used insmod to add module, system invoked init_module()
- *	to initialize and register.
+ *	to initilize and register.
  */
 
 static int __init dmfe_init_module(void)

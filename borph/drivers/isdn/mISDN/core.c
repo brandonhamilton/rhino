@@ -12,7 +12,6 @@
  *
  */
 
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/module.h>

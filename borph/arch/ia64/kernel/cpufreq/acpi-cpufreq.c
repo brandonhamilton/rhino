@@ -10,7 +10,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/cpufreq.h>
@@ -113,7 +112,7 @@ processor_get_freq (
 	dprintk("processor_get_freq\n");
 
 	saved_mask = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 	if (smp_processor_id() != cpu)
 		goto migrate_end;
 
@@ -121,7 +120,7 @@ processor_get_freq (
 	ret = processor_get_pstate(&value);
 
 	if (ret) {
-		set_cpus_allowed_ptr(current, &saved_mask);
+		set_cpus_allowed(current, saved_mask);
 		printk(KERN_WARNING "get performance failed with error %d\n",
 		       ret);
 		ret = 0;
@@ -131,7 +130,7 @@ processor_get_freq (
 	ret = (clock_freq*1000);
 
 migrate_end:
-	set_cpus_allowed_ptr(current, &saved_mask);
+	set_cpus_allowed(current, saved_mask);
 	return ret;
 }
 
@@ -151,7 +150,7 @@ processor_set_freq (
 	dprintk("processor_set_freq\n");
 
 	saved_mask = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 	if (smp_processor_id() != cpu) {
 		retval = -EAGAIN;
 		goto migrate_end;
@@ -208,7 +207,7 @@ processor_set_freq (
 	retval = 0;
 
 migrate_end:
-	set_cpus_allowed_ptr(current, &saved_mask);
+	set_cpus_allowed(current, saved_mask);
 	return (retval);
 }
 

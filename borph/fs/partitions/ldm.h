@@ -5,7 +5,7 @@
  * Copyright (c) 2001-2007 Anton Altaparmakov
  * Copyright (C) 2001,2002 Jakob Kemi <jakob.kemi@telia.com>
  *
- * Documentation is available at http://www.linux-ntfs.org/doku.php?id=downloads 
+ * Documentation is available at http://www.linux-ntfs.org/content/view/19/37/
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -209,7 +209,7 @@ struct ldmdb {				/* Cache of the database */
 	struct list_head v_part;
 };
 
-int ldm_partition(struct parsed_partitions *state);
+int ldm_partition (struct parsed_partitions *state, struct block_device *bdev);
 
 #endif /* _FS_PT_LDM_H_ */
 

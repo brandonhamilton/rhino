@@ -57,7 +57,7 @@
 #define SMP_NOP2
 #define SMP_NOP3
 #endif /* SMP */
-unsigned long arch_local_irq_save(void)
+unsigned long __raw_local_irq_save(void)
 {
 	unsigned long retval;
 	unsigned long tmp;
@@ -74,9 +74,8 @@ unsigned long arch_local_irq_save(void)
 
 	return retval;
 }
-EXPORT_SYMBOL(arch_local_irq_save);
 
-void arch_local_irq_enable(void)
+void raw_local_irq_enable(void)
 {
 	unsigned long tmp;
 
@@ -90,9 +89,8 @@ void arch_local_irq_enable(void)
 		: "i" (PSR_PIL)
 		: "memory");
 }
-EXPORT_SYMBOL(arch_local_irq_enable);
 
-void arch_local_irq_restore(unsigned long old_psr)
+void raw_local_irq_restore(unsigned long old_psr)
 {
 	unsigned long tmp;
 
@@ -107,7 +105,10 @@ void arch_local_irq_restore(unsigned long old_psr)
 		: "i" (PSR_PIL), "r" (old_psr)
 		: "memory");
 }
-EXPORT_SYMBOL(arch_local_irq_restore);
+
+EXPORT_SYMBOL(__raw_local_irq_save);
+EXPORT_SYMBOL(raw_local_irq_enable);
+EXPORT_SYMBOL(raw_local_irq_restore);
 
 /*
  * Dave Redman (djhr@tadpole.co.uk)
@@ -365,7 +366,7 @@ static int request_fast_irq(unsigned int irq,
 	unsigned long flags;
 	unsigned int cpu_irq;
 	int ret;
-#if defined CONFIG_SMP && !defined CONFIG_SPARC_LEON
+#ifdef CONFIG_SMP
 	struct tt_entry *trap_table;
 	extern struct tt_entry trapbase_cpu1, trapbase_cpu2, trapbase_cpu3;
 #endif
@@ -425,7 +426,7 @@ static int request_fast_irq(unsigned int irq,
 	table[SP_TRAP_IRQ1+(cpu_irq-1)].inst_four = SPARC_NOP;
 
 	INSTANTIATE(sparc_ttable)
-#if defined CONFIG_SMP && !defined CONFIG_SPARC_LEON
+#ifdef CONFIG_SMP
 	trap_table = &trapbase_cpu1; INSTANTIATE(trap_table)
 	trap_table = &trapbase_cpu2; INSTANTIATE(trap_table)
 	trap_table = &trapbase_cpu3; INSTANTIATE(trap_table)

@@ -624,6 +624,7 @@ static struct clk_lookup lookups[] = {
 int __init mxc91231_clocks_init(unsigned long fref)
 {
 	void __iomem *gpt_base;
+	int i;
 
 	ckih_rate = fref;
 
@@ -631,7 +632,8 @@ int __init mxc91231_clocks_init(unsigned long fref)
 	sdhc_clk[0].parent = clk_sdhc_parent(&sdhc_clk[0]);
 	sdhc_clk[1].parent = clk_sdhc_parent(&sdhc_clk[1]);
 
-	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
+	for (i = 0; i < ARRAY_SIZE(lookups); i++)
+		clkdev_add(&lookups[i]);
 
 	gpt_base = MXC91231_IO_ADDRESS(MXC91231_GPT1_BASE_ADDR);
 	mxc_timer_init(&gpt_clk, gpt_base, MXC91231_INT_GPT);

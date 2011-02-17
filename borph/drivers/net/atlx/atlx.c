@@ -41,10 +41,6 @@
 
 #include "atlx.h"
 
-static s32 atlx_read_phy_reg(struct atl1_hw *hw, u16 reg_addr, u16 *phy_data);
-static u32 atlx_hash_mc_addr(struct atl1_hw *hw, u8 *mc_addr);
-static void atlx_set_mac_addr(struct atl1_hw *hw);
-
 static struct atlx_spi_flash_dev flash_table[] = {
 /*	MFR_NAME  WRSR  READ  PRGM  WREN  WRDI  RDSR  RDID  SEC_ERS CHIP_ERS */
 	{"Atmel", 0x00, 0x03, 0x02, 0x06, 0x04, 0x05, 0x15, 0x52,   0x62},
@@ -127,7 +123,7 @@ static void atlx_set_multi(struct net_device *netdev)
 {
 	struct atlx_adapter *adapter = netdev_priv(netdev);
 	struct atlx_hw *hw = &adapter->hw;
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *mc_ptr;
 	u32 rctl;
 	u32 hash_value;
 
@@ -148,8 +144,8 @@ static void atlx_set_multi(struct net_device *netdev)
 	iowrite32(0, (hw->hw_addr + REG_RX_HASH_TABLE) + (1 << 2));
 
 	/* compute mc addresses' hash value ,and put it into hash table */
-	netdev_for_each_mc_addr(ha, netdev) {
-		hash_value = atlx_hash_mc_addr(hw, ha->addr);
+	for (mc_ptr = netdev->mc_list; mc_ptr; mc_ptr = mc_ptr->next) {
+		hash_value = atlx_hash_mc_addr(hw, mc_ptr->dmi_addr);
 		atlx_hash_set(hw, hash_value);
 	}
 }

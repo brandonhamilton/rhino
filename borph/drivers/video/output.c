@@ -23,7 +23,6 @@
  */
 #include <linux/module.h>
 #include <linux/video_output.h>
-#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/ctype.h>
 

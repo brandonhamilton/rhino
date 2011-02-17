@@ -17,7 +17,6 @@
 #include <linux/in6.h>
 #include <linux/ipv6.h>
 #include <linux/jhash.h>
-#include <linux/slab.h>
 
 #include <net/addrconf.h>
 #include <net/inet_connection_sock.h>
@@ -178,14 +177,14 @@ struct dst_entry *__inet6_csk_dst_check(struct sock *sk, u32 cookie)
 	return dst;
 }
 
-int inet6_csk_xmit(struct sk_buff *skb)
+int inet6_csk_xmit(struct sk_buff *skb, int ipfragok)
 {
 	struct sock *sk = skb->sk;
 	struct inet_sock *inet = inet_sk(sk);
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct flowi fl;
 	struct dst_entry *dst;
-	struct in6_addr *final_p, final;
+	struct in6_addr *final_p = NULL, final;
 
 	memset(&fl, 0, sizeof(fl));
 	fl.proto = sk->sk_protocol;
@@ -199,7 +198,12 @@ int inet6_csk_xmit(struct sk_buff *skb)
 	fl.fl_ip_dport = inet->inet_dport;
 	security_sk_classify_flow(sk, &fl);
 
-	final_p = fl6_update_dst(&fl, np->opt, &final);
+	if (np->opt && np->opt->srcrt) {
+		struct rt0_hdr *rt0 = (struct rt0_hdr *)np->opt->srcrt;
+		ipv6_addr_copy(&final, &fl.fl6_dst);
+		ipv6_addr_copy(&fl.fl6_dst, rt0->addr);
+		final_p = &final;
+	}
 
 	dst = __inet6_csk_dst_check(sk, np->dst_cookie);
 
@@ -229,7 +233,7 @@ int inet6_csk_xmit(struct sk_buff *skb)
 	/* Restore final destination back after routing done */
 	ipv6_addr_copy(&fl.fl6_dst, &np->daddr);
 
-	return ip6_xmit(sk, skb, &fl, np->opt);
+	return ip6_xmit(sk, skb, &fl, np->opt, 0);
 }
 
 EXPORT_SYMBOL_GPL(inet6_csk_xmit);

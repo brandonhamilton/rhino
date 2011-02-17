@@ -17,7 +17,6 @@
 #include <linux/cpufreq.h>
 #include <linux/seq_file.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <mach/map.h>
 #include <mach/regs-mem.h>

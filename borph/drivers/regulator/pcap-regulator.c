@@ -288,18 +288,16 @@ static int __devexit pcap_regulator_remove(struct platform_device *pdev)
 	struct regulator_dev *rdev = platform_get_drvdata(pdev);
 
 	regulator_unregister(rdev);
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
 
 static struct platform_driver pcap_regulator_driver = {
 	.driver = {
-		.name	= "pcap-regulator",
-		.owner	= THIS_MODULE,
+		.name = "pcap-regulator",
 	},
-	.probe	= pcap_regulator_probe,
-	.remove	= __devexit_p(pcap_regulator_remove),
+	.probe = pcap_regulator_probe,
+	.remove = __devexit_p(pcap_regulator_remove),
 };
 
 static int __init pcap_regulator_init(void)

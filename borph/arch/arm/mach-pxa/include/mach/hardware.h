@@ -14,6 +14,11 @@
 #define __ASM_ARCH_HARDWARE_H
 
 /*
+ * We requires absolute addresses.
+ */
+#define PCIO_BASE		0
+
+/*
  * Workarounds for at least 2 errata so far require this.
  * The mapping is set in mach-pxa/generic.c.
  */
@@ -197,7 +202,7 @@
 #define __cpu_is_pxa950(id)                             \
 	({                                              \
 		unsigned int _id = (id) >> 4 & 0xfff;	\
-		_id == 0x697;				\
+		id == 0x697;				\
 	 })
 #else
 #define __cpu_is_pxa950(id)	(0)
@@ -245,17 +250,20 @@
 
 #define cpu_is_pxa930()					\
 	({						\
-		__cpu_is_pxa930(read_cpuid_id());	\
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa930(id);			\
 	 })
 
 #define cpu_is_pxa935()					\
 	({						\
-		__cpu_is_pxa935(read_cpuid_id());	\
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa935(id);			\
 	 })
 
 #define cpu_is_pxa950()					\
 	({						\
-		__cpu_is_pxa950(read_cpuid_id());	\
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa950(id);			\
 	 })
 
 
@@ -264,35 +272,23 @@
  * <= 0x2 for pxa21x/pxa25x/pxa26x/pxa27x
  * == 0x3 for pxa300/pxa310/pxa320
  */
-#if defined(CONFIG_PXA25x) || defined(CONFIG_PXA27x)
 #define __cpu_is_pxa2xx(id)				\
 	({						\
 		unsigned int _id = (id) >> 13 & 0x7;	\
 		_id <= 0x2;				\
 	 })
-#else
-#define __cpu_is_pxa2xx(id)	(0)
-#endif
 
-#ifdef CONFIG_PXA3xx
 #define __cpu_is_pxa3xx(id)				\
 	({						\
 		unsigned int _id = (id) >> 13 & 0x7;	\
 		_id == 0x3;				\
 	 })
-#else
-#define __cpu_is_pxa3xx(id)	(0)
-#endif
 
-#if defined(CONFIG_CPU_PXA930) || defined(CONFIG_CPU_PXA935)
 #define __cpu_is_pxa93x(id)				\
 	({						\
 		unsigned int _id = (id) >> 4 & 0xfff;	\
 		_id == 0x683 || _id == 0x693;		\
 	 })
-#else
-#define __cpu_is_pxa93x(id)	(0)
-#endif
 
 #define cpu_is_pxa2xx()					\
 	({						\
@@ -321,7 +317,8 @@ extern unsigned long get_clock_tick_rate(void);
 #define PCIBIOS_MIN_IO		0
 #define PCIBIOS_MIN_MEM		0
 #define pcibios_assign_all_busses()	1
-#define ARCH_HAS_DMA_SET_COHERENT_MASK
+#define HAVE_ARCH_PCI_SET_DMA_MASK	1
 #endif
+
 
 #endif  /* _ASM_ARCH_HARDWARE_H */

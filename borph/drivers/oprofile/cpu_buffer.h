@@ -25,7 +25,6 @@ void free_cpu_buffers(void);
 
 void start_cpu_work(void);
 void end_cpu_work(void);
-void flush_cpu_work(void);
 
 /* CPU buffer is composed of such entries (which are
  * also used for context switch notes)

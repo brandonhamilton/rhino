@@ -39,6 +39,10 @@ void bust_spinlocks(int yes)
 {
 	if (yes) {
 		oops_in_progress = 1;
+#ifdef CONFIG_SMP
+		/* Many serial drivers do __global_cli() */
+		global_irq_lock = 0;
+#endif
 	} else {
 		int loglevel_save = console_loglevel;
 #ifdef CONFIG_VT
@@ -95,6 +99,8 @@ static void print_pagetable_entries(pgd_t *pgdir, unsigned long address)
 		printk(KERN_DEBUG "... pte not present!\n");
 }
 #endif
+
+asmlinkage void monitor_signal(struct pt_regs *);
 
 /*
  * This routine handles page faults.  It determines the address,
@@ -273,6 +279,7 @@ good_area:
  */
 bad_area:
 	up_read(&mm->mmap_sem);
+	monitor_signal(regs);
 
 	/* User mode accesses just cause a SIGSEGV */
 	if ((fault_code & MMUFCR_xFC_ACCESS) == MMUFCR_xFC_ACCESS_USR) {
@@ -285,6 +292,7 @@ bad_area:
 	}
 
 no_context:
+	monitor_signal(regs);
 	/* Are we prepared to handle this kernel fault?  */
 	if (fixup_exception(regs))
 		return;
@@ -330,6 +338,7 @@ no_context:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
+	monitor_signal(regs);
 	printk(KERN_ALERT "VM: killing process %s\n", tsk->comm);
 	if ((fault_code & MMUFCR_xFC_ACCESS) == MMUFCR_xFC_ACCESS_USR)
 		do_exit(SIGKILL);
@@ -337,6 +346,7 @@ out_of_memory:
 
 do_sigbus:
 	up_read(&mm->mmap_sem);
+	monitor_signal(regs);
 
 	/*
 	 * Send a sigbus, regardless of whether we were in kernel

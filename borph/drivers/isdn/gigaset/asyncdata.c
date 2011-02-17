@@ -40,8 +40,6 @@ static inline int muststuff(unsigned char c)
  * Append received bytes to the command response buffer and forward them
  * line by line to the response handler. Exit whenever a mode/state change
  * might have occurred.
- * Note: Received lines may be terminated by CR, LF, or CR LF, which will be
- * removed before passing the line to the response handler.
  * Return value:
  *	number of processed bytes
  */
@@ -67,14 +65,14 @@ static unsigned cmd_loop(unsigned numbytes, struct inbuf_t *inbuf)
 			/* --v-- fall through --v-- */
 		case '\r':
 			/* end of message line, pass to response handler */
+			gig_dbg(DEBUG_TRANSCMD, "%s: End of Message (%d Bytes)",
+				__func__, cbytes);
 			if (cbytes >= MAX_RESP_SIZE) {
 				dev_warn(cs->dev, "response too large (%d)\n",
 					 cbytes);
 				cbytes = MAX_RESP_SIZE;
 			}
 			cs->cbytes = cbytes;
-			gigaset_dbg_buffer(DEBUG_TRANSCMD, "received response",
-					   cbytes, cs->respdata);
 			gigaset_handle_modem_response(cs);
 			cbytes = 0;
 
@@ -126,6 +124,26 @@ static unsigned lock_loop(unsigned numbytes, struct inbuf_t *inbuf)
 	return numbytes;
 }
 
+/* set up next receive skb for data mode
+ */
+static void new_rcv_skb(struct bc_state *bcs)
+{
+	struct cardstate *cs = bcs->cs;
+	unsigned short hw_hdr_len = cs->hw_hdr_len;
+
+	if (bcs->ignore) {
+		bcs->skb = NULL;
+		return;
+	}
+
+	bcs->skb = dev_alloc_skb(SBUFSIZE + hw_hdr_len);
+	if (bcs->skb == NULL) {
+		dev_warn(cs->dev, "could not allocate new skb\n");
+		return;
+	}
+	skb_reserve(bcs->skb, hw_hdr_len);
+}
+
 /* process a block of received bytes in HDLC data mode
  * (mstate != MS_LOCKED && !(inputstate & INS_command) && proto2 == L2_HDLC)
  * Collect HDLC frames, undoing byte stuffing and watching for DLE escapes.
@@ -139,8 +157,8 @@ static unsigned hdlc_loop(unsigned numbytes, struct inbuf_t *inbuf)
 	struct cardstate *cs = inbuf->cs;
 	struct bc_state *bcs = cs->bcs;
 	int inputstate = bcs->inputstate;
-	__u16 fcs = bcs->rx_fcs;
-	struct sk_buff *skb = bcs->rx_skb;
+	__u16 fcs = bcs->fcs;
+	struct sk_buff *skb = bcs->skb;
 	unsigned char *src = inbuf->data + inbuf->head;
 	unsigned procbytes = 0;
 	unsigned char c;
@@ -225,7 +243,8 @@ byte_stuff:
 
 				/* prepare reception of next frame */
 				inputstate &= ~INS_have_data;
-				skb = gigaset_new_rx_skb(bcs);
+				new_rcv_skb(bcs);
+				skb = bcs->skb;
 			} else {
 				/* empty frame (7E 7E) */
 #ifdef CONFIG_GIGASET_DEBUG
@@ -234,7 +253,8 @@ byte_stuff:
 				if (!skb) {
 					/* skipped (?) */
 					gigaset_isdn_rcv_err(bcs);
-					skb = gigaset_new_rx_skb(bcs);
+					new_rcv_skb(bcs);
+					skb = bcs->skb;
 				}
 			}
 
@@ -257,11 +277,11 @@ byte_stuff:
 #endif
 		inputstate |= INS_have_data;
 		if (skb) {
-			if (skb->len >= bcs->rx_bufsize) {
+			if (skb->len == SBUFSIZE) {
 				dev_warn(cs->dev, "received packet too long\n");
 				dev_kfree_skb_any(skb);
 				/* skip remainder of packet */
-				bcs->rx_skb = skb = NULL;
+				bcs->skb = skb = NULL;
 			} else {
 				*__skb_put(skb, 1) = c;
 				fcs = crc_ccitt_byte(fcs, c);
@@ -270,7 +290,7 @@ byte_stuff:
 	}
 
 	bcs->inputstate = inputstate;
-	bcs->rx_fcs = fcs;
+	bcs->fcs = fcs;
 	return procbytes;
 }
 
@@ -286,18 +306,18 @@ static unsigned iraw_loop(unsigned numbytes, struct inbuf_t *inbuf)
 	struct cardstate *cs = inbuf->cs;
 	struct bc_state *bcs = cs->bcs;
 	int inputstate = bcs->inputstate;
-	struct sk_buff *skb = bcs->rx_skb;
+	struct sk_buff *skb = bcs->skb;
 	unsigned char *src = inbuf->data + inbuf->head;
 	unsigned procbytes = 0;
 	unsigned char c;
 
 	if (!skb) {
 		/* skip this block */
-		gigaset_new_rx_skb(bcs);
+		new_rcv_skb(bcs);
 		return numbytes;
 	}
 
-	while (procbytes < numbytes && skb->len < bcs->rx_bufsize) {
+	while (procbytes < numbytes && skb->len < SBUFSIZE) {
 		c = *src++;
 		procbytes++;
 
@@ -321,7 +341,7 @@ static unsigned iraw_loop(unsigned numbytes, struct inbuf_t *inbuf)
 	if (inputstate & INS_have_data) {
 		gigaset_skb_rcvd(bcs, skb);
 		inputstate &= ~INS_have_data;
-		gigaset_new_rx_skb(bcs);
+		new_rcv_skb(bcs);
 	}
 
 	bcs->inputstate = inputstate;

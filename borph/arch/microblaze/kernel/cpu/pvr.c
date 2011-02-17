@@ -27,7 +27,7 @@
 	register unsigned tmp __asm__("r3");			\
 	tmp = 0x0;	/* Prevent warning about unused */	\
 	__asm__ __volatile__ (					\
-			"mfs	%0, rpvr" #pvrid ";"	\
+			".byte 0x94,0x60,0xa0, " #pvrid "\n\t"	\
 			: "=r" (tmp) : : "memory"); 		\
 	val = tmp;						\
 }

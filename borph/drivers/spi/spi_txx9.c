@@ -375,10 +375,12 @@ static int __init txx9spi_probe(struct platform_device *dev)
 	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	if (!res)
 		goto exit_busy;
-	if (!devm_request_mem_region(&dev->dev, res->start, resource_size(res),
+	if (!devm_request_mem_region(&dev->dev,
+				     res->start, res->end - res->start + 1,
 				     "spi_txx9"))
 		goto exit_busy;
-	c->membase = devm_ioremap(&dev->dev, res->start, resource_size(res));
+	c->membase = devm_ioremap(&dev->dev,
+				  res->start, res->end - res->start + 1);
 	if (!c->membase)
 		goto exit_busy;
 

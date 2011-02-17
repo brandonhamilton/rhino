@@ -22,7 +22,6 @@
 #include <linux/notifier.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/mtd/physmap.h>
 #include <linux/types.h>
 #include <linux/i2c.h>
 #include <linux/errno.h>
@@ -30,10 +29,10 @@
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
+#include <asm/mach/flash.h>
 #include <asm/mach/map.h>
 
 #include <mach/gpio.h>
-#include <plat/flash.h>
 #include <plat/mux.h>
 #include <plat/dma.h>
 #include <plat/irda.h>
@@ -288,9 +287,9 @@ static struct mtd_partition sx1_partitions[] = {
 	}
 };
 
-static struct physmap_flash_data sx1_flash_data = {
+static struct flash_platform_data sx1_flash_data = {
+	.map_name	= "cfi_probe",
 	.width		= 2,
-	.set_vpp	= omap1_set_vpp,
 	.parts		= sx1_partitions,
 	.nr_parts	= ARRAY_SIZE(sx1_partitions),
 };
@@ -311,7 +310,7 @@ static struct resource sx1_old_flash_resource[] = {
 };
 
 static struct platform_device sx1_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "omapflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &sx1_flash_data,
@@ -328,7 +327,7 @@ static struct resource sx1_new_flash_resource = {
 };
 
 static struct platform_device sx1_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "omapflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &sx1_flash_data,
@@ -392,7 +391,7 @@ static void __init omap_sx1_init(void)
 	omap_board_config_size = ARRAY_SIZE(sx1_config);
 	omap_serial_init();
 	omap_register_i2c_bus(1, 100, NULL, 0);
-	omap1_usb_init(&sx1_usb_config);
+	omap_usb_init(&sx1_usb_config);
 	sx1_mmc_init();
 
 	/* turn on USB power */
@@ -419,10 +418,11 @@ static void __init omap_sx1_map_io(void)
 }
 
 MACHINE_START(SX1, "OMAP310 based Siemens SX1")
+	.phys_io	= 0xfff00000,
+	.io_pg_offst	= ((0xfef00000) >> 18) & 0xfffc,
 	.boot_params	= 0x10000100,
 	.map_io		= omap_sx1_map_io,
-	.reserve	= omap_reserve,
-	.init_irq	= omap_sx1_init_irq,
+	.init_irq		= omap_sx1_init_irq,
 	.init_machine	= omap_sx1_init,
 	.timer		= &omap_timer,
 MACHINE_END

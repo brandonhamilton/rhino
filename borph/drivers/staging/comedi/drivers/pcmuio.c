@@ -76,7 +76,6 @@ Configuration Options:
 */
 
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include "../comedidev.h"
 #include "pcm_common.h"
 
@@ -1018,19 +1017,4 @@ pcmuio_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-static int __init driver_init_module(void)
-{
-	return comedi_driver_register(&driver);
-}
-
-static void __exit driver_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver);
-}
-
-module_init(driver_init_module);
-module_exit(driver_cleanup_module);
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+COMEDI_INITCLEANUP(driver);

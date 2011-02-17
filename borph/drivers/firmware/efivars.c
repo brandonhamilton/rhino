@@ -77,7 +77,6 @@
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/device.h>
-#include <linux/slab.h>
 
 #include <asm/uaccess.h>
 
@@ -363,7 +362,7 @@ static ssize_t efivar_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-static const struct sysfs_ops efivar_attr_ops = {
+static struct sysfs_ops efivar_attr_ops = {
 	.show = efivar_attr_show,
 	.store = efivar_attr_store,
 };
@@ -402,7 +401,7 @@ efivar_unregister(struct efivar_entry *var)
 }
 
 
-static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
+static ssize_t efivar_create(struct kobject *kobj,
 			     struct bin_attribute *bin_attr,
 			     char *buf, loff_t pos, size_t count)
 {
@@ -461,7 +460,7 @@ static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
 	return count;
 }
 
-static ssize_t efivar_delete(struct file *filp, struct kobject *kobj,
+static ssize_t efivar_delete(struct kobject *kobj,
 			     struct bin_attribute *bin_attr,
 			     char *buf, loff_t pos, size_t count)
 {

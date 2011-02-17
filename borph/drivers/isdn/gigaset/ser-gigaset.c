@@ -11,9 +11,11 @@
  */
 
 #include "gigaset.h"
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/platform_device.h>
+#include <linux/tty.h>
 #include <linux/completion.h>
 
 /* Version Information */
@@ -241,13 +243,30 @@ static void flush_send_queue(struct cardstate *cs)
  * return value:
  *	number of bytes queued, or error code < 0
  */
-static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
+static int gigaset_write_cmd(struct cardstate *cs, const unsigned char *buf,
+			     int len, struct tasklet_struct *wake_tasklet)
 {
+	struct cmdbuf_t *cb;
 	unsigned long flags;
 
 	gigaset_dbg_buffer(cs->mstate != MS_LOCKED ?
 				DEBUG_TRANSCMD : DEBUG_LOCKCMD,
-			   "CMD Transmit", cb->len, cb->buf);
+			   "CMD Transmit", len, buf);
+
+	if (len <= 0)
+		return 0;
+
+	cb = kmalloc(sizeof(struct cmdbuf_t) + len, GFP_ATOMIC);
+	if (!cb) {
+		dev_err(cs->dev, "%s: out of memory!\n", __func__);
+		return -ENOMEM;
+	}
+
+	memcpy(cb->buf, buf, len);
+	cb->len = len;
+	cb->offset = 0;
+	cb->next = NULL;
+	cb->wake_tasklet = wake_tasklet;
 
 	spin_lock_irqsave(&cs->cmdlock, flags);
 	cb->prev = cs->lastcmdbuf;
@@ -255,9 +274,9 @@ static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
 		cs->lastcmdbuf->next = cb;
 	else {
 		cs->cmdbuf = cb;
-		cs->curlen = cb->len;
+		cs->curlen = len;
 	}
-	cs->cmdbytes += cb->len;
+	cs->cmdbytes += len;
 	cs->lastcmdbuf = cb;
 	spin_unlock_irqrestore(&cs->cmdlock, flags);
 
@@ -265,7 +284,7 @@ static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
 	if (cs->connected)
 		tasklet_schedule(&cs->write_tasklet);
 	spin_unlock_irqrestore(&cs->lock, flags);
-	return cb->len;
+	return len;
 }
 
 /*

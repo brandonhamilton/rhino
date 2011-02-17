@@ -19,7 +19,6 @@
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <mach/w90p910_keypad.h>
 
@@ -258,7 +257,7 @@ static struct platform_driver w90p910_keypad_driver = {
 	.probe		= w90p910_keypad_probe,
 	.remove		= __devexit_p(w90p910_keypad_remove),
 	.driver		= {
-		.name	= "nuc900-kpi",
+		.name	= "nuc900-keypad",
 		.owner	= THIS_MODULE,
 	},
 };

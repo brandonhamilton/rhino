@@ -9,7 +9,6 @@
 
 #include <linux/mm.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <linux/hugetlb.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>

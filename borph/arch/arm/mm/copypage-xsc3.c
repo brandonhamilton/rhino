@@ -34,7 +34,7 @@ xsc3_mc_copy_user_page(void *kto, const void *kfrom)
 {
 	asm("\
 	stmfd	sp!, {r4, r5, lr}		\n\
-	mov	lr, %2				\n\
+	mov	lr, %0				\n\
 						\n\
 	pld	[r1, #0]			\n\
 	pld	[r1, #32]			\n\
@@ -67,17 +67,16 @@ xsc3_mc_copy_user_page(void *kto, const void *kfrom)
 						\n\
 	ldmfd	sp!, {r4, r5, pc}"
 	:
-	: "r" (kto), "r" (kfrom), "I" (PAGE_SIZE / 64 - 1));
+	: "I" (PAGE_SIZE / 64 - 1));
 }
 
 void xsc3_mc_copy_user_highpage(struct page *to, struct page *from,
-	unsigned long vaddr, struct vm_area_struct *vma)
+	unsigned long vaddr)
 {
 	void *kto, *kfrom;
 
 	kto = kmap_atomic(to, KM_USER0);
 	kfrom = kmap_atomic(from, KM_USER1);
-	flush_cache_page(vma, vaddr, page_to_pfn(from));
 	xsc3_mc_copy_user_page(kto, kfrom);
 	kunmap_atomic(kfrom, KM_USER1);
 	kunmap_atomic(kto, KM_USER0);

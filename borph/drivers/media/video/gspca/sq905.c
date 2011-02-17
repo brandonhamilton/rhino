@@ -36,7 +36,6 @@
 #define MODULE_NAME "sq905"
 
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 #include "gspca.h"
 
 MODULE_AUTHOR("Adam Baker <linux@baker-net.org.uk>, "
@@ -123,7 +122,7 @@ static int sq905_command(struct gspca_dev *gspca_dev, u16 index)
 			      SQ905_COMMAND, index, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		err("%s: usb_control_msg failed (%d)",
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)",
 			__func__, ret);
 		return ret;
 	}
@@ -135,7 +134,7 @@ static int sq905_command(struct gspca_dev *gspca_dev, u16 index)
 			      SQ905_PING, 0, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		err("%s: usb_control_msg failed 2 (%d)",
+		PDEBUG(D_ERR, "%s: usb_control_msg failed 2 (%d)",
 			__func__, ret);
 		return ret;
 	}
@@ -158,7 +157,7 @@ static int sq905_ack_frame(struct gspca_dev *gspca_dev)
 			      SQ905_READ_DONE, 0, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		err("%s: usb_control_msg failed (%d)", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)", __func__, ret);
 		return ret;
 	}
 
@@ -186,7 +185,7 @@ sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size, int need_lock)
 	if (need_lock)
 		mutex_unlock(&gspca_dev->usb_lock);
 	if (ret < 0) {
-		err("%s: usb_control_msg failed (%d)", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)", __func__, ret);
 		return ret;
 	}
 	ret = usb_bulk_msg(gspca_dev->dev,
@@ -195,7 +194,7 @@ sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size, int need_lock)
 
 	/* successful, it returns 0, otherwise  negative */
 	if (ret < 0 || act_len != size) {
-		err("bulk read fail (%d) len %d/%d",
+		PDEBUG(D_ERR, "bulk read fail (%d) len %d/%d",
 			ret, act_len, size);
 		return -EIO;
 	}
@@ -226,7 +225,7 @@ static void sq905_dostream(struct work_struct *work)
 
 	buffer = kmalloc(SQ905_MAX_TRANSFER, GFP_KERNEL | GFP_DMA);
 	if (!buffer) {
-		err("Couldn't allocate USB buffer");
+		PDEBUG(D_ERR, "Couldn't allocate USB buffer");
 		goto quit_stream;
 	}
 
@@ -436,12 +435,19 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init sd_mod_init(void)
 {
-	return usb_register(&sd_driver);
+	int ret;
+
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	PDEBUG(D_PROBE, "registered");
+	return 0;
 }
 
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
+	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(sd_mod_init);

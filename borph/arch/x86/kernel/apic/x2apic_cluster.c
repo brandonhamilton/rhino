@@ -148,7 +148,10 @@ x2apic_cpu_mask_to_apicid_and(const struct cpumask *cpumask,
 			break;
 	}
 
-	return per_cpu(x86_cpu_to_logical_apicid, cpu);
+	if (cpu < nr_cpu_ids)
+		return per_cpu(x86_cpu_to_logical_apicid, cpu);
+
+	return BAD_APICID;
 }
 
 static unsigned int x2apic_cluster_phys_get_apic_id(unsigned long x)

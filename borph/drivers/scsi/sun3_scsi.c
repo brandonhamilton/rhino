@@ -524,7 +524,7 @@ static inline unsigned long sun3scsi_dma_xfer_len(unsigned long wanted,
 						  struct scsi_cmnd *cmd,
 						  int write_flag)
 {
-	if (cmd->request->cmd_type == REQ_TYPE_FS)
+	if(blk_fs_request(cmd->request))
  		return wanted;
 	else
 		return 0;

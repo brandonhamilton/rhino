@@ -16,7 +16,6 @@
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 #include <linux/gpio.h>
-#include <linux/slab.h>
 
 #include <mach/hardware.h>
 #include <mach/regs-gpio.h>

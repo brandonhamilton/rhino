@@ -770,10 +770,10 @@ const BYTE abyFirmware[] = {
 
 BOOL
 FIRMWAREbDownload(
-     PSDevice pDevice
+    IN PSDevice pDevice
     )
 {
-    int NdisStatus;
+    NDIS_STATUS NdisStatus;
     PBYTE       pBuffer = NULL;
     WORD        wLength;
     int         ii;
@@ -806,7 +806,7 @@ FIRMWAREbDownload(
                 if (pBuffer)
                     kfree(pBuffer);
                 spin_lock_irq(&pDevice->lock);
-		return FALSE;
+                return (FALSE);
             }
         }
     }
@@ -820,10 +820,10 @@ FIRMWAREbDownload(
 
 BOOL
 FIRMWAREbBrach2Sram(
-     PSDevice pDevice
+    IN PSDevice pDevice
     )
 {
-    int NdisStatus;
+    NDIS_STATUS NdisStatus;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"---->Branch to Sram\n");
 
@@ -845,10 +845,10 @@ FIRMWAREbBrach2Sram(
 
 BOOL
 FIRMWAREbCheckVersion(
-     PSDevice pDevice
+    IN PSDevice pDevice
     )
 {
-	int ntStatus;
+    NTSTATUS                ntStatus;
 
     ntStatus = CONTROLnsRequestIn(pDevice,
                                     MESSAGE_TYPE_READ,

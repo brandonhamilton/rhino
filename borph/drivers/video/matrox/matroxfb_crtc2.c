@@ -15,7 +15,6 @@
 #include "matroxfb_misc.h"
 #include "matroxfb_DAC1064.h"
 #include <linux/matroxfb.h>
-#include <linux/slab.h>
 #include <linux/uaccess.h>
 
 /* **************************************************** */

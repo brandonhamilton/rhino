@@ -102,10 +102,9 @@ static struct of_device_id __initdata auxio_match[] = {
 
 MODULE_DEVICE_TABLE(of, auxio_match);
 
-static int __devinit auxio_probe(struct platform_device *dev,
-				 const struct of_device_id *match)
+static int __devinit auxio_probe(struct of_device *dev, const struct of_device_id *match)
 {
-	struct device_node *dp = dev->dev.of_node;
+	struct device_node *dp = dev->node;
 	unsigned long size;
 
 	if (!strcmp(dp->parent->name, "ebus")) {
@@ -133,17 +132,16 @@ static int __devinit auxio_probe(struct platform_device *dev,
 }
 
 static struct of_platform_driver auxio_driver = {
+	.match_table	= auxio_match,
 	.probe		= auxio_probe,
-	.driver = {
-		.name = "auxio",
-		.owner = THIS_MODULE,
-		.of_match_table = auxio_match,
+	.driver		= {
+		.name	= "auxio",
 	},
 };
 
 static int __init auxio_init(void)
 {
-	return of_register_platform_driver(&auxio_driver);
+	return of_register_driver(&auxio_driver, &of_platform_bus_type);
 }
 
 /* Must be after subsys_initcall() so that busses are probed.  Must

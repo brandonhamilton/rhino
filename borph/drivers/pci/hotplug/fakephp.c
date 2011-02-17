@@ -19,7 +19,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/device.h>
-#include <linux/slab.h>
 #include "../pci.h"
 
 struct legacy_slot {
@@ -74,7 +73,7 @@ static void legacy_release(struct kobject *kobj)
 }
 
 static struct kobj_type legacy_ktype = {
-	.sysfs_ops = &(const struct sysfs_ops){
+	.sysfs_ops = &(struct sysfs_ops){
 		.store = legacy_store, .show = legacy_show
 	},
 	.release = &legacy_release,
@@ -135,7 +134,7 @@ static int __init init_legacy(void)
 	struct pci_dev *pdev = NULL;
 
 	/* Add existing devices */
-	for_each_pci_dev(pdev)
+	while ((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev)))
 		legacy_add_slot(pdev);
 
 	/* Be alerted of any new ones */

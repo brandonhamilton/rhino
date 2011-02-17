@@ -2,7 +2,6 @@
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/wait.h>
 
@@ -13,7 +12,7 @@
  * configuration space.
  */
 
-static DEFINE_RAW_SPINLOCK(pci_lock);
+static DEFINE_SPINLOCK(pci_lock);
 
 /*
  *  Wrappers for all PCI configuration access functions.  They just check
@@ -33,10 +32,10 @@ int pci_bus_read_config_##size \
 	unsigned long flags;						\
 	u32 data = 0;							\
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
-	raw_spin_lock_irqsave(&pci_lock, flags);			\
+	spin_lock_irqsave(&pci_lock, flags);				\
 	res = bus->ops->read(bus, devfn, pos, len, &data);		\
 	*value = (type)data;						\
-	raw_spin_unlock_irqrestore(&pci_lock, flags);		\
+	spin_unlock_irqrestore(&pci_lock, flags);			\
 	return res;							\
 }
 
@@ -47,9 +46,9 @@ int pci_bus_write_config_##size \
 	int res;							\
 	unsigned long flags;						\
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
-	raw_spin_lock_irqsave(&pci_lock, flags);			\
+	spin_lock_irqsave(&pci_lock, flags);				\
 	res = bus->ops->write(bus, devfn, pos, len, value);		\
-	raw_spin_unlock_irqrestore(&pci_lock, flags);		\
+	spin_unlock_irqrestore(&pci_lock, flags);			\
 	return res;							\
 }
 
@@ -79,10 +78,10 @@ struct pci_ops *pci_bus_set_ops(struct pci_bus *bus, struct pci_ops *ops)
 	struct pci_ops *old_ops;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&pci_lock, flags);
+	spin_lock_irqsave(&pci_lock, flags);
 	old_ops = bus->ops;
 	bus->ops = ops;
-	raw_spin_unlock_irqrestore(&pci_lock, flags);
+	spin_unlock_irqrestore(&pci_lock, flags);
 	return old_ops;
 }
 EXPORT_SYMBOL(pci_bus_set_ops);
@@ -136,9 +135,9 @@ static noinline void pci_wait_ucfg(struct pci_dev *dev)
 	__add_wait_queue(&pci_ucfg_wait, &wait);
 	do {
 		set_current_state(TASK_UNINTERRUPTIBLE);
-		raw_spin_unlock_irq(&pci_lock);
+		spin_unlock_irq(&pci_lock);
 		schedule();
-		raw_spin_lock_irq(&pci_lock);
+		spin_lock_irq(&pci_lock);
 	} while (dev->block_ucfg_access);
 	__remove_wait_queue(&pci_ucfg_wait, &wait);
 }
@@ -150,11 +149,11 @@ int pci_user_read_config_##size						\
 	int ret = 0;							\
 	u32 data = -1;							\
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
-	raw_spin_lock_irq(&pci_lock);				\
+	spin_lock_irq(&pci_lock);					\
 	if (unlikely(dev->block_ucfg_access)) pci_wait_ucfg(dev);	\
 	ret = dev->bus->ops->read(dev->bus, dev->devfn,			\
 					pos, sizeof(type), &data);	\
-	raw_spin_unlock_irq(&pci_lock);				\
+	spin_unlock_irq(&pci_lock);					\
 	*val = (type)data;						\
 	return ret;							\
 }
@@ -165,11 +164,11 @@ int pci_user_write_config_##size					\
 {									\
 	int ret = -EIO;							\
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
-	raw_spin_lock_irq(&pci_lock);				\
+	spin_lock_irq(&pci_lock);					\
 	if (unlikely(dev->block_ucfg_access)) pci_wait_ucfg(dev);	\
 	ret = dev->bus->ops->write(dev->bus, dev->devfn,		\
 					pos, sizeof(type), val);	\
-	raw_spin_unlock_irq(&pci_lock);				\
+	spin_unlock_irq(&pci_lock);					\
 	return ret;							\
 }
 
@@ -220,13 +219,8 @@ static int pci_vpd_pci22_wait(struct pci_dev *dev)
 			return 0;
 		}
 
-		if (time_after(jiffies, timeout)) {
-			dev_printk(KERN_DEBUG, &dev->dev,
-				   "vpd r/w failed.  This is likely a firmware "
-				   "bug on this device.  Contact the card "
-				   "vendor for a firmware update.");
+		if (time_after(jiffies, timeout))
 			return -ETIMEDOUT;
-		}
 		if (fatal_signal_pending(current))
 			return -EINTR;
 		if (!cond_resched())
@@ -401,10 +395,10 @@ void pci_block_user_cfg_access(struct pci_dev *dev)
 	unsigned long flags;
 	int was_blocked;
 
-	raw_spin_lock_irqsave(&pci_lock, flags);
+	spin_lock_irqsave(&pci_lock, flags);
 	was_blocked = dev->block_ucfg_access;
 	dev->block_ucfg_access = 1;
-	raw_spin_unlock_irqrestore(&pci_lock, flags);
+	spin_unlock_irqrestore(&pci_lock, flags);
 
 	/* If we BUG() inside the pci_lock, we're guaranteed to hose
 	 * the machine */
@@ -422,7 +416,7 @@ void pci_unblock_user_cfg_access(struct pci_dev *dev)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&pci_lock, flags);
+	spin_lock_irqsave(&pci_lock, flags);
 
 	/* This indicates a problem in the caller, but we don't need
 	 * to kill them, unlike a double-block above. */
@@ -430,6 +424,6 @@ void pci_unblock_user_cfg_access(struct pci_dev *dev)
 
 	dev->block_ucfg_access = 0;
 	wake_up_all(&pci_ucfg_wait);
-	raw_spin_unlock_irqrestore(&pci_lock, flags);
+	spin_unlock_irqrestore(&pci_lock, flags);
 }
 EXPORT_SYMBOL_GPL(pci_unblock_user_cfg_access);

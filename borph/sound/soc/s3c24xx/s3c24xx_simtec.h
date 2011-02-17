@@ -7,10 +7,10 @@
  * published by the Free Software Foundation.
 */
 
-extern void simtec_audio_init(struct snd_soc_pcm_runtime *rtd);
+extern void simtec_audio_init(struct snd_soc_codec *codec);
 
 extern int simtec_audio_core_probe(struct platform_device *pdev,
-				   struct snd_soc_card *card);
+				   struct snd_soc_device *socdev);
 
 extern int simtec_audio_remove(struct platform_device *pdev);
 

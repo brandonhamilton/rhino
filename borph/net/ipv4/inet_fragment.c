@@ -19,7 +19,6 @@
 #include <linux/random.h>
 #include <linux/skbuff.h>
 #include <linux/rtnetlink.h>
-#include <linux/slab.h>
 
 #include <net/inet_frag.h>
 
@@ -114,6 +113,7 @@ void inet_frag_kill(struct inet_frag_queue *fq, struct inet_frags *f)
 		fq->last_in |= INET_FRAG_COMPLETE;
 	}
 }
+
 EXPORT_SYMBOL(inet_frag_kill);
 
 static inline void frag_kfree_skb(struct netns_frags *nf, struct inet_frags *f,

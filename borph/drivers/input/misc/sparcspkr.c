@@ -9,7 +9,6 @@
 #include <linux/init.h>
 #include <linux/input.h>
 #include <linux/of_device.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 
@@ -173,7 +172,7 @@ static int __devinit sparcspkr_probe(struct device *dev)
 	return 0;
 }
 
-static int sparcspkr_shutdown(struct platform_device *dev)
+static int sparcspkr_shutdown(struct of_device *dev)
 {
 	struct sparcspkr_state *state = dev_get_drvdata(&dev->dev);
 	struct input_dev *input_dev = state->input_dev;
@@ -184,7 +183,7 @@ static int sparcspkr_shutdown(struct platform_device *dev)
 	return 0;
 }
 
-static int __devinit bbc_beep_probe(struct platform_device *op, const struct of_device_id *match)
+static int __devinit bbc_beep_probe(struct of_device *op, const struct of_device_id *match)
 {
 	struct sparcspkr_state *state;
 	struct bbc_beep_info *info;
@@ -231,7 +230,7 @@ out_err:
 	return err;
 }
 
-static int __devexit bbc_remove(struct platform_device *op)
+static int __devexit bbc_remove(struct of_device *op)
 {
 	struct sparcspkr_state *state = dev_get_drvdata(&op->dev);
 	struct input_dev *input_dev = state->input_dev;
@@ -259,17 +258,14 @@ static const struct of_device_id bbc_beep_match[] = {
 };
 
 static struct of_platform_driver bbc_beep_driver = {
-	.driver = {
-		.name = "bbcbeep",
-		.owner = THIS_MODULE,
-		.of_match_table = bbc_beep_match,
-	},
+	.name		= "bbcbeep",
+	.match_table	= bbc_beep_match,
 	.probe		= bbc_beep_probe,
 	.remove		= __devexit_p(bbc_remove),
 	.shutdown	= sparcspkr_shutdown,
 };
 
-static int __devinit grover_beep_probe(struct platform_device *op, const struct of_device_id *match)
+static int __devinit grover_beep_probe(struct of_device *op, const struct of_device_id *match)
 {
 	struct sparcspkr_state *state;
 	struct grover_beep_info *info;
@@ -312,7 +308,7 @@ out_err:
 	return err;
 }
 
-static int __devexit grover_remove(struct platform_device *op)
+static int __devexit grover_remove(struct of_device *op)
 {
 	struct sparcspkr_state *state = dev_get_drvdata(&op->dev);
 	struct grover_beep_info *info = &state->u.grover;
@@ -341,11 +337,8 @@ static const struct of_device_id grover_beep_match[] = {
 };
 
 static struct of_platform_driver grover_beep_driver = {
-	.driver = {
-		.name = "groverbeep",
-		.owner = THIS_MODULE,
-		.of_match_table = grover_beep_match,
-	},
+	.name		= "groverbeep",
+	.match_table	= grover_beep_match,
 	.probe		= grover_beep_probe,
 	.remove		= __devexit_p(grover_remove),
 	.shutdown	= sparcspkr_shutdown,
@@ -353,12 +346,14 @@ static struct of_platform_driver grover_beep_driver = {
 
 static int __init sparcspkr_init(void)
 {
-	int err = of_register_platform_driver(&bbc_beep_driver);
+	int err = of_register_driver(&bbc_beep_driver,
+				     &of_platform_bus_type);
 
 	if (!err) {
-		err = of_register_platform_driver(&grover_beep_driver);
+		err = of_register_driver(&grover_beep_driver,
+					 &of_platform_bus_type);
 		if (err)
-			of_unregister_platform_driver(&bbc_beep_driver);
+			of_unregister_driver(&bbc_beep_driver);
 	}
 
 	return err;
@@ -366,8 +361,8 @@ static int __init sparcspkr_init(void)
 
 static void __exit sparcspkr_exit(void)
 {
-	of_unregister_platform_driver(&bbc_beep_driver);
-	of_unregister_platform_driver(&grover_beep_driver);
+	of_unregister_driver(&bbc_beep_driver);
+	of_unregister_driver(&grover_beep_driver);
 }
 
 module_init(sparcspkr_init);

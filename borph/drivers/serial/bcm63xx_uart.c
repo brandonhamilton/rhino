@@ -35,7 +35,7 @@
 #include <bcm63xx_regs.h>
 #include <bcm63xx_io.h>
 
-#define BCM63XX_NR_UARTS	2
+#define BCM63XX_NR_UARTS	1
 
 static struct uart_port ports[BCM63XX_NR_UARTS];
 
@@ -784,7 +784,7 @@ static struct uart_driver bcm_uart_driver = {
 	.dev_name	= "ttyS",
 	.major		= TTY_MAJOR,
 	.minor		= 64,
-	.nr		= BCM63XX_NR_UARTS,
+	.nr		= 1,
 	.cons		= BCM63XX_CONSOLE,
 };
 
@@ -826,12 +826,11 @@ static int __devinit bcm_uart_probe(struct platform_device *pdev)
 	port->dev = &pdev->dev;
 	port->fifosize = 16;
 	port->uartclk = clk_get_rate(clk) / 2;
-	port->line = pdev->id;
 	clk_put(clk);
 
 	ret = uart_add_one_port(&bcm_uart_driver, port);
 	if (ret) {
-		ports[pdev->id].membase = 0;
+		kfree(port);
 		return ret;
 	}
 	platform_set_drvdata(pdev, port);

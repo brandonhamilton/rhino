@@ -32,12 +32,6 @@
  *	A generic parallel ATA driver using libata
  */
 
-enum {
-	ATA_GEN_CLASS_MATCH		= (1 << 0),
-	ATA_GEN_FORCE_DMA		= (1 << 1),
-	ATA_GEN_INTEL_IDER		= (1 << 2),
-};
-
 /**
  *	generic_set_mode	-	mode setting
  *	@link: link to set up
@@ -52,16 +46,16 @@ enum {
 static int generic_set_mode(struct ata_link *link, struct ata_device **unused)
 {
 	struct ata_port *ap = link->ap;
-	const struct pci_device_id *id = ap->host->private_data;
 	int dma_enabled = 0;
 	struct ata_device *dev;
+	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 
-	if (id->driver_data & ATA_GEN_FORCE_DMA) {
-		dma_enabled = 0xff;
-	} else if (ap->ioaddr.bmdma_addr) {
-		/* Bits 5 and 6 indicate if DMA is active on master/slave */
+	/* Bits 5 and 6 indicate if DMA is active on master/slave */
+	if (ap->ioaddr.bmdma_addr)
 		dma_enabled = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
-	}
+
+	if (pdev->vendor == PCI_VENDOR_ID_CENATEK)
+		dma_enabled = 0xFF;
 
 	ata_for_each_dev(dev, link, ENABLED) {
 		/* We don't really care */
@@ -110,49 +104,6 @@ static struct ata_port_operations generic_port_ops = {
 static int all_generic_ide;		/* Set to claim all devices */
 
 /**
- *	is_intel_ider		-	identify intel IDE-R devices
- *	@dev: PCI device
- *
- *	Distinguish Intel IDE-R controller devices from other Intel IDE
- *	devices. IDE-R devices have no timing registers and are in
- *	most respects virtual. They should be driven by the ata_generic
- *	driver.
- *
- *	IDE-R devices have PCI offset 0xF8.L as zero, later Intel ATA has
- *	it non zero. All Intel ATA has 0x40 writable (timing), but it is
- *	not writable on IDE-R devices (this is guaranteed).
- */
-
-static int is_intel_ider(struct pci_dev *dev)
-{
-	/* For Intel IDE the value at 0xF8 is only zero on IDE-R
-	   interfaces */
-	u32 r;
-	u16 t;
-
-	/* Check the manufacturing ID, it will be zero for IDE-R */
-	pci_read_config_dword(dev, 0xF8, &r);
-	/* Not IDE-R: punt so that ata_(old)piix gets it */
-	if (r != 0)
-		return 0;
-	/* 0xF8 will also be zero on some early Intel IDE devices
-	   but they will have a sane timing register */
-	pci_read_config_word(dev, 0x40, &t);
-	if (t != 0)
-		return 0;
-	/* Finally check if the timing register is writable so that
-	   we eliminate any early devices hot-docked in a docking
-	   station */
-	pci_write_config_word(dev, 0x40, 1);
-	pci_read_config_word(dev, 0x40, &t);
-	if (t) {
-		pci_write_config_word(dev, 0x40, 0);
-		return 0;
-	}
-	return 1;
-}
-
-/**
  *	ata_generic_init		-	attach generic IDE
  *	@dev: PCI device found
  *	@id: match entry
@@ -175,12 +126,8 @@ static int ata_generic_init_one(struct pci_dev *dev, const struct pci_device_id 
 	const struct ata_port_info *ppi[] = { &info, NULL };
 
 	/* Don't use the generic entry unless instructed to do so */
-	if ((id->driver_data & ATA_GEN_CLASS_MATCH) && all_generic_ide == 0)
+	if (id->driver_data == 1 && all_generic_ide == 0)
 		return -ENODEV;
-
-	if (id->driver_data & ATA_GEN_INTEL_IDER)
-		if (!is_intel_ider(dev))
-			return -ENODEV;
 
 	/* Devices that need care */
 	if (dev->vendor == PCI_VENDOR_ID_UMC &&
@@ -208,7 +155,7 @@ static int ata_generic_init_one(struct pci_dev *dev, const struct pci_device_id 
 			return rc;
 		pcim_pin_device(dev);
 	}
-	return ata_pci_bmdma_init_one(dev, ppi, &generic_sht, (void *)id, 0);
+	return ata_pci_sff_init_one(dev, ppi, &generic_sht, NULL);
 }
 
 static struct pci_device_id ata_generic[] = {
@@ -220,28 +167,15 @@ static struct pci_device_id ata_generic[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_HINT,   PCI_DEVICE_ID_HINT_VXPROII_IDE), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_VIA,    PCI_DEVICE_ID_VIA_82C561), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_OPTI,   PCI_DEVICE_ID_OPTI_82C558), },
-	{ PCI_DEVICE(PCI_VENDOR_ID_CENATEK,PCI_DEVICE_ID_CENATEK_IDE),
-	  .driver_data = ATA_GEN_FORCE_DMA },
-	/*
-	 * For some reason, MCP89 on MacBook 7,1 doesn't work with
-	 * ahci, use ata_generic instead.
-	 */
-	{ PCI_VENDOR_ID_NVIDIA, PCI_DEVICE_ID_NVIDIA_NFORCE_MCP89_SATA,
-	  PCI_VENDOR_ID_APPLE, 0xcb89,
-	  .driver_data = ATA_GEN_FORCE_DMA },
+	{ PCI_DEVICE(PCI_VENDOR_ID_CENATEK,PCI_DEVICE_ID_CENATEK_IDE), },
 #if !defined(CONFIG_PATA_TOSHIBA) && !defined(CONFIG_PATA_TOSHIBA_MODULE)
 	{ PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA,PCI_DEVICE_ID_TOSHIBA_PICCOLO_1), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA,PCI_DEVICE_ID_TOSHIBA_PICCOLO_2),  },
 	{ PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA,PCI_DEVICE_ID_TOSHIBA_PICCOLO_3),  },
 	{ PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA,PCI_DEVICE_ID_TOSHIBA_PICCOLO_5),  },
-#endif
-	/* Intel, IDE class device */
-	{ PCI_VENDOR_ID_INTEL, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
-	  PCI_CLASS_STORAGE_IDE << 8, 0xFFFFFF00UL, 
-	  .driver_data = ATA_GEN_INTEL_IDER },
+#endif	
 	/* Must come last. If you add entries adjust this table appropriately */
-	{ PCI_DEVICE_CLASS(PCI_CLASS_STORAGE_IDE << 8, 0xFFFFFF00UL),
-	  .driver_data = ATA_GEN_CLASS_MATCH },
+	{ PCI_ANY_ID,		PCI_ANY_ID,			   PCI_ANY_ID, PCI_ANY_ID, PCI_CLASS_STORAGE_IDE << 8, 0xFFFFFF00UL, 1},
 	{ 0, },
 };
 

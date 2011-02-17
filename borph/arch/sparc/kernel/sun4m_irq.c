@@ -17,6 +17,7 @@
 #include <linux/ptrace.h>
 #include <linux/smp.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/of.h>

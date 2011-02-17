@@ -453,7 +453,7 @@ mips_be_fatal:
 
 void ip22_be_interrupt(int irq)
 {
-	struct pt_regs *regs = get_irq_regs();
+	const struct pt_regs *regs = get_irq_regs();
 
 	count_be_interrupt++;
 

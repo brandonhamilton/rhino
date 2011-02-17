@@ -262,7 +262,6 @@ extern const char gfar_driver_version[];
 
 #define next_bd(bdp, base, ring_size) skip_bd(bdp, 1, base, ring_size)
 
-#define RCTRL_TS_ENABLE 	0x01000000
 #define RCTRL_PAL_MASK		0x001f0000
 #define RCTRL_VLEX		0x00002000
 #define RCTRL_FILREN		0x00001000
@@ -334,7 +333,7 @@ extern const char gfar_driver_version[];
 #define IMASK_BSY               0x20000000
 #define IMASK_EBERR             0x10000000
 #define IMASK_MSRO		0x04000000
-#define IMASK_GTSC              0x02000000
+#define IMASK_GRSC              0x02000000
 #define IMASK_BABT		0x01000000
 #define IMASK_TXC               0x00800000
 #define IMASK_TXEEN		0x00400000
@@ -345,7 +344,7 @@ extern const char gfar_driver_version[];
 #define IMASK_XFUN		0x00010000
 #define IMASK_RXB0              0x00008000
 #define IMASK_MAG		0x00000800
-#define IMASK_GRSC              0x00000100
+#define IMASK_GTSC              0x00000100
 #define IMASK_RXFEN0		0x00000080
 #define IMASK_FIR		0x00000008
 #define IMASK_FIQ		0x00000004
@@ -401,10 +400,6 @@ extern const char gfar_driver_version[];
 
 #define FPR_FILER_MASK	0xFFFFFFFF
 #define MAX_FILER_IDX	0xFF
-
-/* This default RIR value directly corresponds
- * to the 3-bit hash value generated */
-#define DEFAULT_RIR0	0x05397700
 
 /* RQFCR register bits */
 #define RQFCR_GPI		0x80000000
@@ -540,7 +535,7 @@ struct txbd8
 
 struct txfcb {
 	u8	flags;
-	u8	ptp;    /* Flag to enable tx timestamping */
+	u8	reserved;
 	u8	l4os;	/* Level 4 Header Offset */
 	u8	l3os; 	/* Level 3 Header Offset */
 	u16	phcs;	/* Pseudo-header Checksum */
@@ -566,12 +561,6 @@ struct rxfcb {
 	u16	reserved;
 	u16	vlctl;	/* VLAN control word */
 };
-
-struct gianfar_skb_cb {
-	int alignamount;
-};
-
-#define GFAR_CB(skb) ((struct gianfar_skb_cb *)((skb)->cb))
 
 struct rmon_mib
 {
@@ -886,7 +875,6 @@ struct gfar {
 #define FSL_GIANFAR_DEV_HAS_MAGIC_PACKET	0x00000100
 #define FSL_GIANFAR_DEV_HAS_BD_STASHING		0x00000200
 #define FSL_GIANFAR_DEV_HAS_BUF_STASHING	0x00000400
-#define FSL_GIANFAR_DEV_HAS_TIMER		0x00000800
 
 #if (MAXGROUPS == 2)
 #define DEFAULT_MAPPING 	0xAA
@@ -948,15 +936,6 @@ struct gfar_priv_tx_q {
 	unsigned short txtime;
 };
 
-/*
- * Per RX queue stats
- */
-struct rx_q_stats {
-	unsigned long rx_packets;
-	unsigned long rx_bytes;
-	unsigned long rx_dropped;
-};
-
 /**
  *	struct gfar_priv_rx_q - per rx queue structure
  *	@rxlock: per queue rx spin lock
@@ -979,7 +958,6 @@ struct gfar_priv_rx_q {
 	struct	rxbd8 *cur_rx;
 	struct	net_device *dev;
 	struct gfar_priv_grp *grp;
-	struct rx_q_stats stats;
 	u16	skb_currx;
 	u16	qindex;
 	unsigned int	rx_ring_size;
@@ -1025,12 +1003,6 @@ struct gfar_priv_grp {
 	char int_name_er[GFAR_INT_NAME_MAX];
 };
 
-enum gfar_errata {
-	GFAR_ERRATA_74		= 0x01,
-	GFAR_ERRATA_76		= 0x02,
-	GFAR_ERRATA_A002	= 0x04,
-};
-
 /* Struct stolen almost completely (and shamelessly) from the FCC enet source
  * (Ok, that's not so true anymore, but there is a family resemblence)
  * The GFAR buffer descriptors track the ring buffers.  The rx_bd_base
@@ -1054,8 +1026,7 @@ struct gfar_private {
 
 	struct device_node *node;
 	struct net_device *ndev;
-	struct platform_device *ofdev;
-	enum gfar_errata errata;
+	struct of_device *ofdev;
 
 	struct gfar_priv_grp gfargrp[MAXGROUPS];
 	struct gfar_priv_tx_q *tx_queue[MAX_TX_QS];
@@ -1109,20 +1080,10 @@ struct gfar_private {
 
 	/* Network Statistics */
 	struct gfar_extra_stats extra_stats;
-
-	/* HW time stamping enabled flag */
-	int hwts_rx_en;
-	int hwts_tx_en;
 };
 
 extern unsigned int ftp_rqfpr[MAX_FILER_IDX + 1];
 extern unsigned int ftp_rqfcr[MAX_FILER_IDX + 1];
-
-static inline int gfar_has_errata(struct gfar_private *priv,
-				  enum gfar_errata err)
-{
-	return priv->errata & err;
-}
 
 static inline u32 gfar_read(volatile unsigned __iomem *addr)
 {

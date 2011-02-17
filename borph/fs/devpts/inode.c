@@ -15,7 +15,6 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/namei.h>
-#include <linux/slab.h>
 #include <linux/mount.h>
 #include <linux/tty.h>
 #include <linux/mutex.h>
@@ -331,7 +330,7 @@ static int compare_init_pts_sb(struct super_block *s, void *p)
 }
 
 /*
- * devpts_mount()
+ * devpts_get_sb()
  *
  *     If the '-o newinstance' mount option was specified, mount a new
  *     (private) instance of devpts.  PTYs created in this instance are
@@ -345,20 +344,20 @@ static int compare_init_pts_sb(struct super_block *s, void *p)
  *     semantics in devpts while preserving backward compatibility of the
  *     current 'single-namespace' semantics. i.e all mounts of devpts
  *     without the 'newinstance' mount option should bind to the initial
- *     kernel mount, like mount_single().
+ *     kernel mount, like get_sb_single().
  *
  *     Mounts with 'newinstance' option create a new, private namespace.
  *
  *     NOTE:
  *
- *     For single-mount semantics, devpts cannot use mount_single(),
- *     because mount_single()/sget() find and use the super-block from
+ *     For single-mount semantics, devpts cannot use get_sb_single(),
+ *     because get_sb_single()/sget() find and use the super-block from
  *     the most recent mount of devpts. But that recent mount may be a
- *     'newinstance' mount and mount_single() would pick the newinstance
+ *     'newinstance' mount and get_sb_single() would pick the newinstance
  *     super-block instead of the initial super-block.
  */
-static struct dentry *devpts_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int devpts_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
 	int error;
 	struct pts_mount_opts opts;
@@ -366,7 +365,7 @@ static struct dentry *devpts_mount(struct file_system_type *fs_type,
 
 	error = parse_mount_options(data, PARSE_MOUNT, &opts);
 	if (error)
-		return ERR_PTR(error);
+		return error;
 
 	if (opts.newinstance)
 		s = sget(fs_type, NULL, set_anon_super, NULL);
@@ -374,7 +373,7 @@ static struct dentry *devpts_mount(struct file_system_type *fs_type,
 		s = sget(fs_type, compare_init_pts_sb, set_anon_super, NULL);
 
 	if (IS_ERR(s))
-		return ERR_CAST(s);
+		return PTR_ERR(s);
 
 	if (!s->s_root) {
 		s->s_flags = flags;
@@ -384,17 +383,22 @@ static struct dentry *devpts_mount(struct file_system_type *fs_type,
 		s->s_flags |= MS_ACTIVE;
 	}
 
+	simple_set_mnt(mnt, s);
+
 	memcpy(&(DEVPTS_SB(s))->mount_opts, &opts, sizeof(opts));
 
 	error = mknod_ptmx(s);
 	if (error)
-		goto out_undo_sget;
+		goto out_dput;
 
-	return dget(s->s_root);
+	return 0;
+
+out_dput:
+	dput(s->s_root); /* undo dget() in simple_set_mnt() */
 
 out_undo_sget:
 	deactivate_locked_super(s);
-	return ERR_PTR(error);
+	return error;
 }
 
 #else
@@ -402,10 +406,10 @@ out_undo_sget:
  * This supports only the legacy single-instance semantics (no
  * multiple-instance semantics)
  */
-static struct dentry *devpts_mount(struct file_system_type *fs_type, int flags,
-		const char *dev_name, void *data)
+static int devpts_get_sb(struct file_system_type *fs_type, int flags,
+		const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, data, devpts_fill_super);
+	return get_sb_single(fs_type, flags, data, devpts_fill_super, mnt);
 }
 #endif
 
@@ -419,7 +423,7 @@ static void devpts_kill_sb(struct super_block *sb)
 
 static struct file_system_type devpts_fs_type = {
 	.name		= "devpts",
-	.mount		= devpts_mount,
+	.get_sb		= devpts_get_sb,
 	.kill_sb	= devpts_kill_sb,
 };
 

@@ -9,7 +9,6 @@
  */
 
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/string.h>
 #include <linux/delay.h>
@@ -608,7 +607,7 @@ int pci_iov_resource_bar(struct pci_dev *dev, int resno,
  * the VF BAR size multiplied by the number of VFs.  The alignment
  * is just the VF BAR size.
  */
-resource_size_t pci_sriov_resource_alignment(struct pci_dev *dev, int resno)
+int pci_sriov_resource_alignment(struct pci_dev *dev, int resno)
 {
 	struct resource tmp;
 	enum pci_bar_type type;
@@ -706,21 +705,6 @@ irqreturn_t pci_sriov_migration(struct pci_dev *dev)
 	return sriov_migration(dev) ? IRQ_HANDLED : IRQ_NONE;
 }
 EXPORT_SYMBOL_GPL(pci_sriov_migration);
-
-/**
- * pci_num_vf - return number of VFs associated with a PF device_release_driver
- * @dev: the PCI device
- *
- * Returns number of VFs, or 0 if SR-IOV is not enabled.
- */
-int pci_num_vf(struct pci_dev *dev)
-{
-	if (!dev || !dev->is_physfn)
-		return 0;
-	else
-		return dev->sriov->nr_virtfn;
-}
-EXPORT_SYMBOL_GPL(pci_num_vf);
 
 static int ats_alloc_one(struct pci_dev *dev, int ps)
 {

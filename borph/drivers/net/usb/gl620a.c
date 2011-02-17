@@ -30,7 +30,6 @@
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/usbnet.h>
-#include <linux/gfp.h>
 
 
 /*

@@ -38,7 +38,6 @@ static const char * osst_version = "0.99.4";
 #include <linux/sched.h>
 #include <linux/proc_fs.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/errno.h>
@@ -51,7 +50,7 @@ static const char * osst_version = "0.99.4";
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/jiffies.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/dma.h>
 #include <asm/system.h>
@@ -80,7 +79,6 @@ static const char * osst_version = "0.99.4";
 #include "osst_options.h"
 #include "osst_detect.h"
 
-static DEFINE_MUTEX(osst_int_mutex);
 static int max_dev = 0;
 static int write_threshold_kbs = 0;
 static int max_sg_segs = 0;
@@ -3588,7 +3586,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 		if (i == (-ENOSPC)) {
 			transfer = STp->buffer->writing;	/* FIXME -- check this logic */
 			if (transfer <= do_count) {
-				*ppos += do_count - transfer;
+				filp->f_pos += do_count - transfer;
 				count -= do_count - transfer;
 				if (STps->drv_block >= 0) {
 					STps->drv_block += (do_count - transfer) / STp->block_size;
@@ -3626,7 +3624,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 			goto out;
 		}
 
-		*ppos += do_count;
+		filp->f_pos += do_count;
 		b_point += do_count;
 		count -= do_count;
 		if (STps->drv_block >= 0) {
@@ -3648,7 +3646,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 		if (STps->drv_block >= 0) {
 			STps->drv_block += blks;
 		}
-		*ppos += count;
+		filp->f_pos += count;
 		count = 0;
 	}
 
@@ -3824,7 +3822,7 @@ static ssize_t osst_read(struct file * filp, char __user * buf, size_t count, lo
 			}
 			STp->logical_blk_num += transfer / STp->block_size;
 			STps->drv_block      += transfer / STp->block_size;
-			*ppos          += transfer;
+			filp->f_pos          += transfer;
 			buf                  += transfer;
 			total                += transfer;
 		}
@@ -4808,9 +4806,9 @@ static int os_scsi_tape_open(struct inode * inode, struct file * filp)
 {
 	int ret;
 
-	mutex_lock(&osst_int_mutex);
+	lock_kernel();
 	ret = __os_scsi_tape_open(inode, filp);
-	mutex_unlock(&osst_int_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -4933,7 +4931,7 @@ static int os_scsi_tape_close(struct inode * inode, struct file * filp)
 
 
 /* The ioctl command */
-static long osst_ioctl(struct file * file,
+static int osst_ioctl(struct inode * inode,struct file * file,
 	 unsigned int cmd_in, unsigned long arg)
 {
 	int		      i, cmd_nr, cmd_type, blk, retval = 0;
@@ -4944,11 +4942,8 @@ static long osst_ioctl(struct file * file,
 	char		    * name  = tape_name(STp);
 	void	    __user  * p     = (void __user *)arg;
 
-	mutex_lock(&osst_int_mutex);
-	if (mutex_lock_interruptible(&STp->lock)) {
-		mutex_unlock(&osst_int_mutex);
+	if (mutex_lock_interruptible(&STp->lock))
 		return -ERESTARTSYS;
-	}
 
 #if DEBUG
 	if (debugging && !STp->in_use) {
@@ -5260,15 +5255,12 @@ static long osst_ioctl(struct file * file,
 
 	mutex_unlock(&STp->lock);
 
-	retval = scsi_ioctl(STp->device, cmd_in, p);
-	mutex_unlock(&osst_int_mutex);
-	return retval;
+	return scsi_ioctl(STp->device, cmd_in, p);
 
 out:
 	if (SRpnt) osst_release_request(SRpnt);
 
 	mutex_unlock(&STp->lock);
-	mutex_unlock(&osst_int_mutex);
 
 	return retval;
 }
@@ -5620,14 +5612,13 @@ static const struct file_operations osst_fops = {
 	.owner =        THIS_MODULE,
 	.read =         osst_read,
 	.write =        osst_write,
-	.unlocked_ioctl = osst_ioctl,
+	.ioctl =        osst_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = osst_compat_ioctl,
 #endif
 	.open =         os_scsi_tape_open,
 	.flush =        os_scsi_tape_flush,
 	.release =      os_scsi_tape_close,
-	.llseek =	noop_llseek,
 };
 
 static int osst_supports(struct scsi_device * SDp)
@@ -5869,8 +5860,7 @@ static int osst_probe(struct device *dev)
 	}
 
 	/* find a free minor number */
-	for (i = 0; i < osst_max_dev && os_scsi_tapes[i]; i++)
-		;
+	for (i=0; os_scsi_tapes[i] && i<osst_max_dev; i++);
 	if(i >= osst_max_dev) panic ("Scsi_devices corrupt (osst)");
 	dev_num = i;
 

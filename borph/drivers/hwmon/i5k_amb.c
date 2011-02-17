@@ -30,7 +30,6 @@
 #include <linux/log2.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #define DRVNAME "i5k_amb"
 
@@ -289,7 +288,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.attr.mode = S_IRUGO;
 			iattr->s_attr.dev_attr.show = show_label;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -304,7 +302,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.attr.mode = S_IRUGO;
 			iattr->s_attr.dev_attr.show = show_amb_temp;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -320,7 +317,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.show = show_amb_min;
 			iattr->s_attr.dev_attr.store = store_amb_min;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -336,7 +332,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.show = show_amb_mid;
 			iattr->s_attr.dev_attr.store = store_amb_mid;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -352,7 +347,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.show = show_amb_max;
 			iattr->s_attr.dev_attr.store = store_amb_max;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -367,7 +361,6 @@ static int __devinit i5k_amb_hwmon_init(struct platform_device *pdev)
 			iattr->s_attr.dev_attr.attr.mode = S_IRUGO;
 			iattr->s_attr.dev_attr.show = show_amb_alarm;
 			iattr->s_attr.index = k;
-			sysfs_attr_init(&iattr->s_attr.dev_attr.attr);
 			res = device_create_file(&pdev->dev,
 						 &iattr->s_attr.dev_attr);
 			if (res)
@@ -497,14 +490,12 @@ static unsigned long chipset_ids[] = {
 	0
 };
 
-#ifdef MODULE
 static struct pci_device_id i5k_amb_ids[] __devinitdata = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_5000_ERR) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_5400_ERR) },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, i5k_amb_ids);
-#endif
 
 static int __devinit i5k_amb_probe(struct platform_device *pdev)
 {

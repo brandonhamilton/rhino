@@ -65,7 +65,6 @@ TRIG_WAKE_EOS
 */
 
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include "../comedidev.h"
 
 #include <linux/ioport.h>
@@ -197,18 +196,7 @@ static int a2150_set_chanlist(struct comedi_device *dev,
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-static int __init driver_a2150_init_module(void)
-{
-	return comedi_driver_register(&driver_a2150);
-}
-
-static void __exit driver_a2150_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_a2150);
-}
-
-module_init(driver_a2150_init_module);
-module_exit(driver_a2150_cleanup_module);
+COMEDI_INITCLEANUP(driver_a2150);
 
 #ifdef A2150_DEBUG
 
@@ -921,7 +909,3 @@ static int a2150_set_chanlist(struct comedi_device *dev,
 
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

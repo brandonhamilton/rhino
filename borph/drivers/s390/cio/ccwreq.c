@@ -38,13 +38,9 @@ static u16 ccwreq_next_path(struct ccw_device *cdev)
 {
 	struct ccw_request *req = &cdev->private->req;
 
-	if (!req->singlepath) {
-		req->mask = 0;
-		goto out;
-	}
 	req->retries	= req->maxretries;
 	req->mask	= lpm_adjust(req->mask >>= 1, req->lpm);
-out:
+
 	return req->mask;
 }
 
@@ -53,6 +49,7 @@ out:
  */
 static void ccwreq_stop(struct ccw_device *cdev, int rc)
 {
+	struct subchannel *sch = to_subchannel(cdev->dev.parent);
 	struct ccw_request *req = &cdev->private->req;
 
 	if (req->done)
@@ -60,6 +57,7 @@ static void ccwreq_stop(struct ccw_device *cdev, int rc)
 	req->done = 1;
 	ccw_device_set_timeout(cdev, 0);
 	memset(&cdev->private->irb, 0, sizeof(struct irb));
+	sch->lpm = sch->schib.pmcw.pam;
 	if (rc && rc != -ENODEV && req->drc)
 		rc = req->drc;
 	req->callback(cdev, req->data, rc);
@@ -82,6 +80,7 @@ static void ccwreq_do(struct ccw_device *cdev)
 			continue;
 		}
 		/* Perform start function. */
+		sch->lpm = 0xff;
 		memset(&cdev->private->irb, 0, sizeof(struct irb));
 		rc = cio_start(sch, cp, (u8) req->mask);
 		if (rc == 0) {
@@ -117,12 +116,8 @@ void ccw_request_start(struct ccw_device *cdev)
 {
 	struct ccw_request *req = &cdev->private->req;
 
-	if (req->singlepath) {
-		/* Try all paths twice to counter link flapping. */
-		req->mask = 0x8080;
-	} else
-		req->mask = req->lpm;
-
+	/* Try all paths twice to counter link flapping. */
+	req->mask	= 0x8080;
 	req->retries	= req->maxretries;
 	req->mask	= lpm_adjust(req->mask, req->lpm);
 	req->drc	= 0;
@@ -167,7 +162,6 @@ static enum io_status ccwreq_status(struct ccw_device *cdev, struct irb *lcirb)
 {
 	struct irb *irb = &cdev->private->irb;
 	struct cmd_scsw *scsw = &irb->scsw.cmd;
-	enum uc_todo todo;
 
 	/* Perform BASIC SENSE if needed. */
 	if (ccw_device_accumulate_and_sense(cdev, lcirb))
@@ -187,22 +181,6 @@ static enum io_status ccwreq_status(struct ccw_device *cdev, struct irb *lcirb)
 		/* Check for command reject. */
 		if (irb->ecw[0] & SNS0_CMD_REJECT)
 			return IO_REJECTED;
-		/* Ask the driver what to do */
-		if (cdev->drv && cdev->drv->uc_handler) {
-			todo = cdev->drv->uc_handler(cdev, lcirb);
-			CIO_TRACE_EVENT(2, "uc_response");
-			CIO_HEX_EVENT(2, &todo, sizeof(todo));
-			switch (todo) {
-			case UC_TODO_RETRY:
-				return IO_STATUS_ERROR;
-			case UC_TODO_RETRY_ON_NEW_PATH:
-				return IO_PATH_ERROR;
-			case UC_TODO_STOP:
-				return IO_REJECTED;
-			default:
-				return IO_STATUS_ERROR;
-			}
-		}
 		/* Assume that unexpected SENSE data implies an error. */
 		return IO_STATUS_ERROR;
 	}
@@ -249,8 +227,8 @@ static void ccwreq_log_status(struct ccw_device *cdev, enum io_status status)
  */
 void ccw_request_handler(struct ccw_device *cdev)
 {
-	struct irb *irb = (struct irb *)&S390_lowcore.irb;
 	struct ccw_request *req = &cdev->private->req;
+	struct irb *irb = (struct irb *) __LC_IRB;
 	enum io_status status;
 	int rc = -EOPNOTSUPP;
 

@@ -31,6 +31,7 @@ static const char version[] = "0.24";
 #include <linux/init.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/pagemap.h>
 #include <linux/usb.h>
 #include "se401.h"
@@ -950,9 +951,9 @@ static int se401_open(struct file *file)
 	struct usb_se401 *se401 = (struct usb_se401 *)dev;
 	int err = 0;
 
-	mutex_lock(&se401->lock);
+	lock_kernel();
 	if (se401->user) {
-		mutex_unlock(&se401->lock);
+		unlock_kernel();
 		return -EBUSY;
 	}
 	se401->fbuf = rvmalloc(se401->maxframesize * SE401_NUMFRAMES);
@@ -961,7 +962,7 @@ static int se401_open(struct file *file)
 	else
 		err = -ENOMEM;
 	se401->user = !err;
-	mutex_unlock(&se401->lock);
+	unlock_kernel();
 
 	return err;
 }
@@ -1427,8 +1428,8 @@ static int se401_probe(struct usb_interface *intf,
 		err("video_register_device failed");
 		return -EIO;
 	}
-	dev_info(&intf->dev, "registered new video device: %s\n",
-		 video_device_node_name(&se401->vdev));
+	dev_info(&intf->dev, "registered new video device: video%d\n",
+		 se401->vdev.num);
 
 	usb_set_intfdata(intf, se401);
 	return 0;

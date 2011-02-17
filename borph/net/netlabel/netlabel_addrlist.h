@@ -130,6 +130,7 @@ static inline void netlbl_af4list_audit_addr(struct audit_buffer *audit_buf,
 					     int src, const char *dev,
 					     __be32 addr, __be32 mask)
 {
+	return;
 }
 #endif
 
@@ -202,6 +203,7 @@ static inline void netlbl_af6list_audit_addr(struct audit_buffer *audit_buf,
 					     const struct in6_addr *addr,
 					     const struct in6_addr *mask)
 {
+	return;
 }
 #endif
 #endif /* IPV6 */

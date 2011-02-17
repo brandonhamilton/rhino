@@ -148,30 +148,29 @@ Form of high byte dependant on justification set in ctrl reg */
 #define LIS3L02DQ_MAX_RX 12
 /**
  * struct lis3l02dq_state - device instance specific data
- * @helper:		data and func pointer allowing generic functions
  * @us:			actual spi_device
- * @work_thresh:	bh for threshold events
- * @thresh_timestamp:	timestamp for threshold interrupts.
+ * @work_trigger_to_ring: bh for triggered event handling
+ * @work_cont_thresh: CLEAN
  * @inter:		used to check if new interrupt has been triggered
+ * @last_timestamp:	passing timestamp from th to bh of interrupt handler
+ * @indio_dev:		industrial I/O device structure
  * @trig:		data ready trigger registered with iio
  * @tx:			transmit buffer
  * @rx:			recieve buffer
  * @buf_lock:		mutex to protect tx and rx
  **/
 struct lis3l02dq_state {
-	struct iio_sw_ring_helper_state	help;
 	struct spi_device		*us;
-	struct work_struct		work_thresh;
-	s64				thresh_timestamp;
+	struct work_struct		work_trigger_to_ring;
+	struct iio_work_cont		work_cont_thresh;
 	bool				inter;
+	s64				last_timestamp;
+	struct iio_dev			*indio_dev;
 	struct iio_trigger		*trig;
 	u8				*tx;
 	u8				*rx;
 	struct mutex			buf_lock;
 };
-
-#define lis3l02dq_h_to_s(_h)				\
-	container_of(_h, struct lis3l02dq_state, help)
 
 int lis3l02dq_spi_read_reg_8(struct device *dev,
 			     u8 reg_address,
@@ -180,6 +179,10 @@ int lis3l02dq_spi_read_reg_8(struct device *dev,
 int lis3l02dq_spi_write_reg_8(struct device *dev,
 			      u8 reg_address,
 			      u8 *val);
+#define LIS3L02DQ_SCAN_ACC_X 0
+#define LIS3L02DQ_SCAN_ACC_Y 1
+#define LIS3L02DQ_SCAN_ACC_Z 2
+
 
 #ifdef CONFIG_IIO_RING_BUFFER
 /* At the moment triggers are only used for ring buffer
@@ -196,15 +199,15 @@ ssize_t lis3l02dq_read_accel_from_ring(struct device *dev,
 int lis3l02dq_configure_ring(struct iio_dev *indio_dev);
 void lis3l02dq_unconfigure_ring(struct iio_dev *indio_dev);
 
+int lis3l02dq_initialize_ring(struct iio_ring_buffer *ring);
+void lis3l02dq_uninitialize_ring(struct iio_ring_buffer *ring);
 #else /* CONFIG_IIO_RING_BUFFER */
 
-static inline void lis3l02dq_remove_trigger(struct iio_dev *indio_dev)
-{
-}
+static inline void lis3l02dq_remove_trigger(struct iio_dev *indio_dev) {};
 static inline int lis3l02dq_probe_trigger(struct iio_dev *indio_dev)
 {
 	return 0;
-}
+};
 
 static inline ssize_t
 lis3l02dq_read_accel_from_ring(struct device *dev,
@@ -212,14 +215,18 @@ lis3l02dq_read_accel_from_ring(struct device *dev,
 			       char *buf)
 {
 	return 0;
-}
+};
 
 static int lis3l02dq_configure_ring(struct iio_dev *indio_dev)
 {
 	return 0;
-}
+};
 static inline void lis3l02dq_unconfigure_ring(struct iio_dev *indio_dev)
+{};
+static inline int lis3l02dq_initialize_ring(struct iio_ring_buffer *ring)
 {
-}
+	return 0;
+};
+static inline void lis3l02dq_uninitialize_ring(struct iio_ring_buffer *ring) {};
 #endif /* CONFIG_IIO_RING_BUFFER */
 #endif /* SPI_LIS3L02DQ_H_ */

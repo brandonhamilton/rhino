@@ -1,7 +1,7 @@
 /*
  * file for managing the edac_device class of devices for EDAC
  *
- * (C) 2007 SoftwareBitMaker 
+ * (C) 2007 SoftwareBitMaker (http://www.softwarebitmaker.com)
  *
  * This file may be distributed under the terms of the
  * GNU General Public License.
@@ -12,8 +12,6 @@
 
 #include <linux/ctype.h>
 #include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/edac.h>
 
 #include "edac_core.h"
 #include "edac_module.h"
@@ -139,7 +137,7 @@ static ssize_t edac_dev_ctl_info_store(struct kobject *kobj,
 }
 
 /* edac_dev file operations for an 'ctl_info' */
-static const struct sysfs_ops device_ctl_info_ops = {
+static struct sysfs_ops device_ctl_info_ops = {
 	.show = edac_dev_ctl_info_show,
 	.store = edac_dev_ctl_info_store
 };
@@ -236,7 +234,7 @@ int edac_device_register_sysfs_main_kobj(struct edac_device_ctl_info *edac_dev)
 	debugf1("%s()\n", __func__);
 
 	/* get the /sys/devices/system/edac reference */
-	edac_class = edac_get_sysfs_class();
+	edac_class = edac_get_edac_class();
 	if (edac_class == NULL) {
 		debugf1("%s() no edac_class error\n", __func__);
 		err = -ENODEV;
@@ -256,7 +254,7 @@ int edac_device_register_sysfs_main_kobj(struct edac_device_ctl_info *edac_dev)
 
 	if (!try_module_get(edac_dev->owner)) {
 		err = -ENODEV;
-		goto err_mod_get;
+		goto err_out;
 	}
 
 	/* register */
@@ -283,9 +281,6 @@ int edac_device_register_sysfs_main_kobj(struct edac_device_ctl_info *edac_dev)
 err_kobj_reg:
 	module_put(edac_dev->owner);
 
-err_mod_get:
-	edac_put_sysfs_class();
-
 err_out:
 	return err;
 }
@@ -294,11 +289,12 @@ err_out:
  * edac_device_unregister_sysfs_main_kobj:
  *	the '..../edac/<name>' kobject
  */
-void edac_device_unregister_sysfs_main_kobj(struct edac_device_ctl_info *dev)
+void edac_device_unregister_sysfs_main_kobj(
+					struct edac_device_ctl_info *edac_dev)
 {
 	debugf0("%s()\n", __func__);
 	debugf4("%s() name of kobject is: %s\n",
-		__func__, kobject_name(&dev->kobj));
+		__func__, kobject_name(&edac_dev->kobj));
 
 	/*
 	 * Unregister the edac device's kobject and
@@ -307,8 +303,7 @@ void edac_device_unregister_sysfs_main_kobj(struct edac_device_ctl_info *dev)
 	 *   a) module_put() this module
 	 *   b) 'kfree' the memory
 	 */
-	kobject_put(&dev->kobj);
-	edac_put_sysfs_class();
+	kobject_put(&edac_dev->kobj);
 }
 
 /* edac_dev -> instance information */
@@ -378,7 +373,7 @@ static ssize_t edac_dev_instance_store(struct kobject *kobj,
 }
 
 /* edac_dev file operations for an 'instance' */
-static const struct sysfs_ops device_instance_ops = {
+static struct sysfs_ops device_instance_ops = {
 	.show = edac_dev_instance_show,
 	.store = edac_dev_instance_store
 };
@@ -481,7 +476,7 @@ static ssize_t edac_dev_block_store(struct kobject *kobj,
 }
 
 /* edac_dev file operations for a 'block' */
-static const struct sysfs_ops device_block_ops = {
+static struct sysfs_ops device_block_ops = {
 	.show = edac_dev_block_show,
 	.store = edac_dev_block_store
 };

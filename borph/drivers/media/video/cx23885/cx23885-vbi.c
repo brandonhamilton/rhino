@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 
 #include "cx23885.h"
 
@@ -74,7 +75,7 @@ static int cx23885_start_vbi_dma(struct cx23885_dev    *dev,
 	q->count = 1;
 
 	/* enable irqs */
-	cx23885_irq_add_enable(dev, 0x01);
+	cx_set(PCI_INT_MSK, cx_read(PCI_INT_MSK) | 0x01);
 	cx_set(VID_A_INT_MSK, 0x000022);
 
 	/* start dma */

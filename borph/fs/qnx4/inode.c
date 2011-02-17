@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/highuid.h>
+#include <linux/smp_lock.h>
 #include <linux/pagemap.h>
 #include <linux/buffer_head.h>
 #include <linux/writeback.h>
@@ -63,7 +64,25 @@ static struct buffer_head *qnx4_getblk(struct inode *inode, int nr,
 		result = sb_getblk(inode->i_sb, nr);
 		return result;
 	}
-	return NULL;
+	if (!create) {
+		return NULL;
+	}
+#if 0
+	tmp = qnx4_new_block(inode->i_sb);
+	if (!tmp) {
+		return NULL;
+	}
+	result = sb_getblk(inode->i_sb, tmp);
+	if (tst) {
+		qnx4_free_block(inode->i_sb, tmp);
+		brelse(result);
+		goto repeat;
+	}
+	tst = tmp;
+#endif
+	inode->i_ctime = CURRENT_TIME_SEC;
+	mark_inode_dirty(inode);
+	return result;
 }
 
 struct buffer_head *qnx4_bread(struct inode *inode, int block, int create)
@@ -94,6 +113,8 @@ static int qnx4_get_block( struct inode *inode, sector_t iblock, struct buffer_h
 	if ( phys ) {
 		// logical block is before EOF
 		map_bh(bh, inode->i_sb, phys);
+	} else if ( create ) {
+		// to be done.
 	}
 	return 0;
 }
@@ -156,6 +177,8 @@ static int qnx4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct super_block *sb = dentry->d_sb;
 	u64 id = huge_encode_dev(sb->s_bdev->bd_dev);
 
+	lock_kernel();
+
 	buf->f_type    = sb->s_magic;
 	buf->f_bsize   = sb->s_blocksize;
 	buf->f_blocks  = le32_to_cpu(qnx4_sb(sb)->BitMap->di_size) * 8;
@@ -164,6 +187,8 @@ static int qnx4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_namelen = QNX4_NAME_MAX;
 	buf->f_fsid.val[0] = (u32)id;
 	buf->f_fsid.val[1] = (u32)(id >> 32);
+
+	unlock_kernel();
 
 	return 0;
 }
@@ -196,8 +221,7 @@ static const char *qnx4_checkroot(struct super_block *sb)
 				rootdir = (struct qnx4_inode_entry *) (bh->b_data + i * QNX4_DIR_ENTRY_SIZE);
 				if (rootdir->di_fname != NULL) {
 					QNX4DEBUG((KERN_INFO "rootdir entry found : [%s]\n", rootdir->di_fname));
-					if (!strcmp(rootdir->di_fname,
-						    QNX4_BMNAME)) {
+					if (!strncmp(rootdir->di_fname, QNX4_BMNAME, sizeof QNX4_BMNAME)) {
 						found = 1;
 						qnx4_sb(sb)->BitMap = kmalloc( sizeof( struct qnx4_inode_entry ), GFP_KERNEL );
 						if (!qnx4_sb(sb)->BitMap) {
@@ -278,6 +302,7 @@ static int qnx4_fill_super(struct super_block *s, void *data, int silent)
  		goto outi;
 
 	brelse(bh);
+
 	return 0;
 
       outi:
@@ -314,19 +339,10 @@ static int qnx4_write_begin(struct file *file, struct address_space *mapping,
 			struct page **pagep, void **fsdata)
 {
 	struct qnx4_inode_info *qnx4_inode = qnx4_i(mapping->host);
-	int ret;
-
 	*pagep = NULL;
-	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				qnx4_get_block,
 				&qnx4_inode->mmu_private);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
-
-	return ret;
 }
 static sector_t qnx4_bmap(struct address_space *mapping, sector_t block)
 {
@@ -454,16 +470,17 @@ static void destroy_inodecache(void)
 	kmem_cache_destroy(qnx4_inode_cachep);
 }
 
-static struct dentry *qnx4_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int qnx4_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, qnx4_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, qnx4_fill_super,
+			   mnt);
 }
 
 static struct file_system_type qnx4_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "qnx4",
-	.mount		= qnx4_mount,
+	.get_sb		= qnx4_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

@@ -37,6 +37,7 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/delay.h>
@@ -157,11 +158,10 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
 			goto out;
 		}
 	}
-out:
-	return ret ? : err;
 out_unlock:
 	mutex_unlock(&rng_mutex);
-	goto out;
+out:
+	return ret ? : err;
 }
 
 
@@ -169,7 +169,6 @@ static const struct file_operations rng_chrdev_ops = {
 	.owner		= THIS_MODULE,
 	.open		= rng_dev_open,
 	.read		= rng_dev_read,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice rng_miscdev = {

@@ -21,8 +21,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#ifndef __ASM_ARCH_OMAP3_H
-#define __ASM_ARCH_OMAP3_H
+#ifndef __ASM_ARCH_OMAP34XX_H
+#define __ASM_ARCH_OMAP34XX_H
 
 /*
  * Please place only base defines here and put the rest in device
@@ -77,15 +77,32 @@
 #define OMAP34XX_UHH_CONFIG_BASE	(L4_34XX_BASE + 0x64000)
 #define OMAP34XX_OHCI_BASE	(L4_34XX_BASE + 0x64400)
 #define OMAP34XX_EHCI_BASE	(L4_34XX_BASE + 0x64800)
-#define OMAP34XX_SR1_BASE	0x480C9000
-#define OMAP34XX_SR2_BASE	0x480CB000
+#define OMAP34XX_SR1_BASE	(L4_34XX_BASE + 0xC9000)
+#define OMAP34XX_SR2_BASE	(L4_34XX_BASE + 0xCB000)
 
-#define OMAP34XX_MAILBOX_BASE		(L4_34XX_BASE + 0x94000)
+#define OMAP34XX_MAILBOX_BASE	(L4_34XX_BASE + 0x94000)
 
-/* Security */
-#define OMAP34XX_SEC_BASE	(L4_34XX_BASE + 0xA0000)
-#define OMAP34XX_SEC_SHA1MD5_BASE	(OMAP34XX_SEC_BASE + 0x23000)
-#define OMAP34XX_SEC_AES_BASE	(OMAP34XX_SEC_BASE + 0x25000)
+/* VDD OPP identifiers */
+#define VDD1_OPP	0x1
+#define VDD2_OPP	0x2
 
-#endif /* __ASM_ARCH_OMAP3_H */
+/* VDD1 OPPS */
+#define VDD1_OPP1	0x1
+#define VDD1_OPP2	0x2
+#define VDD1_OPP3	0x3
+#define VDD1_OPP4	0x4
+#define VDD1_OPP5	0x5
+#define VDD1_OPP6	0x6
+
+/* VDD2 OPPS */
+#define VDD2_OPP1	0x1
+#define VDD2_OPP2	0x2
+#define VDD2_OPP3	0x3
+
+#define MIN_VDD1_OPP	VDD1_OPP1
+#define MAX_VDD1_OPP	VDD1_OPP6
+#define MIN_VDD2_OPP	VDD2_OPP1
+#define MAX_VDD2_OPP	VDD2_OPP3
+
+#endif /* __ASM_ARCH_OMAP34XX_H */
 

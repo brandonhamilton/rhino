@@ -1,4 +1,5 @@
 #include <linux/err.h>
+#include <linux/gfp.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
@@ -34,7 +35,7 @@ void extent_map_exit(void)
  */
 void extent_map_tree_init(struct extent_map_tree *tree, gfp_t mask)
 {
-	tree->map = RB_ROOT;
+	tree->map.rb_node = NULL;
 	rwlock_init(&tree->lock);
 }
 
@@ -152,6 +153,20 @@ static struct rb_node *__tree_search(struct rb_root *root, u64 offset,
 		*next_ret = prev;
 	}
 	return NULL;
+}
+
+/*
+ * look for an offset in the tree, and if it can't be found, return
+ * the first offset we can find smaller than 'offset'.
+ */
+static inline struct rb_node *tree_search(struct rb_root *root, u64 offset)
+{
+	struct rb_node *prev;
+	struct rb_node *ret;
+	ret = __tree_search(root, offset, &prev, NULL);
+	if (!ret)
+		return prev;
+	return ret;
 }
 
 /* check to see if two extent_map structs are adjacent and safe to merge */
@@ -335,7 +350,7 @@ struct extent_map *lookup_extent_mapping(struct extent_map_tree *tree,
 		goto out;
 	}
 	if (IS_ERR(rb_node)) {
-		em = ERR_CAST(rb_node);
+		em = ERR_PTR(PTR_ERR(rb_node));
 		goto out;
 	}
 	em = rb_entry(rb_node, struct extent_map, rb_node);
@@ -384,7 +399,7 @@ struct extent_map *search_extent_mapping(struct extent_map_tree *tree,
 		goto out;
 	}
 	if (IS_ERR(rb_node)) {
-		em = ERR_CAST(rb_node);
+		em = ERR_PTR(PTR_ERR(rb_node));
 		goto out;
 	}
 	em = rb_entry(rb_node, struct extent_map, rb_node);

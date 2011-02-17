@@ -36,7 +36,6 @@
 #include <linux/blkdev.h>
 #include <linux/mempool.h>
 #include <linux/hash.h>
-#include <linux/compat.h>
 
 #include <asm/kmap_types.h>
 #include <asm/uaccess.h>
@@ -527,7 +526,7 @@ static void aio_fput_routine(struct work_struct *data)
 
 		/* Complete the fput(s) */
 		if (req->ki_filp != NULL)
-			fput(req->ki_filp);
+			__fput(req->ki_filp);
 
 		/* Link the iocb into the context's free list */
 		spin_lock_irq(&ctx->ctx_lock);
@@ -560,11 +559,11 @@ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
 
 	/*
 	 * Try to optimize the aio and eventfd file* puts, by avoiding to
-	 * schedule work in case it is not final fput() time. In normal cases,
+	 * schedule work in case it is not __fput() time. In normal cases,
 	 * we would not be holding the last reference to the file*, so
 	 * this function will be executed w/out any aio kthread wakeup.
 	 */
-	if (unlikely(!fput_atomic(req->ki_filp))) {
+	if (unlikely(atomic_long_dec_and_test(&req->ki_filp->f_count))) {
 		get_ioctx(ctx);
 		spin_lock(&fput_lock);
 		list_add(&req->ki_list, &fput_head);
@@ -713,13 +712,7 @@ static ssize_t aio_run_iocb(struct kiocb *iocb)
 	ret = retry(iocb);
 
 	if (ret != -EIOCBRETRY && ret != -EIOCBQUEUED) {
-		/*
-		 * There's no easy way to restart the syscall since other AIO's
-		 * may be already running. Just fail this IO with EINTR.
-		 */
-		if (unlikely(ret == -ERESTARTSYS || ret == -ERESTARTNOINTR ||
-			     ret == -ERESTARTNOHAND || ret == -ERESTART_RESTARTBLOCK))
-			ret = -EINTR;
+		BUG_ON(!list_empty(&iocb->ki_wait.task_list));
 		aio_complete(iocb, ret, 0);
 	}
 out:
@@ -873,6 +866,13 @@ static void try_queue_kicked_iocb(struct kiocb *iocb)
 	unsigned long flags;
 	int run = 0;
 
+	/* We're supposed to be the only path putting the iocb back on the run
+	 * list.  If we find that the iocb is *back* on a wait queue already
+	 * than retry has happened before we could queue the iocb.  This also
+	 * means that the retry could have completed and freed our iocb, no
+	 * good. */
+	BUG_ON((!list_empty(&iocb->ki_wait.task_list)));
+
 	spin_lock_irqsave(&ctx->ctx_lock, flags);
 	/* set this inside the lock so that we can't race with aio_run_iocb()
 	 * testing it and putting the iocb on the run list under the lock */
@@ -886,7 +886,7 @@ static void try_queue_kicked_iocb(struct kiocb *iocb)
 /*
  * kick_iocb:
  *      Called typically from a wait queue callback context
- *      to trigger a retry of the iocb.
+ *      (aio_wake_function) to trigger a retry of the iocb.
  *      The retry is usually executed by aio workqueue
  *      threads (See aio_kick_handler).
  */
@@ -1285,7 +1285,7 @@ out:
 /* sys_io_destroy:
  *	Destroy the aio_context specified.  May cancel any outstanding 
  *	AIOs and block on completion.  Will fail with -ENOSYS if not
- *	implemented.  May fail with -EINVAL if the context pointed to
+ *	implemented.  May fail with -EFAULT if the context pointed to
  *	is invalid.
  */
 SYSCALL_DEFINE1(io_destroy, aio_context_t, ctx)
@@ -1393,22 +1393,13 @@ static ssize_t aio_fsync(struct kiocb *iocb)
 	return ret;
 }
 
-static ssize_t aio_setup_vectored_rw(int type, struct kiocb *kiocb, bool compat)
+static ssize_t aio_setup_vectored_rw(int type, struct kiocb *kiocb)
 {
 	ssize_t ret;
 
-#ifdef CONFIG_COMPAT
-	if (compat)
-		ret = compat_rw_copy_check_uvector(type,
-				(struct compat_iovec __user *)kiocb->ki_buf,
-				kiocb->ki_nbytes, 1, &kiocb->ki_inline_vec,
-				&kiocb->ki_iovec);
-	else
-#endif
-		ret = rw_copy_check_uvector(type,
-				(struct iovec __user *)kiocb->ki_buf,
-				kiocb->ki_nbytes, 1, &kiocb->ki_inline_vec,
-				&kiocb->ki_iovec);
+	ret = rw_copy_check_uvector(type, (struct iovec __user *)kiocb->ki_buf,
+				    kiocb->ki_nbytes, 1,
+				    &kiocb->ki_inline_vec, &kiocb->ki_iovec);
 	if (ret < 0)
 		goto out;
 
@@ -1438,7 +1429,7 @@ static ssize_t aio_setup_single_vector(struct kiocb *kiocb)
  *	Performs the initial checks and aio retry method
  *	setup for the kiocb at the time of io submission.
  */
-static ssize_t aio_setup_iocb(struct kiocb *kiocb, bool compat)
+static ssize_t aio_setup_iocb(struct kiocb *kiocb)
 {
 	struct file *file = kiocb->ki_filp;
 	ssize_t ret = 0;
@@ -1487,7 +1478,7 @@ static ssize_t aio_setup_iocb(struct kiocb *kiocb, bool compat)
 		ret = security_file_permission(file, MAY_READ);
 		if (unlikely(ret))
 			break;
-		ret = aio_setup_vectored_rw(READ, kiocb, compat);
+		ret = aio_setup_vectored_rw(READ, kiocb);
 		if (ret)
 			break;
 		ret = -EINVAL;
@@ -1501,7 +1492,7 @@ static ssize_t aio_setup_iocb(struct kiocb *kiocb, bool compat)
 		ret = security_file_permission(file, MAY_WRITE);
 		if (unlikely(ret))
 			break;
-		ret = aio_setup_vectored_rw(WRITE, kiocb, compat);
+		ret = aio_setup_vectored_rw(WRITE, kiocb);
 		if (ret)
 			break;
 		ret = -EINVAL;
@@ -1529,6 +1520,31 @@ static ssize_t aio_setup_iocb(struct kiocb *kiocb, bool compat)
 	return 0;
 }
 
+/*
+ * aio_wake_function:
+ * 	wait queue callback function for aio notification,
+ * 	Simply triggers a retry of the operation via kick_iocb.
+ *
+ * 	This callback is specified in the wait queue entry in
+ *	a kiocb.
+ *
+ * Note:
+ * This routine is executed with the wait queue lock held.
+ * Since kick_iocb acquires iocb->ctx->ctx_lock, it nests
+ * the ioctx lock inside the wait queue lock. This is safe
+ * because this callback isn't used for wait queues which
+ * are nested inside ioctx lock (i.e. ctx->wait)
+ */
+static int aio_wake_function(wait_queue_t *wait, unsigned mode,
+			     int sync, void *key)
+{
+	struct kiocb *iocb = container_of(wait, struct kiocb, ki_wait);
+
+	list_del_init(&wait->task_list);
+	kick_iocb(iocb);
+	return 1;
+}
+
 static void aio_batch_add(struct address_space *mapping,
 			  struct hlist_head *batch_hash)
 {
@@ -1543,19 +1559,7 @@ static void aio_batch_add(struct address_space *mapping,
 	}
 
 	abe = mempool_alloc(abe_pool, GFP_KERNEL);
-
-	/*
-	 * we should be using igrab here, but
-	 * we don't want to hammer on the global
-	 * inode spinlock just to take an extra
-	 * reference on a file that we must already
-	 * have a reference to.
-	 *
-	 * When we're called, we always have a reference
-	 * on the file, so we must always have a reference
-	 * on the inode, so ihold() is safe here.
-	 */
-	ihold(mapping->host);
+	BUG_ON(!igrab(mapping->host));
 	abe->mapping = mapping;
 	hlist_add_head(&abe->list, &batch_hash[bucket]);
 	return;
@@ -1578,8 +1582,7 @@ static void aio_batch_free(struct hlist_head *batch_hash)
 }
 
 static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
-			 struct iocb *iocb, struct hlist_head *batch_hash,
-			 bool compat)
+			 struct iocb *iocb, struct hlist_head *batch_hash)
 {
 	struct kiocb *req;
 	struct file *file;
@@ -1639,8 +1642,10 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	req->ki_buf = (char __user *)(unsigned long)iocb->aio_buf;
 	req->ki_left = req->ki_nbytes = iocb->aio_nbytes;
 	req->ki_opcode = iocb->aio_lio_opcode;
+	init_waitqueue_func_entry(&req->ki_wait, aio_wake_function);
+	INIT_LIST_HEAD(&req->ki_wait.task_list);
 
-	ret = aio_setup_iocb(req, compat);
+	ret = aio_setup_iocb(req);
 
 	if (ret)
 		goto out_put_req;
@@ -1668,8 +1673,20 @@ out_put_req:
 	return ret;
 }
 
-long do_io_submit(aio_context_t ctx_id, long nr,
-		  struct iocb __user *__user *iocbpp, bool compat)
+/* sys_io_submit:
+ *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
+ *	the number of iocbs queued.  May return -EINVAL if the aio_context
+ *	specified by ctx_id is invalid, if nr is < 0, if the iocb at
+ *	*iocbpp[0] is not properly initialized, if the operation specified
+ *	is invalid for the file descriptor in the iocb.  May fail with
+ *	-EFAULT if any of the data structures point to invalid data.  May
+ *	fail with -EBADF if the file descriptor specified in the first
+ *	iocb is invalid.  May fail with -EAGAIN if insufficient resources
+ *	are available to queue any iocbs.  Will return 0 if nr is 0.  Will
+ *	fail with -ENOSYS if not implemented.
+ */
+SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
+		struct iocb __user * __user *, iocbpp)
 {
 	struct kioctx *ctx;
 	long ret = 0;
@@ -1678,9 +1695,6 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 
 	if (unlikely(nr < 0))
 		return -EINVAL;
-
-	if (unlikely(nr > LONG_MAX/sizeof(*iocbpp)))
-		nr = LONG_MAX/sizeof(*iocbpp);
 
 	if (unlikely(!access_ok(VERIFY_READ, iocbpp, (nr*sizeof(*iocbpp)))))
 		return -EFAULT;
@@ -1709,7 +1723,7 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 			break;
 		}
 
-		ret = io_submit_one(ctx, user_iocb, &tmp, batch_hash, compat);
+		ret = io_submit_one(ctx, user_iocb, &tmp, batch_hash);
 		if (ret)
 			break;
 	}
@@ -1717,24 +1731,6 @@ long do_io_submit(aio_context_t ctx_id, long nr,
 
 	put_ioctx(ctx);
 	return i ? i : ret;
-}
-
-/* sys_io_submit:
- *	Queue the nr iocbs pointed to by iocbpp for processing.  Returns
- *	the number of iocbs queued.  May return -EINVAL if the aio_context
- *	specified by ctx_id is invalid, if nr is < 0, if the iocb at
- *	*iocbpp[0] is not properly initialized, if the operation specified
- *	is invalid for the file descriptor in the iocb.  May fail with
- *	-EFAULT if any of the data structures point to invalid data.  May
- *	fail with -EBADF if the file descriptor specified in the first
- *	iocb is invalid.  May fail with -EAGAIN if insufficient resources
- *	are available to queue any iocbs.  Will return 0 if nr is 0.  Will
- *	fail with -ENOSYS if not implemented.
- */
-SYSCALL_DEFINE3(io_submit, aio_context_t, ctx_id, long, nr,
-		struct iocb __user * __user *, iocbpp)
-{
-	return do_io_submit(ctx_id, nr, iocbpp, 0);
 }
 
 /* lookup_kiocb
@@ -1818,16 +1814,15 @@ SYSCALL_DEFINE3(io_cancel, aio_context_t, ctx_id, struct iocb __user *, iocb,
 
 /* io_getevents:
  *	Attempts to read at least min_nr events and up to nr events from
- *	the completion queue for the aio_context specified by ctx_id. If
- *	it succeeds, the number of read events is returned. May fail with
- *	-EINVAL if ctx_id is invalid, if min_nr is out of range, if nr is
- *	out of range, if timeout is out of range.  May fail with -EFAULT
- *	if any of the memory specified is invalid.  May return 0 or
- *	< min_nr if the timeout specified by timeout has elapsed
- *	before sufficient events are available, where timeout == NULL
- *	specifies an infinite timeout. Note that the timeout pointed to by
- *	timeout is relative and will be updated if not NULL and the
- *	operation blocks. Will fail with -ENOSYS if not implemented.
+ *	the completion queue for the aio_context specified by ctx_id.  May
+ *	fail with -EINVAL if ctx_id is invalid, if min_nr is out of range,
+ *	if nr is out of range, if when is out of range.  May fail with
+ *	-EFAULT if any of the memory specified to is invalid.  May return
+ *	0 or < min_nr if no events are available and the timeout specified
+ *	by when	has elapsed, where when == NULL specifies an infinite
+ *	timeout.  Note that the timeout pointed to by when is relative and
+ *	will be updated if not NULL and the operation blocks.  Will fail
+ *	with -ENOSYS if not implemented.
  */
 SYSCALL_DEFINE5(io_getevents, aio_context_t, ctx_id,
 		long, min_nr,

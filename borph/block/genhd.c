@@ -22,7 +22,9 @@
 #include "blk.h"
 
 static DEFINE_MUTEX(block_class_lock);
+#ifndef CONFIG_SYSFS_DEPRECATED
 struct kobject *block_depr;
+#endif
 
 /* for extended dynamic devt allocation, currently only one major is used */
 #define MAX_EXT_DEVT		(1 << MINORBITS)
@@ -539,15 +541,13 @@ void add_disk(struct gendisk *disk)
 	disk->major = MAJOR(devt);
 	disk->first_minor = MINOR(devt);
 
-	/* Register BDI before referencing it from bdev */ 
-	bdi = &disk->queue->backing_dev_info;
-	bdi_register_dev(bdi, disk_devt(disk));
-
 	blk_register_region(disk_devt(disk), disk->minors, NULL,
 			    exact_match, exact_lock, disk);
 	register_disk(disk);
 	blk_register_queue(disk);
 
+	bdi = &disk->queue->backing_dev_info;
+	bdi_register_dev(bdi, disk_devt(disk));
 	retval = sysfs_create_link(&disk_to_dev(disk)->kobj, &bdi->dev->kobj,
 				   "bdi");
 	WARN_ON(retval);
@@ -596,7 +596,6 @@ struct gendisk *get_gendisk(dev_t devt, int *partno)
 
 	return disk;
 }
-EXPORT_SYMBOL(get_gendisk);
 
 /**
  * bdget_disk - do bdget() by gendisk and partition number
@@ -642,7 +641,6 @@ void __init printk_all_partitions(void)
 		struct hd_struct *part;
 		char name_buf[BDEVNAME_SIZE];
 		char devt_buf[BDEVT_SIZE];
-		u8 uuid[PARTITION_META_INFO_UUIDLTH * 2 + 1];
 
 		/*
 		 * Don't show empty devices or things that have been
@@ -661,14 +659,10 @@ void __init printk_all_partitions(void)
 		while ((part = disk_part_iter_next(&piter))) {
 			bool is_part0 = part == &disk->part0;
 
-			uuid[0] = 0;
-			if (part->info)
-				part_unpack_uuid(part->info->uuid, uuid);
-
-			printk("%s%s %10llu %s %s", is_part0 ? "" : "  ",
+			printk("%s%s %10llu %s", is_part0 ? "" : "  ",
 			       bdevt_str(part_devt(part), devt_buf),
 			       (unsigned long long)part->nr_sects >> 1,
-			       disk_name(disk, part->partno, name_buf), uuid);
+			       disk_name(disk, part->partno, name_buf));
 			if (is_part0) {
 				if (disk->driverfs_dev != NULL &&
 				    disk->driverfs_dev->driver != NULL)
@@ -808,9 +802,10 @@ static int __init genhd_device_init(void)
 
 	register_blkdev(BLOCK_EXT_MAJOR, "blkext");
 
+#ifndef CONFIG_SYSFS_DEPRECATED
 	/* create top-level block dir */
-	if (!sysfs_deprecated)
-		block_depr = kobject_create_and_add("block", NULL);
+	block_depr = kobject_create_and_add("block", NULL);
+#endif
 	return 0;
 }
 
@@ -872,7 +867,7 @@ static ssize_t disk_discard_alignment_show(struct device *dev,
 {
 	struct gendisk *disk = dev_to_disk(dev);
 
-	return sprintf(buf, "%d\n", queue_discard_alignment(disk->queue));
+	return sprintf(buf, "%u\n", queue_discard_alignment(disk->queue));
 }
 
 static DEVICE_ATTR(range, S_IRUGO, disk_range_show, NULL);
@@ -992,6 +987,7 @@ int disk_expand_part_tbl(struct gendisk *disk, int partno)
 	if (!new_ptbl)
 		return -ENOMEM;
 
+	INIT_RCU_HEAD(&new_ptbl->rcu_head);
 	new_ptbl->len = target;
 
 	for (i = 0; i < len; i++)
@@ -1008,7 +1004,6 @@ static void disk_release(struct device *dev)
 	kfree(disk->random);
 	disk_replace_part_tbl(disk, NULL);
 	free_part_stats(&disk->part0);
-	free_part_info(&disk->part0);
 	kfree(disk);
 }
 struct class block_class = {

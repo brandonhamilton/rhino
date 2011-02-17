@@ -44,7 +44,6 @@
 #include <linux/err.h>
 #include <linux/blkdev.h>
 #include <linux/freezer.h>
-#include <linux/gfp.h>
 #include <linux/scatterlist.h>
 #include <linux/libata.h>
 
@@ -113,10 +112,10 @@ static void sas_scsi_task_done(struct sas_task *task)
 		case SAS_ABORTED_TASK:
 			hs = DID_ABORT;
 			break;
-		case SAM_STAT_CHECK_CONDITION:
+		case SAM_CHECK_COND:
 			memcpy(sc->sense_buffer, ts->buf,
 			       min(SCSI_SENSE_BUFFERSIZE, ts->buf_valid_size));
-			stat = SAM_STAT_CHECK_CONDITION;
+			stat = SAM_CHECK_COND;
 			break;
 		default:
 			stat = ts->stat;
@@ -128,6 +127,17 @@ static void sas_scsi_task_done(struct sas_task *task)
 	list_del_init(&task->list);
 	sas_free_task(task);
 	sc->scsi_done(sc);
+}
+
+static enum task_attribute sas_scsi_get_task_attr(struct scsi_cmnd *cmd)
+{
+	enum task_attribute ta = TASK_ATTR_SIMPLE;
+	if (cmd->request && blk_rq_tagged(cmd->request)) {
+		if (cmd->device->ordered_tags &&
+		    (cmd->request->cmd_flags & REQ_HARDBARRIER))
+			ta = TASK_ATTR_ORDERED;
+	}
+	return ta;
 }
 
 static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
@@ -149,7 +159,7 @@ static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
 	task->ssp_task.retry_count = 1;
 	int_to_scsilun(cmd->device->lun, &lun);
 	memcpy(task->ssp_task.LUN, &lun.scsi_lun, 8);
-	task->ssp_task.task_attr = TASK_ATTR_SIMPLE;
+	task->ssp_task.task_attr = sas_scsi_get_task_attr(cmd);
 	memcpy(task->ssp_task.cdb, cmd->cmnd, 16);
 
 	task->scatter = scsi_sglist(cmd);
@@ -189,7 +199,7 @@ int sas_queue_up(struct sas_task *task)
  * Note: XXX: Remove the host unlock/lock pair when SCSI Core can
  * call us without holding an IRQ spinlock...
  */
-static int sas_queuecommand_lck(struct scsi_cmnd *cmd,
+int sas_queuecommand(struct scsi_cmnd *cmd,
 		     void (*scsi_done)(struct scsi_cmnd *))
 	__releases(host->host_lock)
 	__acquires(dev->sata_dev.ap->lock)
@@ -214,13 +224,6 @@ static int sas_queuecommand_lck(struct scsi_cmnd *cmd,
 			res = ata_sas_queuecmd(cmd, scsi_done,
 					       dev->sata_dev.ap);
 			spin_unlock_irqrestore(dev->sata_dev.ap->lock, flags);
-			goto out;
-		}
-
-		/* If the device fell off, no sense in issuing commands */
-		if (dev->gone) {
-			cmd->result = DID_BAD_TARGET << 16;
-			scsi_done(cmd);
 			goto out;
 		}
 
@@ -253,8 +256,6 @@ out:
 	spin_lock_irq(host->host_lock);
 	return res;
 }
-
-DEF_SCSI_QCMD(sas_queuecommand)
 
 static void sas_eh_finish_cmd(struct scsi_cmnd *cmd)
 {
@@ -816,7 +817,7 @@ void sas_slave_destroy(struct scsi_device *scsi_dev)
 	struct domain_device *dev = sdev_to_domain_dev(scsi_dev);
 
 	if (dev_is_sata(dev))
-		dev->sata_dev.ap->link.device[0].class = ATA_DEV_NONE;
+		ata_port_disable(dev->sata_dev.ap);
 }
 
 int sas_change_queue_depth(struct scsi_device *scsi_dev, int new_depth,
@@ -1039,15 +1040,11 @@ void sas_task_abort(struct sas_task *task)
 
 	if (dev_is_sata(task->dev)) {
 		sas_ata_task_abort(task);
-	} else {
-		struct request_queue *q = sc->device->request_queue;
-		unsigned long flags;
-
-		spin_lock_irqsave(q->queue_lock, flags);
-		blk_abort_request(sc->request);
-		spin_unlock_irqrestore(q->queue_lock, flags);
-		scsi_schedule_eh(sc->device->host);
+		return;
 	}
+
+	blk_abort_request(sc->request);
+	scsi_schedule_eh(sc->device->host);
 }
 
 int sas_slave_alloc(struct scsi_device *scsi_dev)

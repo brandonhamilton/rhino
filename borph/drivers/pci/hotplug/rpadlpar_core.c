@@ -20,7 +20,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/string.h>
-#include <linux/vmalloc.h>
 
 #include <asm/pci-bridge.h>
 #include <linux/mutex.h>
@@ -431,8 +430,6 @@ int dlpar_remove_slot(char *drc_name)
 			rc = dlpar_remove_pci_slot(drc_name, dn);
 			break;
 	}
-	vm_unmap_aliases();
-
 	printk(KERN_INFO "%s: slot %s removed\n", DLPAR_MODULE_NAME, drc_name);
 exit:
 	mutex_unlock(&rpadlpar_mutex);

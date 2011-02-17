@@ -2511,7 +2511,7 @@ acornscsi_intr(int irq, void *dev_id)
  *	      done - function called on completion, with pointer to command descriptor
  * Returns  : 0, or < 0 on error.
  */
-static int acornscsi_queuecmd_lck(struct scsi_cmnd *SCpnt,
+int acornscsi_queuecmd(struct scsi_cmnd *SCpnt,
 		       void (*done)(struct scsi_cmnd *))
 {
     AS_Host *host = (AS_Host *)SCpnt->device->host->hostdata;
@@ -2560,8 +2560,6 @@ static int acornscsi_queuecmd_lck(struct scsi_cmnd *SCpnt,
     }
     return 0;
 }
-
-DEF_SCSI_QCMD(acornscsi_queuecmd)
 
 /*
  * Prototype: void acornscsi_reportstatus(struct scsi_cmnd **SCpntp1, struct scsi_cmnd **SCpntp2, int result)

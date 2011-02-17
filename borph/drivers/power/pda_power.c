@@ -404,13 +404,6 @@ static int usb_wakeup_enabled;
 
 static int pda_power_suspend(struct platform_device *pdev, pm_message_t state)
 {
-	if (pdata->suspend) {
-		int ret = pdata->suspend(state);
-
-		if (ret)
-			return ret;
-	}
-
 	if (device_may_wakeup(&pdev->dev)) {
 		if (ac_irq)
 			ac_wakeup_enabled = !enable_irq_wake(ac_irq->start);
@@ -429,9 +422,6 @@ static int pda_power_resume(struct platform_device *pdev)
 		if (ac_irq && ac_wakeup_enabled)
 			disable_irq_wake(ac_irq->start);
 	}
-
-	if (pdata->resume)
-		return pdata->resume();
 
 	return 0;
 }

@@ -40,7 +40,6 @@
 #include <linux/net.h>
 #include <linux/netdevice.h>
 #include <linux/uio.h>
-#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/smp_lock.h>
 #include <linux/socket.h>

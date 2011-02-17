@@ -16,7 +16,6 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 
 #include <net/irda/irda.h>
 #include <net/irda/wrapper.h>

@@ -34,7 +34,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/spinlock.h>
 #include <linux/of_platform.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/dcr.h>
@@ -170,12 +169,12 @@ struct emac_instance {
 	struct net_device		*ndev;
 	struct resource			rsrc_regs;
 	struct emac_regs		__iomem *emacp;
-	struct platform_device		*ofdev;
+	struct of_device		*ofdev;
 	struct device_node		**blist; /* bootlist entry */
 
 	/* MAL linkage */
 	u32				mal_ph;
-	struct platform_device		*mal_dev;
+	struct of_device		*mal_dev;
 	u32				mal_rx_chan;
 	u32				mal_tx_chan;
 	struct mal_instance		*mal;
@@ -196,24 +195,24 @@ struct emac_instance {
 
 	/* Shared MDIO if any */
 	u32				mdio_ph;
-	struct platform_device		*mdio_dev;
+	struct of_device		*mdio_dev;
 	struct emac_instance		*mdio_instance;
 	struct mutex			mdio_lock;
 
 	/* ZMII infos if any */
 	u32				zmii_ph;
 	u32				zmii_port;
-	struct platform_device		*zmii_dev;
+	struct of_device		*zmii_dev;
 
 	/* RGMII infos if any */
 	u32				rgmii_ph;
 	u32				rgmii_port;
-	struct platform_device		*rgmii_dev;
+	struct of_device		*rgmii_dev;
 
 	/* TAH infos if any */
 	u32				tah_ph;
 	u32				tah_port;
-	struct platform_device		*tah_dev;
+	struct of_device		*tah_dev;
 
 	/* IRQs */
 	int				wol_irq;
@@ -410,7 +409,7 @@ static inline u32 *emac_xaht_base(struct emac_instance *dev)
 	else
 		offset = offsetof(struct emac_regs, u0.emac4.iaht1);
 
-	return (u32 *)((ptrdiff_t)p + offset);
+	return ((u32 *)((ptrdiff_t)p + offset));
 }
 
 static inline u32 *emac_gaht_base(struct emac_instance *dev)
@@ -418,7 +417,7 @@ static inline u32 *emac_gaht_base(struct emac_instance *dev)
 	/* GAHT registers always come after an identical number of
 	 * IAHT registers.
 	 */
-	return emac_xaht_base(dev) + EMAC_XAHT_REGS(dev);
+	return (emac_xaht_base(dev) + EMAC_XAHT_REGS(dev));
 }
 
 static inline u32 *emac_iaht_base(struct emac_instance *dev)
@@ -426,7 +425,7 @@ static inline u32 *emac_iaht_base(struct emac_instance *dev)
 	/* IAHT registers always come before an identical number of
 	 * GAHT registers.
 	 */
-	return emac_xaht_base(dev);
+	return (emac_xaht_base(dev));
 }
 
 /* Ethtool get_regs complex data.

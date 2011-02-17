@@ -9,7 +9,7 @@
  *
  * The following files are helpful:
  *
- *     Documentation/filesystems/nfs/Exporting
+ *     Documentation/filesystems/Exporting
  *     fs/exportfs/expfs.c.
  */
 

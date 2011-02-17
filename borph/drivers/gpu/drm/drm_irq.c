@@ -34,10 +34,8 @@
  */
 
 #include "drmP.h"
-#include "drm_trace.h"
 
 #include <linux/interrupt.h>	/* For task queue support */
-#include <linux/slab.h>
 
 #include <linux/vgaarb.h>
 /**
@@ -57,9 +55,6 @@ int drm_irq_by_busid(struct drm_device *dev, void *data,
 		     struct drm_file *file_priv)
 {
 	struct drm_irq_busid *p = data;
-
-	if (drm_core_check_feature(dev, DRIVER_USE_PLATFORM_DEVICE))
-		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_IRQ))
 		return -EINVAL;
@@ -120,7 +115,6 @@ void drm_vblank_cleanup(struct drm_device *dev)
 
 	dev->num_crtcs = 0;
 }
-EXPORT_SYMBOL(drm_vblank_cleanup);
 
 int drm_vblank_init(struct drm_device *dev, int num_crtcs)
 {
@@ -169,6 +163,7 @@ int drm_vblank_init(struct drm_device *dev, int num_crtcs)
 	}
 
 	dev->vblank_disable_allowed = 0;
+
 	return 0;
 
 err:
@@ -215,7 +210,7 @@ int drm_irq_install(struct drm_device *dev)
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_IRQ))
 		return -EINVAL;
 
-	if (drm_dev_to_irq(dev) == 0)
+	if (dev->pdev->irq == 0)
 		return -EINVAL;
 
 	mutex_lock(&dev->struct_mutex);
@@ -233,7 +228,7 @@ int drm_irq_install(struct drm_device *dev)
 	dev->irq_enabled = 1;
 	mutex_unlock(&dev->struct_mutex);
 
-	DRM_DEBUG("irq=%d\n", drm_dev_to_irq(dev));
+	DRM_DEBUG("irq=%d\n", dev->pdev->irq);
 
 	/* Before installing handler */
 	dev->driver->irq_preinstall(dev);
@@ -306,14 +301,14 @@ int drm_irq_uninstall(struct drm_device * dev)
 	if (!irq_enabled)
 		return -EINVAL;
 
-	DRM_DEBUG("irq=%d\n", drm_dev_to_irq(dev));
+	DRM_DEBUG("irq=%d\n", dev->pdev->irq);
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		vga_client_register(dev->pdev, NULL, NULL, NULL);
 
 	dev->driver->irq_uninstall(dev);
 
-	free_irq(drm_dev_to_irq(dev), dev);
+	free_irq(dev->pdev->irq, dev);
 
 	return 0;
 }
@@ -345,7 +340,7 @@ int drm_control(struct drm_device *dev, void *data,
 		if (drm_core_check_feature(dev, DRIVER_MODESET))
 			return 0;
 		if (dev->if_version < DRM_IF_VERSION(1, 2) &&
-		    ctl->irq != drm_dev_to_irq(dev))
+		    ctl->irq != dev->pdev->irq)
 			return -EINVAL;
 		return drm_irq_install(dev);
 	case DRM_UNINST_HANDLER:
@@ -480,7 +475,6 @@ void drm_vblank_off(struct drm_device *dev, int crtc)
 	unsigned long irqflags;
 
 	spin_lock_irqsave(&dev->vbl_lock, irqflags);
-	dev->driver->disable_vblank(dev, crtc);
 	DRM_WAKEUP(&dev->vbl_queue[crtc]);
 	dev->vblank_enabled[crtc] = 0;
 	dev->last_vblank[crtc] = dev->driver->get_vblank_counter(dev, crtc);
@@ -499,9 +493,6 @@ EXPORT_SYMBOL(drm_vblank_off);
  */
 void drm_vblank_pre_modeset(struct drm_device *dev, int crtc)
 {
-	/* vblank is not initialized (IRQ not installed ?) */
-	if (!dev->num_crtcs)
-		return;
 	/*
 	 * To avoid all the problems that might happen if interrupts
 	 * were enabled/disabled around or between these calls, we just
@@ -585,16 +576,12 @@ static int drm_queue_vblank_event(struct drm_device *dev, int pipe,
 	struct timeval now;
 	unsigned long flags;
 	unsigned int seq;
-	int ret;
 
 	e = kzalloc(sizeof *e, GFP_KERNEL);
-	if (e == NULL) {
-		ret = -ENOMEM;
-		goto err_put;
-	}
+	if (e == NULL)
+		return -ENOMEM;
 
 	e->pipe = pipe;
-	e->base.pid = current->pid;
 	e->event.base.type = DRM_EVENT_VBLANK;
 	e->event.base.length = sizeof e->event;
 	e->event.user_data = vblwait->request.signal;
@@ -606,8 +593,9 @@ static int drm_queue_vblank_event(struct drm_device *dev, int pipe,
 	spin_lock_irqsave(&dev->event_lock, flags);
 
 	if (file_priv->event_space < sizeof e->event) {
-		ret = -EBUSY;
-		goto err_unlock;
+		spin_unlock_irqrestore(&dev->event_lock, flags);
+		kfree(e);
+		return -ENOMEM;
 	}
 
 	file_priv->event_space -= sizeof e->event;
@@ -621,18 +609,13 @@ static int drm_queue_vblank_event(struct drm_device *dev, int pipe,
 	DRM_DEBUG("event on vblank count %d, current %d, crtc %d\n",
 		  vblwait->request.sequence, seq, pipe);
 
-	trace_drm_vblank_event_queued(current->pid, pipe,
-				      vblwait->request.sequence);
-
 	e->event.sequence = vblwait->request.sequence;
 	if ((seq - vblwait->request.sequence) <= (1 << 23)) {
 		e->event.tv_sec = now.tv_sec;
 		e->event.tv_usec = now.tv_usec;
-		drm_vblank_put(dev, pipe);
+		drm_vblank_put(dev, e->pipe);
 		list_add_tail(&e->base.link, &e->base.file_priv->event_list);
 		wake_up_interruptible(&e->base.file_priv->event_wait);
-		trace_drm_vblank_event_delivered(current->pid, pipe,
-						 vblwait->request.sequence);
 	} else {
 		list_add_tail(&e->base.link, &dev->vblank_event_list);
 	}
@@ -640,13 +623,6 @@ static int drm_queue_vblank_event(struct drm_device *dev, int pipe,
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 
 	return 0;
-
-err_unlock:
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-	kfree(e);
-err_put:
-	drm_vblank_put(dev, pipe);
-	return ret;
 }
 
 /**
@@ -670,7 +646,7 @@ int drm_wait_vblank(struct drm_device *dev, void *data,
 	int ret = 0;
 	unsigned int flags, seq, crtc;
 
-	if ((!drm_dev_to_irq(dev)) || (!dev->irq_enabled))
+	if ((!dev->pdev->irq) || (!dev->irq_enabled))
 		return -EINVAL;
 
 	if (vblwait->request.type & _DRM_VBLANK_SIGNAL)
@@ -770,13 +746,9 @@ void drm_handle_vblank_events(struct drm_device *dev, int crtc)
 		drm_vblank_put(dev, e->pipe);
 		list_move_tail(&e->base.link, &e->base.file_priv->event_list);
 		wake_up_interruptible(&e->base.file_priv->event_wait);
-		trace_drm_vblank_event_delivered(e->base.pid, e->pipe,
-						 e->event.sequence);
 	}
 
 	spin_unlock_irqrestore(&dev->event_lock, flags);
-
-	trace_drm_vblank_event(crtc, seq);
 }
 
 /**

@@ -40,25 +40,6 @@ void pxa27x_clear_otgph(void)
 }
 EXPORT_SYMBOL(pxa27x_clear_otgph);
 
-static unsigned long ac97_reset_config[] = {
-	GPIO113_GPIO,
-	GPIO113_AC97_nRESET,
-	GPIO95_GPIO,
-	GPIO95_AC97_nRESET,
-};
-
-void pxa27x_assert_ac97reset(int reset_gpio, int on)
-{
-	if (reset_gpio == 113)
-		pxa2xx_mfp_config(on ? &ac97_reset_config[0] :
-				       &ac97_reset_config[1], 1);
-
-	if (reset_gpio == 95)
-		pxa2xx_mfp_config(on ? &ac97_reset_config[2] :
-				       &ac97_reset_config[3], 1);
-}
-EXPORT_SYMBOL_GPL(pxa27x_assert_ac97reset);
-
 /* Crystal clock: 13MHz */
 #define BASE_CLK	13000000
 
@@ -383,12 +364,7 @@ void __init pxa27x_set_i2c_power_info(struct i2c_pxa_platform_data *info)
 
 static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_udc,
-	&pxa_device_pmu,
 	&pxa_device_i2s,
-	&pxa_device_asoc_ssp1,
-	&pxa_device_asoc_ssp2,
-	&pxa_device_asoc_ssp3,
-	&pxa_device_asoc_platform,
 	&sa1100_device_rtc,
 	&pxa_device_rtc,
 	&pxa27x_device_ssp1,
@@ -416,7 +392,7 @@ static int __init pxa27x_init(void)
 
 		reset_status = RCSR;
 
-		clkdev_add_table(pxa27x_clkregs, ARRAY_SIZE(pxa27x_clkregs));
+		clks_register(pxa27x_clkregs, ARRAY_SIZE(pxa27x_clkregs));
 
 		if ((ret = pxa_init_dma(IRQ_DMA, 32)))
 			return ret;

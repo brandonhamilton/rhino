@@ -47,7 +47,6 @@
 #include <linux/hdlc.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <asm/dma.h>
 #include <asm/io.h>
 #define RT_LOCK
@@ -766,7 +765,7 @@ irqreturn_t z8530_interrupt(int irq, void *dev_id)
 
 EXPORT_SYMBOL(z8530_interrupt);
 
-static const u8 reg_init[16]=
+static char reg_init[16]=
 {
 	0,0,0,0,
 	0,0,0,0,
@@ -1206,7 +1205,7 @@ EXPORT_SYMBOL(z8530_sync_txdma_close);
  *	it exists...
  */
  
-static const char *z8530_type_name[]={
+static char *z8530_type_name[]={
 	"Z8530",
 	"Z85C30",
 	"Z85230"

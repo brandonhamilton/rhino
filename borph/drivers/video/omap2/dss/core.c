@@ -31,13 +31,11 @@
 #include <linux/debugfs.h>
 #include <linux/io.h>
 #include <linux/device.h>
-#include <linux/regulator/consumer.h>
 
 #include <plat/display.h>
 #include <plat/clock.h>
 
 #include "dss.h"
-#include "dss_features.h"
 
 static struct {
 	struct platform_device *pdev;
@@ -49,10 +47,6 @@ static struct {
 	struct clk      *dss_54m_fck;
 	struct clk	*dss_96m_fck;
 	unsigned	num_clks_enabled;
-
-	struct regulator *vdds_dsi_reg;
-	struct regulator *vdds_sdi_reg;
-	struct regulator *vdda_dac_reg;
 } core;
 
 static void dss_clk_enable_all_no_ctx(void);
@@ -290,11 +284,14 @@ static void dss_clk_enable_no_ctx(enum dss_clock clks)
 
 void dss_clk_enable(enum dss_clock clks)
 {
-	bool check_ctx = core.num_clks_enabled == 0;
+	bool restore = false;
+
+	if (core.num_clks_enabled == 0)
+		restore = true;
 
 	dss_clk_enable_no_ctx(clks);
 
-	if (check_ctx && cpu_is_omap34xx() && dss_need_ctx_restore())
+	if (restore || (cpu_is_omap34xx() && dss_need_ctx_restore()))
 		restore_all_ctx();
 }
 
@@ -360,48 +357,48 @@ static void dss_clk_disable_all(void)
 	dss_clk_disable(clks);
 }
 
-/* REGULATORS */
-
-struct regulator *dss_get_vdds_dsi(void)
+void dss_clk_enable_parent(enum dss_clock clks)
 {
-	struct regulator *reg;
+	struct clk *clk;
 
-	if (core.vdds_dsi_reg != NULL)
-		return core.vdds_dsi_reg;
-
-	reg = regulator_get(&core.pdev->dev, "vdds_dsi");
-	if (!IS_ERR(reg))
-		core.vdds_dsi_reg = reg;
-
-	return reg;
+	if (clks & DSS_CLK_54M) {
+		clk = clk_get_parent(core.dss_54m_fck);
+		clk_enable(clk);
+	}
+	if (clks & DSS_CLK_96M) {
+		clk = clk_get_parent(core.dss_96m_fck);
+		clk_enable(clk);
+	}
+	if (clks & DSS_CLK_FCK1) {
+		clk = clk_get_parent(core.dss1_fck);
+		clk_enable(clk);
+	}
+	if (clks & DSS_CLK_FCK2) {
+		clk = clk_get_parent(core.dss2_fck);
+		clk_enable(clk);
+	}
 }
 
-struct regulator *dss_get_vdds_sdi(void)
+void dss_clk_disable_parent(enum dss_clock clks)
 {
-	struct regulator *reg;
+	struct clk *clk;
 
-	if (core.vdds_sdi_reg != NULL)
-		return core.vdds_sdi_reg;
-
-	reg = regulator_get(&core.pdev->dev, "vdds_sdi");
-	if (!IS_ERR(reg))
-		core.vdds_sdi_reg = reg;
-
-	return reg;
-}
-
-struct regulator *dss_get_vdda_dac(void)
-{
-	struct regulator *reg;
-
-	if (core.vdda_dac_reg != NULL)
-		return core.vdda_dac_reg;
-
-	reg = regulator_get(&core.pdev->dev, "vdda_dac");
-	if (!IS_ERR(reg))
-		core.vdda_dac_reg = reg;
-
-	return reg;
+	if (clks & DSS_CLK_54M) {
+		clk = clk_get_parent(core.dss_54m_fck);
+		clk_disable(clk);
+	}
+	if (clks & DSS_CLK_96M) {
+		clk = clk_get_parent(core.dss_96m_fck);
+		clk_disable(clk);
+	}
+	if (clks & DSS_CLK_FCK1) {
+		clk = clk_get_parent(core.dss1_fck);
+		clk_disable(clk);
+	}
+	if (clks & DSS_CLK_FCK2) {
+		clk = clk_get_parent(core.dss2_fck);
+		clk_disable(clk);
+	}
 }
 
 /* DEBUGFS */
@@ -449,16 +446,6 @@ static int dss_initialize_debugfs(void)
 	debugfs_create_file("clk", S_IRUGO, dss_debugfs_dir,
 			&dss_debug_dump_clocks, &dss_debug_fops);
 
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-	debugfs_create_file("dispc_irq", S_IRUGO, dss_debugfs_dir,
-			&dispc_dump_irqs, &dss_debug_fops);
-#endif
-
-#if defined(CONFIG_OMAP2_DSS_DSI) && defined(CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS)
-	debugfs_create_file("dsi_irq", S_IRUGO, dss_debugfs_dir,
-			&dsi_dump_irqs, &dss_debug_fops);
-#endif
-
 	debugfs_create_file("dss", S_IRUGO, dss_debugfs_dir,
 			&dss_dump_regs, &dss_debug_fops);
 	debugfs_create_file("dispc", S_IRUGO, dss_debugfs_dir,
@@ -483,14 +470,6 @@ static void dss_uninitialize_debugfs(void)
 	if (dss_debugfs_dir)
 		debugfs_remove_recursive(dss_debugfs_dir);
 }
-#else /* CONFIG_DEBUG_FS && CONFIG_OMAP2_DSS_DEBUG_SUPPORT */
-static inline int dss_initialize_debugfs(void)
-{
-	return 0;
-}
-static inline void dss_uninitialize_debugfs(void)
-{
-}
 #endif /* CONFIG_DEBUG_FS && CONFIG_OMAP2_DSS_DEBUG_SUPPORT */
 
 /* PLATFORM DEVICE */
@@ -503,14 +482,12 @@ static int omap_dss_probe(struct platform_device *pdev)
 
 	core.pdev = pdev;
 
-	dss_features_init();
-
 	dss_init_overlay_managers(pdev);
 	dss_init_overlays(pdev);
 
 	r = dss_get_clocks();
 	if (r)
-		goto err_clocks;
+		goto fail0;
 
 	dss_clk_enable_all_no_ctx();
 
@@ -526,64 +503,64 @@ static int omap_dss_probe(struct platform_device *pdev)
 	r = dss_init(skip_init);
 	if (r) {
 		DSSERR("Failed to initialize DSS\n");
-		goto err_dss;
+		goto fail0;
 	}
 
+#ifdef CONFIG_OMAP2_DSS_RFBI
 	r = rfbi_init();
 	if (r) {
 		DSSERR("Failed to initialize rfbi\n");
-		goto err_rfbi;
+		goto fail0;
 	}
+#endif
 
-	r = dpi_init(pdev);
+	r = dpi_init();
 	if (r) {
 		DSSERR("Failed to initialize dpi\n");
-		goto err_dpi;
+		goto fail0;
 	}
 
 	r = dispc_init();
 	if (r) {
 		DSSERR("Failed to initialize dispc\n");
-		goto err_dispc;
+		goto fail0;
 	}
-
+#ifdef CONFIG_OMAP2_DSS_VENC
 	r = venc_init(pdev);
 	if (r) {
 		DSSERR("Failed to initialize venc\n");
-		goto err_venc;
+		goto fail0;
 	}
-
+#endif
 	if (cpu_is_omap34xx()) {
+#ifdef CONFIG_OMAP2_DSS_SDI
 		r = sdi_init(skip_init);
 		if (r) {
 			DSSERR("Failed to initialize SDI\n");
-			goto err_sdi;
+			goto fail0;
 		}
-
+#endif
+#ifdef CONFIG_OMAP2_DSS_DSI
 		r = dsi_init(pdev);
 		if (r) {
 			DSSERR("Failed to initialize DSI\n");
-			goto err_dsi;
+			goto fail0;
 		}
+#endif
 	}
 
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_OMAP2_DSS_DEBUG_SUPPORT)
 	r = dss_initialize_debugfs();
 	if (r)
-		goto err_debugfs;
+		goto fail0;
+#endif
 
 	for (i = 0; i < pdata->num_devices; ++i) {
 		struct omap_dss_device *dssdev = pdata->devices[i];
 
 		r = omap_dss_register_device(dssdev);
-		if (r) {
-			DSSERR("device %d %s register failed %d\n", i,
-				dssdev->name ?: "unnamed", r);
-
-			while (--i >= 0)
-				omap_dss_unregister_device(pdata->devices[i]);
-
-			goto err_register;
-		}
+		if (r)
+			DSSERR("device reg failed %d\n", i);
 
 		if (def_disp_name && strcmp(def_disp_name, dssdev->name) == 0)
 			pdata->default_device = dssdev;
@@ -593,29 +570,8 @@ static int omap_dss_probe(struct platform_device *pdev)
 
 	return 0;
 
-err_register:
-	dss_uninitialize_debugfs();
-err_debugfs:
-	if (cpu_is_omap34xx())
-		dsi_exit();
-err_dsi:
-	if (cpu_is_omap34xx())
-		sdi_exit();
-err_sdi:
-	venc_exit();
-err_venc:
-	dispc_exit();
-err_dispc:
-	dpi_exit();
-err_dpi:
-	rfbi_exit();
-err_rfbi:
-	dss_exit();
-err_dss:
-	dss_clk_disable_all_no_ctx();
-	dss_put_clocks();
-err_clocks:
-
+	/* XXX fail correctly */
+fail0:
 	return r;
 }
 
@@ -625,15 +581,25 @@ static int omap_dss_remove(struct platform_device *pdev)
 	int i;
 	int c;
 
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_OMAP2_DSS_DEBUG_SUPPORT)
 	dss_uninitialize_debugfs();
+#endif
 
+#ifdef CONFIG_OMAP2_DSS_VENC
 	venc_exit();
+#endif
 	dispc_exit();
 	dpi_exit();
+#ifdef CONFIG_OMAP2_DSS_RFBI
 	rfbi_exit();
+#endif
 	if (cpu_is_omap34xx()) {
+#ifdef CONFIG_OMAP2_DSS_DSI
 		dsi_exit();
+#endif
+#ifdef CONFIG_OMAP2_DSS_SDI
 		sdi_exit();
+#endif
 	}
 
 	dss_exit();
@@ -793,14 +759,16 @@ static int dss_driver_probe(struct device *dev)
 
 	dss_init_device(core.pdev, dssdev);
 
-	force = pdata->default_device == dssdev;
-	dss_recheck_connections(dssdev, force);
+	/* skip this if the device is behind a ctrl */
+	if (!dssdev->panel.ctrl) {
+		force = pdata->default_device == dssdev;
+		dss_recheck_connections(dssdev, force);
+	}
 
 	r = dssdrv->probe(dssdev);
 
 	if (r) {
 		DSSERR("driver probe failed: %d\n", r);
-		dss_uninit_device(core.pdev, dssdev);
 		return r;
 	}
 
@@ -833,13 +801,6 @@ int omap_dss_register_driver(struct omap_dss_driver *dssdriver)
 	dssdriver->driver.bus = &dss_bus_type;
 	dssdriver->driver.probe = dss_driver_probe;
 	dssdriver->driver.remove = dss_driver_remove;
-
-	if (dssdriver->get_resolution == NULL)
-		dssdriver->get_resolution = omapdss_default_get_resolution;
-	if (dssdriver->get_recommended_bpp == NULL)
-		dssdriver->get_recommended_bpp =
-			omapdss_default_get_recommended_bpp;
-
 	return driver_register(&dssdriver->driver);
 }
 EXPORT_SYMBOL(omap_dss_register_driver);
@@ -888,6 +849,8 @@ static void omap_dss_dev_release(struct device *dev)
 int omap_dss_register_device(struct omap_dss_device *dssdev)
 {
 	static int dev_num;
+	static int panel_num;
+	int r;
 
 	WARN_ON(!dssdev->driver_name);
 
@@ -896,12 +859,36 @@ int omap_dss_register_device(struct omap_dss_device *dssdev)
 	dssdev->dev.parent = &dss_bus;
 	dssdev->dev.release = omap_dss_dev_release;
 	dev_set_name(&dssdev->dev, "display%d", dev_num++);
-	return device_register(&dssdev->dev);
+	r = device_register(&dssdev->dev);
+	if (r)
+		return r;
+
+	if (dssdev->ctrl.panel) {
+		struct omap_dss_device *panel = dssdev->ctrl.panel;
+
+		panel->panel.ctrl = dssdev;
+
+		reset_device(&panel->dev, 1);
+		panel->dev.bus = &dss_bus_type;
+		panel->dev.parent = &dssdev->dev;
+		panel->dev.release = omap_dss_dev_release;
+		dev_set_name(&panel->dev, "panel%d", panel_num++);
+		r = device_register(&panel->dev);
+		if (r)
+			return r;
+	}
+
+	return 0;
 }
 
 void omap_dss_unregister_device(struct omap_dss_device *dssdev)
 {
 	device_unregister(&dssdev->dev);
+
+	if (dssdev->ctrl.panel) {
+		struct omap_dss_device *panel = dssdev->ctrl.panel;
+		device_unregister(&panel->dev);
+	}
 }
 
 /* BUS */
@@ -955,21 +942,6 @@ static int __init omap_dss_init(void)
 
 static void __exit omap_dss_exit(void)
 {
-	if (core.vdds_dsi_reg != NULL) {
-		regulator_put(core.vdds_dsi_reg);
-		core.vdds_dsi_reg = NULL;
-	}
-
-	if (core.vdds_sdi_reg != NULL) {
-		regulator_put(core.vdds_sdi_reg);
-		core.vdds_sdi_reg = NULL;
-	}
-
-	if (core.vdda_dac_reg != NULL) {
-		regulator_put(core.vdda_dac_reg);
-		core.vdda_dac_reg = NULL;
-	}
-
 	platform_driver_unregister(&omap_dss_driver);
 
 	omap_dss_bus_unregister();

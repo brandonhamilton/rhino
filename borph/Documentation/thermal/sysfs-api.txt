@@ -206,7 +206,6 @@ passive
 	passive trip point for the zone. Activation is done by polling with
 	an interval of 1 second.
 	Unit: millidegrees Celsius
-	Valid values: 0 (disabled) or greater than 1000
 	RW, Optional
 
 *****************************

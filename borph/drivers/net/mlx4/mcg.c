@@ -32,6 +32,7 @@
  */
 
 #include <linux/string.h>
+#include <linux/slab.h>
 
 #include <linux/mlx4/cmd.h>
 

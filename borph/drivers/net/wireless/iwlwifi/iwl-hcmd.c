@@ -2,7 +2,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2008 - 2010 Intel Corporation. All rights reserved.
+ * Copyright(c) 2008 - 2009 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -49,7 +49,6 @@ const char *get_cmd_string(u8 cmd)
 		IWL_CMD(REPLY_ADD_STA);
 		IWL_CMD(REPLY_REMOVE_STA);
 		IWL_CMD(REPLY_REMOVE_ALL_STA);
-		IWL_CMD(REPLY_TXFIFO_FLUSH);
 		IWL_CMD(REPLY_WEPKEY);
 		IWL_CMD(REPLY_3945_RX);
 		IWL_CMD(REPLY_TX);
@@ -59,6 +58,7 @@ const char *get_cmd_string(u8 cmd)
 		IWL_CMD(COEX_PRIORITY_TABLE_CMD);
 		IWL_CMD(COEX_MEDIUM_NOTIFICATION);
 		IWL_CMD(COEX_EVENT_CMD);
+		IWL_CMD(RADAR_NOTIFICATION);
 		IWL_CMD(REPLY_QUIET_CMD);
 		IWL_CMD(REPLY_CHANNEL_SWITCH);
 		IWL_CMD(CHANNEL_SWITCH_NOTIFICATION);
@@ -97,17 +97,6 @@ const char *get_cmd_string(u8 cmd)
 		IWL_CMD(REPLY_TX_POWER_DBM_CMD);
 		IWL_CMD(TEMPERATURE_NOTIFICATION);
 		IWL_CMD(TX_ANT_CONFIGURATION_CMD);
-		IWL_CMD(REPLY_BT_COEX_PROFILE_NOTIF);
-		IWL_CMD(REPLY_BT_COEX_PRIO_TABLE);
-		IWL_CMD(REPLY_BT_COEX_PROT_ENV);
-		IWL_CMD(REPLY_WIPAN_PARAMS);
-		IWL_CMD(REPLY_WIPAN_RXON);
-		IWL_CMD(REPLY_WIPAN_RXON_TIMING);
-		IWL_CMD(REPLY_WIPAN_RXON_ASSOC);
-		IWL_CMD(REPLY_WIPAN_QOS_PARAM);
-		IWL_CMD(REPLY_WIPAN_WEPKEY);
-		IWL_CMD(REPLY_WIPAN_P2P_CHANNEL_SWITCH);
-		IWL_CMD(REPLY_WIPAN_NOA_NOTIFICATION);
 	default:
 		return "UNKNOWN";
 
@@ -176,13 +165,15 @@ int iwl_send_cmd_sync(struct iwl_priv *priv, struct iwl_host_cmd *cmd)
 	 /* A synchronous command can not have a callback set. */
 	BUG_ON(cmd->callback);
 
-	IWL_DEBUG_INFO(priv, "Attempting to send sync command %s\n",
+	if (test_and_set_bit(STATUS_HCMD_SYNC_ACTIVE, &priv->status)) {
+		IWL_ERR(priv,
+			"Error sending %s: Already sending a host command\n",
 			get_cmd_string(cmd->id));
-	mutex_lock(&priv->sync_cmd_mutex);
+		ret = -EBUSY;
+		goto out;
+	}
 
 	set_bit(STATUS_HCMD_ACTIVE, &priv->status);
-	IWL_DEBUG_INFO(priv, "Setting HCMD_ACTIVE for command %s\n",
-			get_cmd_string(cmd->id));
 
 	cmd_idx = iwl_enqueue_hcmd(priv, cmd);
 	if (cmd_idx < 0) {
@@ -203,8 +194,6 @@ int iwl_send_cmd_sync(struct iwl_priv *priv, struct iwl_host_cmd *cmd)
 				jiffies_to_msecs(HOST_COMPLETE_TIMEOUT));
 
 			clear_bit(STATUS_HCMD_ACTIVE, &priv->status);
-			IWL_DEBUG_INFO(priv, "Clearing HCMD_ACTIVE for command %s\n",
-				       get_cmd_string(cmd->id));
 			ret = -ETIMEDOUT;
 			goto cancel;
 		}
@@ -240,16 +229,16 @@ cancel:
 		 * in later, it will possibly set an invalid
 		 * address (cmd->meta.source).
 		 */
-		priv->txq[priv->cmd_queue].meta[cmd_idx].flags &=
+		priv->txq[IWL_CMD_QUEUE_NUM].meta[cmd_idx].flags &=
 							~CMD_WANT_SKB;
 	}
 fail:
 	if (cmd->reply_page) {
-		iwl_free_pages(priv, cmd->reply_page);
+		free_pages(cmd->reply_page, priv->hw_params.rx_page_order);
 		cmd->reply_page = 0;
 	}
 out:
-	mutex_unlock(&priv->sync_cmd_mutex);
+	clear_bit(STATUS_HCMD_SYNC_ACTIVE, &priv->status);
 	return ret;
 }
 EXPORT_SYMBOL(iwl_send_cmd_sync);

@@ -24,6 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 

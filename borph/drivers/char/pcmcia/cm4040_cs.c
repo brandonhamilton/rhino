@@ -24,11 +24,13 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/poll.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/wait.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ciscode.h>
@@ -48,7 +50,8 @@
 			   __func__ , ## args);		\
 	} while (0)
 
-static DEFINE_MUTEX(cm4040_mutex);
+static char *version =
+"OMNIKEY CardMan 4040 v1.1.0gm5 - All bugs added by Harald Welte";
 
 #define	CCID_DRIVER_BULK_DEFAULT_TIMEOUT  	(150*HZ)
 #define	CCID_DRIVER_ASYNC_POWERUP_TIMEOUT 	(35*HZ)
@@ -69,6 +72,7 @@ static struct class *cmx_class;
 
 struct reader_dev {
 	struct pcmcia_device	*p_dev;
+	dev_node_t		node;
 	wait_queue_head_t	devq;
 	wait_queue_head_t	poll_wait;
 	wait_queue_head_t	read_wait;
@@ -107,7 +111,7 @@ static inline unsigned char xinb(unsigned short port)
 static void cm4040_do_poll(unsigned long dummy)
 {
 	struct reader_dev *dev = (struct reader_dev *) dummy;
-	unsigned int obs = xinb(dev->p_dev->resource[0]->start
+	unsigned int obs = xinb(dev->p_dev->io.BasePort1
 				+ REG_OFFSET_BUFFER_STATUS);
 
 	if ((obs & BSR_BULK_IN_FULL)) {
@@ -138,7 +142,7 @@ static void cm4040_stop_poll(struct reader_dev *dev)
 static int wait_for_bulk_out_ready(struct reader_dev *dev)
 {
 	int i, rc;
-	int iobase = dev->p_dev->resource[0]->start;
+	int iobase = dev->p_dev->io.BasePort1;
 
 	for (i = 0; i < POLL_LOOP_COUNT; i++) {
 		if ((xinb(iobase + REG_OFFSET_BUFFER_STATUS)
@@ -168,7 +172,7 @@ static int wait_for_bulk_out_ready(struct reader_dev *dev)
 /* Write to Sync Control Register */
 static int write_sync_reg(unsigned char val, struct reader_dev *dev)
 {
-	int iobase = dev->p_dev->resource[0]->start;
+	int iobase = dev->p_dev->io.BasePort1;
 	int rc;
 
 	rc = wait_for_bulk_out_ready(dev);
@@ -186,7 +190,7 @@ static int write_sync_reg(unsigned char val, struct reader_dev *dev)
 static int wait_for_bulk_in_ready(struct reader_dev *dev)
 {
 	int i, rc;
-	int iobase = dev->p_dev->resource[0]->start;
+	int iobase = dev->p_dev->io.BasePort1;
 
 	for (i = 0; i < POLL_LOOP_COUNT; i++) {
 		if ((xinb(iobase + REG_OFFSET_BUFFER_STATUS)
@@ -216,7 +220,7 @@ static ssize_t cm4040_read(struct file *filp, char __user *buf,
 			size_t count, loff_t *ppos)
 {
 	struct reader_dev *dev = filp->private_data;
-	int iobase = dev->p_dev->resource[0]->start;
+	int iobase = dev->p_dev->io.BasePort1;
 	size_t bytes_to_read;
 	unsigned long i;
 	size_t min_bytes_to_read;
@@ -318,7 +322,7 @@ static ssize_t cm4040_write(struct file *filp, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
 	struct reader_dev *dev = filp->private_data;
-	int iobase = dev->p_dev->resource[0]->start;
+	int iobase = dev->p_dev->io.BasePort1;
 	ssize_t rc;
 	int i;
 	unsigned int bytes_to_write;
@@ -442,7 +446,7 @@ static int cm4040_open(struct inode *inode, struct file *filp)
 	if (minor >= CM_MAX_DEV)
 		return -ENODEV;
 
-	mutex_lock(&cm4040_mutex);
+	lock_kernel();
 	link = dev_table[minor];
 	if (link == NULL || !pcmcia_dev_present(link)) {
 		ret = -ENODEV;
@@ -471,7 +475,7 @@ static int cm4040_open(struct inode *inode, struct file *filp)
 	DEBUGP(2, dev, "<- cm4040_open (successfully)\n");
 	ret = nonseekable_open(inode, filp);
 out:
-	mutex_unlock(&cm4040_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -514,9 +518,30 @@ static void cm4040_reader_release(struct pcmcia_device *link)
 	return;
 }
 
-static int cm4040_config_check(struct pcmcia_device *p_dev, void *priv_data)
+static int cm4040_config_check(struct pcmcia_device *p_dev,
+			       cistpl_cftable_entry_t *cfg,
+			       cistpl_cftable_entry_t *dflt,
+			       unsigned int vcc,
+			       void *priv_data)
 {
-	return pcmcia_request_io(p_dev);
+	int rc;
+	if (!cfg->io.nwin)
+		return -ENODEV;
+
+	/* Get the IOaddr */
+	p_dev->io.BasePort1 = cfg->io.win[0].base;
+	p_dev->io.NumPorts1 = cfg->io.win[0].len;
+	p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+	if (!(cfg->io.flags & CISTPL_IO_8BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
+	if (!(cfg->io.flags & CISTPL_IO_16BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
+	p_dev->io.IOAddrLines = cfg->io.flags & CISTPL_IO_LINES_MASK;
+
+	rc = pcmcia_request_io(p_dev, &p_dev->io);
+	dev_printk(KERN_INFO, &p_dev->dev,
+		   "pcmcia_request_io returned 0x%x\n", rc);
+	return rc;
 }
 
 
@@ -525,23 +550,31 @@ static int reader_config(struct pcmcia_device *link, int devno)
 	struct reader_dev *dev;
 	int fail_rc;
 
-	link->config_flags |= CONF_AUTO_SET_IO;
+	link->io.BasePort2 = 0;
+	link->io.NumPorts2 = 0;
+	link->io.Attributes2 = 0;
 
 	if (pcmcia_loop_config(link, cm4040_config_check, NULL))
 		goto cs_release;
 
-	fail_rc = pcmcia_enable_device(link);
+	link->conf.IntType = 00000002;
+
+	fail_rc = pcmcia_request_configuration(link, &link->conf);
 	if (fail_rc != 0) {
 		dev_printk(KERN_INFO, &link->dev,
-			   "pcmcia_enable_device failed 0x%x\n",
+			   "pcmcia_request_configuration failed 0x%x\n",
 			   fail_rc);
 		goto cs_release;
 	}
 
 	dev = link->priv;
+	sprintf(dev->node.dev_name, DEVICE_NAME "%d", devno);
+	dev->node.major = major;
+	dev->node.minor = devno;
+	dev->node.next = &dev->node;
 
-	DEBUGP(2, dev, "device " DEVICE_NAME "%d at %pR\n", devno,
-	      link->resource[0]);
+	DEBUGP(2, dev, "device " DEVICE_NAME "%d at 0x%.4x-0x%.4x\n", devno,
+	      link->io.BasePort1, link->io.BasePort1+link->io.NumPorts1);
 	DEBUGP(2, dev, "<- reader_config (succ)\n");
 
 	return 0;
@@ -580,6 +613,7 @@ static int reader_probe(struct pcmcia_device *link)
 	link->priv = dev;
 	dev->p_dev = link;
 
+	link->conf.IntType = INT_MEMORY_AND_IO;
 	dev_table[i] = link;
 
 	init_waitqueue_head(&dev->devq);
@@ -630,7 +664,6 @@ static const struct file_operations reader_fops = {
 	.open		= cm4040_open,
 	.release	= cm4040_close,
 	.poll		= cm4040_poll,
-	.llseek		= no_llseek,
 };
 
 static struct pcmcia_device_id cm4040_ids[] = {
@@ -643,7 +676,9 @@ MODULE_DEVICE_TABLE(pcmcia, cm4040_ids);
 
 static struct pcmcia_driver reader_driver = {
   	.owner		= THIS_MODULE,
-	.name		= "cm4040_cs",
+  	.drv		= {
+		.name	= "cm4040_cs",
+	},
 	.probe		= reader_probe,
 	.remove		= reader_detach,
 	.id_table	= cm4040_ids,
@@ -653,6 +688,7 @@ static int __init cm4040_init(void)
 {
 	int rc;
 
+	printk(KERN_INFO "%s\n", version);
 	cmx_class = class_create(THIS_MODULE, "cardman_4040");
 	if (IS_ERR(cmx_class))
 		return PTR_ERR(cmx_class);
@@ -677,6 +713,7 @@ static int __init cm4040_init(void)
 
 static void __exit cm4040_exit(void)
 {
+	printk(KERN_INFO MODULE_NAME ": unloading\n");
 	pcmcia_unregister_driver(&reader_driver);
 	unregister_chrdev(major, DEVICE_NAME);
 	class_destroy(cmx_class);

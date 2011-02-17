@@ -10,7 +10,6 @@
 
 #include <asm/machvec.h>
 #include <asm/dma.h>
-#include <asm/perf_event.h>
 
 #include "proto.h"
 #include "irq_impl.h"
@@ -112,8 +111,6 @@ init_IRQ(void)
 	wrent(entInt, 0);
 
 	alpha_mv.init_irq();
-
-	init_hw_perf_events();
 }
 
 /*

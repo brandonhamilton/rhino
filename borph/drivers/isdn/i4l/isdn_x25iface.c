@@ -20,7 +20,6 @@
 /* #include <linux/isdn.h> */
 #include <linux/netdevice.h>
 #include <linux/concap.h>
-#include <linux/slab.h>
 #include <linux/wanrouter.h>
 #include <net/x25device.h>
 #include "isdn_x25iface.h"
@@ -194,7 +193,7 @@ static int isdn_x25iface_receive(struct concap_proto *cprot, struct sk_buff *skb
 	if ( ( (ix25_pdata_t*) (cprot->proto_data) ) 
 	     -> state == WAN_CONNECTED ){
 		if( skb_push(skb, 1)){
-			skb->data[0] = X25_IFACE_DATA;
+			skb -> data[0]=0x00;
 			skb->protocol = x25_type_trans(skb, cprot->net_dev);
 			netif_rx(skb);
 			return 0;
@@ -224,7 +223,7 @@ static int isdn_x25iface_connect_ind(struct concap_proto *cprot)
 
 	skb = dev_alloc_skb(1);
 	if( skb ){
-		*(skb_put(skb, 1)) = X25_IFACE_CONNECT;
+		*( skb_put(skb, 1) ) = 0x01;
 		skb->protocol = x25_type_trans(skb, cprot->net_dev);
 		netif_rx(skb);
 		return 0;
@@ -253,7 +252,7 @@ static int isdn_x25iface_disconn_ind(struct concap_proto *cprot)
 	*state_p = WAN_DISCONNECTED;
 	skb = dev_alloc_skb(1);
 	if( skb ){
-		*(skb_put(skb, 1)) = X25_IFACE_DISCONNECT;
+		*( skb_put(skb, 1) ) = 0x02;
 		skb->protocol = x25_type_trans(skb, cprot->net_dev);
 		netif_rx(skb);
 		return 0;
@@ -272,10 +271,9 @@ static int isdn_x25iface_xmit(struct concap_proto *cprot, struct sk_buff *skb)
 	unsigned char firstbyte = skb->data[0];
 	enum wan_states *state = &((ix25_pdata_t*)cprot->proto_data)->state;
 	int ret = 0;
-	IX25DEBUG("isdn_x25iface_xmit: %s first=%x state=%d\n",
-		MY_DEVNAME(cprot->net_dev), firstbyte, *state);
+	IX25DEBUG( "isdn_x25iface_xmit: %s first=%x state=%d \n", MY_DEVNAME(cprot -> net_dev), firstbyte, *state );
 	switch ( firstbyte ){
-	case X25_IFACE_DATA:
+	case 0x00: /* dl_data request */
 		if( *state == WAN_CONNECTED ){
 			skb_pull(skb, 1);
 			cprot -> net_dev -> trans_start = jiffies;
@@ -286,7 +284,7 @@ static int isdn_x25iface_xmit(struct concap_proto *cprot, struct sk_buff *skb)
 		}
 		illegal_state_warn( *state, firstbyte ); 
 		break;
-	case X25_IFACE_CONNECT:
+	case 0x01: /* dl_connect request */
 		if( *state == WAN_DISCONNECTED ){
 			*state = WAN_CONNECTING;
 		        ret = cprot -> dops -> connect_req(cprot);
@@ -299,7 +297,7 @@ static int isdn_x25iface_xmit(struct concap_proto *cprot, struct sk_buff *skb)
 			illegal_state_warn( *state, firstbyte );
 		}
 		break;
-	case X25_IFACE_DISCONNECT:
+	case 0x02: /* dl_disconnect request */
 		switch ( *state ){
 		case WAN_DISCONNECTED: 
 			/* Should not happen. However, give upper layer a
@@ -319,7 +317,7 @@ static int isdn_x25iface_xmit(struct concap_proto *cprot, struct sk_buff *skb)
 			illegal_state_warn( *state, firstbyte );
 		}
 		break;
-	case X25_IFACE_PARAMS:
+	case 0x03: /* changing lapb parameters requested */
 		printk(KERN_WARNING "isdn_x25iface_xmit: setting of lapb"
 		       " options not yet supported\n");
 		break;

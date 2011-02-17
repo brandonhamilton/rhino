@@ -38,7 +38,6 @@
 #include "device.h"
 #include "wmgr.h"
 #include "rxtx.h"
-#include "channel.h"
 
 /*---------------------  Static Definitions -------------------------*/
 static int          msglevel                =MSG_LEVEL_INFO;
@@ -47,40 +46,40 @@ static int          msglevel                =MSG_LEVEL_INFO;
 
 typedef struct _WLAN_FRAME_ACTION {
     WLAN_80211HDR_A3    Header;
-    unsigned char byCategory;
-    unsigned char byAction;
-    unsigned char abyVars[1];
+    BYTE                byCategory;
+    BYTE                byAction;
+    BYTE                abyVars[1];
 } WLAN_FRAME_ACTION, *PWLAN_FRAME_ACTION;
 
 typedef struct _WLAN_FRAME_MSRREQ {
     WLAN_80211HDR_A3    Header;
-    unsigned char byCategory;
-    unsigned char byAction;
-    unsigned char byDialogToken;
+    BYTE                byCategory;
+    BYTE                byAction;
+    BYTE                byDialogToken;
     WLAN_IE_MEASURE_REQ sMSRReqEIDs[1];
 } WLAN_FRAME_MSRREQ, *PWLAN_FRAME_MSRREQ;
 
 typedef struct _WLAN_FRAME_MSRREP {
     WLAN_80211HDR_A3    Header;
-    unsigned char byCategory;
-    unsigned char byAction;
-    unsigned char byDialogToken;
+    BYTE                byCategory;
+    BYTE                byAction;
+    BYTE                byDialogToken;
     WLAN_IE_MEASURE_REP sMSRRepEIDs[1];
 } WLAN_FRAME_MSRREP, *PWLAN_FRAME_MSRREP;
 
 typedef struct _WLAN_FRAME_TPCREQ {
     WLAN_80211HDR_A3    Header;
-    unsigned char byCategory;
-    unsigned char byAction;
-    unsigned char byDialogToken;
+    BYTE                byCategory;
+    BYTE                byAction;
+    BYTE                byDialogToken;
     WLAN_IE_TPC_REQ     sTPCReqEIDs;
 } WLAN_FRAME_TPCREQ, *PWLAN_FRAME_TPCREQ;
 
 typedef struct _WLAN_FRAME_TPCREP {
     WLAN_80211HDR_A3    Header;
-    unsigned char byCategory;
-    unsigned char byAction;
-    unsigned char byDialogToken;
+    BYTE                byCategory;
+    BYTE                byAction;
+    BYTE                byDialogToken;
     WLAN_IE_TPC_REP     sTPCRepEIDs;
 } WLAN_FRAME_TPCREP, *PWLAN_FRAME_TPCREP;
 
@@ -98,11 +97,10 @@ typedef struct _WLAN_FRAME_TPCREP {
 /*---------------------  Static Variables  --------------------------*/
 
 /*---------------------  Static Functions  --------------------------*/
-static bool s_bRxMSRReq(PSMgmtObject pMgmt, PWLAN_FRAME_MSRREQ pMSRReq,
-		unsigned int uLength)
+static BOOL s_bRxMSRReq(PSMgmtObject pMgmt, PWLAN_FRAME_MSRREQ pMSRReq, UINT uLength)
 {
     size_t    uNumOfEIDs = 0;
-    bool bResult = true;
+    BOOL    bResult = TRUE;
 
     if (uLength <= WLAN_A3FR_MAXLEN) {
         memcpy(pMgmt->abyCurrentMSRReq, pMSRReq, uLength);
@@ -118,7 +116,7 @@ static bool s_bRxMSRReq(PSMgmtObject pMgmt, PWLAN_FRAME_MSRREQ pMSRReq,
 }
 
 
-static bool s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, unsigned char byRate, unsigned char byRSSI)
+static BOOL s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, BYTE byRate, BYTE byRSSI)
 {
     PWLAN_FRAME_TPCREP  pFrame;
     PSTxMgmtPacket      pTxPacket = NULL;
@@ -126,9 +124,9 @@ static bool s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, unsigned
 
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyMgmtPacketPool;
     memset(pTxPacket, 0, sizeof(STxMgmtPacket) + WLAN_A3FR_MAXLEN);
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
 
-    pFrame = (PWLAN_FRAME_TPCREP)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
+    pFrame = (PWLAN_FRAME_TPCREP)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
 
     pFrame->Header.wFrameCtl = (   WLAN_SET_FC_FTYPE(WLAN_FTYPE_MGMT) |
                                     WLAN_SET_FC_FSTYPE(WLAN_FSTYPE_ACTION)
@@ -176,8 +174,8 @@ static bool s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, unsigned
     pTxPacket->cbMPDULen = sizeof(WLAN_FRAME_TPCREP);
     pTxPacket->cbPayloadLen = sizeof(WLAN_FRAME_TPCREP) - WLAN_HDR_ADDR3_LEN;
     if (csMgmt_xmit(pMgmt->pAdapter, pTxPacket) != CMD_STATUS_PENDING)
-        return (false);
-    return (true);
+        return (FALSE);
+    return (TRUE);
 //    return (CARDbSendPacket(pMgmt->pAdapter, pFrame, PKT_TYPE_802_11_MNG, sizeof(WLAN_FRAME_TPCREP)));
 
 }
@@ -203,22 +201,22 @@ static bool s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, unsigned
  * Return Value: None.
  *
 -*/
-bool
+BOOL
 IEEE11hbMgrRxAction (
-    void *pMgmtHandle,
-    void *pRxPacket
+    IN PVOID pMgmtHandle,
+    IN PVOID pRxPacket
     )
 {
     PSMgmtObject            pMgmt = (PSMgmtObject) pMgmtHandle;
     PWLAN_FRAME_ACTION      pAction = NULL;
-    unsigned int uLength = 0;
+    UINT                    uLength = 0;
     PWLAN_IE_CH_SW          pChannelSwitch = NULL;
 
 
     // decode the frame
     uLength = ((PSRxMgmtPacket)pRxPacket)->cbMPDULen;
     if (uLength > WLAN_A3FR_MAXLEN) {
-        return (false);
+        return (FALSE);
     }
 
 
@@ -235,7 +233,7 @@ IEEE11hbMgrRxAction (
                 return (s_bRxTPCReq(pMgmt,
                                     (PWLAN_FRAME_TPCREQ) pAction,
                                     ((PSRxMgmtPacket)pRxPacket)->byRxRate,
-                                    (unsigned char) ((PSRxMgmtPacket)pRxPacket)->uRSSI));
+                                    (BYTE) ((PSRxMgmtPacket)pRxPacket)->uRSSI));
                 break;
             case ACTION_TPCREP:
                 break;
@@ -246,7 +244,7 @@ IEEE11hbMgrRxAction (
                     // valid element id
                     CARDbChannelSwitch( pMgmt->pAdapter,
                                         pChannelSwitch->byMode,
-                                        get_channel_mapping(pMgmt->pAdapter, pChannelSwitch->byChannel, pMgmt->eCurrentPHYMode),
+                                        CARDbyGetChannelMapping(pMgmt->pAdapter, pChannelSwitch->byChannel, pMgmt->eCurrentPHYMode),
                                         pChannelSwitch->byCount
                                         );
                 }
@@ -260,14 +258,14 @@ IEEE11hbMgrRxAction (
         pAction->byCategory |= 0x80;
 
        //return (CARDbSendPacket(pMgmt->pAdapter, pAction, PKT_TYPE_802_11_MNG, uLength));
-        return (true);
+        return (TRUE);
     }
-    return (true);
+    return (TRUE);
 }
 
 
-bool IEEE11hbMSRRepTx (
-    void *pMgmtHandle
+BOOL IEEE11hbMSRRepTx (
+    IN PVOID pMgmtHandle
     )
 {
     PSMgmtObject            pMgmt = (PSMgmtObject) pMgmtHandle;
@@ -277,7 +275,7 @@ bool IEEE11hbMSRRepTx (
 
     pTxPacket = (PSTxMgmtPacket)pMgmt->abyCurrentMSRRep;
     memset(pTxPacket, 0, sizeof(STxMgmtPacket) + WLAN_A3FR_MAXLEN);
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
 
 
     pMSRRep->Header.wFrameCtl = (   WLAN_SET_FC_FTYPE(WLAN_FTYPE_MGMT) |
@@ -297,8 +295,8 @@ bool IEEE11hbMSRRepTx (
     pTxPacket->cbMPDULen = uLength;
     pTxPacket->cbPayloadLen = uLength - WLAN_HDR_ADDR3_LEN;
     if (csMgmt_xmit(pMgmt->pAdapter, pTxPacket) != CMD_STATUS_PENDING)
-        return (false);
-    return (true);
+        return (FALSE);
+    return (TRUE);
 //    return (CARDbSendPacket(pMgmt->pAdapter, pMSRRep, PKT_TYPE_802_11_MNG, uLength));
 
 }

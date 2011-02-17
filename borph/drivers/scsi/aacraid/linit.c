@@ -38,7 +38,7 @@
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/syscalls.h>
 #include <linux/delay.h>
@@ -76,7 +76,6 @@ MODULE_DESCRIPTION("Dell PERC2, 2/Si, 3/Si, 3/Di, "
 MODULE_LICENSE("GPL");
 MODULE_VERSION(AAC_DRIVER_FULL_VERSION);
 
-static DEFINE_MUTEX(aac_mutex);
 static LIST_HEAD(aac_devices);
 static int aac_cfg_major = -1;
 char aac_driver_version[] = AAC_DRIVER_FULL_VERSION;
@@ -248,7 +247,7 @@ static struct aac_driver_ident aac_drivers[] = {
  *	TODO: unify with aac_scsi_cmd().
  */
 
-static int aac_queuecommand_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+static int aac_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct Scsi_Host *host = cmd->device->host;
 	struct aac_dev *dev = (struct aac_dev *)host->hostdata;
@@ -266,8 +265,6 @@ static int aac_queuecommand_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_
 	cmd->SCp.phase = AAC_OWNER_LOWLEVEL;
 	return (aac_scsi_cmd(cmd) ? FAILED : 0);
 }
-
-static DEF_SCSI_QCMD(aac_queuecommand)
 
 /**
  *	aac_info		-	Returns the host adapter name
@@ -681,7 +678,7 @@ static int aac_cfg_open(struct inode *inode, struct file *file)
 	unsigned minor_number = iminor(inode);
 	int err = -ENODEV;
 
-	mutex_lock(&aac_mutex);  /* BKL pushdown: nothing else protects this list */
+	lock_kernel();  /* BKL pushdown: nothing else protects this list */
 	list_for_each_entry(aac, &aac_devices, entry) {
 		if (aac->id == minor_number) {
 			file->private_data = aac;
@@ -689,7 +686,7 @@ static int aac_cfg_open(struct inode *inode, struct file *file)
 			break;
 		}
 	}
-	mutex_unlock(&aac_mutex);
+	unlock_kernel();
 
 	return err;
 }
@@ -708,24 +705,19 @@ static int aac_cfg_open(struct inode *inode, struct file *file)
  *	Bugs: Needs to handle hot plugging
  */
 
-static long aac_cfg_ioctl(struct file *file,
+static int aac_cfg_ioctl(struct inode *inode, struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
-	int ret;
 	if (!capable(CAP_SYS_RAWIO))
 		return -EPERM;
-	mutex_lock(&aac_mutex);
-	ret = aac_do_ioctl(file->private_data, cmd, (void __user *)arg);
-	mutex_unlock(&aac_mutex);
-
-	return ret;
+	return aac_do_ioctl(file->private_data, cmd, (void __user *)arg);
 }
 
 #ifdef CONFIG_COMPAT
 static long aac_compat_do_ioctl(struct aac_dev *dev, unsigned cmd, unsigned long arg)
 {
 	long ret;
-	mutex_lock(&aac_mutex);
+	lock_kernel();
 	switch (cmd) {
 	case FSACTL_MINIPORT_REV_CHECK:
 	case FSACTL_SENDFIB:
@@ -759,7 +751,7 @@ static long aac_compat_do_ioctl(struct aac_dev *dev, unsigned cmd, unsigned long
 		ret = -ENOIOCTLCMD;
 		break;
 	}
-	mutex_unlock(&aac_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -773,7 +765,7 @@ static long aac_compat_cfg_ioctl(struct file *file, unsigned cmd, unsigned long 
 {
 	if (!capable(CAP_SYS_RAWIO))
 		return -EPERM;
-	return aac_compat_do_ioctl(file->private_data, cmd, arg);
+	return aac_compat_do_ioctl((struct aac_dev *)file->private_data, cmd, arg);
 }
 #endif
 
@@ -1037,12 +1029,11 @@ ssize_t aac_get_serial_number(struct device *device, char *buf)
 
 static const struct file_operations aac_cfg_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= aac_cfg_ioctl,
+	.ioctl		= aac_cfg_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl   = aac_compat_cfg_ioctl,
 #endif
 	.open		= aac_cfg_open,
-	.llseek		= noop_llseek,
 };
 
 static struct scsi_host_template aac_driver_template = {
@@ -1095,7 +1086,6 @@ static int __devinit aac_probe_one(struct pci_dev *pdev,
 	struct list_head *insert = &aac_devices;
 	int error = -ENODEV;
 	int unique_id = 0;
-	u64 dmamask;
 
 	list_for_each_entry(aac, &aac_devices, entry) {
 		if (aac->id > unique_id)
@@ -1109,18 +1099,17 @@ static int __devinit aac_probe_one(struct pci_dev *pdev,
 		goto out;
 	error = -ENODEV;
 
+	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32)) ||
+			pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32)))
+		goto out_disable_pdev;
 	/*
 	 * If the quirk31 bit is set, the adapter needs adapter
 	 * to driver communication memory to be allocated below 2gig
 	 */
 	if (aac_drivers[index].quirks & AAC_QUIRK_31BIT)
-		dmamask = DMA_BIT_MASK(31);
-	else
-		dmamask = DMA_BIT_MASK(32);
-
-	if (pci_set_dma_mask(pdev, dmamask) ||
-			pci_set_consistent_dma_mask(pdev, dmamask))
-		goto out_disable_pdev;
+		if (pci_set_dma_mask(pdev, DMA_BIT_MASK(31)) ||
+				pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(31)))
+			goto out_disable_pdev;
 
 	pci_set_master(pdev);
 

@@ -14,6 +14,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/mman.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>

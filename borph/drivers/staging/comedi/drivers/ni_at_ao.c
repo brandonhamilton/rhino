@@ -194,18 +194,7 @@ static struct comedi_driver driver_atao = {
 	.num_names = ARRAY_SIZE(atao_boards),
 };
 
-static int __init driver_atao_init_module(void)
-{
-	return comedi_driver_register(&driver_atao);
-}
-
-static void __exit driver_atao_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_atao);
-}
-
-module_init(driver_atao_init_module);
-module_exit(driver_atao_cleanup_module);
+COMEDI_INITCLEANUP(driver_atao);
 
 static void atao_reset(struct comedi_device *dev);
 
@@ -237,7 +226,7 @@ static int atao_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		iobase = 0x1c0;
 	ao_unipolar = it->options[3];
 
-	printk(KERN_INFO "comedi%d: ni_at_ao: 0x%04lx", dev->minor, iobase);
+	printk("comedi%d: ni_at_ao: 0x%04lx", dev->minor, iobase);
 
 	if (!request_region(iobase, ATAO_SIZE, "ni_at_ao")) {
 		printk(" I/O port conflict\n");
@@ -294,14 +283,14 @@ static int atao_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 	atao_reset(dev);
 
-	printk(KERN_INFO "\n");
+	printk("\n");
 
 	return 0;
 }
 
 static int atao_detach(struct comedi_device *dev)
 {
-	printk(KERN_INFO "comedi%d: atao: remove\n", dev->minor);
+	printk("comedi%d: atao: remove\n", dev->minor);
 
 	if (dev->iobase)
 		release_region(dev->iobase, ATAO_SIZE);
@@ -470,7 +459,3 @@ static int atao_calib_insn_write(struct comedi_device *dev,
 
 	return insn->n;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

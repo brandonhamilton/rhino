@@ -5,7 +5,6 @@
  *	Copyright (C) IBM Corporation, 2004. All rights reserved
  */
 
-#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/highmem.h>
 #include <linux/crash_dump.h>
@@ -61,7 +60,7 @@ ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
 	if (!is_crashed_pfn_valid(pfn))
 		return -EFAULT;
 
-	vaddr = kmap_atomic_pfn(pfn);
+	vaddr = kmap_atomic_pfn(pfn, KM_PTE0);
 
 	if (!userbuf) {
 		memcpy(buf, (vaddr + offset), csize);

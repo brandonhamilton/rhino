@@ -57,7 +57,6 @@
 #include <linux/smp_lock.h>
 #include <linux/termios.h>	/* For TIOCOUTQ/INQ */
 #include <linux/compat.h>
-#include <linux/slab.h>
 #include <net/datalink.h>
 #include <net/psnap.h>
 #include <net/sock.h>
@@ -782,7 +781,7 @@ static int atif_ioctl(int cmd, void __user *arg)
 						atrtr_create(&rtdef, dev);
 					}
 			}
-			dev_mc_add_global(dev, aarp_mcast);
+			dev_mc_add(dev, aarp_mcast, 6, 1);
 			return 0;
 
 		case SIOCGIFADDR:

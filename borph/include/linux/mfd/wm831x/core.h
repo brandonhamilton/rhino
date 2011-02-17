@@ -15,7 +15,6 @@
 #ifndef __MFD_WM831X_CORE_H__
 #define __MFD_WM831X_CORE_H__
 
-#include <linux/completion.h>
 #include <linux/interrupt.h>
 
 /*
@@ -238,15 +237,6 @@ struct regulator_dev;
 
 #define WM831X_NUM_IRQ_REGS 5
 
-enum wm831x_parent {
-	WM8310 = 0x8310,
-	WM8311 = 0x8311,
-	WM8312 = 0x8312,
-	WM8320 = 0x8320,
-	WM8321 = 0x8321,
-	WM8325 = 0x8325,
-};
-
 struct wm831x {
 	struct mutex io_lock;
 
@@ -264,15 +254,9 @@ struct wm831x {
 	int irq_masks_cur[WM831X_NUM_IRQ_REGS];   /* Currently active value */
 	int irq_masks_cache[WM831X_NUM_IRQ_REGS]; /* Cached hardware value */
 
-	/* Chip revision based flags */
-	unsigned has_gpio_ena:1;         /* Has GPIO enable bit */
-	unsigned has_cs_sts:1;           /* Has current sink status bit */
-	unsigned charger_irq_wake:1;     /* Are charger IRQs a wake source? */
-
 	int num_gpio;
 
 	struct mutex auxadc_lock;
-	struct completion auxadc_done;
 
 	/* The WM831x has a security key blocking access to certain
 	 * registers.  The mutex is taken by the accessors for locking
@@ -294,9 +278,6 @@ int wm831x_set_bits(struct wm831x *wm831x, unsigned short reg,
 int wm831x_bulk_read(struct wm831x *wm831x, unsigned short reg,
 		     int count, u16 *buf);
 
-int wm831x_device_init(struct wm831x *wm831x, unsigned long id, int irq);
-void wm831x_device_exit(struct wm831x *wm831x);
-int wm831x_device_suspend(struct wm831x *wm831x);
 int wm831x_irq_init(struct wm831x *wm831x, int irq);
 void wm831x_irq_exit(struct wm831x *wm831x);
 

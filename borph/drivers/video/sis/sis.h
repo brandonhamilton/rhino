@@ -24,6 +24,7 @@
 #ifndef _SIS_H_
 #define _SIS_H_
 
+#include "osdef.h"
 #include <video/sisfb.h>
 
 #include "vgatypes.h"

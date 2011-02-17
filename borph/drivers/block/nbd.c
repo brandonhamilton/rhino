@@ -4,7 +4,7 @@
  * Note that you can not swap over this thing, yet. Seems to work but
  * deadlocks sometimes - you can not swap over TCP in general.
  * 
- * Copyright 1997-2000, 2008 Pavel Machek <pavel@ucw.cz>
+ * Copyright 1997-2000, 2008 Pavel Machek <pavel@suse.cz>
  * Parts copyright 2001 Steven Whitehouse <steve@chygwyn.com>
  *
  * This file is released under GPLv2 or later.
@@ -24,11 +24,9 @@
 #include <linux/errno.h>
 #include <linux/file.h>
 #include <linux/ioctl.h>
-#include <linux/mutex.h>
 #include <linux/compiler.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <linux/net.h>
 #include <linux/kthread.h>
@@ -53,7 +51,6 @@
 #define DBG_BLKDEV      0x0100
 #define DBG_RX          0x0200
 #define DBG_TX          0x0400
-static DEFINE_MUTEX(nbd_mutex);
 static unsigned int debugflags;
 #endif /* NDEBUG */
 
@@ -450,7 +447,7 @@ static void nbd_clear_que(struct nbd_device *lo)
 
 static void nbd_handle_req(struct nbd_device *lo, struct request *req)
 {
-	if (req->cmd_type != REQ_TYPE_FS)
+	if (!blk_fs_request(req))
 		goto error_out;
 
 	nbd_cmd(req) = NBD_CMD_READ;
@@ -718,11 +715,9 @@ static int nbd_ioctl(struct block_device *bdev, fmode_t mode,
 	dprintk(DBG_IOCTL, "%s: nbd_ioctl cmd=%s(0x%x) arg=%lu\n",
 			lo->disk->disk_name, ioctl_cmd_to_ascii(cmd), cmd, arg);
 
-	mutex_lock(&nbd_mutex);
 	mutex_lock(&lo->tx_lock);
 	error = __nbd_ioctl(bdev, lo, cmd, arg);
 	mutex_unlock(&lo->tx_lock);
-	mutex_unlock(&nbd_mutex);
 
 	return error;
 }
@@ -730,7 +725,7 @@ static int nbd_ioctl(struct block_device *bdev, fmode_t mode,
 static const struct block_device_operations nbd_fops =
 {
 	.owner =	THIS_MODULE,
-	.ioctl =	nbd_ioctl,
+	.locked_ioctl =	nbd_ioctl,
 };
 
 /*

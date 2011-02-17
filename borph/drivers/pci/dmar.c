@@ -35,8 +35,6 @@
 #include <linux/interrupt.h>
 #include <linux/tboot.h>
 #include <linux/dmi.h>
-#include <linux/slab.h>
-#include <asm/iommu_table.h>
 
 #define PREFIX "DMAR: "
 
@@ -132,10 +130,9 @@ static int __init dmar_parse_dev_scope(void *start, void *end, int *cnt,
 		if (scope->entry_type == ACPI_DMAR_SCOPE_TYPE_ENDPOINT ||
 		    scope->entry_type == ACPI_DMAR_SCOPE_TYPE_BRIDGE)
 			(*cnt)++;
-		else if (scope->entry_type != ACPI_DMAR_SCOPE_TYPE_IOAPIC) {
+		else
 			printk(KERN_WARNING PREFIX
-			       "Unsupported device scope\n");
-		}
+				"Unsupported device scope\n");
 		start += scope->length;
 	}
 	if (*cnt == 0)
@@ -311,8 +308,6 @@ int dmar_find_matched_atsr_unit(struct pci_dev *dev)
 	struct acpi_dmar_atsr *atsr;
 	struct dmar_atsr_unit *atsru;
 
-	dev = pci_physfn(dev);
-
 	list_for_each_entry(atsru, &dmar_atsr_units, list) {
 		atsr = container_of(atsru->hdr, struct acpi_dmar_atsr, header);
 		if (atsr->segment == pci_domain_nr(dev->bus))
@@ -339,37 +334,6 @@ found:
 
 	if (atsru->include_all)
 		return 1;
-
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_ACPI_NUMA
-static int __init
-dmar_parse_one_rhsa(struct acpi_dmar_header *header)
-{
-	struct acpi_dmar_rhsa *rhsa;
-	struct dmar_drhd_unit *drhd;
-
-	rhsa = (struct acpi_dmar_rhsa *)header;
-	for_each_drhd_unit(drhd) {
-		if (drhd->reg_base_addr == rhsa->base_address) {
-			int node = acpi_map_pxm_to_node(rhsa->proximity_domain);
-
-			if (!node_online(node))
-				node = -1;
-			drhd->iommu->node = node;
-			return 0;
-		}
-	}
-	WARN_TAINT(
-		1, TAINT_FIRMWARE_WORKAROUND,
-		"Your BIOS is broken; RHSA refers to non-existent DMAR unit at %llx\n"
-		"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
-		drhd->reg_base_addr,
-		dmi_get_system_info(DMI_BIOS_VENDOR),
-		dmi_get_system_info(DMI_BIOS_VERSION),
-		dmi_get_system_info(DMI_PRODUCT_VERSION));
 
 	return 0;
 }
@@ -494,9 +458,7 @@ parse_dmar_table(void)
 #endif
 			break;
 		case ACPI_DMAR_HARDWARE_AFFINITY:
-#ifdef CONFIG_ACPI_NUMA
-			ret = dmar_parse_one_rhsa(entry_header);
-#endif
+			/* We don't do anything with RHSA (yet?) */
 			break;
 		default:
 			printk(KERN_WARNING PREFIX
@@ -513,7 +475,7 @@ parse_dmar_table(void)
 	return ret;
 }
 
-static int dmar_pci_device_match(struct pci_dev *devices[], int cnt,
+int dmar_pci_device_match(struct pci_dev *devices[], int cnt,
 			  struct pci_dev *dev)
 {
 	int index;
@@ -535,8 +497,6 @@ dmar_find_matched_drhd_unit(struct pci_dev *dev)
 {
 	struct dmar_drhd_unit *dmaru = NULL;
 	struct acpi_dmar_hardware_unit *drhd;
-
-	dev = pci_physfn(dev);
 
 	list_for_each_entry(dmaru, &dmar_drhd_units, list) {
 		drhd = container_of(dmaru->hdr,
@@ -622,18 +582,6 @@ int __init dmar_table_init(void)
 	return 0;
 }
 
-static void warn_invalid_dmar(u64 addr, const char *message)
-{
-	WARN_TAINT_ONCE(
-		1, TAINT_FIRMWARE_WORKAROUND,
-		"Your BIOS is broken; DMAR reported at address %llx%s!\n"
-		"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
-		addr, message,
-		dmi_get_system_info(DMI_BIOS_VENDOR),
-		dmi_get_system_info(DMI_BIOS_VERSION),
-		dmi_get_system_info(DMI_PRODUCT_VERSION));
-}
-
 int __init check_zero_address(void)
 {
 	struct acpi_table_dmar *dmar;
@@ -653,42 +601,28 @@ int __init check_zero_address(void)
 		}
 
 		if (entry_header->type == ACPI_DMAR_TYPE_HARDWARE_UNIT) {
-			void __iomem *addr;
-			u64 cap, ecap;
-
 			drhd = (void *)entry_header;
 			if (!drhd->address) {
-				warn_invalid_dmar(0, "");
-				goto failed;
+				/* Promote an attitude of violence to a BIOS engineer today */
+				WARN(1, "Your BIOS is broken; DMAR reported at address zero!\n"
+				     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+				     dmi_get_system_info(DMI_BIOS_VENDOR),
+				     dmi_get_system_info(DMI_BIOS_VERSION),
+				     dmi_get_system_info(DMI_PRODUCT_VERSION));
+#ifdef CONFIG_DMAR
+				dmar_disabled = 1;
+#endif
+				return 0;
 			}
-
-			addr = early_ioremap(drhd->address, VTD_PAGE_SIZE);
-			if (!addr ) {
-				printk("IOMMU: can't validate: %llx\n", drhd->address);
-				goto failed;
-			}
-			cap = dmar_readq(addr + DMAR_CAP_REG);
-			ecap = dmar_readq(addr + DMAR_ECAP_REG);
-			early_iounmap(addr, VTD_PAGE_SIZE);
-			if (cap == (uint64_t)-1 && ecap == (uint64_t)-1) {
-				warn_invalid_dmar(drhd->address,
-						  " returns all ones");
-				goto failed;
-			}
+			break;
 		}
 
 		entry_header = ((void *)entry_header + entry_header->length);
 	}
 	return 1;
-
-failed:
-#ifdef CONFIG_DMAR
-	dmar_disabled = 1;
-#endif
-	return 0;
 }
 
-int __init detect_intel_iommu(void)
+void __init detect_intel_iommu(void)
 {
 	int ret;
 
@@ -724,8 +658,6 @@ int __init detect_intel_iommu(void)
 	}
 	early_acpi_os_unmap_memory(dmar_tbl, dmar_tbl_size);
 	dmar_tbl = NULL;
-
-	return ret ? 1 : -ENODEV;
 }
 
 
@@ -737,11 +669,6 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	static int iommu_allocated = 0;
 	int agaw = 0;
 	int msagaw = 0;
-
-	if (!drhd->reg_base_addr) {
-		warn_invalid_dmar(0, "");
-		return -EINVAL;
-	}
 
 	iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
 	if (!iommu)
@@ -759,7 +686,13 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	iommu->ecap = dmar_readq(iommu->reg + DMAR_ECAP_REG);
 
 	if (iommu->cap == (uint64_t)-1 && iommu->ecap == (uint64_t)-1) {
-		warn_invalid_dmar(drhd->reg_base_addr, " returns all ones");
+		/* Promote an attitude of violence to a BIOS engineer today */
+		WARN(1, "Your BIOS is broken; DMAR reported at address %llx returns all ones!\n"
+		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+		     drhd->reg_base_addr,
+		     dmi_get_system_info(DMI_BIOS_VENDOR),
+		     dmi_get_system_info(DMI_BIOS_VERSION),
+		     dmi_get_system_info(DMI_PRODUCT_VERSION));
 		goto err_unmap;
 	}
 
@@ -782,8 +715,6 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	iommu->agaw = agaw;
 	iommu->msagaw = msagaw;
 
-	iommu->node = -1;
-
 	/* the registers might be more than one page */
 	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
 		cap_max_fault_reg_offset(iommu->cap));
@@ -798,8 +729,7 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	}
 
 	ver = readl(iommu->reg + DMAR_VER_REG);
-	pr_info("IOMMU %d: reg_base_addr %llx ver %d:%d cap %llx ecap %llx\n",
-		iommu->seq_id,
+	pr_info("IOMMU %llx: ver %d:%d cap %llx ecap %llx\n",
 		(unsigned long long)drhd->reg_base_addr,
 		DMAR_VER_MAJOR(ver), DMAR_VER_MINOR(ver),
 		(unsigned long long)iommu->cap,
@@ -1126,7 +1056,6 @@ static void __dmar_enable_qi(struct intel_iommu *iommu)
 int dmar_enable_qi(struct intel_iommu *iommu)
 {
 	struct q_inval *qi;
-	struct page *desc_page;
 
 	if (!ecap_qis(iommu->ecap))
 		return -ENOENT;
@@ -1143,15 +1072,12 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 
 	qi = iommu->qi;
 
-
-	desc_page = alloc_pages_node(iommu->node, GFP_ATOMIC | __GFP_ZERO, 0);
-	if (!desc_page) {
+	qi->desc = (void *)(get_zeroed_page(GFP_ATOMIC));
+	if (!qi->desc) {
 		kfree(qi);
 		iommu->qi = 0;
 		return -ENOMEM;
 	}
-
-	qi->desc = page_address(desc_page);
 
 	qi->desc_status = kmalloc(QI_LENGTH * sizeof(int), GFP_ATOMIC);
 	if (!qi->desc_status) {
@@ -1224,9 +1150,9 @@ const char *dmar_get_fault_reason(u8 fault_reason, int *fault_type)
 	}
 }
 
-void dmar_msi_unmask(struct irq_data *data)
+void dmar_msi_unmask(unsigned int irq)
 {
-	struct intel_iommu *iommu = irq_data_get_irq_data(data);
+	struct intel_iommu *iommu = get_irq_data(irq);
 	unsigned long flag;
 
 	/* unmask it */
@@ -1237,10 +1163,10 @@ void dmar_msi_unmask(struct irq_data *data)
 	spin_unlock_irqrestore(&iommu->register_lock, flag);
 }
 
-void dmar_msi_mask(struct irq_data *data)
+void dmar_msi_mask(unsigned int irq)
 {
 	unsigned long flag;
-	struct intel_iommu *iommu = irq_data_get_irq_data(data);
+	struct intel_iommu *iommu = get_irq_data(irq);
 
 	/* mask it */
 	spin_lock_irqsave(&iommu->register_lock, flag);
@@ -1417,11 +1343,6 @@ int __init enable_drhd_fault_handling(void)
 			       (unsigned long long)drhd->reg_base_addr, ret);
 			return -1;
 		}
-
-		/*
-		 * Clear any previous faults.
-		 */
-		dmar_fault(iommu->irq, iommu);
 	}
 
 	return 0;
@@ -1455,12 +1376,9 @@ int dmar_reenable_qi(struct intel_iommu *iommu)
 /*
  * Check interrupt remapping support in DMAR table description.
  */
-int __init dmar_ir_support(void)
+int dmar_ir_support(void)
 {
 	struct acpi_table_dmar *dmar;
 	dmar = (struct acpi_table_dmar *)dmar_tbl;
-	if (!dmar)
-		return 0;
 	return dmar->flags & 0x1;
 }
-IOMMU_INIT_POST(detect_intel_iommu);

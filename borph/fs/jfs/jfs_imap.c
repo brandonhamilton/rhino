@@ -45,7 +45,6 @@
 #include <linux/buffer_head.h>
 #include <linux/pagemap.h>
 #include <linux/quotaops.h>
-#include <linux/slab.h>
 
 #include "jfs_incore.h"
 #include "jfs_inode.h"
@@ -497,7 +496,7 @@ struct inode *diReadSpecial(struct super_block *sb, ino_t inum, int secondary)
 	 * appear hashed, but do not put on any lists.  hlist_del()
 	 * will work fine and require no locking.
 	 */
-	hlist_add_fake(&ip->i_hash);
+	ip->i_hash.pprev = &ip->i_hash.next;
 
 	return (ip);
 }

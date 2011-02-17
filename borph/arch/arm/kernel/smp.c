@@ -33,7 +33,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/processor.h>
-#include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 #include <asm/localtimer.h>
@@ -68,47 +67,12 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 };
 
-static inline void identity_mapping_add(pgd_t *pgd, unsigned long start,
-	unsigned long end)
-{
-	unsigned long addr, prot;
-	pmd_t *pmd;
-
-	prot = PMD_TYPE_SECT | PMD_SECT_AP_WRITE;
-	if (cpu_architecture() <= CPU_ARCH_ARMv5TEJ && !cpu_is_xscale())
-		prot |= PMD_BIT4;
-
-	for (addr = start & PGDIR_MASK; addr < end;) {
-		pmd = pmd_offset(pgd + pgd_index(addr), addr);
-		pmd[0] = __pmd(addr | prot);
-		addr += SECTION_SIZE;
-		pmd[1] = __pmd(addr | prot);
-		addr += SECTION_SIZE;
-		flush_pmd_entry(pmd);
-		outer_clean_range(__pa(pmd), __pa(pmd + 1));
-	}
-}
-
-static inline void identity_mapping_del(pgd_t *pgd, unsigned long start,
-	unsigned long end)
-{
-	unsigned long addr;
-	pmd_t *pmd;
-
-	for (addr = start & PGDIR_MASK; addr < end; addr += PGDIR_SIZE) {
-		pmd = pmd_offset(pgd + pgd_index(addr), addr);
-		pmd[0] = __pmd(0);
-		pmd[1] = __pmd(0);
-		clean_pmd_entry(pmd);
-		outer_clean_range(__pa(pmd), __pa(pmd + 1));
-	}
-}
-
 int __cpuinit __cpu_up(unsigned int cpu)
 {
 	struct cpuinfo_arm *ci = &per_cpu(cpu_data, cpu);
 	struct task_struct *idle = ci->idle;
 	pgd_t *pgd;
+	pmd_t *pmd;
 	int ret;
 
 	/*
@@ -122,12 +86,6 @@ int __cpuinit __cpu_up(unsigned int cpu)
 			return PTR_ERR(idle);
 		}
 		ci->idle = idle;
-	} else {
-		/*
-		 * Since this idle thread is being re-used, call
-		 * init_idle() to reinitialize the thread structure.
-		 */
-		init_idle(idle, cpu);
 	}
 
 	/*
@@ -137,16 +95,10 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	 * a 1:1 mapping for the physical address of the kernel.
 	 */
 	pgd = pgd_alloc(&init_mm);
-	if (!pgd)
-		return -ENOMEM;
-
-	if (PHYS_OFFSET != PAGE_OFFSET) {
-#ifndef CONFIG_HOTPLUG_CPU
-		identity_mapping_add(pgd, __pa(__init_begin), __pa(__init_end));
-#endif
-		identity_mapping_add(pgd, __pa(_stext), __pa(_etext));
-		identity_mapping_add(pgd, __pa(_sdata), __pa(_edata));
-	}
+	pmd = pmd_offset(pgd + pgd_index(PHYS_OFFSET), PHYS_OFFSET);
+	*pmd = __pmd((PHYS_OFFSET & PGDIR_MASK) |
+		     PMD_TYPE_SECT | PMD_SECT_AP_WRITE);
+	flush_pmd_entry(pmd);
 
 	/*
 	 * We need to tell the secondary core where to find
@@ -154,8 +106,7 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	 */
 	secondary_data.stack = task_stack_page(idle) + THREAD_START_SP;
 	secondary_data.pgdir = virt_to_phys(pgd);
-	__cpuc_flush_dcache_area(&secondary_data, sizeof(secondary_data));
-	outer_clean_range(__pa(&secondary_data), __pa(&secondary_data + 1));
+	wmb();
 
 	/*
 	 * Now bring the CPU into our world.
@@ -184,14 +135,8 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	secondary_data.stack = NULL;
 	secondary_data.pgdir = 0;
 
-	if (PHYS_OFFSET != PAGE_OFFSET) {
-#ifndef CONFIG_HOTPLUG_CPU
-		identity_mapping_del(pgd, __pa(__init_begin), __pa(__init_end));
-#endif
-		identity_mapping_del(pgd, __pa(_stext), __pa(_etext));
-		identity_mapping_del(pgd, __pa(_sdata), __pa(_edata));
-	}
-
+	*pmd = __pmd(0);
+	clean_pmd_entry(pmd);
 	pgd_free(&init_mm, pgd);
 
 	if (ret) {
@@ -215,7 +160,7 @@ int __cpu_disable(void)
 	struct task_struct *p;
 	int ret;
 
-	ret = platform_cpu_disable(cpu);
+	ret = mach_cpu_disable(cpu);
 	if (ret)
 		return ret;
 
@@ -310,6 +255,7 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	 * All kernel threads share the same mm context; grab a
 	 * reference and switch to it.
 	 */
+	atomic_inc(&mm->mm_users);
 	atomic_inc(&mm->mm_count);
 	current->active_mm = mm;
 	cpumask_set_cpu(cpu, mm_cpumask(mm));
@@ -475,11 +421,7 @@ static void smp_timer_broadcast(const struct cpumask *mask)
 {
 	send_ipi_message(mask, IPI_TIMER);
 }
-#else
-#define smp_timer_broadcast	NULL
-#endif
 
-#ifndef CONFIG_LOCAL_TIMERS
 static void broadcast_timer_set_mode(enum clock_event_mode mode,
 	struct clock_event_device *evt)
 {
@@ -494,6 +436,7 @@ static void local_timer_setup(struct clock_event_device *evt)
 	evt->rating	= 400;
 	evt->mult	= 1;
 	evt->set_mode	= broadcast_timer_set_mode;
+	evt->broadcast	= smp_timer_broadcast;
 
 	clockevents_register_device(evt);
 }
@@ -505,7 +448,6 @@ void __cpuinit percpu_timer_setup(void)
 	struct clock_event_device *evt = &per_cpu(percpu_clockevent, cpu);
 
 	evt->cpumask = cpumask_of(cpu);
-	evt->broadcast = smp_timer_broadcast;
 
 	local_timer_setup(evt);
 }
@@ -517,13 +459,10 @@ static DEFINE_SPINLOCK(stop_lock);
  */
 static void ipi_cpu_stop(unsigned int cpu)
 {
-	if (system_state == SYSTEM_BOOTING ||
-	    system_state == SYSTEM_RUNNING) {
-		spin_lock(&stop_lock);
-		printk(KERN_CRIT "CPU%u: stopping\n", cpu);
-		dump_stack();
-		spin_unlock(&stop_lock);
-	}
+	spin_lock(&stop_lock);
+	printk(KERN_CRIT "CPU%u: stopping\n", cpu);
+	dump_stack();
+	spin_unlock(&stop_lock);
 
 	set_cpu_online(cpu, false);
 
@@ -613,8 +552,7 @@ void smp_send_stop(void)
 {
 	cpumask_t mask = cpu_online_map;
 	cpu_clear(smp_processor_id(), mask);
-	if (!cpus_empty(mask))
-		send_ipi_message(&mask, IPI_CPU_STOP);
+	send_ipi_message(&mask, IPI_CPU_STOP);
 }
 
 /*

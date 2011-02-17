@@ -794,8 +794,11 @@ void MlmeDisassocReqAction(struct rt_rtmp_adapter *pAd, struct rt_mlme_queue_ele
 	RTMPCancelTimer(&pAd->MlmeAux.DisassocTimer, &TimerCancelled);
 
 	DBGPRINT(RT_DEBUG_TRACE,
-		("ASSOC - Send DISASSOC request[BSSID::%pM (Reason=%d)\n",
-			pDisassocReq->Addr, pDisassocReq->Reason));
+		 ("ASSOC - Send DISASSOC request[BSSID::%02x:%02x:%02x:%02x:%02x:%02x (Reason=%d)\n",
+		  pDisassocReq->Addr[0], pDisassocReq->Addr[1],
+		  pDisassocReq->Addr[2], pDisassocReq->Addr[3],
+		  pDisassocReq->Addr[4], pDisassocReq->Addr[5],
+		  pDisassocReq->Reason));
 	MgtMacHeaderInit(pAd, &DisassocHdr, SUBTYPE_DISASSOC, 0, pDisassocReq->Addr, pDisassocReq->Addr);	/* patch peap ttls switching issue */
 	MakeOutgoingFrame(pOutBuffer, &FrameLen,
 			  sizeof(struct rt_header_802_11), &DisassocHdr,
@@ -1593,6 +1596,7 @@ BOOLEAN StaAddMacTableEntry(struct rt_rtmp_adapter *pAd,
 		union iwreq_data wrqu;
 		wext_notify_event_assoc(pAd);
 
+		memset(wrqu.ap_addr.sa_data, 0, MAC_ADDR_LEN);
 		memcpy(wrqu.ap_addr.sa_data, pAd->MlmeAux.Bssid, MAC_ADDR_LEN);
 		wireless_send_event(pAd->net_dev, SIOCGIWAP, &wrqu, NULL);
 

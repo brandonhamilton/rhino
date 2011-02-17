@@ -6,7 +6,7 @@
  *    Author(s): Holger Smolinski (Holger.Smolinski@de.ibm.com)
  */
 
-#include <asm/asm-offsets.h>
+#include <asm/lowcore.h>
 
 #
 # do_reipl_asm

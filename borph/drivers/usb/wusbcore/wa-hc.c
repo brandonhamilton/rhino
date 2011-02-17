@@ -22,7 +22,6 @@
  *
  * FIXME: docs
  */
-#include <linux/slab.h>
 #include "wusbhc.h"
 #include "wa-hc.h"
 

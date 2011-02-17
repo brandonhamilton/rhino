@@ -24,6 +24,7 @@
 #include <mach/dma.h>
 #include <mach/audio.h>
 
+#include "pxa2xx-pcm.h"
 #include "pxa2xx-ac97.h"
 
 static void pxa2xx_ac97_warm_reset(struct snd_ac97 *ac97)
@@ -103,58 +104,59 @@ static int pxa2xx_ac97_resume(struct snd_soc_dai *dai)
 #define pxa2xx_ac97_resume	NULL
 #endif
 
-static int pxa2xx_ac97_probe(struct snd_soc_dai *dai)
+static int pxa2xx_ac97_probe(struct platform_device *pdev,
+			     struct snd_soc_dai *dai)
 {
 	return pxa2xx_ac97_hw_probe(to_platform_device(dai->dev));
 }
 
-static int pxa2xx_ac97_remove(struct snd_soc_dai *dai)
+static void pxa2xx_ac97_remove(struct platform_device *pdev,
+			       struct snd_soc_dai *dai)
 {
 	pxa2xx_ac97_hw_remove(to_platform_device(dai->dev));
-	return 0;
 }
 
 static int pxa2xx_ac97_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params,
-				 struct snd_soc_dai *cpu_dai)
+				 struct snd_soc_dai *dai)
 {
-	struct pxa2xx_pcm_dma_params *dma_data;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dma_data = &pxa2xx_ac97_pcm_stereo_out;
+		cpu_dai->dma_data = &pxa2xx_ac97_pcm_stereo_out;
 	else
-		dma_data = &pxa2xx_ac97_pcm_stereo_in;
-
-	snd_soc_dai_set_dma_data(cpu_dai, substream, dma_data);
+		cpu_dai->dma_data = &pxa2xx_ac97_pcm_stereo_in;
 
 	return 0;
 }
 
 static int pxa2xx_ac97_hw_aux_params(struct snd_pcm_substream *substream,
 				     struct snd_pcm_hw_params *params,
-				     struct snd_soc_dai *cpu_dai)
+				     struct snd_soc_dai *dai)
 {
-	struct pxa2xx_pcm_dma_params *dma_data;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dma_data = &pxa2xx_ac97_pcm_aux_mono_out;
+		cpu_dai->dma_data = &pxa2xx_ac97_pcm_aux_mono_out;
 	else
-		dma_data = &pxa2xx_ac97_pcm_aux_mono_in;
-
-	snd_soc_dai_set_dma_data(cpu_dai, substream, dma_data);
+		cpu_dai->dma_data = &pxa2xx_ac97_pcm_aux_mono_in;
 
 	return 0;
 }
 
 static int pxa2xx_ac97_hw_mic_params(struct snd_pcm_substream *substream,
 				     struct snd_pcm_hw_params *params,
-				     struct snd_soc_dai *cpu_dai)
+				     struct snd_soc_dai *dai)
 {
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
+
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		return -ENODEV;
 	else
-		snd_soc_dai_set_dma_data(cpu_dai, substream,
-					 &pxa2xx_ac97_pcm_mic_mono_in);
+		cpu_dai->dma_data = &pxa2xx_ac97_pcm_mic_mono_in;
 
 	return 0;
 }
@@ -179,9 +181,10 @@ static struct snd_soc_dai_ops pxa_ac97_mic_dai_ops = {
  * There is only 1 physical AC97 interface for pxa2xx, but it
  * has extra fifo's that can be used for aux DACs and ADCs.
  */
-static struct snd_soc_dai_driver pxa_ac97_dai[] = {
+struct snd_soc_dai pxa_ac97_dai[] = {
 {
 	.name = "pxa2xx-ac97",
+	.id = 0,
 	.ac97_control = 1,
 	.probe = pxa2xx_ac97_probe,
 	.remove = pxa2xx_ac97_remove,
@@ -203,6 +206,7 @@ static struct snd_soc_dai_driver pxa_ac97_dai[] = {
 },
 {
 	.name = "pxa2xx-ac97-aux",
+	.id = 1,
 	.ac97_control = 1,
 	.playback = {
 		.stream_name = "AC97 Aux Playback",
@@ -220,6 +224,7 @@ static struct snd_soc_dai_driver pxa_ac97_dai[] = {
 },
 {
 	.name = "pxa2xx-ac97-mic",
+	.id = 2,
 	.ac97_control = 1,
 	.capture = {
 		.stream_name = "AC97 Mic Capture",
@@ -231,26 +236,36 @@ static struct snd_soc_dai_driver pxa_ac97_dai[] = {
 },
 };
 
+EXPORT_SYMBOL_GPL(pxa_ac97_dai);
 EXPORT_SYMBOL_GPL(soc_ac97_ops);
 
-static __devinit int pxa2xx_ac97_dev_probe(struct platform_device *pdev)
+static int __devinit pxa2xx_ac97_dev_probe(struct platform_device *pdev)
 {
-	if (pdev->id != -1) {
+	int i;
+	pxa2xx_audio_ops_t *pdata = pdev->dev.platform_data;
+
+	if (pdev->id >= 0) {
 		dev_err(&pdev->dev, "PXA2xx has only one AC97 port.\n");
 		return -ENXIO;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(pxa_ac97_dai); i++) {
+		pxa_ac97_dai[i].dev = &pdev->dev;
+		if (pdata && pdata->codec_pdata[0])
+			pxa_ac97_dai[i].ac97_pdata = pdata->codec_pdata[0];
 	}
 
 	/* Punt most of the init to the SoC probe; we may need the machine
 	 * driver to do interesting things with the clocking to get us up
 	 * and running.
 	 */
-	return snd_soc_register_dais(&pdev->dev, pxa_ac97_dai,
-			ARRAY_SIZE(pxa_ac97_dai));
+	return snd_soc_register_dais(pxa_ac97_dai, ARRAY_SIZE(pxa_ac97_dai));
 }
 
 static int __devexit pxa2xx_ac97_dev_remove(struct platform_device *pdev)
 {
-	snd_soc_unregister_dais(&pdev->dev, ARRAY_SIZE(pxa_ac97_dai));
+	snd_soc_unregister_dais(pxa_ac97_dai, ARRAY_SIZE(pxa_ac97_dai));
+
 	return 0;
 }
 

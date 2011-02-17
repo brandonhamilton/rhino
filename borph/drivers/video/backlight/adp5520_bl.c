@@ -12,7 +12,6 @@
 #include <linux/fb.h>
 #include <linux/backlight.h>
 #include <linux/mfd/adp5520.h>
-#include <linux/slab.h>
 
 struct adp5520_bl {
 	struct device *master;
@@ -86,7 +85,7 @@ static int adp5520_bl_get_brightness(struct backlight_device *bl)
 	return error ? data->current_brightness : reg_val;
 }
 
-static const struct backlight_ops adp5520_bl_ops = {
+static struct backlight_ops adp5520_bl_ops = {
 	.update_status	= adp5520_bl_update_status,
 	.get_brightness	= adp5520_bl_get_brightness,
 };
@@ -279,7 +278,6 @@ static const struct attribute_group adp5520_bl_attr_group = {
 
 static int __devinit adp5520_bl_probe(struct platform_device *pdev)
 {
-	struct backlight_properties props;
 	struct backlight_device *bl;
 	struct adp5520_bl *data;
 	int ret = 0;
@@ -302,17 +300,17 @@ static int __devinit adp5520_bl_probe(struct platform_device *pdev)
 
 	mutex_init(&data->lock);
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.max_brightness = ADP5020_MAX_BRIGHTNESS;
-	bl = backlight_device_register(pdev->name, data->master, data,
-				       &adp5520_bl_ops, &props);
+	bl = backlight_device_register(pdev->name, data->master,
+			data, &adp5520_bl_ops);
 	if (IS_ERR(bl)) {
 		dev_err(&pdev->dev, "failed to register backlight\n");
 		kfree(data);
 		return PTR_ERR(bl);
 	}
 
-	bl->props.brightness = ADP5020_MAX_BRIGHTNESS;
+	bl->props.max_brightness =
+		bl->props.brightness = ADP5020_MAX_BRIGHTNESS;
+
 	if (data->pdata->en_ambl_sens)
 		ret = sysfs_create_group(&bl->dev.kobj,
 			&adp5520_bl_attr_group);

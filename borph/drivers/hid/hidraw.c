@@ -28,10 +28,10 @@
 #include <linux/poll.h>
 #include <linux/device.h>
 #include <linux/major.h>
-#include <linux/slab.h>
 #include <linux/hid.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 
 #include <linux/hidraw.h>
 
@@ -45,6 +45,7 @@ static ssize_t hidraw_read(struct file *file, char __user *buffer, size_t count,
 {
 	struct hidraw_list *list = file->private_data;
 	int ret = 0, len;
+	char *report;
 	DECLARE_WAITQUEUE(wait, current);
 
 	mutex_lock(&list->read_mutex);
@@ -82,6 +83,7 @@ static ssize_t hidraw_read(struct file *file, char __user *buffer, size_t count,
 		if (ret)
 			goto out;
 
+		report = list->buffer[list->tail].value;
 		len = list->buffer[list->tail].len > count ?
 			count : list->buffer[list->tail].len;
 
@@ -103,54 +105,38 @@ out:
 static ssize_t hidraw_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
 	unsigned int minor = iminor(file->f_path.dentry->d_inode);
-	struct hid_device *dev;
+	/* FIXME: What stops hidraw_table going NULL */
+	struct hid_device *dev = hidraw_table[minor]->hid;
 	__u8 *buf;
 	int ret = 0;
 
-	mutex_lock(&minors_lock);
-
-	if (!hidraw_table[minor]) {
-		ret = -ENODEV;
-		goto out;
-	}
-
-	dev = hidraw_table[minor]->hid;
-
-	if (!dev->hid_output_raw_report) {
-		ret = -ENODEV;
-		goto out;
-	}
+	if (!dev->hid_output_raw_report)
+		return -ENODEV;
 
 	if (count > HID_MAX_BUFFER_SIZE) {
 		printk(KERN_WARNING "hidraw: pid %d passed too large report\n",
 				task_pid_nr(current));
-		ret = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 	if (count < 2) {
 		printk(KERN_WARNING "hidraw: pid %d passed too short report\n",
 				task_pid_nr(current));
-		ret = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 	buf = kmalloc(count * sizeof(__u8), GFP_KERNEL);
-	if (!buf) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (!buf)
+		return -ENOMEM;
 
 	if (copy_from_user(buf, buffer, count)) {
 		ret = -EFAULT;
-		goto out_free;
+		goto out;
 	}
 
-	ret = dev->hid_output_raw_report(dev, buf, count, HID_OUTPUT_REPORT);
-out_free:
-	kfree(buf);
+	ret = dev->hid_output_raw_report(dev, buf, count);
 out:
-	mutex_unlock(&minors_lock);
+	kfree(buf);
 	return ret;
 }
 
@@ -178,8 +164,11 @@ static int hidraw_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 
+	lock_kernel();
 	mutex_lock(&minors_lock);
 	if (!hidraw_table[minor]) {
+		printk(KERN_EMERG "hidraw device with minor %d doesn't exist\n",
+				minor);
 		kfree(list);
 		err = -ENODEV;
 		goto out_unlock;
@@ -207,6 +196,7 @@ static int hidraw_open(struct inode *inode, struct file *file)
 
 out_unlock:
 	mutex_unlock(&minors_lock);
+	unlock_kernel();
 out:
 	return err;
 
@@ -217,12 +207,11 @@ static int hidraw_release(struct inode * inode, struct file * file)
 	unsigned int minor = iminor(inode);
 	struct hidraw *dev;
 	struct hidraw_list *list = file->private_data;
-	int ret;
 
-	mutex_lock(&minors_lock);
 	if (!hidraw_table[minor]) {
-		ret = -ENODEV;
-		goto unlock;
+		printk(KERN_EMERG "hidraw device with minor %d doesn't exist\n",
+				minor);
+		return -ENODEV;
 	}
 
 	list_del(&list->node);
@@ -236,12 +225,10 @@ static int hidraw_release(struct inode * inode, struct file * file)
 			kfree(list->hidraw);
 		}
 	}
-	kfree(list);
-	ret = 0;
-unlock:
-	mutex_unlock(&minors_lock);
 
-	return ret;
+	kfree(list);
+
+	return 0;
 }
 
 static long hidraw_ioctl(struct file *file, unsigned int cmd,
@@ -250,16 +237,11 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 	struct inode *inode = file->f_path.dentry->d_inode;
 	unsigned int minor = iminor(inode);
 	long ret = 0;
-	struct hidraw *dev;
+	/* FIXME: What stops hidraw_table going NULL */
+	struct hidraw *dev = hidraw_table[minor];
 	void __user *user_arg = (void __user*) arg;
 
-	mutex_lock(&minors_lock);
-	dev = hidraw_table[minor];
-	if (!dev) {
-		ret = -ENODEV;
-		goto out;
-	}
-
+	lock_kernel();
 	switch (cmd) {
 		case HIDIOCGRDESCSIZE:
 			if (put_user(dev->hid->rsize, (int __user *)arg))
@@ -328,12 +310,11 @@ static long hidraw_ioctl(struct file *file, unsigned int cmd,
 						-EFAULT : len;
 					break;
 				}
-		}
+                }
 
 		ret = -ENOTTY;
 	}
-out:
-	mutex_unlock(&minors_lock);
+	unlock_kernel();
 	return ret;
 }
 
@@ -345,7 +326,6 @@ static const struct file_operations hidraw_ops = {
 	.open =         hidraw_open,
 	.release =      hidraw_release,
 	.unlocked_ioctl = hidraw_ioctl,
-	.llseek =	noop_llseek,
 };
 
 void hidraw_report_event(struct hid_device *hid, u8 *data, int len)

@@ -10,7 +10,6 @@
  */
 #include <linux/platform_device.h>
 #include <linux/serial_8250.h>
-#include <linux/slab.h>
 
 #include <mach/regs-board-a9m9750dev.h>
 #include <mach/board.h>

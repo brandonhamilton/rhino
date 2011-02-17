@@ -137,8 +137,7 @@
 	li	r10,0;							   \
 	ld	r11,exception_marker@toc(r2);				   \
 	std	r10,RESULT(r1);		/* clear regs->result		*/ \
-	std	r11,STACK_FRAME_OVERHEAD-16(r1); /* mark the frame	*/ \
-	ACCOUNT_STOLEN_TIME
+	std	r11,STACK_FRAME_OVERHEAD-16(r1); /* mark the frame	*/
 
 /*
  * Exception vectors.

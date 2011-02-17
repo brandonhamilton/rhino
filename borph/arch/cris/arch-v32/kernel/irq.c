@@ -97,11 +97,7 @@ extern void breakh_BUG(void);
 /*
  * Build the IRQ handler stubs using macros from irq.h.
  */
-#ifdef CONFIG_CRIS_MACH_ARTPEC3
-BUILD_TIMER_IRQ(0x31, 0)
-#else
 BUILD_IRQ(0x31)
-#endif
 BUILD_IRQ(0x32)
 BUILD_IRQ(0x33)
 BUILD_IRQ(0x34)
@@ -127,11 +123,7 @@ BUILD_IRQ(0x47)
 BUILD_IRQ(0x48)
 BUILD_IRQ(0x49)
 BUILD_IRQ(0x4a)
-#ifdef CONFIG_ETRAXFS
-BUILD_TIMER_IRQ(0x4b, 0)
-#else
 BUILD_IRQ(0x4b)
-#endif
 BUILD_IRQ(0x4c)
 BUILD_IRQ(0x4d)
 BUILD_IRQ(0x4e)
@@ -207,20 +199,25 @@ block_irq(int irq, int cpu)
         unsigned long flags;
 
 	spin_lock_irqsave(&irq_lock, flags);
-	/* Remember, 1 let thru, 0 block. */
-	if (irq - FIRST_IRQ < 32) {
+	if (irq - FIRST_IRQ < 32)
 		intr_mask = REG_RD_INT_VECT(intr_vect, irq_regs[cpu],
 			rw_mask, 0);
-		intr_mask &= ~(1 << (irq - FIRST_IRQ));
-		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
-			0, intr_mask);
-	} else {
+	else
 		intr_mask = REG_RD_INT_VECT(intr_vect, irq_regs[cpu],
 			rw_mask, 1);
+
+	/* Remember; 1 let thru, 0 block. */
+	if (irq - FIRST_IRQ < 32)
+		intr_mask &= ~(1 << (irq - FIRST_IRQ));
+	else
 		intr_mask &= ~(1 << (irq - FIRST_IRQ - 32));
+
+	if (irq - FIRST_IRQ < 32)
+		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
+			0, intr_mask);
+	else
 		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
 			1, intr_mask);
-	}
         spin_unlock_irqrestore(&irq_lock, flags);
 }
 
@@ -231,20 +228,26 @@ unblock_irq(int irq, int cpu)
         unsigned long flags;
 
         spin_lock_irqsave(&irq_lock, flags);
-	/* Remember, 1 let thru, 0 block. */
-	if (irq - FIRST_IRQ < 32) {
+	if (irq - FIRST_IRQ < 32)
 		intr_mask = REG_RD_INT_VECT(intr_vect, irq_regs[cpu],
 			rw_mask, 0);
-		intr_mask |= (1 << (irq - FIRST_IRQ));
-		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
-			0, intr_mask);
-	} else {
+	else
 		intr_mask = REG_RD_INT_VECT(intr_vect, irq_regs[cpu],
 			rw_mask, 1);
+
+	/* Remember; 1 let thru, 0 block. */
+	if (irq - FIRST_IRQ < 32)
+		intr_mask |= (1 << (irq - FIRST_IRQ));
+	else
 		intr_mask |= (1 << (irq - FIRST_IRQ - 32));
+
+	if (irq - FIRST_IRQ < 32)
+		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
+			0, intr_mask);
+	else
 		REG_WR_INT_VECT(intr_vect, irq_regs[cpu], rw_mask,
 			1, intr_mask);
-	}
+
         spin_unlock_irqrestore(&irq_lock, flags);
 }
 
@@ -277,7 +280,8 @@ out:
 	return cpu;
 }
 
-void crisv32_mask_irq(int irq)
+void
+mask_irq(int irq)
 {
 	int cpu;
 
@@ -285,7 +289,8 @@ void crisv32_mask_irq(int irq)
 		block_irq(irq, cpu);
 }
 
-void crisv32_unmask_irq(int irq)
+void
+unmask_irq(int irq)
 {
 	unblock_irq(irq, irq_cpu(irq));
 }
@@ -293,23 +298,23 @@ void crisv32_unmask_irq(int irq)
 
 static unsigned int startup_crisv32_irq(unsigned int irq)
 {
-	crisv32_unmask_irq(irq);
+	unmask_irq(irq);
 	return 0;
 }
 
 static void shutdown_crisv32_irq(unsigned int irq)
 {
-	crisv32_mask_irq(irq);
+	mask_irq(irq);
 }
 
 static void enable_crisv32_irq(unsigned int irq)
 {
-	crisv32_unmask_irq(irq);
+	unmask_irq(irq);
 }
 
 static void disable_crisv32_irq(unsigned int irq)
 {
-	crisv32_mask_irq(irq);
+	mask_irq(irq);
 }
 
 static void ack_crisv32_irq(unsigned int irq)
@@ -331,7 +336,7 @@ int set_affinity_crisv32_irq(unsigned int irq, const struct cpumask *dest)
 }
 
 static struct irq_chip crisv32_irq_type = {
-	.name =        "CRISv32",
+	.typename =    "CRISv32",
 	.startup =     startup_crisv32_irq,
 	.shutdown =    shutdown_crisv32_irq,
 	.enable =      enable_crisv32_irq,

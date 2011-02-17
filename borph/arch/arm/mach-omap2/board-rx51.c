@@ -32,11 +32,12 @@
 
 #include "mux.h"
 #include "pm.h"
+#include "omap3-opp.h"
 
 #define RX51_GPIO_SLEEP_IND 162
 
+
 struct omap_sdrc_params *rx51_get_sdram_timings(void);
-extern void rx51_video_mem_init(void);
 
 static struct gpio_led gpio_leds[] = {
 	{
@@ -106,7 +107,10 @@ static void __init rx51_init_irq(void)
 	omap_board_config_size = ARRAY_SIZE(rx51_config);
 	omap3_pm_init_cpuidle(rx51_cpuidle_params);
 	sdrc_params = rx51_get_sdram_timings();
-	omap2_init_common_hw(sdrc_params, sdrc_params);
+	omap2_init_common_hw(sdrc_params, sdrc_params,
+			     omap3_mpu_rate_table,
+			     omap3_dsp_rate_table,
+			     omap3_l3_rate_table);
 	omap_init_irq();
 	omap_gpio_init();
 }
@@ -121,17 +125,11 @@ static struct omap_board_mux board_mux[] __initdata = {
 #define board_mux	NULL
 #endif
 
-static struct omap_musb_board_data musb_board_data = {
-	.interface_type		= MUSB_INTERFACE_ULPI,
-	.mode			= MUSB_PERIPHERAL,
-	.power			= 0,
-};
-
 static void __init rx51_init(void)
 {
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	omap_serial_init();
-	usb_musb_init(&musb_board_data);
+	usb_musb_init();
 	rx51_peripherals_init();
 
 	/* Ensure SDRC pins are mux'd for self-refresh */
@@ -143,16 +141,16 @@ static void __init rx51_init(void)
 
 static void __init rx51_map_io(void)
 {
-	omap2_set_globals_3xxx();
-	rx51_video_mem_init();
-	omap34xx_map_common_io();
+	omap2_set_globals_343x();
+	omap2_map_common_io();
 }
 
 MACHINE_START(NOKIA_RX51, "Nokia RX-51 board")
 	/* Maintainer: Lauri Leukkunen <lauri.leukkunen@nokia.com> */
+	.phys_io	= 0x48000000,
+	.io_pg_offst	= ((0xfa000000) >> 18) & 0xfffc,
 	.boot_params	= 0x80000100,
 	.map_io		= rx51_map_io,
-	.reserve	= omap_reserve,
 	.init_irq	= rx51_init_irq,
 	.init_machine	= rx51_init,
 	.timer		= &omap_timer,

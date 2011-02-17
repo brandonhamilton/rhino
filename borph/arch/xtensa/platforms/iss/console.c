@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <linux/console.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/major.h>
 #include <linux/param.h>

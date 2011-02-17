@@ -143,60 +143,50 @@ static ssize_t udf_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	return retval;
 }
 
-long udf_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+int udf_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
+	      unsigned long arg)
 {
-	struct inode *inode = filp->f_dentry->d_inode;
 	long old_block, new_block;
 	int result = -EINVAL;
 
-	lock_kernel();
-
 	if (file_permission(filp, MAY_READ) != 0) {
-		udf_debug("no permission to access inode %lu\n", inode->i_ino);
-		result = -EPERM;
-		goto out;
+		udf_debug("no permission to access inode %lu\n",
+			  inode->i_ino);
+		return -EPERM;
 	}
 
 	if (!arg) {
 		udf_debug("invalid argument to udf_ioctl\n");
-		result = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 	switch (cmd) {
 	case UDF_GETVOLIDENT:
 		if (copy_to_user((char __user *)arg,
 				 UDF_SB(inode->i_sb)->s_volume_ident, 32))
-			result = -EFAULT;
+			return -EFAULT;
 		else
-			result = 0;
-		goto out;
+			return 0;
 	case UDF_RELOCATE_BLOCKS:
-		if (!capable(CAP_SYS_ADMIN)) {
-			result = -EACCES;
-			goto out;
-		}
-		if (get_user(old_block, (long __user *)arg)) {
-			result = -EFAULT;
-			goto out;
-		}
+		if (!capable(CAP_SYS_ADMIN))
+			return -EACCES;
+		if (get_user(old_block, (long __user *)arg))
+			return -EFAULT;
 		result = udf_relocate_blocks(inode->i_sb,
 						old_block, &new_block);
 		if (result == 0)
 			result = put_user(new_block, (long __user *)arg);
-		goto out;
+		return result;
 	case UDF_GETEASIZE:
 		result = put_user(UDF_I(inode)->i_lenEAttr, (int __user *)arg);
-		goto out;
+		break;
 	case UDF_GETEABLOCK:
 		result = copy_to_user((char __user *)arg,
 				      UDF_I(inode)->i_ext.i_data,
 				      UDF_I(inode)->i_lenEAttr) ? -EFAULT : 0;
-		goto out;
+		break;
 	}
 
-out:
-	unlock_kernel();
 	return result;
 }
 
@@ -216,39 +206,17 @@ static int udf_release_file(struct inode *inode, struct file *filp)
 const struct file_operations udf_file_operations = {
 	.read			= do_sync_read,
 	.aio_read		= generic_file_aio_read,
-	.unlocked_ioctl		= udf_ioctl,
+	.ioctl			= udf_ioctl,
 	.open			= generic_file_open,
 	.mmap			= generic_file_mmap,
 	.write			= do_sync_write,
 	.aio_write		= udf_file_aio_write,
 	.release		= udf_release_file,
-	.fsync			= generic_file_fsync,
+	.fsync			= simple_fsync,
 	.splice_read		= generic_file_splice_read,
 	.llseek			= generic_file_llseek,
 };
 
-static int udf_setattr(struct dentry *dentry, struct iattr *attr)
-{
-	struct inode *inode = dentry->d_inode;
-	int error;
-
-	error = inode_change_ok(inode, attr);
-	if (error)
-		return error;
-
-	if ((attr->ia_valid & ATTR_SIZE) &&
-	    attr->ia_size != i_size_read(inode)) {
-		error = vmtruncate(inode, attr->ia_size);
-		if (error)
-			return error;
-	}
-
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
-	return 0;
-}
-
 const struct inode_operations udf_file_inode_operations = {
-	.setattr		= udf_setattr,
-	.truncate		= udf_truncate,
+	.truncate = udf_truncate,
 };

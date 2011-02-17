@@ -12,7 +12,6 @@
 #include <linux/platform_device.h>
 #include <linux/input.h>
 #include <linux/mfd/adp5520.h>
-#include <linux/slab.h>
 
 struct adp5520_keys {
 	struct input_dev *input;

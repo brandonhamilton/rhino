@@ -209,7 +209,7 @@ static int setup_new_group_blocks(struct super_block *sb,
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
-	mutex_lock(&sbi->s_resize_lock);
+	lock_super(sb);
 	if (input->group != sbi->s_groups_count) {
 		err = -EBUSY;
 		goto exit_journal;
@@ -324,7 +324,7 @@ exit_bh:
 	brelse(bh);
 
 exit_journal:
-	mutex_unlock(&sbi->s_resize_lock);
+	unlock_super(sb);
 	if ((err2 = ext3_journal_stop(handle)) && !err)
 		err = err2;
 
@@ -662,12 +662,11 @@ exit_free:
  * important part is that the new block and inode counts are in the backup
  * superblocks, and the location of the new group metadata in the GDT backups.
  *
- * We do not need take the s_resize_lock for this, because these
- * blocks are not otherwise touched by the filesystem code when it is
- * mounted.  We don't need to worry about last changing from
- * sbi->s_groups_count, because the worst that can happen is that we
- * do not copy the full number of backups at this time.  The resize
- * which changed s_groups_count will backup again.
+ * We do not need lock_super() for this, because these blocks are not
+ * otherwise touched by the filesystem code when it is mounted.  We don't
+ * need to worry about last changing from sbi->s_groups_count, because the
+ * worst that can happen is that we do not copy the full number of backups
+ * at this time.  The resize which changed s_groups_count will backup again.
  */
 static void update_backups(struct super_block *sb,
 			   int blk_off, char *data, int size)
@@ -826,7 +825,7 @@ int ext3_group_add(struct super_block *sb, struct ext3_new_group_data *input)
 		goto exit_put;
 	}
 
-	mutex_lock(&sbi->s_resize_lock);
+	lock_super(sb);
 	if (input->group != sbi->s_groups_count) {
 		ext3_warning(sb, __func__,
 			     "multiple resizers run on filesystem!");
@@ -857,7 +856,7 @@ int ext3_group_add(struct super_block *sb, struct ext3_new_group_data *input)
 	/*
 	 * OK, now we've set up the new group.  Time to make it active.
 	 *
-	 * We do not lock all allocations via s_resize_lock
+	 * Current kernels don't lock all allocations via lock_super(),
 	 * so we have to be safe wrt. concurrent accesses the group
 	 * data.  So we need to be careful to set all of the relevant
 	 * group descriptor data etc. *before* we enable the group.
@@ -901,12 +900,12 @@ int ext3_group_add(struct super_block *sb, struct ext3_new_group_data *input)
 	 *
 	 * The precise rules we use are:
 	 *
-	 * * Writers of s_groups_count *must* hold s_resize_lock
+	 * * Writers of s_groups_count *must* hold lock_super
 	 * AND
 	 * * Writers must perform a smp_wmb() after updating all dependent
 	 *   data and before modifying the groups count
 	 *
-	 * * Readers must hold s_resize_lock over the access
+	 * * Readers must hold lock_super() over the access
 	 * OR
 	 * * Readers must perform an smp_rmb() after reading the groups count
 	 *   and before reading any dependent data.
@@ -937,7 +936,7 @@ int ext3_group_add(struct super_block *sb, struct ext3_new_group_data *input)
 	ext3_journal_dirty_metadata(handle, sbi->s_sbh);
 
 exit_journal:
-	mutex_unlock(&sbi->s_resize_lock);
+	unlock_super(sb);
 	if ((err2 = ext3_journal_stop(handle)) && !err)
 		err = err2;
 	if (!err) {
@@ -964,6 +963,7 @@ int ext3_group_extend(struct super_block *sb, struct ext3_super_block *es,
 		      ext3_fsblk_t n_blocks_count)
 {
 	ext3_fsblk_t o_blocks_count;
+	unsigned long o_groups_count;
 	ext3_grpblk_t last;
 	ext3_grpblk_t add;
 	struct buffer_head * bh;
@@ -973,12 +973,12 @@ int ext3_group_extend(struct super_block *sb, struct ext3_super_block *es,
 
 	/* We don't need to worry about locking wrt other resizers just
 	 * yet: we're going to revalidate es->s_blocks_count after
-	 * taking the s_resize_lock below. */
+	 * taking lock_super() below. */
 	o_blocks_count = le32_to_cpu(es->s_blocks_count);
+	o_groups_count = EXT3_SB(sb)->s_groups_count;
 
 	if (test_opt(sb, DEBUG))
-		printk(KERN_DEBUG "EXT3-fs: extending last group from "E3FSBLK
-		       " upto "E3FSBLK" blocks\n",
+		printk(KERN_DEBUG "EXT3-fs: extending last group from "E3FSBLK" uto "E3FSBLK" blocks\n",
 		       o_blocks_count, n_blocks_count);
 
 	if (n_blocks_count == 0 || n_blocks_count == o_blocks_count)
@@ -986,7 +986,7 @@ int ext3_group_extend(struct super_block *sb, struct ext3_super_block *es,
 
 	if (n_blocks_count > (sector_t)(~0ULL) >> (sb->s_blocksize_bits - 9)) {
 		printk(KERN_ERR "EXT3-fs: filesystem on %s:"
-			" too large to resize to "E3FSBLK" blocks safely\n",
+			" too large to resize to %lu blocks safely\n",
 			sb->s_id, n_blocks_count);
 		if (sizeof(sector_t) < 8)
 			ext3_warning(sb, __func__,
@@ -1045,11 +1045,11 @@ int ext3_group_extend(struct super_block *sb, struct ext3_super_block *es,
 		goto exit_put;
 	}
 
-	mutex_lock(&EXT3_SB(sb)->s_resize_lock);
+	lock_super(sb);
 	if (o_blocks_count != le32_to_cpu(es->s_blocks_count)) {
 		ext3_warning(sb, __func__,
 			     "multiple resizers run on filesystem!");
-		mutex_unlock(&EXT3_SB(sb)->s_resize_lock);
+		unlock_super(sb);
 		ext3_journal_stop(handle);
 		err = -EBUSY;
 		goto exit_put;
@@ -1059,18 +1059,18 @@ int ext3_group_extend(struct super_block *sb, struct ext3_super_block *es,
 						 EXT3_SB(sb)->s_sbh))) {
 		ext3_warning(sb, __func__,
 			     "error %d on journal write access", err);
-		mutex_unlock(&EXT3_SB(sb)->s_resize_lock);
+		unlock_super(sb);
 		ext3_journal_stop(handle);
 		goto exit_put;
 	}
 	es->s_blocks_count = cpu_to_le32(o_blocks_count + add);
 	ext3_journal_dirty_metadata(handle, EXT3_SB(sb)->s_sbh);
-	mutex_unlock(&EXT3_SB(sb)->s_resize_lock);
-	ext3_debug("freeing blocks "E3FSBLK" through "E3FSBLK"\n",
-		   o_blocks_count, o_blocks_count + add);
+	unlock_super(sb);
+	ext3_debug("freeing blocks %lu through "E3FSBLK"\n", o_blocks_count,
+		   o_blocks_count + add);
 	ext3_free_blocks_sb(handle, sb, o_blocks_count, add, &freed_blocks);
-	ext3_debug("freed blocks "E3FSBLK" through "E3FSBLK"\n",
-		   o_blocks_count, o_blocks_count + add);
+	ext3_debug("freed blocks "E3FSBLK" through "E3FSBLK"\n", o_blocks_count,
+		   o_blocks_count + add);
 	if ((err = ext3_journal_stop(handle)))
 		goto exit_put;
 	if (test_opt(sb, DEBUG))

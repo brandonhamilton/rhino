@@ -15,22 +15,15 @@
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/stat.h>
-#include <linux/slab.h>
 #include <linux/param.h>
 #include <linux/time.h>
-#include <linux/compat.h>
-#include <linux/mutex.h>
-
 #include "autofs_i.h"
 
 static int autofs4_dir_symlink(struct inode *,struct dentry *,const char *);
 static int autofs4_dir_unlink(struct inode *,struct dentry *);
 static int autofs4_dir_rmdir(struct inode *,struct dentry *);
 static int autofs4_dir_mkdir(struct inode *,struct dentry *,int);
-static long autofs4_root_ioctl(struct file *,unsigned int,unsigned long);
-#ifdef CONFIG_COMPAT
-static long autofs4_root_compat_ioctl(struct file *,unsigned int,unsigned long);
-#endif
+static int autofs4_root_ioctl(struct inode *, struct file *,unsigned int,unsigned long);
 static int autofs4_dir_open(struct inode *inode, struct file *file);
 static struct dentry *autofs4_lookup(struct inode *,struct dentry *, struct nameidata *);
 static void *autofs4_follow_link(struct dentry *, struct nameidata *);
@@ -44,10 +37,7 @@ const struct file_operations autofs4_root_operations = {
 	.read		= generic_read_dir,
 	.readdir	= dcache_readdir,
 	.llseek		= dcache_dir_lseek,
-	.unlocked_ioctl	= autofs4_root_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= autofs4_root_compat_ioctl,
-#endif
+	.ioctl		= autofs4_root_ioctl,
 };
 
 const struct file_operations autofs4_dir_operations = {
@@ -82,46 +72,6 @@ const struct inode_operations autofs4_dir_inode_operations = {
 	.rmdir		= autofs4_dir_rmdir,
 };
 
-static void autofs4_add_active(struct dentry *dentry)
-{
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct autofs_info *ino = autofs4_dentry_ino(dentry);
-	if (ino) {
-		spin_lock(&sbi->lookup_lock);
-		if (!ino->active_count) {
-			if (list_empty(&ino->active))
-				list_add(&ino->active, &sbi->active_list);
-		}
-		ino->active_count++;
-		spin_unlock(&sbi->lookup_lock);
-	}
-	return;
-}
-
-static void autofs4_del_active(struct dentry *dentry)
-{
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct autofs_info *ino = autofs4_dentry_ino(dentry);
-	if (ino) {
-		spin_lock(&sbi->lookup_lock);
-		ino->active_count--;
-		if (!ino->active_count) {
-			if (!list_empty(&ino->active))
-				list_del_init(&ino->active);
-		}
-		spin_unlock(&sbi->lookup_lock);
-	}
-	return;
-}
-
-static unsigned int autofs4_need_mount(unsigned int flags)
-{
-	unsigned int res = 0;
-	if (flags & (TRIGGER_FLAGS | TRIGGER_INTENTS))
-		res = 1;
-	return res;
-}
-
 static int autofs4_dir_open(struct inode *inode, struct file *file)
 {
 	struct dentry *dentry = file->f_path.dentry;
@@ -143,7 +93,7 @@ static int autofs4_dir_open(struct inode *inode, struct file *file)
 	 * it.
 	 */
 	spin_lock(&dcache_lock);
-	if (!d_mountpoint(dentry) && list_empty(&dentry->d_subdirs)) {
+	if (!d_mountpoint(dentry) && __simple_empty(dentry)) {
 		spin_unlock(&dcache_lock);
 		return -ENOENT;
 	}
@@ -176,41 +126,43 @@ static int try_to_fill_dentry(struct dentry *dentry, int flags)
 
 		/* Turn this into a real negative dentry? */
 		if (status == -ENOENT) {
-			spin_lock(&sbi->fs_lock);
-			ino->flags &= ~AUTOFS_INF_PENDING;
-			spin_unlock(&sbi->fs_lock);
+			spin_lock(&dentry->d_lock);
+			dentry->d_flags &= ~DCACHE_AUTOFS_PENDING;
+			spin_unlock(&dentry->d_lock);
 			return status;
 		} else if (status) {
 			/* Return a negative dentry, but leave it "pending" */
 			return status;
 		}
 	/* Trigger mount for path component or follow link */
-	} else if (ino->flags & AUTOFS_INF_PENDING ||
-			autofs4_need_mount(flags)) {
+	} else if (dentry->d_flags & DCACHE_AUTOFS_PENDING ||
+			flags & (TRIGGER_FLAGS | TRIGGER_INTENTS) ||
+			current->link_count) {
 		DPRINTK("waiting for mount name=%.*s",
 			dentry->d_name.len, dentry->d_name.name);
 
-		spin_lock(&sbi->fs_lock);
-		ino->flags |= AUTOFS_INF_PENDING;
-		spin_unlock(&sbi->fs_lock);
+		spin_lock(&dentry->d_lock);
+		dentry->d_flags |= DCACHE_AUTOFS_PENDING;
+		spin_unlock(&dentry->d_lock);
 		status = autofs4_wait(sbi, dentry, NFY_MOUNT);
 
 		DPRINTK("mount done status=%d", status);
 
 		if (status) {
-			spin_lock(&sbi->fs_lock);
-			ino->flags &= ~AUTOFS_INF_PENDING;
-			spin_unlock(&sbi->fs_lock);
+			spin_lock(&dentry->d_lock);
+			dentry->d_flags &= ~DCACHE_AUTOFS_PENDING;
+			spin_unlock(&dentry->d_lock);
 			return status;
 		}
 	}
 
 	/* Initialize expiry counter after successful mount */
-	ino->last_used = jiffies;
+	if (ino)
+		ino->last_used = jiffies;
 
-	spin_lock(&sbi->fs_lock);
-	ino->flags &= ~AUTOFS_INF_PENDING;
-	spin_unlock(&sbi->fs_lock);
+	spin_lock(&dentry->d_lock);
+	dentry->d_flags &= ~DCACHE_AUTOFS_PENDING;
+	spin_unlock(&dentry->d_lock);
 
 	return 0;
 }
@@ -250,33 +202,27 @@ static void *autofs4_follow_link(struct dentry *dentry, struct nameidata *nd)
 	autofs4_expire_wait(dentry);
 
 	/* We trigger a mount for almost all flags */
-	lookup_type = autofs4_need_mount(nd->flags);
-	spin_lock(&sbi->fs_lock);
-	spin_lock(&dcache_lock);
-	if (!(lookup_type || ino->flags & AUTOFS_INF_PENDING)) {
-		spin_unlock(&dcache_lock);
-		spin_unlock(&sbi->fs_lock);
+	lookup_type = nd->flags & (TRIGGER_FLAGS | TRIGGER_INTENTS);
+	if (!(lookup_type || dentry->d_flags & DCACHE_AUTOFS_PENDING))
 		goto follow;
-	}
 
 	/*
 	 * If the dentry contains directories then it is an autofs
 	 * multi-mount with no root mount offset. So don't try to
 	 * mount it again.
 	 */
-	if (ino->flags & AUTOFS_INF_PENDING ||
-	    (!d_mountpoint(dentry) && list_empty(&dentry->d_subdirs))) {
+	spin_lock(&dcache_lock);
+	if (dentry->d_flags & DCACHE_AUTOFS_PENDING ||
+	    (!d_mountpoint(dentry) && __simple_empty(dentry))) {
 		spin_unlock(&dcache_lock);
-		spin_unlock(&sbi->fs_lock);
 
-		status = try_to_fill_dentry(dentry, nd->flags);
+		status = try_to_fill_dentry(dentry, 0);
 		if (status)
 			goto out_error;
 
 		goto follow;
 	}
 	spin_unlock(&dcache_lock);
-	spin_unlock(&sbi->fs_lock);
 follow:
 	/*
 	 * If there is no root mount it must be an autofs
@@ -348,7 +294,8 @@ static int autofs4_revalidate(struct dentry *dentry, struct nameidata *nd)
 	/* Check for a non-mountpoint directory with no contents */
 	spin_lock(&dcache_lock);
 	if (S_ISDIR(dentry->d_inode->i_mode) &&
-	    !d_mountpoint(dentry) && list_empty(&dentry->d_subdirs)) {
+	    !d_mountpoint(dentry) && 
+	    __simple_empty(dentry)) {
 		DPRINTK("dentry=%p %.*s, emptydir",
 			 dentry, dentry->d_name.len, dentry->d_name.name);
 		spin_unlock(&dcache_lock);
@@ -412,11 +359,8 @@ static const struct dentry_operations autofs4_dentry_operations = {
 	.d_release	= autofs4_dentry_release,
 };
 
-static struct dentry *autofs4_lookup_active(struct dentry *dentry)
+static struct dentry *autofs4_lookup_active(struct autofs_sb_info *sbi, struct dentry *parent, struct qstr *name)
 {
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct dentry *parent = dentry->d_parent;
-	struct qstr *name = &dentry->d_name;
 	unsigned int len = name->len;
 	unsigned int hash = name->hash;
 	const unsigned char *str = name->name;
@@ -427,23 +371,23 @@ static struct dentry *autofs4_lookup_active(struct dentry *dentry)
 	head = &sbi->active_list;
 	list_for_each(p, head) {
 		struct autofs_info *ino;
-		struct dentry *active;
+		struct dentry *dentry;
 		struct qstr *qstr;
 
 		ino = list_entry(p, struct autofs_info, active);
-		active = ino->dentry;
+		dentry = ino->dentry;
 
-		spin_lock(&active->d_lock);
+		spin_lock(&dentry->d_lock);
 
 		/* Already gone? */
-		if (atomic_read(&active->d_count) == 0)
+		if (atomic_read(&dentry->d_count) == 0)
 			goto next;
 
-		qstr = &active->d_name;
+		qstr = &dentry->d_name;
 
-		if (active->d_name.hash != hash)
+		if (dentry->d_name.hash != hash)
 			goto next;
-		if (active->d_parent != parent)
+		if (dentry->d_parent != parent)
 			goto next;
 
 		if (qstr->len != len)
@@ -451,15 +395,15 @@ static struct dentry *autofs4_lookup_active(struct dentry *dentry)
 		if (memcmp(qstr->name, str, len))
 			goto next;
 
-		if (d_unhashed(active)) {
-			dget(active);
-			spin_unlock(&active->d_lock);
+		if (d_unhashed(dentry)) {
+			dget(dentry);
+			spin_unlock(&dentry->d_lock);
 			spin_unlock(&sbi->lookup_lock);
 			spin_unlock(&dcache_lock);
-			return active;
+			return dentry;
 		}
 next:
-		spin_unlock(&active->d_lock);
+		spin_unlock(&dentry->d_lock);
 	}
 	spin_unlock(&sbi->lookup_lock);
 	spin_unlock(&dcache_lock);
@@ -467,11 +411,8 @@ next:
 	return NULL;
 }
 
-static struct dentry *autofs4_lookup_expiring(struct dentry *dentry)
+static struct dentry *autofs4_lookup_expiring(struct autofs_sb_info *sbi, struct dentry *parent, struct qstr *name)
 {
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct dentry *parent = dentry->d_parent;
-	struct qstr *name = &dentry->d_name;
 	unsigned int len = name->len;
 	unsigned int hash = name->hash;
 	const unsigned char *str = name->name;
@@ -482,23 +423,23 @@ static struct dentry *autofs4_lookup_expiring(struct dentry *dentry)
 	head = &sbi->expiring_list;
 	list_for_each(p, head) {
 		struct autofs_info *ino;
-		struct dentry *expiring;
+		struct dentry *dentry;
 		struct qstr *qstr;
 
 		ino = list_entry(p, struct autofs_info, expiring);
-		expiring = ino->dentry;
+		dentry = ino->dentry;
 
-		spin_lock(&expiring->d_lock);
+		spin_lock(&dentry->d_lock);
 
 		/* Bad luck, we've already been dentry_iput */
-		if (!expiring->d_inode)
+		if (!dentry->d_inode)
 			goto next;
 
-		qstr = &expiring->d_name;
+		qstr = &dentry->d_name;
 
-		if (expiring->d_name.hash != hash)
+		if (dentry->d_name.hash != hash)
 			goto next;
-		if (expiring->d_parent != parent)
+		if (dentry->d_parent != parent)
 			goto next;
 
 		if (qstr->len != len)
@@ -506,15 +447,15 @@ static struct dentry *autofs4_lookup_expiring(struct dentry *dentry)
 		if (memcmp(qstr->name, str, len))
 			goto next;
 
-		if (d_unhashed(expiring)) {
-			dget(expiring);
-			spin_unlock(&expiring->d_lock);
+		if (d_unhashed(dentry)) {
+			dget(dentry);
+			spin_unlock(&dentry->d_lock);
 			spin_unlock(&sbi->lookup_lock);
 			spin_unlock(&dcache_lock);
-			return expiring;
+			return dentry;
 		}
 next:
-		spin_unlock(&expiring->d_lock);
+		spin_unlock(&dentry->d_lock);
 	}
 	spin_unlock(&sbi->lookup_lock);
 	spin_unlock(&dcache_lock);
@@ -527,7 +468,7 @@ static struct dentry *autofs4_lookup(struct inode *dir, struct dentry *dentry, s
 {
 	struct autofs_sb_info *sbi;
 	struct autofs_info *ino;
-	struct dentry *expiring, *active;
+	struct dentry *expiring, *unhashed;
 	int oz_mode;
 
 	DPRINTK("name = %.*s",
@@ -543,11 +484,10 @@ static struct dentry *autofs4_lookup(struct inode *dir, struct dentry *dentry, s
 	DPRINTK("pid = %u, pgrp = %u, catatonic = %d, oz_mode = %d",
 		 current->pid, task_pgrp_nr(current), sbi->catatonic, oz_mode);
 
-	active = autofs4_lookup_active(dentry);
-	if (active) {
-		dentry = active;
-		ino = autofs4_dentry_ino(dentry);
-	} else {
+	unhashed = autofs4_lookup_active(sbi, dentry->d_parent, &dentry->d_name);
+	if (unhashed)
+		dentry = unhashed;
+	else {
 		/*
 		 * Mark the dentry incomplete but don't hash it. We do this
 		 * to serialize our inode creation operations (symlink and
@@ -573,28 +513,36 @@ static struct dentry *autofs4_lookup(struct inode *dir, struct dentry *dentry, s
 		dentry->d_fsdata = ino;
 		ino->dentry = dentry;
 
-		autofs4_add_active(dentry);
+		spin_lock(&sbi->lookup_lock);
+		list_add(&ino->active, &sbi->active_list);
+		spin_unlock(&sbi->lookup_lock);
 
 		d_instantiate(dentry, NULL);
 	}
 
 	if (!oz_mode) {
 		mutex_unlock(&dir->i_mutex);
-		expiring = autofs4_lookup_expiring(dentry);
+		expiring = autofs4_lookup_expiring(sbi,
+						   dentry->d_parent,
+						   &dentry->d_name);
 		if (expiring) {
 			/*
 			 * If we are racing with expire the request might not
 			 * be quite complete but the directory has been removed
 			 * so it must have been successful, so just wait for it.
 			 */
+			ino = autofs4_dentry_ino(expiring);
 			autofs4_expire_wait(expiring);
-			autofs4_del_expiring(expiring);
+			spin_lock(&sbi->lookup_lock);
+			if (!list_empty(&ino->expiring))
+				list_del_init(&ino->expiring);
+			spin_unlock(&sbi->lookup_lock);
 			dput(expiring);
 		}
 
-		spin_lock(&sbi->fs_lock);
-		ino->flags |= AUTOFS_INF_PENDING;
-		spin_unlock(&sbi->fs_lock);
+		spin_lock(&dentry->d_lock);
+		dentry->d_flags |= DCACHE_AUTOFS_PENDING;
+		spin_unlock(&dentry->d_lock);
 		if (dentry->d_op && dentry->d_op->d_revalidate)
 			(dentry->d_op->d_revalidate)(dentry, nd);
 		mutex_lock(&dir->i_mutex);
@@ -604,22 +552,22 @@ static struct dentry *autofs4_lookup(struct inode *dir, struct dentry *dentry, s
 	 * If we are still pending, check if we had to handle
 	 * a signal. If so we can force a restart..
 	 */
-	if (ino->flags & AUTOFS_INF_PENDING) {
+	if (dentry->d_flags & DCACHE_AUTOFS_PENDING) {
 		/* See if we were interrupted */
 		if (signal_pending(current)) {
 			sigset_t *sigset = &current->pending.signal;
 			if (sigismember (sigset, SIGKILL) ||
 			    sigismember (sigset, SIGQUIT) ||
 			    sigismember (sigset, SIGINT)) {
-			    if (active)
-				dput(active);
+			    if (unhashed)
+				dput(unhashed);
 			    return ERR_PTR(-ERESTARTNOINTR);
 			}
 		}
 		if (!oz_mode) {
-			spin_lock(&sbi->fs_lock);
-			ino->flags &= ~AUTOFS_INF_PENDING;
-			spin_unlock(&sbi->fs_lock);
+			spin_lock(&dentry->d_lock);
+			dentry->d_flags &= ~DCACHE_AUTOFS_PENDING;
+			spin_unlock(&dentry->d_lock);
 		}
 	}
 
@@ -644,14 +592,14 @@ static struct dentry *autofs4_lookup(struct inode *dir, struct dentry *dentry, s
 		else
 			dentry = ERR_PTR(-ENOENT);
 
-		if (active)
-			dput(active);
+		if (unhashed)
+			dput(unhashed);
 
 		return dentry;
 	}
 
-	if (active)
-		return active;
+	if (unhashed)
+		return unhashed;
 
 	return NULL;
 }
@@ -676,7 +624,10 @@ static int autofs4_dir_symlink(struct inode *dir,
 	if (!ino)
 		return -ENOMEM;
 
-	autofs4_del_active(dentry);
+	spin_lock(&sbi->lookup_lock);
+	if (!list_empty(&ino->active))
+		list_del_init(&ino->active);
+	spin_unlock(&sbi->lookup_lock);
 
 	ino->size = strlen(symname);
 	cp = kmalloc(ino->size + 1, GFP_KERNEL);
@@ -754,7 +705,10 @@ static int autofs4_dir_unlink(struct inode *dir, struct dentry *dentry)
 	dir->i_mtime = CURRENT_TIME;
 
 	spin_lock(&dcache_lock);
-	autofs4_add_expiring(dentry);
+	spin_lock(&sbi->lookup_lock);
+	if (list_empty(&ino->expiring))
+		list_add(&ino->expiring, &sbi->expiring_list);
+	spin_unlock(&sbi->lookup_lock);
 	spin_lock(&dentry->d_lock);
 	__d_drop(dentry);
 	spin_unlock(&dentry->d_lock);
@@ -780,7 +734,10 @@ static int autofs4_dir_rmdir(struct inode *dir, struct dentry *dentry)
 		spin_unlock(&dcache_lock);
 		return -ENOTEMPTY;
 	}
-	autofs4_add_expiring(dentry);
+	spin_lock(&sbi->lookup_lock);
+	if (list_empty(&ino->expiring))
+		list_add(&ino->expiring, &sbi->expiring_list);
+	spin_unlock(&sbi->lookup_lock);
 	spin_lock(&dentry->d_lock);
 	__d_drop(dentry);
 	spin_unlock(&dentry->d_lock);
@@ -818,7 +775,10 @@ static int autofs4_dir_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	if (!ino)
 		return -ENOMEM;
 
-	autofs4_del_active(dentry);
+	spin_lock(&sbi->lookup_lock);
+	if (!list_empty(&ino->active))
+		list_del_init(&ino->active);
+	spin_unlock(&sbi->lookup_lock);
 
 	inode = autofs4_get_inode(dir->i_sb, ino);
 	if (!inode) {
@@ -847,26 +807,6 @@ static int autofs4_dir_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 }
 
 /* Get/set timeout ioctl() operation */
-#ifdef CONFIG_COMPAT
-static inline int autofs4_compat_get_set_timeout(struct autofs_sb_info *sbi,
-					 compat_ulong_t __user *p)
-{
-	int rv;
-	unsigned long ntimeout;
-
-	if ((rv = get_user(ntimeout, p)) ||
-	     (rv = put_user(sbi->exp_timeout/HZ, p)))
-		return rv;
-
-	if (ntimeout > UINT_MAX/HZ)
-		sbi->exp_timeout = 0;
-	else
-		sbi->exp_timeout = ntimeout * HZ;
-
-	return 0;
-}
-#endif
-
 static inline int autofs4_get_set_timeout(struct autofs_sb_info *sbi,
 					 unsigned long __user *p)
 {
@@ -930,8 +870,8 @@ int is_autofs4_dentry(struct dentry *dentry)
  * ioctl()'s on the root directory is the chief method for the daemon to
  * generate kernel reactions
  */
-static int autofs4_root_ioctl_unlocked(struct inode *inode, struct file *filp,
-				       unsigned int cmd, unsigned long arg)
+static int autofs4_root_ioctl(struct inode *inode, struct file *filp,
+			     unsigned int cmd, unsigned long arg)
 {
 	struct autofs_sb_info *sbi = autofs4_sbi(inode->i_sb);
 	void __user *p = (void __user *)arg;
@@ -960,10 +900,6 @@ static int autofs4_root_ioctl_unlocked(struct inode *inode, struct file *filp,
 		return autofs4_get_protosubver(sbi, p);
 	case AUTOFS_IOC_SETTIMEOUT:
 		return autofs4_get_set_timeout(sbi, p);
-#ifdef CONFIG_COMPAT
-	case AUTOFS_IOC_SETTIMEOUT32:
-		return autofs4_compat_get_set_timeout(sbi, p);
-#endif
 
 	case AUTOFS_IOC_ASKUMOUNT:
 		return autofs4_ask_umount(filp->f_path.mnt, p);
@@ -979,27 +915,3 @@ static int autofs4_root_ioctl_unlocked(struct inode *inode, struct file *filp,
 		return -ENOSYS;
 	}
 }
-
-static long autofs4_root_ioctl(struct file *filp,
-			       unsigned int cmd, unsigned long arg)
-{
-	struct inode *inode = filp->f_dentry->d_inode;
-	return autofs4_root_ioctl_unlocked(inode, filp, cmd, arg);
-}
-
-#ifdef CONFIG_COMPAT
-static long autofs4_root_compat_ioctl(struct file *filp,
-			     unsigned int cmd, unsigned long arg)
-{
-	struct inode *inode = filp->f_path.dentry->d_inode;
-	int ret;
-
-	if (cmd == AUTOFS_IOC_READY || cmd == AUTOFS_IOC_FAIL)
-		ret = autofs4_root_ioctl_unlocked(inode, filp, cmd, arg);
-	else
-		ret = autofs4_root_ioctl_unlocked(inode, filp, cmd,
-			(unsigned long)compat_ptr(arg));
-
-	return ret;
-}
-#endif

@@ -20,7 +20,6 @@
 #include <linux/route.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 
 #include <net/net_namespace.h>
 #include <net/sock.h>
@@ -155,7 +154,7 @@ static void ip6_fl_gc(unsigned long dummy)
 	write_unlock(&ip6_fl_lock);
 }
 
-static void __net_exit ip6_fl_purge(struct net *net)
+static void ip6_fl_purge(struct net *net)
 {
 	int i;
 
@@ -360,8 +359,7 @@ fl_create(struct net *net, struct in6_flowlabel_req *freq, char __user *optval,
 		msg.msg_control = (void*)(fl->opt+1);
 		flowi.oif = 0;
 
-		err = datagram_send_ctl(net, &msg, &flowi, fl->opt, &junk,
-					&junk, &junk);
+		err = datagram_send_ctl(net, &msg, &flowi, fl->opt, &junk, &junk);
 		if (err)
 			goto done;
 		err = -EINVAL;
@@ -737,7 +735,7 @@ static const struct file_operations ip6fl_seq_fops = {
 	.release	=	seq_release_net,
 };
 
-static int __net_init ip6_flowlabel_proc_init(struct net *net)
+static int ip6_flowlabel_proc_init(struct net *net)
 {
 	if (!proc_net_fops_create(net, "ip6_flowlabel",
 				  S_IRUGO, &ip6fl_seq_fops))
@@ -745,7 +743,7 @@ static int __net_init ip6_flowlabel_proc_init(struct net *net)
 	return 0;
 }
 
-static void __net_exit ip6_flowlabel_proc_fini(struct net *net)
+static void ip6_flowlabel_proc_fini(struct net *net)
 {
 	proc_net_remove(net, "ip6_flowlabel");
 }
@@ -756,10 +754,11 @@ static inline int ip6_flowlabel_proc_init(struct net *net)
 }
 static inline void ip6_flowlabel_proc_fini(struct net *net)
 {
+	return ;
 }
 #endif
 
-static void __net_exit ip6_flowlabel_net_exit(struct net *net)
+static inline void ip6_flowlabel_net_exit(struct net *net)
 {
 	ip6_fl_purge(net);
 	ip6_flowlabel_proc_fini(net);

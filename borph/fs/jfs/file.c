@@ -17,9 +17,7 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
-#include <linux/mm.h>
 #include <linux/fs.h>
-#include <linux/quotaops.h>
 #include "jfs_incore.h"
 #include "jfs_inode.h"
 #include "jfs_dmap.h"
@@ -28,9 +26,9 @@
 #include "jfs_acl.h"
 #include "jfs_debug.h"
 
-int jfs_fsync(struct file *file, int datasync)
+int jfs_fsync(struct file *file, struct dentry *dentry, int datasync)
 {
-	struct inode *inode = file->f_mapping->host;
+	struct inode *inode = dentry->d_inode;
 	int rc = 0;
 
 	if (!(inode->i_state & I_DIRTY) ||
@@ -49,7 +47,7 @@ static int jfs_open(struct inode *inode, struct file *file)
 {
 	int rc;
 
-	if ((rc = dquot_file_open(inode, file)))
+	if ((rc = generic_file_open(inode, file)))
 		return rc;
 
 	/*
@@ -90,47 +88,14 @@ static int jfs_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-int jfs_setattr(struct dentry *dentry, struct iattr *iattr)
-{
-	struct inode *inode = dentry->d_inode;
-	int rc;
-
-	rc = inode_change_ok(inode, iattr);
-	if (rc)
-		return rc;
-
-	if (is_quota_modification(inode, iattr))
-		dquot_initialize(inode);
-	if ((iattr->ia_valid & ATTR_UID && iattr->ia_uid != inode->i_uid) ||
-	    (iattr->ia_valid & ATTR_GID && iattr->ia_gid != inode->i_gid)) {
-		rc = dquot_transfer(inode, iattr);
-		if (rc)
-			return rc;
-	}
-
-	if ((iattr->ia_valid & ATTR_SIZE) &&
-	    iattr->ia_size != i_size_read(inode)) {
-		rc = vmtruncate(inode, iattr->ia_size);
-		if (rc)
-			return rc;
-	}
-
-	setattr_copy(inode, iattr);
-	mark_inode_dirty(inode);
-
-	if (iattr->ia_valid & ATTR_MODE)
-		rc = jfs_acl_chmod(inode);
-	return rc;
-}
-
 const struct inode_operations jfs_file_inode_operations = {
 	.truncate	= jfs_truncate,
 	.setxattr	= jfs_setxattr,
 	.getxattr	= jfs_getxattr,
 	.listxattr	= jfs_listxattr,
 	.removexattr	= jfs_removexattr,
-	.setattr	= jfs_setattr,
 #ifdef CONFIG_JFS_POSIX_ACL
+	.setattr	= jfs_setattr,
 	.check_acl	= jfs_check_acl,
 #endif
 };

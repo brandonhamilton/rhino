@@ -169,8 +169,7 @@ static const struct file_operations cs5535_gpio_fops = {
 	.owner	= THIS_MODULE,
 	.write	= cs5535_gpio_write,
 	.read	= cs5535_gpio_read,
-	.open	= cs5535_gpio_open,
-	.llseek = no_llseek,
+	.open	= cs5535_gpio_open
 };
 
 static int __init cs5535_gpio_init(void)

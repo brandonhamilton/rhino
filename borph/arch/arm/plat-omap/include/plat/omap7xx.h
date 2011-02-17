@@ -46,9 +46,6 @@
 #define OMAP7XX_DSPREG_SIZE	SZ_128K
 #define OMAP7XX_DSPREG_START	0xE1000000
 
-#define OMAP7XX_SPI1_BASE	0xfffc0800
-#define OMAP7XX_SPI2_BASE	0xfffc1000
-
 /*
  * ----------------------------------------------------------------------------
  * OMAP7XX specific configuration registers

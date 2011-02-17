@@ -26,7 +26,6 @@
  */
 
 #include "../rt_config.h"
-#include <linux/kernel.h>
 
 #define BA_ORI_INIT_SEQ		(pEntry->TxSeq[TID])	/*1                        // inital sequence number of BA session */
 
@@ -655,8 +654,8 @@ BOOLEAN BARecSessionAdd(struct rt_rtmp_adapter *pAd,
 	} else {
 		Status = FALSE;
 		DBGPRINT(RT_DEBUG_TRACE,
-			("Can't Accept ADDBA for %pM TID = %d\n",
-				pEntry->Addr, TID));
+			 ("Can't Accept ADDBA for %02x:%02x:%02x:%02x:%02x:%02x TID = %d\n",
+			  PRINT_MAC(pEntry->Addr), TID));
 	}
 	return (Status);
 }

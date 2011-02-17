@@ -28,7 +28,7 @@
 #include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/usb.h>
-#include <linux/usb/hcd.h>
+#include "../core/hcd.h"
 #include "c67x00.h"
 
 /*

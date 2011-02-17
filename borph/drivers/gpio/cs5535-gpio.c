@@ -56,29 +56,6 @@ static struct cs5535_gpio_chip {
  * registers, see include/linux/cs5535.h.
  */
 
-static void errata_outl(struct cs5535_gpio_chip *chip, u32 val,
-		unsigned int reg)
-{
-	unsigned long addr = chip->base + 0x80 + reg;
-
-	/*
-	 * According to the CS5536 errata (#36), after suspend
-	 * a write to the high bank GPIO register will clear all
-	 * non-selected bits; the recommended workaround is a
-	 * read-modify-write operation.
-	 *
-	 * Don't apply this errata to the edge status GPIOs, as writing
-	 * to their lower bits will clear them.
-	 */
-	if (reg != GPIO_POSITIVE_EDGE_STS && reg != GPIO_NEGATIVE_EDGE_STS) {
-		if (val & 0xffff)
-			val |= (inl(addr) & 0xffff); /* ignore the high bits */
-		else
-			val |= (inl(addr) ^ (val >> 16));
-	}
-	outl(val, addr);
-}
-
 static void __cs5535_gpio_set(struct cs5535_gpio_chip *chip, unsigned offset,
 		unsigned int reg)
 {
@@ -87,7 +64,7 @@ static void __cs5535_gpio_set(struct cs5535_gpio_chip *chip, unsigned offset,
 		outl(1 << offset, chip->base + reg);
 	else
 		/* high bank register */
-		errata_outl(chip, 1 << (offset - 16), reg);
+		outl(1 << (offset - 16), chip->base + 0x80 + reg);
 }
 
 void cs5535_gpio_set(unsigned offset, unsigned int reg)
@@ -109,7 +86,7 @@ static void __cs5535_gpio_clear(struct cs5535_gpio_chip *chip, unsigned offset,
 		outl(1 << (offset + 16), chip->base + reg);
 	else
 		/* high bank register */
-		errata_outl(chip, 1 << offset, reg);
+		outl(1 << offset, chip->base + 0x80 + reg);
 }
 
 void cs5535_gpio_clear(unsigned offset, unsigned int reg)
@@ -177,7 +154,7 @@ static int chip_gpio_request(struct gpio_chip *c, unsigned offset)
 
 static int chip_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
-	return cs5535_gpio_isset(offset, GPIO_READ_BACK);
+	return cs5535_gpio_isset(offset, GPIO_OUTPUT_VAL);
 }
 
 static void chip_gpio_set(struct gpio_chip *chip, unsigned offset, int val)
@@ -195,7 +172,6 @@ static int chip_direction_input(struct gpio_chip *c, unsigned offset)
 
 	spin_lock_irqsave(&chip->lock, flags);
 	__cs5535_gpio_set(chip, offset, GPIO_INPUT_ENABLE);
-	__cs5535_gpio_clear(chip, offset, GPIO_OUTPUT_ENABLE);
 	spin_unlock_irqrestore(&chip->lock, flags);
 
 	return 0;
@@ -208,7 +184,6 @@ static int chip_direction_output(struct gpio_chip *c, unsigned offset, int val)
 
 	spin_lock_irqsave(&chip->lock, flags);
 
-	__cs5535_gpio_set(chip, offset, GPIO_INPUT_ENABLE);
 	__cs5535_gpio_set(chip, offset, GPIO_OUTPUT_ENABLE);
 	if (val)
 		__cs5535_gpio_set(chip, offset, GPIO_OUTPUT_VAL);
@@ -220,7 +195,7 @@ static int chip_direction_output(struct gpio_chip *c, unsigned offset, int val)
 	return 0;
 }
 
-static const char * const cs5535_gpio_names[] = {
+static char *cs5535_gpio_names[] = {
 	"GPIO0", "GPIO1", "GPIO2", "GPIO3",
 	"GPIO4", "GPIO5", "GPIO6", "GPIO7",
 	"GPIO8", "GPIO9", "GPIO10", "GPIO11",
@@ -375,6 +350,6 @@ static void __exit cs5535_gpio_exit(void)
 module_init(cs5535_gpio_init);
 module_exit(cs5535_gpio_exit);
 
-MODULE_AUTHOR("Andres Salomon <dilinger@queued.net>");
+MODULE_AUTHOR("Andres Salomon <dilinger@collabora.co.uk>");
 MODULE_DESCRIPTION("AMD CS5535/CS5536 GPIO driver");
 MODULE_LICENSE("GPL");

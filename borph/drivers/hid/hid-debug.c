@@ -29,7 +29,6 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/poll.h>
 
@@ -565,13 +564,11 @@ void hid_debug_event(struct hid_device *hdev, char *buf)
 	struct hid_debug_list *list;
 
 	list_for_each_entry(list, &hdev->debug_list, node) {
-		for (i = 0; i < strlen(buf); i++)
-			list->hid_debug_buf[(list->tail + i) % HID_DEBUG_BUFSIZE] =
+		for (i = 0; i <= strlen(buf); i++)
+			list->hid_debug_buf[(list->tail + i) % (HID_DEBUG_BUFSIZE - 1)] =
 				buf[i];
-		list->tail = (list->tail + i) % HID_DEBUG_BUFSIZE;
+		list->tail = (list->tail + i) % (HID_DEBUG_BUFSIZE - 1);
         }
-
-	wake_up_interruptible(&hdev->debug_wait);
 }
 EXPORT_SYMBOL_GPL(hid_debug_event);
 
@@ -813,7 +810,7 @@ static const char *relatives[REL_MAX + 1] = {
 	[REL_WHEEL] = "Wheel",		[REL_MISC] = "Misc",
 };
 
-static const char *absolutes[ABS_CNT] = {
+static const char *absolutes[ABS_MAX + 1] = {
 	[ABS_X] = "X",			[ABS_Y] = "Y",
 	[ABS_Z] = "Z",			[ABS_RX] = "Rx",
 	[ABS_RY] = "Ry",		[ABS_RZ] = "Rz",
@@ -867,13 +864,13 @@ static const char **names[EV_MAX + 1] = {
 	[EV_SND] = sounds,			[EV_REP] = repeats,
 };
 
-static void hid_resolv_event(__u8 type, __u16 code, struct seq_file *f)
-{
+void hid_resolv_event(__u8 type, __u16 code, struct seq_file *f) {
+
 	seq_printf(f, "%s.%s", events[type] ? events[type] : "?",
 		names[type] ? (names[type][code] ? names[type][code] : "?") : "?");
 }
 
-static void hid_dump_input_mapping(struct hid_device *hid, struct seq_file *f)
+void hid_dump_input_mapping(struct hid_device *hid, struct seq_file *f)
 {
 	int i, j, k;
 	struct hid_report *report;
@@ -951,8 +948,8 @@ static ssize_t hid_debug_events_read(struct file *file, char __user *buffer,
 	int ret = 0, len;
 	DECLARE_WAITQUEUE(wait, current);
 
-	mutex_lock(&list->read_mutex);
 	while (ret == 0) {
+		mutex_lock(&list->read_mutex);
 		if (list->head == list->tail) {
 			add_wait_queue(&list->hdev->debug_wait, &wait);
 			set_current_state(TASK_INTERRUPTIBLE);
@@ -1053,7 +1050,6 @@ static const struct file_operations hid_debug_events_fops = {
 	.read           = hid_debug_events_read,
 	.poll		= hid_debug_events_poll,
 	.release        = hid_debug_events_release,
-	.llseek		= noop_llseek,
 };
 
 

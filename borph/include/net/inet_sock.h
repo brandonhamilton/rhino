@@ -21,7 +21,6 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/jhash.h>
-#include <linux/netdevice.h>
 
 #include <net/flow.h>
 #include <net/sock.h>
@@ -123,12 +122,10 @@ struct inet_sock {
 	__be32			inet_saddr;
 	__s16			uc_ttl;
 	__u16			cmsg_flags;
+	struct ip_options	*opt;
 	__be16			inet_sport;
 	__u16			inet_id;
-
-	struct ip_options	*opt;
 	__u8			tos;
-	__u8			min_ttl;
 	__u8			mc_ttl;
 	__u8			pmtudisc;
 	__u8			recverr:1,
@@ -137,8 +134,7 @@ struct inet_sock {
 				hdrincl:1,
 				mc_loop:1,
 				transparent:1,
-				mc_all:1,
-				nodefrag:1;
+				mc_all:1;
 	int			mc_index;
 	__be32			mc_addr;
 	struct ip_mc_socklist	*mc_list;

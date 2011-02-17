@@ -44,7 +44,6 @@
 #include <linux/magic.h>
 #include <linux/miscdevice.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/stat.h>
 
@@ -182,7 +181,6 @@ static const struct file_operations cuse_frontend_fops = {
 	.unlocked_ioctl		= cuse_file_ioctl,
 	.compat_ioctl		= cuse_file_compat_ioctl,
 	.poll			= fuse_file_poll,
-	.llseek		= noop_llseek,
 };
 
 

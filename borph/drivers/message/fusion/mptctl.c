@@ -54,7 +54,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>	/* for mdelay */
 #include <linux/miscdevice.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/compat.h>
 
 #include <asm/io.h>
@@ -83,7 +83,6 @@ MODULE_VERSION(my_VERSION);
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 
-static DEFINE_MUTEX(mpctl_mutex);
 static u8 mptctl_id = MPT_MAX_PROTOCOL_DRIVERS;
 static u8 mptctl_taskmgmt_id = MPT_MAX_PROTOCOL_DRIVERS;
 
@@ -129,6 +128,7 @@ static MptSge_t *kbuf_alloc_2_sgl(int bytes, u32 dir, int sge_offset, int *frags
 		struct buflist **blp, dma_addr_t *sglbuf_dma, MPT_ADAPTER *ioc);
 static void kfree_sgl(MptSge_t *sgl, dma_addr_t sgl_dma,
 		struct buflist *buflist, MPT_ADAPTER *ioc);
+static int mptctl_bus_reset(MPT_ADAPTER *ioc, u8 function);
 
 /*
  * Reset Handler cleanup function
@@ -262,16 +262,10 @@ mptctl_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
 	/* We are done, issue wake up
 	 */
 	if (ioc->ioctl_cmds.status & MPT_MGMT_STATUS_PENDING) {
-		if (req->u.hdr.Function == MPI_FUNCTION_SCSI_TASK_MGMT) {
+		if (req->u.hdr.Function == MPI_FUNCTION_SCSI_TASK_MGMT)
 			mpt_clear_taskmgmt_in_progress_flag(ioc);
-			ioc->ioctl_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
-			complete(&ioc->ioctl_cmds.done);
-			if (ioc->bus_type == SAS)
-				ioc->schedule_target_reset(ioc);
-		} else {
-			ioc->ioctl_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
-			complete(&ioc->ioctl_cmds.done);
-		}
+		ioc->ioctl_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
+		complete(&ioc->ioctl_cmds.done);
 	}
 
  out_continuation:
@@ -281,6 +275,45 @@ mptctl_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
 	return 1;
 }
 
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+/* mptctl_timeout_expired
+ *
+ * Expecting an interrupt, however timed out.
+ *
+ */
+static void
+mptctl_timeout_expired(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
+{
+	unsigned long flags;
+
+	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT ": %s\n",
+		ioc->name, __func__));
+
+	if (mpt_fwfault_debug)
+		mpt_halt_firmware(ioc);
+
+	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
+	if (ioc->ioc_reset_in_progress) {
+		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
+		CLEAR_MGMT_PENDING_STATUS(ioc->ioctl_cmds.status)
+		mpt_free_msg_frame(ioc, mf);
+		return;
+	}
+	spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
+
+
+	if (!mptctl_bus_reset(ioc, mf->u.hdr.Function))
+		return;
+
+	/* Issue a reset for this device.
+	 * The IOC is not responding.
+	 */
+	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "Calling HardReset! \n",
+		 ioc->name));
+	CLEAR_MGMT_PENDING_STATUS(ioc->ioctl_cmds.status)
+	mpt_HardResetHandler(ioc, CAN_SLEEP);
+	mpt_free_msg_frame(ioc, mf);
+}
 
 static int
 mptctl_taskmgmt_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
@@ -305,15 +338,17 @@ mptctl_taskmgmt_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 		mpt_clear_taskmgmt_in_progress_flag(ioc);
 		ioc->taskmgmt_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
 		complete(&ioc->taskmgmt_cmds.done);
-		if (ioc->bus_type == SAS)
-			ioc->schedule_target_reset(ioc);
 		return 1;
 	}
 	return 0;
 }
 
-static int
-mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
+/* mptctl_bus_reset
+ *
+ * Bus reset code.
+ *
+ */
+static int mptctl_bus_reset(MPT_ADAPTER *ioc, u8 function)
 {
 	MPT_FRAME_HDR	*mf;
 	SCSITaskMgmt_t	*pScsiTm;
@@ -324,6 +359,13 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 	unsigned long	 time_count;
 	u16		 iocstatus;
 
+	/* bus reset is only good for SCSI IO, RAID PASSTHRU */
+	if (!(function == MPI_FUNCTION_RAID_SCSI_IO_PASSTHROUGH) ||
+	    (function == MPI_FUNCTION_SCSI_IO_REQUEST)) {
+		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT
+			"TaskMgmt, not SCSI_IO!!\n", ioc->name));
+		return -EPERM;
+	}
 
 	mutex_lock(&ioc->taskmgmt_cmds.mutex);
 	if (mpt_set_taskmgmt_in_progress_flag(ioc) != 0) {
@@ -333,14 +375,15 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 
 	retval = 0;
 
+	/* Send request
+	 */
 	mf = mpt_get_msg_frame(mptctl_taskmgmt_id, ioc);
 	if (mf == NULL) {
-		dtmprintk(ioc,
-			printk(MYIOC_s_WARN_FMT "TaskMgmt, no msg frames!!\n",
-			ioc->name));
+		dtmprintk(ioc, printk(MYIOC_s_WARN_FMT
+			"TaskMgmt, no msg frames!!\n", ioc->name));
 		mpt_clear_taskmgmt_in_progress_flag(ioc);
 		retval = -ENOMEM;
-		goto tm_done;
+		goto mptctl_bus_reset_done;
 	}
 
 	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "TaskMgmt request (mf=%p)\n",
@@ -349,13 +392,10 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 	pScsiTm = (SCSITaskMgmt_t *) mf;
 	memset(pScsiTm, 0, sizeof(SCSITaskMgmt_t));
 	pScsiTm->Function = MPI_FUNCTION_SCSI_TASK_MGMT;
-	pScsiTm->TaskType = tm_type;
-	if ((tm_type == MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS) &&
-		(ioc->bus_type == FC))
-		pScsiTm->MsgFlags =
-				MPI_SCSITASKMGMT_MSGFLAGS_LIPRESET_RESET_OPTION;
-	pScsiTm->TargetID = target_id;
-	pScsiTm->Bus = bus_id;
+	pScsiTm->TaskType = MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS;
+	pScsiTm->MsgFlags = MPI_SCSITASKMGMT_MSGFLAGS_LIPRESET_RESET_OPTION;
+	pScsiTm->TargetID = 0;
+	pScsiTm->Bus = 0;
 	pScsiTm->ChainOffset = 0;
 	pScsiTm->Reserved = 0;
 	pScsiTm->Reserved1 = 0;
@@ -373,16 +413,17 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 		timeout = 30;
 		break;
 	case SPI:
-		default:
-		timeout = 10;
+	default:
+		timeout = 2;
 		break;
 	}
 
-	dtmprintk(ioc,
-		printk(MYIOC_s_DEBUG_FMT "TaskMgmt type=%d timeout=%ld\n",
-		ioc->name, tm_type, timeout));
+	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+		"TaskMgmt type=%d timeout=%ld\n",
+		ioc->name, MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS, timeout));
 
 	INITIALIZE_MGMT_STATUS(ioc->taskmgmt_cmds.status)
+	CLEAR_MGMT_STATUS(ioc->taskmgmt_cmds.status)
 	time_count = jiffies;
 	if ((ioc->facts.IOCCapabilities & MPI_IOCFACTS_CAPABILITY_HIGH_PRI_Q) &&
 	    (ioc->facts.MsgVersion >= MPI_VERSION_01_05))
@@ -391,20 +432,17 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 		retval = mpt_send_handshake_request(mptctl_taskmgmt_id, ioc,
 		    sizeof(SCSITaskMgmt_t), (u32 *)pScsiTm, CAN_SLEEP);
 		if (retval != 0) {
-			dfailprintk(ioc,
-				printk(MYIOC_s_ERR_FMT
+			dfailprintk(ioc, printk(MYIOC_s_ERR_FMT
 				"TaskMgmt send_handshake FAILED!"
 				" (ioc %p, mf %p, rc=%d) \n", ioc->name,
 				ioc, mf, retval));
-			mpt_free_msg_frame(ioc, mf);
 			mpt_clear_taskmgmt_in_progress_flag(ioc);
-			goto tm_done;
+			goto mptctl_bus_reset_done;
 		}
 	}
 
 	/* Now wait for the command to complete */
 	ii = wait_for_completion_timeout(&ioc->taskmgmt_cmds.done, timeout*HZ);
-
 	if (!(ioc->taskmgmt_cmds.status & MPT_MGMT_STATUS_COMMAND_GOOD)) {
 		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
 		    "TaskMgmt failed\n", ioc->name));
@@ -414,14 +452,14 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 			retval = 0;
 		else
 			retval = -1; /* return failure */
-		goto tm_done;
+		goto mptctl_bus_reset_done;
 	}
 
 	if (!(ioc->taskmgmt_cmds.status & MPT_MGMT_STATUS_RF_VALID)) {
 		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
 		    "TaskMgmt failed\n", ioc->name));
 		retval = -1; /* return failure */
-		goto tm_done;
+		goto mptctl_bus_reset_done;
 	}
 
 	pScsiTmReply = (SCSITaskMgmtReply_t *) ioc->taskmgmt_cmds.reply;
@@ -429,7 +467,7 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 	    "TaskMgmt fw_channel = %d, fw_id = %d, task_type=0x%02X, "
 	    "iocstatus=0x%04X\n\tloginfo=0x%08X, response_code=0x%02X, "
 	    "term_cmnds=%d\n", ioc->name, pScsiTmReply->Bus,
-	    pScsiTmReply->TargetID, tm_type,
+	    pScsiTmReply->TargetID, MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS,
 	    le16_to_cpu(pScsiTmReply->IOCStatus),
 	    le32_to_cpu(pScsiTmReply->IOCLogInfo),
 	    pScsiTmReply->ResponseCode,
@@ -447,69 +485,11 @@ mptctl_do_taskmgmt(MPT_ADAPTER *ioc, u8 tm_type, u8 bus_id, u8 target_id)
 		retval = -1; /* return failure */
 	}
 
- tm_done:
+
+ mptctl_bus_reset_done:
 	mutex_unlock(&ioc->taskmgmt_cmds.mutex);
 	CLEAR_MGMT_STATUS(ioc->taskmgmt_cmds.status)
 	return retval;
-}
-
-/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
-/* mptctl_timeout_expired
- *
- * Expecting an interrupt, however timed out.
- *
- */
-static void
-mptctl_timeout_expired(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
-{
-	unsigned long flags;
-	int ret_val = -1;
-	SCSIIORequest_t *scsi_req = (SCSIIORequest_t *) mf;
-	u8 function = mf->u.hdr.Function;
-
-	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT ": %s\n",
-		ioc->name, __func__));
-
-	if (mpt_fwfault_debug)
-		mpt_halt_firmware(ioc);
-
-	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
-	if (ioc->ioc_reset_in_progress) {
-		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		CLEAR_MGMT_PENDING_STATUS(ioc->ioctl_cmds.status)
-		mpt_free_msg_frame(ioc, mf);
-		return;
-	}
-	spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-
-
-	CLEAR_MGMT_PENDING_STATUS(ioc->ioctl_cmds.status)
-
-	if (ioc->bus_type == SAS) {
-		if (function == MPI_FUNCTION_SCSI_IO_REQUEST)
-			ret_val = mptctl_do_taskmgmt(ioc,
-				MPI_SCSITASKMGMT_TASKTYPE_TARGET_RESET,
-				scsi_req->Bus, scsi_req->TargetID);
-		else if (function == MPI_FUNCTION_RAID_SCSI_IO_PASSTHROUGH)
-			ret_val = mptctl_do_taskmgmt(ioc,
-				MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS,
-				scsi_req->Bus, 0);
-		if (!ret_val)
-			return;
-	} else {
-		if ((function == MPI_FUNCTION_SCSI_IO_REQUEST) ||
-			(function == MPI_FUNCTION_RAID_SCSI_IO_PASSTHROUGH))
-			ret_val = mptctl_do_taskmgmt(ioc,
-				MPI_SCSITASKMGMT_TASKTYPE_RESET_BUS,
-				scsi_req->Bus, 0);
-		if (!ret_val)
-			return;
-	}
-
-	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "Calling Reset! \n",
-		 ioc->name));
-	mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
-	mpt_free_msg_frame(ioc, mf);
 }
 
 
@@ -602,12 +582,12 @@ mptctl_fasync(int fd, struct file *filep, int mode)
 	MPT_ADAPTER	*ioc;
 	int ret;
 
-	mutex_lock(&mpctl_mutex);
+	lock_kernel();
 	list_for_each_entry(ioc, &ioc_list, list)
 		ioc->aen_event_read_flag=0;
 
 	ret = fasync_helper(fd, filep, mode, &async_queue);
-	mutex_unlock(&mpctl_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -699,9 +679,9 @@ static long
 mptctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long ret;
-	mutex_lock(&mpctl_mutex);
+	lock_kernel();
 	ret = __mptctl_ioctl(file, cmd, arg);
-	mutex_unlock(&mpctl_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -955,12 +935,9 @@ retry_wait:
 			mpt_free_msg_frame(iocp, mf);
 			goto fwdl_out;
 		}
-		if (!timeleft) {
-			printk(MYIOC_s_WARN_FMT
-			       "FW download timeout, doorbell=0x%08x\n",
-			       iocp->name, mpt_GetIocState(iocp, 0));
+		if (!timeleft)
 			mptctl_timeout_expired(iocp, mf);
-		} else
+		else
 			goto retry_wait;
 		goto fwdl_out;
 	}
@@ -1341,8 +1318,6 @@ mptctl_getiocinfo (unsigned long arg, unsigned int data_size)
 	if (ioc->sh) {
 		shost_for_each_device(sdev, ioc->sh) {
 			vdevice = sdev->hostdata;
-			if (vdevice == NULL || vdevice->vtarget == NULL)
-				continue;
 			if (vdevice->vtarget->tflags &
 			    MPT_TARGET_FLAGS_RAID_COMPONENT)
 				continue;
@@ -1464,8 +1439,6 @@ mptctl_gettargetinfo (unsigned long arg)
 			if (!maxWordsLeft)
 				continue;
 			vdevice = sdev->hostdata;
-			if (vdevice == NULL || vdevice->vtarget == NULL)
-				continue;
 			if (vdevice->vtarget->tflags &
 			    MPT_TARGET_FLAGS_RAID_COMPONENT)
 				continue;
@@ -1994,9 +1967,6 @@ mptctl_do_mpt_command (struct mpt_ioctl_command karg, void __user *mfPtr)
 				struct scsi_target *starget = scsi_target(sdev);
 				VirtTarget *vtarget = starget->hostdata;
 
-				if (vtarget == NULL)
-					continue;
-
 				if ((pScsiReq->TargetID == vtarget->id) &&
 				    (pScsiReq->Bus == vtarget->channel) &&
 				    (vtarget->tflags & MPT_TARGET_FLAGS_Q_YES))
@@ -2305,10 +2275,6 @@ retry_wait:
 			goto done_free_mem;
 		}
 		if (!timeleft) {
-			printk(MYIOC_s_WARN_FMT
-			       "mpt cmd timeout, doorbell=0x%08x"
-			       " function=0x%x\n",
-			       ioc->name, mpt_GetIocState(ioc, 0), function);
 			if (function == MPI_FUNCTION_SCSI_TASK_MGMT)
 				mutex_unlock(&ioc->taskmgmt_cmds.mutex);
 			mptctl_timeout_expired(ioc, mf);
@@ -2616,12 +2582,9 @@ retry_wait:
 			mpt_free_msg_frame(ioc, mf);
 			goto out;
 		}
-		if (!timeleft) {
-			printk(MYIOC_s_WARN_FMT
-			       "HOST INFO command timeout, doorbell=0x%08x\n",
-			       ioc->name, mpt_GetIocState(ioc, 0));
+		if (!timeleft)
 			mptctl_timeout_expired(ioc, mf);
-		} else
+		else
 			goto retry_wait;
 		goto out;
 	}
@@ -2927,7 +2890,7 @@ compat_mpt_command(struct file *filp, unsigned int cmd,
 static long compat_mpctl_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
 	long ret;
-	mutex_lock(&mpctl_mutex);
+	lock_kernel();
 	switch (cmd) {
 	case MPTIOCINFO:
 	case MPTIOCINFO1:
@@ -2952,7 +2915,7 @@ static long compat_mpctl_ioctl(struct file *f, unsigned int cmd, unsigned long a
 		ret = -ENOIOCTLCMD;
 		break;
 	}
-	mutex_unlock(&mpctl_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -3019,8 +2982,7 @@ static int __init mptctl_init(void)
 	 *  Install our handler
 	 */
 	++where;
-	mptctl_id = mpt_register(mptctl_reply, MPTCTL_DRIVER,
-	    "mptctl_reply");
+	mptctl_id = mpt_register(mptctl_reply, MPTCTL_DRIVER);
 	if (!mptctl_id || mptctl_id >= MPT_MAX_PROTOCOL_DRIVERS) {
 		printk(KERN_ERR MYNAM ": ERROR: Failed to register with Fusion MPT base driver\n");
 		misc_deregister(&mptctl_miscdev);
@@ -3028,16 +2990,7 @@ static int __init mptctl_init(void)
 		goto out_fail;
 	}
 
-	mptctl_taskmgmt_id = mpt_register(mptctl_taskmgmt_reply, MPTCTL_DRIVER,
-	    "mptctl_taskmgmt_reply");
-	if (!mptctl_taskmgmt_id || mptctl_taskmgmt_id >= MPT_MAX_PROTOCOL_DRIVERS) {
-		printk(KERN_ERR MYNAM ": ERROR: Failed to register with Fusion MPT base driver\n");
-		mpt_deregister(mptctl_id);
-		misc_deregister(&mptctl_miscdev);
-		err = -EBUSY;
-		goto out_fail;
-	}
-
+	mptctl_taskmgmt_id = mpt_register(mptctl_taskmgmt_reply, MPTCTL_DRIVER);
 	mpt_reset_register(mptctl_id, mptctl_ioc_reset);
 	mpt_event_register(mptctl_id, mptctl_event_process);
 
@@ -3057,15 +3010,12 @@ static void mptctl_exit(void)
 	printk(KERN_INFO MYNAM ": Deregistered /dev/%s @ (major,minor=%d,%d)\n",
 			 mptctl_miscdev.name, MISC_MAJOR, mptctl_miscdev.minor);
 
-	/* De-register event handler from base module */
-	mpt_event_deregister(mptctl_id);
-
 	/* De-register reset handler from base module */
 	mpt_reset_deregister(mptctl_id);
 
 	/* De-register callback handler from base module */
-	mpt_deregister(mptctl_taskmgmt_id);
 	mpt_deregister(mptctl_id);
+	mpt_reset_deregister(mptctl_taskmgmt_id);
 
         mpt_device_driver_deregister(MPTCTL_DRIVER);
 

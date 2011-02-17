@@ -29,7 +29,6 @@
 #include <linux/irq.h>
 #include <linux/device.h>
 #include <linux/delay.h>
-#include <linux/dmaengine.h>
 #include <linux/mmc/host.h>
 #include <linux/mfd/core.h>
 #include <linux/mfd/tmio.h>
@@ -47,9 +46,7 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host, int new_clock)
 		clk |= 0x100;
 	}
 
-	if (host->set_clk_div)
-		host->set_clk_div(host->pdev, (clk>>22) & 1);
-
+	sd_config_write8(host, CNF_SD_CLK_MODE, clk >> 22);
 	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, clk & 0x1ff);
 }
 
@@ -132,8 +129,8 @@ tmio_mmc_start_command(struct tmio_mmc_host *host, struct mmc_command *cmd)
 
 	host->cmd = cmd;
 
-/* FIXME - this seems to be ok commented out but the spec suggest this bit
- *         should be set when issuing app commands.
+/* FIXME - this seems to be ok comented out but the spec suggest this bit should
+ *         be set when issuing app commands.
  *	if(cmd->flags & MMC_FLAG_ACMD)
  *		c |= APP_CMD;
  */
@@ -156,15 +153,14 @@ tmio_mmc_start_command(struct tmio_mmc_host *host, struct mmc_command *cmd)
 	return 0;
 }
 
-/*
- * This chip always returns (at least?) as much data as you ask for.
+/* This chip always returns (at least?) as much data as you ask for.
  * I'm unsure what happens if you ask for less than a block. This should be
  * looked into to ensure that a funny length read doesnt hose the controller.
+ *
  */
-static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
+static inline void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 {
 	struct mmc_data *data = host->data;
-	void *sg_virt;
 	unsigned short *buf;
 	unsigned int count;
 	unsigned long flags;
@@ -174,15 +170,15 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 		return;
 	}
 
-	sg_virt = tmio_mmc_kmap_atomic(host->sg_ptr, &flags);
-	buf = (unsigned short *)(sg_virt + host->sg_off);
+	buf = (unsigned short *)(tmio_mmc_kmap_atomic(host, &flags) +
+	      host->sg_off);
 
 	count = host->sg_ptr->length - host->sg_off;
 	if (count > data->blksz)
 		count = data->blksz;
 
 	pr_debug("count: %08x offset: %08x flags %08x\n",
-		 count, host->sg_off, data->flags);
+	    count, host->sg_off, data->flags);
 
 	/* Transfer the data */
 	if (data->flags & MMC_DATA_READ)
@@ -192,7 +188,7 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 
 	host->sg_off += count;
 
-	tmio_mmc_kunmap_atomic(sg_virt, &flags);
+	tmio_mmc_kunmap_atomic(host, &flags);
 
 	if (host->sg_off == host->sg_ptr->length)
 		tmio_mmc_next_sg(host);
@@ -200,7 +196,7 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 	return;
 }
 
-static void tmio_mmc_do_data_irq(struct tmio_mmc_host *host)
+static inline void tmio_mmc_data_irq(struct tmio_mmc_host *host)
 {
 	struct mmc_data *data = host->data;
 	struct mmc_command *stop;
@@ -208,7 +204,7 @@ static void tmio_mmc_do_data_irq(struct tmio_mmc_host *host)
 	host->data = NULL;
 
 	if (!data) {
-		dev_warn(&host->pdev->dev, "Spurious data end IRQ\n");
+		pr_debug("Spurious data end IRQ\n");
 		return;
 	}
 	stop = data->stop;
@@ -221,8 +217,7 @@ static void tmio_mmc_do_data_irq(struct tmio_mmc_host *host)
 
 	pr_debug("Completed data request\n");
 
-	/*
-	 * FIXME: other drivers allow an optional stop command of any given type
+	/*FIXME - other drivers allow an optional stop command of any given type
 	 *        which we dont do, as the chip can auto generate them.
 	 *        Perhaps we can be smarter about when to use auto CMD12 and
 	 *        only issue the auto request when we know this is the desired
@@ -230,17 +225,10 @@ static void tmio_mmc_do_data_irq(struct tmio_mmc_host *host)
 	 *        upper layers expect. For now, we do what works.
 	 */
 
-	if (data->flags & MMC_DATA_READ) {
-		if (!host->chan_rx)
-			disable_mmc_irqs(host, TMIO_MASK_READOP);
-		dev_dbg(&host->pdev->dev, "Complete Rx request %p\n",
-			host->mrq);
-	} else {
-		if (!host->chan_tx)
-			disable_mmc_irqs(host, TMIO_MASK_WRITEOP);
-		dev_dbg(&host->pdev->dev, "Complete Tx request %p\n",
-			host->mrq);
-	}
+	if (data->flags & MMC_DATA_READ)
+		disable_mmc_irqs(host, TMIO_MASK_READOP);
+	else
+		disable_mmc_irqs(host, TMIO_MASK_WRITEOP);
 
 	if (stop) {
 		if (stop->opcode == 12 && !stop->arg)
@@ -252,35 +240,7 @@ static void tmio_mmc_do_data_irq(struct tmio_mmc_host *host)
 	tmio_mmc_finish_request(host);
 }
 
-static void tmio_mmc_data_irq(struct tmio_mmc_host *host)
-{
-	struct mmc_data *data = host->data;
-
-	if (!data)
-		return;
-
-	if (host->chan_tx && (data->flags & MMC_DATA_WRITE)) {
-		/*
-		 * Has all data been written out yet? Testing on SuperH showed,
-		 * that in most cases the first interrupt comes already with the
-		 * BUSY status bit clear, but on some operations, like mount or
-		 * in the beginning of a write / sync / umount, there is one
-		 * DATAEND interrupt with the BUSY bit set, in this cases
-		 * waiting for one more interrupt fixes the problem.
-		 */
-		if (!(sd_ctrl_read32(host, CTL_STATUS) & TMIO_STAT_CMD_BUSY)) {
-			disable_mmc_irqs(host, TMIO_STAT_DATAEND);
-			tasklet_schedule(&host->dma_complete);
-		}
-	} else if (host->chan_rx && (data->flags & MMC_DATA_READ)) {
-		disable_mmc_irqs(host, TMIO_STAT_DATAEND);
-		tasklet_schedule(&host->dma_complete);
-	} else {
-		tmio_mmc_do_data_irq(host);
-	}
-}
-
-static void tmio_mmc_cmd_irq(struct tmio_mmc_host *host,
+static inline void tmio_mmc_cmd_irq(struct tmio_mmc_host *host,
 	unsigned int stat)
 {
 	struct mmc_command *cmd = host->cmd;
@@ -320,22 +280,17 @@ static void tmio_mmc_cmd_irq(struct tmio_mmc_host *host,
 	 * If theres no data or we encountered an error, finish now.
 	 */
 	if (host->data && !cmd->error) {
-		if (host->data->flags & MMC_DATA_READ) {
-			if (!host->chan_rx)
-				enable_mmc_irqs(host, TMIO_MASK_READOP);
-		} else {
-			struct dma_chan *chan = host->chan_tx;
-			if (!chan)
-				enable_mmc_irqs(host, TMIO_MASK_WRITEOP);
-			else
-				tasklet_schedule(&host->dma_issue);
-		}
+		if (host->data->flags & MMC_DATA_READ)
+			enable_mmc_irqs(host, TMIO_MASK_READOP);
+		else
+			enable_mmc_irqs(host, TMIO_MASK_WRITEOP);
 	} else {
 		tmio_mmc_finish_request(host);
 	}
 
 	return;
 }
+
 
 static irqreturn_t tmio_mmc_irq(int irq, void *devid)
 {
@@ -354,7 +309,7 @@ static irqreturn_t tmio_mmc_irq(int irq, void *devid)
 	if (!ireg) {
 		disable_mmc_irqs(host, status & ~irq_mask);
 
-		pr_warning("tmio_mmc: Spurious irq, disabling! "
+		pr_debug("tmio_mmc: Spurious irq, disabling! "
 			"0x%08x 0x%08x 0x%08x\n", status, irq_mask, ireg);
 		pr_debug_status(status);
 
@@ -366,7 +321,7 @@ static irqreturn_t tmio_mmc_irq(int irq, void *devid)
 		if (ireg & (TMIO_STAT_CARD_INSERT | TMIO_STAT_CARD_REMOVE)) {
 			ack_mmc_irqs(host, TMIO_STAT_CARD_INSERT |
 				TMIO_STAT_CARD_REMOVE);
-			mmc_detect_change(host->mmc, msecs_to_jiffies(100));
+			mmc_detect_change(host->mmc, 0);
 		}
 
 		/* CRC and other errors */
@@ -406,273 +361,17 @@ out:
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_TMIO_MMC_DMA
-static void tmio_mmc_enable_dma(struct tmio_mmc_host *host, bool enable)
-{
-#if defined(CONFIG_SUPERH) || defined(CONFIG_ARCH_SHMOBILE)
-	/* Switch DMA mode on or off - SuperH specific? */
-	sd_ctrl_write16(host, 0xd8, enable ? 2 : 0);
-#endif
-}
-
-static void tmio_dma_complete(void *arg)
-{
-	struct tmio_mmc_host *host = arg;
-
-	dev_dbg(&host->pdev->dev, "Command completed\n");
-
-	if (!host->data)
-		dev_warn(&host->pdev->dev, "NULL data in DMA completion!\n");
-	else
-		enable_mmc_irqs(host, TMIO_STAT_DATAEND);
-}
-
-static int tmio_mmc_start_dma_rx(struct tmio_mmc_host *host)
-{
-	struct scatterlist *sg = host->sg_ptr;
-	struct dma_async_tx_descriptor *desc = NULL;
-	struct dma_chan *chan = host->chan_rx;
-	int ret;
-
-	ret = dma_map_sg(&host->pdev->dev, sg, host->sg_len, DMA_FROM_DEVICE);
-	if (ret > 0) {
-		host->dma_sglen = ret;
-		desc = chan->device->device_prep_slave_sg(chan, sg, ret,
-			DMA_FROM_DEVICE, DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	}
-
-	if (desc) {
-		host->desc = desc;
-		desc->callback = tmio_dma_complete;
-		desc->callback_param = host;
-		host->cookie = desc->tx_submit(desc);
-		if (host->cookie < 0) {
-			host->desc = NULL;
-			ret = host->cookie;
-		} else {
-			chan->device->device_issue_pending(chan);
-		}
-	}
-	dev_dbg(&host->pdev->dev, "%s(): mapped %d -> %d, cookie %d, rq %p\n",
-		__func__, host->sg_len, ret, host->cookie, host->mrq);
-
-	if (!host->desc) {
-		/* DMA failed, fall back to PIO */
-		if (ret >= 0)
-			ret = -EIO;
-		host->chan_rx = NULL;
-		dma_release_channel(chan);
-		/* Free the Tx channel too */
-		chan = host->chan_tx;
-		if (chan) {
-			host->chan_tx = NULL;
-			dma_release_channel(chan);
-		}
-		dev_warn(&host->pdev->dev,
-			 "DMA failed: %d, falling back to PIO\n", ret);
-		tmio_mmc_enable_dma(host, false);
-		reset(host);
-		/* Fail this request, let above layers recover */
-		host->mrq->cmd->error = ret;
-		tmio_mmc_finish_request(host);
-	}
-
-	dev_dbg(&host->pdev->dev, "%s(): desc %p, cookie %d, sg[%d]\n", __func__,
-		desc, host->cookie, host->sg_len);
-
-	return ret > 0 ? 0 : ret;
-}
-
-static int tmio_mmc_start_dma_tx(struct tmio_mmc_host *host)
-{
-	struct scatterlist *sg = host->sg_ptr;
-	struct dma_async_tx_descriptor *desc = NULL;
-	struct dma_chan *chan = host->chan_tx;
-	int ret;
-
-	ret = dma_map_sg(&host->pdev->dev, sg, host->sg_len, DMA_TO_DEVICE);
-	if (ret > 0) {
-		host->dma_sglen = ret;
-		desc = chan->device->device_prep_slave_sg(chan, sg, ret,
-			DMA_TO_DEVICE, DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	}
-
-	if (desc) {
-		host->desc = desc;
-		desc->callback = tmio_dma_complete;
-		desc->callback_param = host;
-		host->cookie = desc->tx_submit(desc);
-		if (host->cookie < 0) {
-			host->desc = NULL;
-			ret = host->cookie;
-		}
-	}
-	dev_dbg(&host->pdev->dev, "%s(): mapped %d -> %d, cookie %d, rq %p\n",
-		__func__, host->sg_len, ret, host->cookie, host->mrq);
-
-	if (!host->desc) {
-		/* DMA failed, fall back to PIO */
-		if (ret >= 0)
-			ret = -EIO;
-		host->chan_tx = NULL;
-		dma_release_channel(chan);
-		/* Free the Rx channel too */
-		chan = host->chan_rx;
-		if (chan) {
-			host->chan_rx = NULL;
-			dma_release_channel(chan);
-		}
-		dev_warn(&host->pdev->dev,
-			 "DMA failed: %d, falling back to PIO\n", ret);
-		tmio_mmc_enable_dma(host, false);
-		reset(host);
-		/* Fail this request, let above layers recover */
-		host->mrq->cmd->error = ret;
-		tmio_mmc_finish_request(host);
-	}
-
-	dev_dbg(&host->pdev->dev, "%s(): desc %p, cookie %d\n", __func__,
-		desc, host->cookie);
-
-	return ret > 0 ? 0 : ret;
-}
-
-static int tmio_mmc_start_dma(struct tmio_mmc_host *host,
-			       struct mmc_data *data)
-{
-	if (data->flags & MMC_DATA_READ) {
-		if (host->chan_rx)
-			return tmio_mmc_start_dma_rx(host);
-	} else {
-		if (host->chan_tx)
-			return tmio_mmc_start_dma_tx(host);
-	}
-
-	return 0;
-}
-
-static void tmio_issue_tasklet_fn(unsigned long priv)
-{
-	struct tmio_mmc_host *host = (struct tmio_mmc_host *)priv;
-	struct dma_chan *chan = host->chan_tx;
-
-	chan->device->device_issue_pending(chan);
-}
-
-static void tmio_tasklet_fn(unsigned long arg)
-{
-	struct tmio_mmc_host *host = (struct tmio_mmc_host *)arg;
-
-	if (host->data->flags & MMC_DATA_READ)
-		dma_unmap_sg(&host->pdev->dev, host->sg_ptr, host->dma_sglen,
-			     DMA_FROM_DEVICE);
-	else
-		dma_unmap_sg(&host->pdev->dev, host->sg_ptr, host->dma_sglen,
-			     DMA_TO_DEVICE);
-
-	tmio_mmc_do_data_irq(host);
-}
-
-/* It might be necessary to make filter MFD specific */
-static bool tmio_mmc_filter(struct dma_chan *chan, void *arg)
-{
-	dev_dbg(chan->device->dev, "%s: slave data %p\n", __func__, arg);
-	chan->private = arg;
-	return true;
-}
-
-static void tmio_mmc_request_dma(struct tmio_mmc_host *host,
-				 struct tmio_mmc_data *pdata)
-{
-	host->cookie = -EINVAL;
-	host->desc = NULL;
-
-	/* We can only either use DMA for both Tx and Rx or not use it at all */
-	if (pdata->dma) {
-		dma_cap_mask_t mask;
-
-		dma_cap_zero(mask);
-		dma_cap_set(DMA_SLAVE, mask);
-
-		host->chan_tx = dma_request_channel(mask, tmio_mmc_filter,
-						    pdata->dma->chan_priv_tx);
-		dev_dbg(&host->pdev->dev, "%s: TX: got channel %p\n", __func__,
-			host->chan_tx);
-
-		if (!host->chan_tx)
-			return;
-
-		host->chan_rx = dma_request_channel(mask, tmio_mmc_filter,
-						    pdata->dma->chan_priv_rx);
-		dev_dbg(&host->pdev->dev, "%s: RX: got channel %p\n", __func__,
-			host->chan_rx);
-
-		if (!host->chan_rx) {
-			dma_release_channel(host->chan_tx);
-			host->chan_tx = NULL;
-			return;
-		}
-
-		tasklet_init(&host->dma_complete, tmio_tasklet_fn, (unsigned long)host);
-		tasklet_init(&host->dma_issue, tmio_issue_tasklet_fn, (unsigned long)host);
-
-		tmio_mmc_enable_dma(host, true);
-	}
-}
-
-static void tmio_mmc_release_dma(struct tmio_mmc_host *host)
-{
-	if (host->chan_tx) {
-		struct dma_chan *chan = host->chan_tx;
-		host->chan_tx = NULL;
-		dma_release_channel(chan);
-	}
-	if (host->chan_rx) {
-		struct dma_chan *chan = host->chan_rx;
-		host->chan_rx = NULL;
-		dma_release_channel(chan);
-	}
-
-	host->cookie = -EINVAL;
-	host->desc = NULL;
-}
-#else
-static int tmio_mmc_start_dma(struct tmio_mmc_host *host,
-			       struct mmc_data *data)
-{
-	return 0;
-}
-
-static void tmio_mmc_request_dma(struct tmio_mmc_host *host,
-				 struct tmio_mmc_data *pdata)
-{
-	host->chan_tx = NULL;
-	host->chan_rx = NULL;
-}
-
-static void tmio_mmc_release_dma(struct tmio_mmc_host *host)
-{
-}
-#endif
-
 static int tmio_mmc_start_data(struct tmio_mmc_host *host,
 	struct mmc_data *data)
 {
-	struct mfd_cell *cell = host->pdev->dev.platform_data;
-	struct tmio_mmc_data *pdata = cell->driver_data;
-
 	pr_debug("setup data transfer: blocksize %08x  nr_blocks %d\n",
-		 data->blksz, data->blocks);
+	    data->blksz, data->blocks);
 
-	/* Some hardware cannot perform 2 byte requests in 4 bit mode */
-	if (host->mmc->ios.bus_width == MMC_BUS_WIDTH_4) {
-		int blksz_2bytes = pdata->flags & TMIO_MMC_BLKSZ_2BYTES;
-
-		if (data->blksz < 2 || (data->blksz < 4 && !blksz_2bytes)) {
-			pr_err("%s: %d byte block unsupported in 4 bit mode\n",
-			       mmc_hostname(host->mmc), data->blksz);
-			return -EINVAL;
-		}
+	/* Hardware cannot perform 1 and 2 byte requests in 4 bit mode */
+	if (data->blksz < 4 && host->mmc->ios.bus_width == MMC_BUS_WIDTH_4) {
+		printk(KERN_ERR "%s: %d byte block unsupported in 4 bit mode\n",
+			mmc_hostname(host->mmc), data->blksz);
+		return -EINVAL;
 	}
 
 	tmio_mmc_init_sg(host, data);
@@ -682,7 +381,7 @@ static int tmio_mmc_start_data(struct tmio_mmc_host *host,
 	sd_ctrl_write16(host, CTL_SD_XFER_LEN, data->blksz);
 	sd_ctrl_write16(host, CTL_XFER_BLK_COUNT, data->blocks);
 
-	return tmio_mmc_start_dma(host, data);
+	return 0;
 }
 
 /* Process requests from the MMC layer */
@@ -703,6 +402,7 @@ static void tmio_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	}
 
 	ret = tmio_mmc_start_command(host, mrq->cmd);
+
 	if (!ret)
 		return;
 
@@ -727,13 +427,12 @@ static void tmio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	/* Power sequence - OFF -> ON -> UP */
 	switch (ios->power_mode) {
 	case MMC_POWER_OFF: /* power down SD bus */
-		if (host->set_pwr)
-			host->set_pwr(host->pdev, 0);
+		sd_config_write8(host, CNF_PWR_CTL_2, 0x00);
 		tmio_mmc_clk_stop(host);
 		break;
 	case MMC_POWER_ON: /* power up SD bus */
-		if (host->set_pwr)
-			host->set_pwr(host->pdev, 1);
+
+		sd_config_write8(host, CNF_PWR_CTL_2, 0x02);
 		break;
 	case MMC_POWER_UP: /* start bus clock */
 		tmio_mmc_clk_start(host);
@@ -756,30 +455,14 @@ static void tmio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 static int tmio_mmc_get_ro(struct mmc_host *mmc)
 {
 	struct tmio_mmc_host *host = mmc_priv(mmc);
-	struct mfd_cell	*cell = host->pdev->dev.platform_data;
-	struct tmio_mmc_data *pdata = cell->driver_data;
 
-	return ((pdata->flags & TMIO_MMC_WRPROTECT_DISABLE) ||
-		(sd_ctrl_read32(host, CTL_STATUS) & TMIO_STAT_WRPROTECT)) ? 0 : 1;
+	return (sd_ctrl_read16(host, CTL_STATUS) & TMIO_STAT_WRPROTECT) ? 0 : 1;
 }
 
-static int tmio_mmc_get_cd(struct mmc_host *mmc)
-{
-	struct tmio_mmc_host *host = mmc_priv(mmc);
-	struct mfd_cell	*cell = host->pdev->dev.platform_data;
-	struct tmio_mmc_data *pdata = cell->driver_data;
-
-	if (!pdata->get_cd)
-		return -ENOSYS;
-	else
-		return pdata->get_cd(host->pdev);
-}
-
-static const struct mmc_host_ops tmio_mmc_ops = {
+static struct mmc_host_ops tmio_mmc_ops = {
 	.request	= tmio_mmc_request,
 	.set_ios	= tmio_mmc_set_ios,
 	.get_ro         = tmio_mmc_get_ro,
-	.get_cd		= tmio_mmc_get_cd,
 };
 
 #ifdef CONFIG_PM
@@ -789,7 +472,7 @@ static int tmio_mmc_suspend(struct platform_device *dev, pm_message_t state)
 	struct mmc_host *mmc = platform_get_drvdata(dev);
 	int ret;
 
-	ret = mmc_suspend_host(mmc);
+	ret = mmc_suspend_host(mmc, state);
 
 	/* Tell MFD core it can disable us now.*/
 	if (!ret && cell->disable)
@@ -802,14 +485,20 @@ static int tmio_mmc_resume(struct platform_device *dev)
 {
 	struct mfd_cell	*cell = (struct mfd_cell *)dev->dev.platform_data;
 	struct mmc_host *mmc = platform_get_drvdata(dev);
+	struct tmio_mmc_host *host = mmc_priv(mmc);
 	int ret = 0;
 
 	/* Tell the MFD core we are ready to be enabled */
-	if (cell->resume) {
-		ret = cell->resume(dev);
+	if (cell->enable) {
+		ret = cell->enable(dev);
 		if (ret)
 			goto out;
 	}
+
+	/* Enable the MMC/SD Control registers */
+	sd_config_write16(host, CNF_CMD, SDCREN);
+	sd_config_write32(host, CNF_CTL_BASE,
+		(dev->resource[0].start >> host->bus_shift) & 0xfffe);
 
 	mmc_resume_host(mmc);
 
@@ -825,17 +514,17 @@ static int __devinit tmio_mmc_probe(struct platform_device *dev)
 {
 	struct mfd_cell	*cell = (struct mfd_cell *)dev->dev.platform_data;
 	struct tmio_mmc_data *pdata;
-	struct resource *res_ctl;
+	struct resource *res_ctl, *res_cnf;
 	struct tmio_mmc_host *host;
 	struct mmc_host *mmc;
 	int ret = -EINVAL;
-	u32 irq_mask = TMIO_MASK_CMD;
 
-	if (dev->num_resources != 2)
+	if (dev->num_resources != 3)
 		goto out;
 
 	res_ctl = platform_get_resource(dev, IORESOURCE_MEM, 0);
-	if (!res_ctl)
+	res_cnf = platform_get_resource(dev, IORESOURCE_MEM, 1);
+	if (!res_ctl || !res_cnf)
 		goto out;
 
 	pdata = cell->driver_data;
@@ -850,11 +539,7 @@ static int __devinit tmio_mmc_probe(struct platform_device *dev)
 
 	host = mmc_priv(mmc);
 	host->mmc = mmc;
-	host->pdev = dev;
 	platform_set_drvdata(dev, mmc);
-
-	host->set_pwr = pdata->set_pwr;
-	host->set_clk_div = pdata->set_clk_div;
 
 	/* SD control register space size is 0x200, 0x400 for bus_shift=1 */
 	host->bus_shift = resource_size(res_ctl) >> 10;
@@ -863,22 +548,36 @@ static int __devinit tmio_mmc_probe(struct platform_device *dev)
 	if (!host->ctl)
 		goto host_free;
 
+	host->cnf = ioremap(res_cnf->start, resource_size(res_cnf));
+	if (!host->cnf)
+		goto unmap_ctl;
+
 	mmc->ops = &tmio_mmc_ops;
 	mmc->caps = MMC_CAP_4_BIT_DATA;
-	mmc->caps |= pdata->capabilities;
 	mmc->f_max = pdata->hclk;
 	mmc->f_min = mmc->f_max / 512;
-	if (pdata->ocr_mask)
-		mmc->ocr_avail = pdata->ocr_mask;
-	else
-		mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
+	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
 
 	/* Tell the MFD core we are ready to be enabled */
 	if (cell->enable) {
 		ret = cell->enable(dev);
 		if (ret)
-			goto unmap_ctl;
+			goto unmap_cnf;
 	}
+
+	/* Enable the MMC/SD Control registers */
+	sd_config_write16(host, CNF_CMD, SDCREN);
+	sd_config_write32(host, CNF_CTL_BASE,
+		(dev->resource[0].start >> host->bus_shift) & 0xfffe);
+
+	/* Disable SD power during suspend */
+	sd_config_write8(host, CNF_PWR_CTL_3, 0x01);
+
+	/* The below is required but why? FIXME */
+	sd_config_write8(host, CNF_STOP_CLK_CTL, 0x1f);
+
+	/* Power down SD bus*/
+	sd_config_write8(host, CNF_PWR_CTL_2, 0x00);
 
 	tmio_mmc_clk_stop(host);
 	reset(host);
@@ -887,35 +586,27 @@ static int __devinit tmio_mmc_probe(struct platform_device *dev)
 	if (ret >= 0)
 		host->irq = ret;
 	else
-		goto cell_disable;
+		goto unmap_cnf;
 
 	disable_mmc_irqs(host, TMIO_MASK_ALL);
 
 	ret = request_irq(host->irq, tmio_mmc_irq, IRQF_DISABLED |
 		IRQF_TRIGGER_FALLING, dev_name(&dev->dev), host);
 	if (ret)
-		goto cell_disable;
-
-	/* See if we also get DMA */
-	tmio_mmc_request_dma(host, pdata);
+		goto unmap_cnf;
 
 	mmc_add_host(mmc);
 
-	pr_info("%s at 0x%08lx irq %d\n", mmc_hostname(host->mmc),
-		(unsigned long)host->ctl, host->irq);
+	printk(KERN_INFO "%s at 0x%08lx irq %d\n", mmc_hostname(host->mmc),
+	       (unsigned long)host->ctl, host->irq);
 
 	/* Unmask the IRQs we want to know about */
-	if (!host->chan_rx)
-		irq_mask |= TMIO_MASK_READOP;
-	if (!host->chan_tx)
-		irq_mask |= TMIO_MASK_WRITEOP;
-	enable_mmc_irqs(host, irq_mask);
+	enable_mmc_irqs(host, TMIO_MASK_IRQ);
 
 	return 0;
 
-cell_disable:
-	if (cell->disable)
-		cell->disable(dev);
+unmap_cnf:
+	iounmap(host->cnf);
 unmap_ctl:
 	iounmap(host->ctl);
 host_free:
@@ -926,7 +617,6 @@ out:
 
 static int __devexit tmio_mmc_remove(struct platform_device *dev)
 {
-	struct mfd_cell	*cell = (struct mfd_cell *)dev->dev.platform_data;
 	struct mmc_host *mmc = platform_get_drvdata(dev);
 
 	platform_set_drvdata(dev, NULL);
@@ -934,11 +624,9 @@ static int __devexit tmio_mmc_remove(struct platform_device *dev)
 	if (mmc) {
 		struct tmio_mmc_host *host = mmc_priv(mmc);
 		mmc_remove_host(mmc);
-		tmio_mmc_release_dma(host);
 		free_irq(host->irq, host);
-		if (cell->disable)
-			cell->disable(dev);
 		iounmap(host->ctl);
+		iounmap(host->cnf);
 		mmc_free_host(mmc);
 	}
 

@@ -19,7 +19,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <asm/types.h>
 #include <linux/dvb/frontend.h>
 #include <linux/videodev2.h>

@@ -20,7 +20,6 @@
  * 02110-1301 USA
  */
 
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
 

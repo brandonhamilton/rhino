@@ -7,8 +7,7 @@
 #include <linux/init.h>
 #include <linux/irq.h>
 
-#include <linux/irq_work.h>
-#include <linux/ftrace.h>
+#include <linux/perf_event.h>
 
 #include <asm/pil.h>
 #include <asm/pcr.h>
@@ -35,7 +34,7 @@ unsigned int picl_shift;
  * Therefore in such situations we defer the work by signalling
  * a lower level cpu IRQ.
  */
-void __irq_entry deferred_pcr_work_irq(int irq, struct pt_regs *regs)
+void deferred_pcr_work_irq(int irq, struct pt_regs *regs)
 {
 	struct pt_regs *old_regs;
 
@@ -43,14 +42,14 @@ void __irq_entry deferred_pcr_work_irq(int irq, struct pt_regs *regs)
 
 	old_regs = set_irq_regs(regs);
 	irq_enter();
-#ifdef CONFIG_IRQ_WORK
-	irq_work_run();
+#ifdef CONFIG_PERF_EVENTS
+	perf_event_do_pending();
 #endif
 	irq_exit();
 	set_irq_regs(old_regs);
 }
 
-void arch_irq_work_raise(void)
+void set_perf_event_pending(void)
 {
 	set_softint(1 << PIL_DEFERRED_PCR_WORK);
 }

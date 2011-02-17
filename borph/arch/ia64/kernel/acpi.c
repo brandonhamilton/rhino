@@ -44,8 +44,6 @@
 #include <linux/efi.h>
 #include <linux/mmzone.h>
 #include <linux/nodemask.h>
-#include <linux/slab.h>
-#include <acpi/processor.h>
 #include <asm/io.h>
 #include <asm/iosapic.h>
 #include <asm/machvec.h>
@@ -61,6 +59,11 @@
 		((struct acpi_subtable_header *)entry)->length < sizeof(*entry))
 
 #define PREFIX			"ACPI: "
+
+void (*pm_idle) (void);
+EXPORT_SYMBOL(pm_idle);
+void (*pm_power_off) (void);
+EXPORT_SYMBOL(pm_power_off);
 
 u32 acpi_rsdt_forced;
 unsigned int acpi_cpei_override;
@@ -80,10 +83,12 @@ static unsigned long __init acpi_find_rsdp(void)
 		       "v1.0/r0.71 tables no longer supported\n");
 	return rsdp_phys;
 }
+#endif
 
 const char __init *
 acpi_get_sysname(void)
 {
+#ifdef CONFIG_IA64_GENERIC
 	unsigned long rsdp_phys;
 	struct acpi_table_rsdp *rsdp;
 	struct acpi_table_xsdt *xsdt;
@@ -138,8 +143,30 @@ acpi_get_sysname(void)
 #endif
 
 	return "dig";
+#else
+# if defined (CONFIG_IA64_HP_SIM)
+	return "hpsim";
+# elif defined (CONFIG_IA64_HP_ZX1)
+	return "hpzx1";
+# elif defined (CONFIG_IA64_HP_ZX1_SWIOTLB)
+	return "hpzx1_swiotlb";
+# elif defined (CONFIG_IA64_SGI_SN2)
+	return "sn2";
+# elif defined (CONFIG_IA64_SGI_UV)
+	return "uv";
+# elif defined (CONFIG_IA64_DIG)
+	return "dig";
+# elif defined (CONFIG_IA64_XEN_GUEST)
+	return "xen";
+# elif defined(CONFIG_IA64_DIG_VTD)
+	return "dig_vtd";
+# else
+#	error Unknown platform.  Fix acpi.c.
+# endif
+#endif
 }
-#endif /* CONFIG_IA64_GENERIC */
+
+#ifdef CONFIG_ACPI
 
 #define ACPI_MAX_PLATFORM_INTERRUPTS	256
 
@@ -785,14 +812,6 @@ int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
 	return 0;
 }
 
-int acpi_isa_irq_to_gsi(unsigned isa_irq, u32 *gsi)
-{
-	if (isa_irq >= 16)
-		return -1;
-	*gsi = isa_irq;
-	return 0;
-}
-
 /*
  *  ACPI based hotplug CPU support
  */
@@ -862,8 +881,8 @@ __init void prefill_possible_map(void)
 
 	possible = available_cpus + additional_cpus;
 
-	if (possible > nr_cpu_ids)
-		possible = nr_cpu_ids;
+	if (possible > NR_CPUS)
+		possible = NR_CPUS;
 
 	printk(KERN_INFO "SMP: Allowing %d CPUs, %d hotplug CPUs\n",
 		possible, max((possible - available_cpus), 0));
@@ -916,8 +935,6 @@ int acpi_map_lsapic(acpi_handle handle, int *pcpu)
 
 	cpu_set(cpu, cpu_present_map);
 	ia64_cpu_to_sapicid[cpu] = physid;
-
-	acpi_processor_set_pdc(handle);
 
 	*pcpu = cpu;
 	return (0);
@@ -1043,3 +1060,5 @@ void acpi_restore_state_mem(void) {}
  * do_suspend_lowlevel()
  */
 void do_suspend_lowlevel(void) {}
+
+#endif				/* CONFIG_ACPI */

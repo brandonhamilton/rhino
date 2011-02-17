@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/percpu.h>
 #include <linux/smp.h>
-#include <linux/slab.h>
 #include <asm/byteorder.h>
 #include <asm/processor.h>
 #include <asm/i387.h>
@@ -286,7 +285,7 @@ static inline u8 *padlock_xcrypt_cbc(const u8 *input, u8 *output, void *key,
 	if (initial)
 		asm volatile (".byte 0xf3,0x0f,0xa7,0xd0"	/* rep xcryptcbc */
 			      : "+S" (input), "+D" (output), "+a" (iv)
-			      : "d" (control_word), "b" (key), "c" (initial));
+			      : "d" (control_word), "b" (key), "c" (count));
 
 	asm volatile (".byte 0xf3,0x0f,0xa7,0xd0"	/* rep xcryptcbc */
 		      : "+S" (input), "+D" (output), "+a" (iv)

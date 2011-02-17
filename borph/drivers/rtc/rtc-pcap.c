@@ -17,7 +17,6 @@
 #include <linux/init.h>
 #include <linux/mfd/ezx-pcap.h>
 #include <linux/rtc.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
 
 struct pcap_rtc {

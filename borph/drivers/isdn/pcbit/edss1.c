@@ -19,6 +19,7 @@
 #include <linux/kernel.h>
 
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/skbuff.h>
 
@@ -33,7 +34,7 @@
 #include "callbacks.h"
 
 
-const char * const isdn_state_table[] = {
+char * isdn_state_table[] = {
   "Closed",
   "Call initiated",
   "Overlap sending",

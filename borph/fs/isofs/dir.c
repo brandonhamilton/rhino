@@ -10,7 +10,7 @@
  *
  *  isofs directory handling functions
  */
-#include <linux/gfp.h>
+#include <linux/smp_lock.h>
 #include "isofs.h"
 
 int isofs_name_translate(struct iso_directory_record *de, char *new, struct inode *inode)
@@ -254,25 +254,23 @@ static int isofs_readdir(struct file *filp,
 	char *tmpname;
 	struct iso_directory_record *tmpde;
 	struct inode *inode = filp->f_path.dentry->d_inode;
-	struct isofs_sb_info *sbi = ISOFS_SB(inode->i_sb);
 
 	tmpname = (char *)__get_free_page(GFP_KERNEL);
 	if (tmpname == NULL)
 		return -ENOMEM;
 
-	mutex_lock(&sbi->s_mutex);
+	lock_kernel();
 	tmpde = (struct iso_directory_record *) (tmpname+1024);
 
 	result = do_isofs_readdir(inode, filp, dirent, filldir, tmpname, tmpde);
 
 	free_page((unsigned long) tmpname);
-	mutex_unlock(&sbi->s_mutex);
+	unlock_kernel();
 	return result;
 }
 
 const struct file_operations isofs_dir_operations =
 {
-	.llseek = generic_file_llseek,
 	.read = generic_read_dir,
 	.readdir = isofs_readdir,
 };

@@ -14,16 +14,13 @@
 #include <linux/poll.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
-#include <linux/mutex.h>
-#include <linux/kernel.h>
+#include <linux/smp_lock.h>
 
 #include "hysdn_defs.h"
 
 /* the proc subdir for the interface is defined in the procconf module */
 extern struct proc_dir_entry *hysdn_proc_entry;
 
-static DEFINE_MUTEX(hysdn_log_mutex);
 static void put_log_buffer(hysdn_card * card, char *cp);
 
 /*************************************************/
@@ -156,9 +153,10 @@ static ssize_t
 hysdn_log_write(struct file *file, const char __user *buf, size_t count, loff_t * off)
 {
 	unsigned long u = 0;
-	int rc;
-	unsigned char valbuf[128];
-	hysdn_card *card = file->private_data;
+	int found = 0;
+	unsigned char *cp, valbuf[128];
+	long base = 10;
+	hysdn_card *card = (hysdn_card *) file->private_data;
 
 	if (count > (sizeof(valbuf) - 1))
 		count = sizeof(valbuf) - 1;	/* limit length */
@@ -166,10 +164,32 @@ hysdn_log_write(struct file *file, const char __user *buf, size_t count, loff_t 
 		return (-EFAULT);	/* copy failed */
 
 	valbuf[count] = 0;	/* terminating 0 */
+	cp = valbuf;
+	if ((count > 2) && (valbuf[0] == '0') && (valbuf[1] == 'x')) {
+		cp += 2;	/* pointer after hex modifier */
+		base = 16;
+	}
+	/* scan the input for debug flags */
+	while (*cp) {
+		if ((*cp >= '0') && (*cp <= '9')) {
+			found = 1;
+			u *= base;	/* adjust to next digit */
+			u += *cp++ - '0';
+			continue;
+		}
+		if (base != 16)
+			break;	/* end of number */
 
-	rc = strict_strtoul(valbuf, 0, &u);
+		if ((*cp >= 'a') && (*cp <= 'f')) {
+			found = 1;
+			u *= base;	/* adjust to next digit */
+			u += *cp++ - 'a' + 10;
+			continue;
+		}
+		break;		/* terminated */
+	}
 
-	if (rc == 0) {
+	if (found) {
 		card->debug_flags = u;	/* remember debug flags */
 		hysdn_addlog(card, "debug set to 0x%lx", card->debug_flags);
 	}
@@ -230,7 +250,7 @@ hysdn_log_open(struct inode *ino, struct file *filep)
 	struct procdata *pd = NULL;
 	unsigned long flags;
 
-	mutex_lock(&hysdn_log_mutex);
+	lock_kernel();
 	card = card_root;
 	while (card) {
 		pd = card->proclog;
@@ -239,7 +259,7 @@ hysdn_log_open(struct inode *ino, struct file *filep)
 		card = card->next;	/* search next entry */
 	}
 	if (!card) {
-		mutex_unlock(&hysdn_log_mutex);
+		unlock_kernel();
 		return (-ENODEV);	/* device is unknown/invalid */
 	}
 	filep->private_data = card;	/* remember our own card */
@@ -257,10 +277,10 @@ hysdn_log_open(struct inode *ino, struct file *filep)
 			filep->private_data = &pd->log_head;
 		spin_unlock_irqrestore(&card->hysdn_lock, flags);
 	} else {		/* simultaneous read/write access forbidden ! */
-		mutex_unlock(&hysdn_log_mutex);
+		unlock_kernel();
 		return (-EPERM);	/* no permission this time */
 	}
-	mutex_unlock(&hysdn_log_mutex);
+	unlock_kernel();
 	return nonseekable_open(ino, filep);
 }				/* hysdn_log_open */
 
@@ -279,7 +299,7 @@ hysdn_log_close(struct inode *ino, struct file *filep)
 	hysdn_card *card;
 	int retval = 0;
 
-	mutex_lock(&hysdn_log_mutex);
+	lock_kernel();
 	if ((filep->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_WRITE) {
 		/* write only access -> write debug level written */
 		retval = 0;	/* success */
@@ -318,7 +338,7 @@ hysdn_log_close(struct inode *ino, struct file *filep)
 					kfree(inf);
 				}
 	}			/* read access */
-	mutex_unlock(&hysdn_log_mutex);
+	unlock_kernel();
 
 	return (retval);
 }				/* hysdn_log_close */

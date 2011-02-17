@@ -18,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <mach/hardware.h>
 #include <mach/pxa930_trkball.h>

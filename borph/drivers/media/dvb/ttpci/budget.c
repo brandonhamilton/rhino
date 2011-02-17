@@ -31,7 +31,7 @@
  * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
  *
  *
- * the project's page is at http://www.linuxtv.org/ 
+ * the project's page is at http://www.linuxtv.org/dvb/
  */
 
 #include "budget.h"
@@ -433,8 +433,9 @@ static struct stv090x_config tt1600_stv090x_config = {
 	.demod_mode		= STV090x_SINGLE,
 	.clk_mode		= STV090x_CLK_EXT,
 
-	.xtal			= 13500000,
+	.xtal			= 27000000,
 	.address		= 0x68,
+	.ref_clk		= 27000000,
 
 	.ts1_mode		= STV090x_TSMODE_DVBCI,
 	.ts2_mode		= STV090x_TSMODE_SERIAL_CONTINUOUS,
@@ -442,7 +443,6 @@ static struct stv090x_config tt1600_stv090x_config = {
 	.repeater_level		= STV090x_RPTLEVEL_16,
 
 	.tuner_init		= NULL,
-	.tuner_sleep		= NULL,
 	.tuner_set_mode		= NULL,
 	.tuner_set_frequency	= NULL,
 	.tuner_get_frequency	= NULL,
@@ -457,7 +457,6 @@ static struct stv090x_config tt1600_stv090x_config = {
 static struct stv6110x_config tt1600_stv6110x_config = {
 	.addr			= 0x60,
 	.refclk			= 27000000,
-	.clk_div		= 2,
 };
 
 static struct isl6423_config tt1600_isl6423_config = {
@@ -628,36 +627,25 @@ static void frontend_init(struct budget *budget)
 						 &tt1600_stv6110x_config,
 						 &budget->i2c_adap);
 
-				if (ctl) {
-					tt1600_stv090x_config.tuner_init	  = ctl->tuner_init;
-					tt1600_stv090x_config.tuner_sleep	  = ctl->tuner_sleep;
-					tt1600_stv090x_config.tuner_set_mode	  = ctl->tuner_set_mode;
-					tt1600_stv090x_config.tuner_set_frequency = ctl->tuner_set_frequency;
-					tt1600_stv090x_config.tuner_get_frequency = ctl->tuner_get_frequency;
-					tt1600_stv090x_config.tuner_set_bandwidth = ctl->tuner_set_bandwidth;
-					tt1600_stv090x_config.tuner_get_bandwidth = ctl->tuner_get_bandwidth;
-					tt1600_stv090x_config.tuner_set_bbgain	  = ctl->tuner_set_bbgain;
-					tt1600_stv090x_config.tuner_get_bbgain	  = ctl->tuner_get_bbgain;
-					tt1600_stv090x_config.tuner_set_refclk	  = ctl->tuner_set_refclk;
-					tt1600_stv090x_config.tuner_get_status	  = ctl->tuner_get_status;
+				tt1600_stv090x_config.tuner_init	  = ctl->tuner_init;
+				tt1600_stv090x_config.tuner_set_mode	  = ctl->tuner_set_mode;
+				tt1600_stv090x_config.tuner_set_frequency = ctl->tuner_set_frequency;
+				tt1600_stv090x_config.tuner_get_frequency = ctl->tuner_get_frequency;
+				tt1600_stv090x_config.tuner_set_bandwidth = ctl->tuner_set_bandwidth;
+				tt1600_stv090x_config.tuner_get_bandwidth = ctl->tuner_get_bandwidth;
+				tt1600_stv090x_config.tuner_set_bbgain	  = ctl->tuner_set_bbgain;
+				tt1600_stv090x_config.tuner_get_bbgain	  = ctl->tuner_get_bbgain;
+				tt1600_stv090x_config.tuner_set_refclk	  = ctl->tuner_set_refclk;
+				tt1600_stv090x_config.tuner_get_status	  = ctl->tuner_get_status;
 
-					/* call the init function once to initialize
-					   tuner's clock output divider and demod's
-					   master clock */
-					if (budget->dvb_frontend->ops.init)
-						budget->dvb_frontend->ops.init(budget->dvb_frontend);
+				dvb_attach(isl6423_attach,
+					budget->dvb_frontend,
+					&budget->i2c_adap,
+					&tt1600_isl6423_config);
 
-					if (dvb_attach(isl6423_attach,
-						       budget->dvb_frontend,
-						       &budget->i2c_adap,
-						       &tt1600_isl6423_config) == NULL) {
-						printk(KERN_ERR "%s: No Intersil ISL6423 found!\n", __func__);
-						goto error_out;
-					}
-				} else {
-					printk(KERN_ERR "%s: No STV6110(A) Silicon Tuner found!\n", __func__);
-					goto error_out;
-				}
+			} else {
+				dvb_frontend_detach(budget->dvb_frontend);
+				budget->dvb_frontend = NULL;
 			}
 		}
 		break;

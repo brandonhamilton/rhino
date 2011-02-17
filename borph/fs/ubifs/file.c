@@ -45,14 +45,13 @@
  *
  * Similarly, @i_mutex is not always locked in 'ubifs_readpage()', e.g., the
  * read-ahead path does not lock it ("sys_read -> generic_file_aio_read ->
- * ondemand_readahead -> readpage"). In case of readahead, @I_SYNC flag is not
+ * ondemand_readahead -> readpage"). In case of readahead, @I_LOCK flag is not
  * set as well. However, UBIFS disables readahead.
  */
 
 #include "ubifs.h"
 #include <linux/mount.h>
 #include <linux/namei.h>
-#include <linux/slab.h>
 
 static int read_block(struct inode *inode, void *addr, unsigned int block,
 		      struct ubifs_data_node *dn)
@@ -433,9 +432,8 @@ static int ubifs_write_begin(struct file *file, struct address_space *mapping,
 	struct page *page;
 
 	ubifs_assert(ubifs_inode(inode)->ui_size == inode->i_size);
-	ubifs_assert(!c->ro_media && !c->ro_mount);
 
-	if (unlikely(c->ro_error))
+	if (unlikely(c->ro_media))
 		return -EROFS;
 
 	/* Try out the fast-path part first */
@@ -968,15 +966,11 @@ static int do_writepage(struct page *page, int len)
  * the page locked, and it locks @ui_mutex. However, write-back does take inode
  * @i_mutex, which means other VFS operations may be run on this inode at the
  * same time. And the problematic one is truncation to smaller size, from where
- * we have to call 'truncate_setsize()', which first changes @inode->i_size, then
+ * we have to call 'vmtruncate()', which first changes @inode->i_size, then
  * drops the truncated pages. And while dropping the pages, it takes the page
- * lock. This means that 'do_truncation()' cannot call 'truncate_setsize()' with
+ * lock. This means that 'do_truncation()' cannot call 'vmtruncate()' with
  * @ui_mutex locked, because it would deadlock with 'ubifs_writepage()'. This
  * means that @inode->i_size is changed while @ui_mutex is unlocked.
- *
- * XXX(truncate): with the new truncate sequence this is not true anymore,
- * and the calls to truncate_setsize can be move around freely.  They should
- * be moved to the very end of the truncate sequence.
  *
  * But in 'ubifs_writepage()' we have to guarantee that we do not write beyond
  * inode size. How do we do this if @inode->i_size may became smaller while we
@@ -1017,7 +1011,7 @@ static int ubifs_writepage(struct page *page, struct writeback_control *wbc)
 	/* Is the page fully inside @i_size? */
 	if (page->index < end_index) {
 		if (page->index >= synced_i_size >> PAGE_CACHE_SHIFT) {
-			err = inode->i_sb->s_op->write_inode(inode, NULL);
+			err = inode->i_sb->s_op->write_inode(inode, 1);
 			if (err)
 				goto out_unlock;
 			/*
@@ -1045,7 +1039,7 @@ static int ubifs_writepage(struct page *page, struct writeback_control *wbc)
 	kunmap_atomic(kaddr, KM_USER0);
 
 	if (i_size > synced_i_size) {
-		err = inode->i_sb->s_op->write_inode(inode, NULL);
+		err = inode->i_sb->s_op->write_inode(inode, 1);
 		if (err)
 			goto out_unlock;
 	}
@@ -1130,7 +1124,9 @@ static int do_truncation(struct ubifs_info *c, struct inode *inode,
 		budgeted = 0;
 	}
 
-	truncate_setsize(inode, new_size);
+	err = vmtruncate(inode, new_size);
+	if (err)
+		goto out_budg;
 
 	if (offset) {
 		pgoff_t index = new_size >> PAGE_CACHE_SHIFT;
@@ -1217,14 +1213,16 @@ static int do_setattr(struct ubifs_info *c, struct inode *inode,
 
 	if (attr->ia_valid & ATTR_SIZE) {
 		dbg_gen("size %lld -> %lld", inode->i_size, new_size);
-		truncate_setsize(inode, new_size);
+		err = vmtruncate(inode, new_size);
+		if (err)
+			goto out;
 	}
 
 	mutex_lock(&ui->ui_mutex);
 	if (attr->ia_valid & ATTR_SIZE) {
 		/* Truncation changes inode [mc]time */
 		inode->i_mtime = inode->i_ctime = ubifs_current_time(inode);
-		/* 'truncate_setsize()' changed @i_size, update @ui_size */
+		/* 'vmtruncate()' changed @i_size, update @ui_size */
 		ui->ui_size = inode->i_size;
 	}
 
@@ -1244,7 +1242,11 @@ static int do_setattr(struct ubifs_info *c, struct inode *inode,
 	if (release)
 		ubifs_release_budget(c, &req);
 	if (IS_SYNC(inode))
-		err = inode->i_sb->s_op->write_inode(inode, NULL);
+		err = inode->i_sb->s_op->write_inode(inode, 1);
+	return err;
+
+out:
+	ubifs_release_budget(c, &req);
 	return err;
 }
 
@@ -1301,9 +1303,9 @@ static void *ubifs_follow_link(struct dentry *dentry, struct nameidata *nd)
 	return NULL;
 }
 
-int ubifs_fsync(struct file *file, int datasync)
+int ubifs_fsync(struct file *file, struct dentry *dentry, int datasync)
 {
-	struct inode *inode = file->f_mapping->host;
+	struct inode *inode = dentry->d_inode;
 	struct ubifs_info *c = inode->i_sb->s_fs_info;
 	int err;
 
@@ -1314,7 +1316,7 @@ int ubifs_fsync(struct file *file, int datasync)
 	 * the inode unless this is a 'datasync()' call.
 	 */
 	if (!datasync || (inode->i_state & I_DIRTY_DATASYNC)) {
-		err = inode->i_sb->s_op->write_inode(inode, NULL);
+		err = inode->i_sb->s_op->write_inode(inode, 1);
 		if (err)
 			return err;
 	}
@@ -1440,9 +1442,9 @@ static int ubifs_vm_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vm
 
 	dbg_gen("ino %lu, pg %lu, i_size %lld",	inode->i_ino, page->index,
 		i_size_read(inode));
-	ubifs_assert(!c->ro_media && !c->ro_mount);
+	ubifs_assert(!(inode->i_sb->s_flags & MS_RDONLY));
 
-	if (unlikely(c->ro_error))
+	if (unlikely(c->ro_media))
 		return VM_FAULT_SIGBUS; /* -EROFS */
 
 	/*

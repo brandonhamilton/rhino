@@ -21,7 +21,6 @@
 #include <linux/usb.h>
 #include <linux/crc32.h>
 #include <linux/usb/usbnet.h>
-#include <linux/slab.h>
 
 /* datasheet:
  http://ptm2.cc.utu.fi/ftp/network/cards/DM9601/From_NET/DM9601-DS-P01-930914.pdf
@@ -59,7 +58,7 @@ static int dm_read(struct usbnet *dev, u8 reg, u16 length, void *data)
 	void *buf;
 	int err = -ENOMEM;
 
-	netdev_dbg(dev->net, "dm_read() reg=0x%02x length=%d\n", reg, length);
+	devdbg(dev, "dm_read() reg=0x%02x length=%d", reg, length);
 
 	buf = kmalloc(length, GFP_KERNEL);
 	if (!buf)
@@ -90,12 +89,13 @@ static int dm_write(struct usbnet *dev, u8 reg, u16 length, void *data)
 	void *buf = NULL;
 	int err = -ENOMEM;
 
-	netdev_dbg(dev->net, "dm_write() reg=0x%02x, length=%d\n", reg, length);
+	devdbg(dev, "dm_write() reg=0x%02x, length=%d", reg, length);
 
 	if (data) {
-		buf = kmemdup(data, length, GFP_KERNEL);
+		buf = kmalloc(length, GFP_KERNEL);
 		if (!buf)
 			goto out;
+		memcpy(buf, data, length);
 	}
 
 	err = usb_control_msg(dev->udev,
@@ -112,8 +112,7 @@ static int dm_write(struct usbnet *dev, u8 reg, u16 length, void *data)
 
 static int dm_write_reg(struct usbnet *dev, u8 reg, u8 value)
 {
-	netdev_dbg(dev->net, "dm_write_reg() reg=0x%02x, value=0x%02x\n",
-		   reg, value);
+	devdbg(dev, "dm_write_reg() reg=0x%02x, value=0x%02x", reg, value);
 	return usb_control_msg(dev->udev,
 			       usb_sndctrlpipe(dev->udev, 0),
 			       DM_WRITE_REG,
@@ -143,13 +142,13 @@ static void dm_write_async_helper(struct usbnet *dev, u8 reg, u8 value,
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb) {
-		netdev_err(dev->net, "Error allocating URB in dm_write_async_helper!\n");
+		deverr(dev, "Error allocating URB in dm_write_async_helper!");
 		return;
 	}
 
 	req = kmalloc(sizeof(struct usb_ctrlrequest), GFP_ATOMIC);
 	if (!req) {
-		netdev_err(dev->net, "Failed to allocate memory for control request\n");
+		deverr(dev, "Failed to allocate memory for control request");
 		usb_free_urb(urb);
 		return;
 	}
@@ -167,8 +166,8 @@ static void dm_write_async_helper(struct usbnet *dev, u8 reg, u8 value,
 
 	status = usb_submit_urb(urb, GFP_ATOMIC);
 	if (status < 0) {
-		netdev_err(dev->net, "Error submitting the control message: status=%d\n",
-			   status);
+		deverr(dev, "Error submitting the control message: status=%d",
+		       status);
 		kfree(req);
 		usb_free_urb(urb);
 	}
@@ -176,15 +175,15 @@ static void dm_write_async_helper(struct usbnet *dev, u8 reg, u8 value,
 
 static void dm_write_async(struct usbnet *dev, u8 reg, u16 length, void *data)
 {
-	netdev_dbg(dev->net, "dm_write_async() reg=0x%02x length=%d\n", reg, length);
+	devdbg(dev, "dm_write_async() reg=0x%02x length=%d", reg, length);
 
 	dm_write_async_helper(dev, reg, 0, length, data);
 }
 
 static void dm_write_reg_async(struct usbnet *dev, u8 reg, u8 value)
 {
-	netdev_dbg(dev->net, "dm_write_reg_async() reg=0x%02x value=0x%02x\n",
-		   reg, value);
+	devdbg(dev, "dm_write_reg_async() reg=0x%02x value=0x%02x",
+	       reg, value);
 
 	dm_write_async_helper(dev, reg, value, 0, NULL);
 }
@@ -212,7 +211,7 @@ static int dm_read_shared_word(struct usbnet *dev, int phy, u8 reg, __le16 *valu
 	}
 
 	if (i == DM_TIMEOUT) {
-		netdev_err(dev->net, "%s read timed out!\n", phy ? "phy" : "eeprom");
+		deverr(dev, "%s read timed out!", phy ? "phy" : "eeprom");
 		ret = -EIO;
 		goto out;
 	}
@@ -220,8 +219,8 @@ static int dm_read_shared_word(struct usbnet *dev, int phy, u8 reg, __le16 *valu
 	dm_write_reg(dev, DM_SHARED_CTRL, 0x0);
 	ret = dm_read(dev, DM_SHARED_DATA, 2, value);
 
-	netdev_dbg(dev->net, "read shared %d 0x%02x returned 0x%04x, %d\n",
-		   phy, reg, *value, ret);
+	devdbg(dev, "read shared %d 0x%02x returned 0x%04x, %d",
+	       phy, reg, *value, ret);
 
  out:
 	mutex_unlock(&dev->phy_mutex);
@@ -239,7 +238,7 @@ static int dm_write_shared_word(struct usbnet *dev, int phy, u8 reg, __le16 valu
 		goto out;
 
 	dm_write_reg(dev, DM_SHARED_ADDR, phy ? (reg | 0x40) : reg);
-	dm_write_reg(dev, DM_SHARED_CTRL, phy ? 0x1a : 0x12);
+	dm_write_reg(dev, DM_SHARED_CTRL, phy ? 0x1c : 0x14);
 
 	for (i = 0; i < DM_TIMEOUT; i++) {
 		u8 tmp;
@@ -255,7 +254,7 @@ static int dm_write_shared_word(struct usbnet *dev, int phy, u8 reg, __le16 valu
 	}
 
 	if (i == DM_TIMEOUT) {
-		netdev_err(dev->net, "%s write timed out!\n", phy ? "phy" : "eeprom");
+		deverr(dev, "%s write timed out!", phy ? "phy" : "eeprom");
 		ret = -EIO;
 		goto out;
 	}
@@ -305,15 +304,15 @@ static int dm9601_mdio_read(struct net_device *netdev, int phy_id, int loc)
 	__le16 res;
 
 	if (phy_id) {
-		netdev_dbg(dev->net, "Only internal phy supported\n");
+		devdbg(dev, "Only internal phy supported");
 		return 0;
 	}
 
 	dm_read_shared_word(dev, 1, loc, &res);
 
-	netdev_dbg(dev->net,
-		   "dm9601_mdio_read() phy_id=0x%02x, loc=0x%02x, returns=0x%04x\n",
-		   phy_id, loc, le16_to_cpu(res));
+	devdbg(dev,
+	       "dm9601_mdio_read() phy_id=0x%02x, loc=0x%02x, returns=0x%04x",
+	       phy_id, loc, le16_to_cpu(res));
 
 	return le16_to_cpu(res);
 }
@@ -325,12 +324,12 @@ static void dm9601_mdio_write(struct net_device *netdev, int phy_id, int loc,
 	__le16 res = cpu_to_le16(val);
 
 	if (phy_id) {
-		netdev_dbg(dev->net, "Only internal phy supported\n");
+		devdbg(dev, "Only internal phy supported");
 		return;
 	}
 
-	netdev_dbg(dev->net, "dm9601_mdio_write() phy_id=0x%02x, loc=0x%02x, val=0x%04x\n",
-		   phy_id, loc, val);
+	devdbg(dev,"dm9601_mdio_write() phy_id=0x%02x, loc=0x%02x, val=0x%04x",
+	       phy_id, loc, val);
 
 	dm_write_shared_word(dev, 1, loc, res);
 }
@@ -382,14 +381,14 @@ static void dm9601_set_multicast(struct net_device *net)
 
 	if (net->flags & IFF_PROMISC) {
 		rx_ctl |= 0x02;
-	} else if (net->flags & IFF_ALLMULTI ||
-		   netdev_mc_count(net) > DM_MAX_MCAST) {
+	} else if (net->flags & IFF_ALLMULTI || net->mc_count > DM_MAX_MCAST) {
 		rx_ctl |= 0x04;
-	} else if (!netdev_mc_empty(net)) {
-		struct netdev_hw_addr *ha;
+	} else if (net->mc_count) {
+		struct dev_mc_list *mc_list = net->mc_list;
+		int i;
 
-		netdev_for_each_mc_addr(ha, net) {
-			u32 crc = ether_crc(ETH_ALEN, ha->addr) >> 26;
+		for (i = 0; i < net->mc_count; i++, mc_list = mc_list->next) {
+			u32 crc = ether_crc(ETH_ALEN, mc_list->dmi_addr) >> 26;
 			hashes[crc >> 3] |= 1 << (crc & 0x7);
 		}
 	}
@@ -593,7 +592,7 @@ static void dm9601_status(struct usbnet *dev, struct urb *urb)
 		}
 		else
 			netif_carrier_off(dev->net);
-		netdev_dbg(dev->net, "Link Status is: %d\n", link);
+		devdbg(dev, "Link Status is: %d", link);
 	}
 }
 
@@ -604,8 +603,8 @@ static int dm9601_link_reset(struct usbnet *dev)
 	mii_check_media(&dev->mii, 1, 1);
 	mii_ethtool_gset(&dev->mii, &ecmd);
 
-	netdev_dbg(dev->net, "link_reset() speed: %d duplex: %d\n",
-		   ecmd.speed, ecmd.duplex);
+	devdbg(dev, "link_reset() speed: %d duplex: %d",
+	       ecmd.speed, ecmd.duplex);
 
 	return 0;
 }

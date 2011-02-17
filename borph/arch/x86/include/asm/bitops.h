@@ -309,7 +309,7 @@ static inline int test_and_change_bit(int nr, volatile unsigned long *addr)
 static __always_inline int constant_test_bit(unsigned int nr, const volatile unsigned long *addr)
 {
 	return ((1UL << (nr % BITS_PER_LONG)) &
-		(addr[nr / BITS_PER_LONG])) != 0;
+		(((unsigned long *)addr)[nr / BITS_PER_LONG])) != 0;
 }
 
 static inline int variable_test_bit(int nr, volatile const unsigned long *addr)
@@ -440,15 +440,11 @@ static inline int fls(int x)
 
 #ifdef __KERNEL__
 
-#include <asm-generic/bitops/find.h>
-
 #include <asm-generic/bitops/sched.h>
 
 #define ARCH_HAS_FAST_MULTIPLIER 1
 
-#include <asm/arch_hweight.h>
-
-#include <asm-generic/bitops/const_hweight.h>
+#include <asm-generic/bitops/hweight.h>
 
 #endif /* __KERNEL__ */
 

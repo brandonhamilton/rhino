@@ -74,8 +74,7 @@ static int artop6260_pre_reset(struct ata_link *link, unsigned long deadline)
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 
 	/* Odd numbered device ids are the units with enable bits (the -R cards) */
-	if ((pdev->device & 1) &&
-	    !pci_test_config_bits(pdev, &artop_enable_bits[ap->port_no]))
+	if (pdev->device % 1 && !pci_test_config_bits(pdev, &artop_enable_bits[ap->port_no]))
 		return -ENOENT;
 
 	return ata_sff_prereset(link, deadline);
@@ -422,7 +421,7 @@ static int artop_init_one (struct pci_dev *pdev, const struct pci_device_id *id)
 
 	BUG_ON(ppi[0] == NULL);
 
-	return ata_pci_bmdma_init_one(pdev, ppi, &artop_sht, NULL, 0);
+	return ata_pci_sff_init_one(pdev, ppi, &artop_sht, NULL);
 }
 
 static const struct pci_device_id artop_pci_tbl[] = {

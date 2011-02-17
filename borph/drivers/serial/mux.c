@@ -22,6 +22,7 @@
 #include <linux/init.h>
 #include <linux/serial.h>
 #include <linux/console.h>
+#include <linux/slab.h>
 #include <linux/delay.h> /* for udelay */
 #include <linux/device.h>
 #include <asm/io.h>

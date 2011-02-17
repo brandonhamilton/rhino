@@ -30,13 +30,11 @@
  *
  */
 
-#include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
-#include <linux/sysdev.h>
 #include <asm/mach-au1x00/au1000.h>
 #include <asm/mach-au1x00/au1xxx_dbdma.h>
 
@@ -60,6 +58,7 @@ static DEFINE_SPINLOCK(au1xxx_dbdma_spin_lock);
 
 static dbdma_global_t *dbdma_gptr = (dbdma_global_t *)DDMA_GLOBAL_BASE;
 static int dbdma_initialized;
+static void au1xxx_dbdma_init(void);
 
 static dbdev_tab_t dbdev_tab[] = {
 #ifdef CONFIG_SOC_AU1550
@@ -175,6 +174,10 @@ static dbdev_tab_t dbdev_tab[] = {
 
 #define DBDEV_TAB_SIZE	ARRAY_SIZE(dbdev_tab)
 
+#ifdef CONFIG_PM
+static u32 au1xxx_dbdma_pm_regs[NUM_DBDMA_CHANS + 1][6];
+#endif
+
 
 static chan_tab_t *chan_tab_ptr[NUM_DBDMA_CHANS];
 
@@ -234,7 +237,7 @@ u32 au1xxx_dbdma_chan_alloc(u32 srcid, u32 destid,
        void (*callback)(int, void *), void *callparam)
 {
 	unsigned long   flags;
-	u32		used, chan;
+	u32		used, chan, rv;
 	u32		dcp;
 	int		i;
 	dbdev_tab_t	*stp, *dtp;
@@ -247,7 +250,8 @@ u32 au1xxx_dbdma_chan_alloc(u32 srcid, u32 destid,
 	 * which can't be done successfully during board set up.
 	 */
 	if (!dbdma_initialized)
-		return 0;
+		au1xxx_dbdma_init();
+	dbdma_initialized = 1;
 
 	stp = find_dbdev_id(srcid);
 	if (stp == NULL)
@@ -257,6 +261,7 @@ u32 au1xxx_dbdma_chan_alloc(u32 srcid, u32 destid,
 		return 0;
 
 	used = 0;
+	rv = 0;
 
 	/* Check to see if we can get both channels. */
 	spin_lock_irqsave(&au1xxx_dbdma_spin_lock, flags);
@@ -277,65 +282,63 @@ u32 au1xxx_dbdma_chan_alloc(u32 srcid, u32 destid,
 		used++;
 	spin_unlock_irqrestore(&au1xxx_dbdma_spin_lock, flags);
 
-	if (used)
-		return 0;
+	if (!used) {
+		/* Let's see if we can allocate a channel for it. */
+		ctp = NULL;
+		chan = 0;
+		spin_lock_irqsave(&au1xxx_dbdma_spin_lock, flags);
+		for (i = 0; i < NUM_DBDMA_CHANS; i++)
+			if (chan_tab_ptr[i] == NULL) {
+				/*
+				 * If kmalloc fails, it is caught below same
+				 * as a channel not available.
+				 */
+				ctp = kmalloc(sizeof(chan_tab_t), GFP_ATOMIC);
+				chan_tab_ptr[i] = ctp;
+				break;
+			}
+		spin_unlock_irqrestore(&au1xxx_dbdma_spin_lock, flags);
 
-	/* Let's see if we can allocate a channel for it. */
-	ctp = NULL;
-	chan = 0;
-	spin_lock_irqsave(&au1xxx_dbdma_spin_lock, flags);
-	for (i = 0; i < NUM_DBDMA_CHANS; i++)
-		if (chan_tab_ptr[i] == NULL) {
-			/*
-			 * If kmalloc fails, it is caught below same
-			 * as a channel not available.
+		if (ctp != NULL) {
+			memset(ctp, 0, sizeof(chan_tab_t));
+			ctp->chan_index = chan = i;
+			dcp = DDMA_CHANNEL_BASE;
+			dcp += (0x0100 * chan);
+			ctp->chan_ptr = (au1x_dma_chan_t *)dcp;
+			cp = (au1x_dma_chan_t *)dcp;
+			ctp->chan_src = stp;
+			ctp->chan_dest = dtp;
+			ctp->chan_callback = callback;
+			ctp->chan_callparam = callparam;
+
+			/* Initialize channel configuration. */
+			i = 0;
+			if (stp->dev_intlevel)
+				i |= DDMA_CFG_SED;
+			if (stp->dev_intpolarity)
+				i |= DDMA_CFG_SP;
+			if (dtp->dev_intlevel)
+				i |= DDMA_CFG_DED;
+			if (dtp->dev_intpolarity)
+				i |= DDMA_CFG_DP;
+			if ((stp->dev_flags & DEV_FLAGS_SYNC) ||
+				(dtp->dev_flags & DEV_FLAGS_SYNC))
+					i |= DDMA_CFG_SYNC;
+			cp->ddma_cfg = i;
+			au_sync();
+
+			/* Return a non-zero value that can be used to
+			 * find the channel information in subsequent
+			 * operations.
 			 */
-			ctp = kmalloc(sizeof(chan_tab_t), GFP_ATOMIC);
-			chan_tab_ptr[i] = ctp;
-			break;
+			rv = (u32)(&chan_tab_ptr[chan]);
+		} else {
+			/* Release devices */
+			stp->dev_flags &= ~DEV_FLAGS_INUSE;
+			dtp->dev_flags &= ~DEV_FLAGS_INUSE;
 		}
-	spin_unlock_irqrestore(&au1xxx_dbdma_spin_lock, flags);
-
-	if (ctp != NULL) {
-		memset(ctp, 0, sizeof(chan_tab_t));
-		ctp->chan_index = chan = i;
-		dcp = DDMA_CHANNEL_BASE;
-		dcp += (0x0100 * chan);
-		ctp->chan_ptr = (au1x_dma_chan_t *)dcp;
-		cp = (au1x_dma_chan_t *)dcp;
-		ctp->chan_src = stp;
-		ctp->chan_dest = dtp;
-		ctp->chan_callback = callback;
-		ctp->chan_callparam = callparam;
-
-		/* Initialize channel configuration. */
-		i = 0;
-		if (stp->dev_intlevel)
-			i |= DDMA_CFG_SED;
-		if (stp->dev_intpolarity)
-			i |= DDMA_CFG_SP;
-		if (dtp->dev_intlevel)
-			i |= DDMA_CFG_DED;
-		if (dtp->dev_intpolarity)
-			i |= DDMA_CFG_DP;
-		if ((stp->dev_flags & DEV_FLAGS_SYNC) ||
-			(dtp->dev_flags & DEV_FLAGS_SYNC))
-				i |= DDMA_CFG_SYNC;
-		cp->ddma_cfg = i;
-		au_sync();
-
-		/*
-		 * Return a non-zero value that can be used to find the channel
-		 * information in subsequent operations.
-		 */
-		return (u32)(&chan_tab_ptr[chan]);
 	}
-
-	/* Release devices */
-	stp->dev_flags &= ~DEV_FLAGS_INUSE;
-	dtp->dev_flags &= ~DEV_FLAGS_INUSE;
-
-	return 0;
+	return rv;
 }
 EXPORT_SYMBOL(au1xxx_dbdma_chan_alloc);
 
@@ -409,11 +412,8 @@ u32 au1xxx_dbdma_ring_alloc(u32 chanid, int entries)
 		if (desc_base == 0)
 			return 0;
 
-		ctp->cdb_membase = desc_base;
 		desc_base = ALIGN_ADDR(desc_base, sizeof(au1x_ddma_desc_t));
-	} else
-		ctp->cdb_membase = desc_base;
-
+	}
 	dp = (au1x_ddma_desc_t *)desc_base;
 
 	/* Keep track of the base descriptor. */
@@ -569,7 +569,7 @@ EXPORT_SYMBOL(au1xxx_dbdma_ring_alloc);
  * This updates the source pointer and byte count.  Normally used
  * for memory to fifo transfers.
  */
-u32 au1xxx_dbdma_put_source(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
+u32 _au1xxx_dbdma_put_source(u32 chanid, void *buf, int nbytes, u32 flags)
 {
 	chan_tab_t		*ctp;
 	au1x_ddma_desc_t	*dp;
@@ -595,7 +595,7 @@ u32 au1xxx_dbdma_put_source(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 		return 0;
 
 	/* Load up buffer address and byte count. */
-	dp->dscr_source0 = buf & ~0UL;
+	dp->dscr_source0 = virt_to_phys(buf);
 	dp->dscr_cmd1 = nbytes;
 	/* Check flags */
 	if (flags & DDMA_FLAGS_IE)
@@ -613,7 +613,7 @@ u32 au1xxx_dbdma_put_source(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 	dma_cache_wback_inv((unsigned long)buf, nbytes);
 	dp->dscr_cmd0 |= DSCR_CMD0_V;	/* Let it rip */
 	au_sync();
-	dma_cache_wback_inv((unsigned long)dp, sizeof(*dp));
+	dma_cache_wback_inv((unsigned long)dp, sizeof(dp));
 	ctp->chan_ptr->ddma_dbell = 0;
 
 	/* Get next descriptor pointer.	*/
@@ -622,13 +622,14 @@ u32 au1xxx_dbdma_put_source(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 	/* Return something non-zero. */
 	return nbytes;
 }
-EXPORT_SYMBOL(au1xxx_dbdma_put_source);
+EXPORT_SYMBOL(_au1xxx_dbdma_put_source);
 
 /* Put a destination buffer into the DMA ring.
  * This updates the destination pointer and byte count.  Normally used
  * to place an empty buffer into the ring for fifo to memory transfers.
  */
-u32 au1xxx_dbdma_put_dest(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
+u32
+_au1xxx_dbdma_put_dest(u32 chanid, void *buf, int nbytes, u32 flags)
 {
 	chan_tab_t		*ctp;
 	au1x_ddma_desc_t	*dp;
@@ -658,7 +659,7 @@ u32 au1xxx_dbdma_put_dest(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 	if (flags & DDMA_FLAGS_NOIE)
 		dp->dscr_cmd0 &= ~DSCR_CMD0_IE;
 
-	dp->dscr_dest0 = buf & ~0UL;
+	dp->dscr_dest0 = virt_to_phys(buf);
 	dp->dscr_cmd1 = nbytes;
 #if 0
 	printk(KERN_DEBUG "cmd0:%x cmd1:%x source0:%x source1:%x dest0:%x dest1:%x\n",
@@ -675,7 +676,7 @@ u32 au1xxx_dbdma_put_dest(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 	dma_cache_inv((unsigned long)buf, nbytes);
 	dp->dscr_cmd0 |= DSCR_CMD0_V;	/* Let it rip */
 	au_sync();
-	dma_cache_wback_inv((unsigned long)dp, sizeof(*dp));
+	dma_cache_wback_inv((unsigned long)dp, sizeof(dp));
 	ctp->chan_ptr->ddma_dbell = 0;
 
 	/* Get next descriptor pointer.	*/
@@ -684,7 +685,7 @@ u32 au1xxx_dbdma_put_dest(u32 chanid, dma_addr_t buf, int nbytes, u32 flags)
 	/* Return something non-zero. */
 	return nbytes;
 }
-EXPORT_SYMBOL(au1xxx_dbdma_put_dest);
+EXPORT_SYMBOL(_au1xxx_dbdma_put_dest);
 
 /*
  * Get a destination buffer into the DMA ring.
@@ -830,7 +831,7 @@ void au1xxx_dbdma_chan_free(u32 chanid)
 
 	au1xxx_dbdma_stop(chanid);
 
-	kfree((void *)ctp->cdb_membase);
+	kfree((void *)ctp->chan_desc_base);
 
 	stp->dev_flags &= ~DEV_FLAGS_INUSE;
 	dtp->dev_flags &= ~DEV_FLAGS_INUSE;
@@ -867,6 +868,28 @@ static irqreturn_t dbdma_interrupt(int irq, void *dev_id)
 	return IRQ_RETVAL(1);
 }
 
+static void au1xxx_dbdma_init(void)
+{
+	int irq_nr;
+
+	dbdma_gptr->ddma_config = 0;
+	dbdma_gptr->ddma_throttle = 0;
+	dbdma_gptr->ddma_inten = 0xffff;
+	au_sync();
+
+#if defined(CONFIG_SOC_AU1550)
+	irq_nr = AU1550_DDMA_INT;
+#elif defined(CONFIG_SOC_AU1200)
+	irq_nr = AU1200_DDMA_INT;
+#else
+	#error Unknown Au1x00 SOC
+#endif
+
+	if (request_irq(irq_nr, dbdma_interrupt, IRQF_DISABLED,
+			"Au1xxx dbdma", (void *)dbdma_gptr))
+		printk(KERN_ERR "Can't get 1550 dbdma irq");
+}
+
 void au1xxx_dbdma_dump(u32 chanid)
 {
 	chan_tab_t	 *ctp;
@@ -880,7 +903,7 @@ void au1xxx_dbdma_dump(u32 chanid)
 	dtp = ctp->chan_dest;
 	cp = ctp->chan_ptr;
 
-	printk(KERN_DEBUG "Chan %x, stp %x (dev %d)  dtp %x (dev %d)\n",
+	printk(KERN_DEBUG "Chan %x, stp %x (dev %d)  dtp %x (dev %d) \n",
 			  (u32)ctp, (u32)stp, stp - dbdev_tab, (u32)dtp,
 			  dtp - dbdev_tab);
 	printk(KERN_DEBUG "desc base %x, get %x, put %x, cur %x\n",
@@ -957,37 +980,29 @@ u32 au1xxx_dbdma_put_dscr(u32 chanid, au1x_ddma_desc_t *dscr)
 	return nbytes;
 }
 
-
-struct alchemy_dbdma_sysdev {
-	struct sys_device sysdev;
-	u32 pm_regs[NUM_DBDMA_CHANS + 1][6];
-};
-
-static int alchemy_dbdma_suspend(struct sys_device *dev,
-				 pm_message_t state)
+#ifdef CONFIG_PM
+void au1xxx_dbdma_suspend(void)
 {
-	struct alchemy_dbdma_sysdev *sdev =
-		container_of(dev, struct alchemy_dbdma_sysdev, sysdev);
 	int i;
 	u32 addr;
 
 	addr = DDMA_GLOBAL_BASE;
-	sdev->pm_regs[0][0] = au_readl(addr + 0x00);
-	sdev->pm_regs[0][1] = au_readl(addr + 0x04);
-	sdev->pm_regs[0][2] = au_readl(addr + 0x08);
-	sdev->pm_regs[0][3] = au_readl(addr + 0x0c);
+	au1xxx_dbdma_pm_regs[0][0] = au_readl(addr + 0x00);
+	au1xxx_dbdma_pm_regs[0][1] = au_readl(addr + 0x04);
+	au1xxx_dbdma_pm_regs[0][2] = au_readl(addr + 0x08);
+	au1xxx_dbdma_pm_regs[0][3] = au_readl(addr + 0x0c);
 
 	/* save channel configurations */
 	for (i = 1, addr = DDMA_CHANNEL_BASE; i <= NUM_DBDMA_CHANS; i++) {
-		sdev->pm_regs[i][0] = au_readl(addr + 0x00);
-		sdev->pm_regs[i][1] = au_readl(addr + 0x04);
-		sdev->pm_regs[i][2] = au_readl(addr + 0x08);
-		sdev->pm_regs[i][3] = au_readl(addr + 0x0c);
-		sdev->pm_regs[i][4] = au_readl(addr + 0x10);
-		sdev->pm_regs[i][5] = au_readl(addr + 0x14);
+		au1xxx_dbdma_pm_regs[i][0] = au_readl(addr + 0x00);
+		au1xxx_dbdma_pm_regs[i][1] = au_readl(addr + 0x04);
+		au1xxx_dbdma_pm_regs[i][2] = au_readl(addr + 0x08);
+		au1xxx_dbdma_pm_regs[i][3] = au_readl(addr + 0x0c);
+		au1xxx_dbdma_pm_regs[i][4] = au_readl(addr + 0x10);
+		au1xxx_dbdma_pm_regs[i][5] = au_readl(addr + 0x14);
 
 		/* halt channel */
-		au_writel(sdev->pm_regs[i][0] & ~1, addr + 0x00);
+		au_writel(au1xxx_dbdma_pm_regs[i][0] & ~1, addr + 0x00);
 		au_sync();
 		while (!(au_readl(addr + 0x14) & 1))
 			au_sync();
@@ -997,102 +1012,30 @@ static int alchemy_dbdma_suspend(struct sys_device *dev,
 	/* disable channel interrupts */
 	au_writel(0, DDMA_GLOBAL_BASE + 0x0c);
 	au_sync();
-
-	return 0;
 }
 
-static int alchemy_dbdma_resume(struct sys_device *dev)
+void au1xxx_dbdma_resume(void)
 {
-	struct alchemy_dbdma_sysdev *sdev =
-		container_of(dev, struct alchemy_dbdma_sysdev, sysdev);
 	int i;
 	u32 addr;
 
 	addr = DDMA_GLOBAL_BASE;
-	au_writel(sdev->pm_regs[0][0], addr + 0x00);
-	au_writel(sdev->pm_regs[0][1], addr + 0x04);
-	au_writel(sdev->pm_regs[0][2], addr + 0x08);
-	au_writel(sdev->pm_regs[0][3], addr + 0x0c);
+	au_writel(au1xxx_dbdma_pm_regs[0][0], addr + 0x00);
+	au_writel(au1xxx_dbdma_pm_regs[0][1], addr + 0x04);
+	au_writel(au1xxx_dbdma_pm_regs[0][2], addr + 0x08);
+	au_writel(au1xxx_dbdma_pm_regs[0][3], addr + 0x0c);
 
 	/* restore channel configurations */
 	for (i = 1, addr = DDMA_CHANNEL_BASE; i <= NUM_DBDMA_CHANS; i++) {
-		au_writel(sdev->pm_regs[i][0], addr + 0x00);
-		au_writel(sdev->pm_regs[i][1], addr + 0x04);
-		au_writel(sdev->pm_regs[i][2], addr + 0x08);
-		au_writel(sdev->pm_regs[i][3], addr + 0x0c);
-		au_writel(sdev->pm_regs[i][4], addr + 0x10);
-		au_writel(sdev->pm_regs[i][5], addr + 0x14);
+		au_writel(au1xxx_dbdma_pm_regs[i][0], addr + 0x00);
+		au_writel(au1xxx_dbdma_pm_regs[i][1], addr + 0x04);
+		au_writel(au1xxx_dbdma_pm_regs[i][2], addr + 0x08);
+		au_writel(au1xxx_dbdma_pm_regs[i][3], addr + 0x0c);
+		au_writel(au1xxx_dbdma_pm_regs[i][4], addr + 0x10);
+		au_writel(au1xxx_dbdma_pm_regs[i][5], addr + 0x14);
 		au_sync();
 		addr += 0x100;	/* next channel base */
 	}
-
-	return 0;
 }
-
-static struct sysdev_class alchemy_dbdma_sysdev_class = {
-	.name		= "dbdma",
-	.suspend	= alchemy_dbdma_suspend,
-	.resume		= alchemy_dbdma_resume,
-};
-
-static int __init alchemy_dbdma_sysdev_init(void)
-{
-	struct alchemy_dbdma_sysdev *sdev;
-	int ret;
-
-	ret = sysdev_class_register(&alchemy_dbdma_sysdev_class);
-	if (ret)
-		return ret;
-
-	sdev = kzalloc(sizeof(struct alchemy_dbdma_sysdev), GFP_KERNEL);
-	if (!sdev)
-		return -ENOMEM;
-
-	sdev->sysdev.id = -1;
-	sdev->sysdev.cls = &alchemy_dbdma_sysdev_class;
-	ret = sysdev_register(&sdev->sysdev);
-	if (ret)
-		kfree(sdev);
-
-	return ret;
-}
-
-static int __init au1xxx_dbdma_init(void)
-{
-	int irq_nr, ret;
-
-	dbdma_gptr->ddma_config = 0;
-	dbdma_gptr->ddma_throttle = 0;
-	dbdma_gptr->ddma_inten = 0xffff;
-	au_sync();
-
-	switch (alchemy_get_cputype()) {
-	case ALCHEMY_CPU_AU1550:
-		irq_nr = AU1550_DDMA_INT;
-		break;
-	case ALCHEMY_CPU_AU1200:
-		irq_nr = AU1200_DDMA_INT;
-		break;
-	default:
-		return -ENODEV;
-	}
-
-	ret = request_irq(irq_nr, dbdma_interrupt, IRQF_DISABLED,
-			"Au1xxx dbdma", (void *)dbdma_gptr);
-	if (ret)
-		printk(KERN_ERR "Cannot grab DBDMA interrupt!\n");
-	else {
-		dbdma_initialized = 1;
-		printk(KERN_INFO "Alchemy DBDMA initialized\n");
-		ret = alchemy_dbdma_sysdev_init();
-		if (ret) {
-			printk(KERN_ERR "DBDMA PM init failed\n");
-			ret = 0;
-		}
-	}
-
-	return ret;
-}
-subsys_initcall(au1xxx_dbdma_init);
-
+#endif	/* CONFIG_PM */
 #endif /* defined(CONFIG_SOC_AU1550) || defined(CONFIG_SOC_AU1200) */

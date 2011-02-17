@@ -15,7 +15,6 @@
 #include <linux/string.h>
 #include <linux/net.h>
 #include <linux/socket.h>
-#include <linux/slab.h>
 #include <linux/sockios.h>
 #include <linux/init.h>
 #include <linux/skbuff.h>

@@ -33,7 +33,6 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 
 #include <asm/delay.h>
 #include <asm/irq.h>
@@ -476,31 +475,22 @@ static uint32_t dm9000_get_rx_csum(struct net_device *dev)
 	return dm->rx_csum;
 }
 
-static int dm9000_set_rx_csum_unlocked(struct net_device *dev, uint32_t data)
+static int dm9000_set_rx_csum(struct net_device *dev, uint32_t data)
 {
 	board_info_t *dm = to_dm9000_board(dev);
+	unsigned long flags;
 
 	if (dm->can_csum) {
 		dm->rx_csum = data;
+
+		spin_lock_irqsave(&dm->lock, flags);
 		iow(dm, DM9000_RCSR, dm->rx_csum ? RCSR_CSUM : 0);
+		spin_unlock_irqrestore(&dm->lock, flags);
 
 		return 0;
 	}
 
 	return -EOPNOTSUPP;
-}
-
-static int dm9000_set_rx_csum(struct net_device *dev, uint32_t data)
-{
-	board_info_t *dm = to_dm9000_board(dev);
-	unsigned long flags;
-	int ret;
-
-	spin_lock_irqsave(&dm->lock, flags);
-	ret = dm9000_set_rx_csum_unlocked(dev, data);
-	spin_unlock_irqrestore(&dm->lock, flags);
-
-	return ret;
 }
 
 static int dm9000_set_tx_csum(struct net_device *dev, uint32_t data)
@@ -731,16 +721,20 @@ static unsigned char dm9000_type_to_char(enum dm9000_type type)
  *  Set DM9000 multicast address
  */
 static void
-dm9000_hash_table_unlocked(struct net_device *dev)
+dm9000_hash_table(struct net_device *dev)
 {
 	board_info_t *db = netdev_priv(dev);
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *mcptr = dev->mc_list;
+	int mc_cnt = dev->mc_count;
 	int i, oft;
 	u32 hash_val;
 	u16 hash_table[4];
 	u8 rcr = RCR_DIS_LONG | RCR_DIS_CRC | RCR_RXEN;
+	unsigned long flags;
 
 	dm9000_dbg(db, 1, "entering %s\n", __func__);
+
+	spin_lock_irqsave(&db->lock, flags);
 
 	for (i = 0, oft = DM9000_PAR; i < 6; i++, oft++)
 		iow(db, oft, dev->dev_addr[i]);
@@ -759,8 +753,8 @@ dm9000_hash_table_unlocked(struct net_device *dev)
 		rcr |= RCR_ALL;
 
 	/* the multicast address in Hash Table : 64 bits */
-	netdev_for_each_mc_addr(ha, dev) {
-		hash_val = ether_crc_le(6, ha->addr) & 0x3f;
+	for (i = 0; i < mc_cnt; i++, mcptr = mcptr->next) {
+		hash_val = ether_crc_le(6, mcptr->dmi_addr) & 0x3f;
 		hash_table[hash_val / 16] |= (u16) 1 << (hash_val % 16);
 	}
 
@@ -771,21 +765,11 @@ dm9000_hash_table_unlocked(struct net_device *dev)
 	}
 
 	iow(db, DM9000_RCR, rcr);
-}
-
-static void
-dm9000_hash_table(struct net_device *dev)
-{
-	board_info_t *db = netdev_priv(dev);
-	unsigned long flags;
-
-	spin_lock_irqsave(&db->lock, flags);
-	dm9000_hash_table_unlocked(dev);
 	spin_unlock_irqrestore(&db->lock, flags);
 }
 
 /*
- * Initialize dm9000 board
+ * Initilize dm9000 board
  */
 static void
 dm9000_init_dm9000(struct net_device *dev)
@@ -800,7 +784,7 @@ dm9000_init_dm9000(struct net_device *dev)
 	db->io_mode = ior(db, DM9000_ISR) >> 6;	/* ISR bit7:6 keeps I/O mode */
 
 	/* Checksum mode */
-	dm9000_set_rx_csum_unlocked(dev, db->rx_csum);
+	dm9000_set_rx_csum(dev, db->rx_csum);
 
 	/* GPIO0 on pre-activate PHY */
 	iow(db, DM9000_GPR, 0);	/* REG_1F bit0 activate phyxcer */
@@ -827,7 +811,7 @@ dm9000_init_dm9000(struct net_device *dev)
 	iow(db, DM9000_ISR, ISR_CLR_STATUS); /* Clear interrupt status */
 
 	/* Set address filter table */
-	dm9000_hash_table_unlocked(dev);
+	dm9000_hash_table(dev);
 
 	imr = IMR_PAR | IMR_PTM | IMR_PRM;
 	if (db->type != TYPE_DM9000E)
@@ -841,7 +825,7 @@ dm9000_init_dm9000(struct net_device *dev)
 	/* Init Driver variable */
 	db->tx_pkt_cnt = 0;
 	db->queue_pkt_len = 0;
-	dev->trans_start = jiffies;
+	dev->trans_start = 0;
 }
 
 /* Our watchdog timed out. Called by the networking layer */
@@ -859,7 +843,7 @@ static void dm9000_timeout(struct net_device *dev)
 	dm9000_reset(db);
 	dm9000_init_dm9000(dev);
 	/* We can accept TX packets again */
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue(dev);
 
 	/* Restore previous register address */
@@ -961,7 +945,7 @@ struct dm9000_rxhdr {
 	u8	RxPktReady;
 	u8	RxStatus;
 	__le16	RxLen;
-} __packed;
+} __attribute__((__packed__));
 
 /*
  *  Received a packet and pass to upper layer
@@ -1056,7 +1040,7 @@ dm9000_rx(struct net_device *dev)
 				if ((((rxbyte & 0x1c) << 3) & rxbyte) == 0)
 					skb->ip_summed = CHECKSUM_UNNECESSARY;
 				else
-					skb_checksum_none_assert(skb);
+					skb->ip_summed = CHECKSUM_NONE;
 			}
 			netif_rx(skb);
 			dev->stats.rx_packets++;

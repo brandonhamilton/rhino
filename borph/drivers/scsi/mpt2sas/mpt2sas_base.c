@@ -3,7 +3,7 @@
  * for access to MPT (Message Passing Technology) firmware.
  *
  * This code is based on drivers/scsi/mpt2sas/mpt2_base.c
- * Copyright (C) 2007-2010  LSI Corporation
+ * Copyright (C) 2007-2009  LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  * This program is free software; you can redistribute it and/or
@@ -58,7 +58,6 @@
 #include <linux/sort.h>
 #include <linux/io.h>
 #include <linux/time.h>
-#include <linux/aer.h>
 
 #include "mpt2sas_base.h"
 
@@ -95,10 +94,6 @@ int mpt2sas_fwfault_debug;
 MODULE_PARM_DESC(mpt2sas_fwfault_debug, " enable detection of firmware fault "
     "and halt firmware - (default=0)");
 
-static int disable_discovery = -1;
-module_param(disable_discovery, int, 0);
-MODULE_PARM_DESC(disable_discovery, " disable discovery ");
-
 /**
  * _scsih_set_fwfault_debug - global setting of ioc->fwfault_debug.
  *
@@ -112,7 +107,8 @@ _scsih_set_fwfault_debug(const char *val, struct kernel_param *kp)
 	if (ret)
 		return ret;
 
-	printk(KERN_INFO "setting fwfault_debug(%d)\n", mpt2sas_fwfault_debug);
+	printk(KERN_INFO "setting logging_level(0x%08x)\n",
+				mpt2sas_fwfault_debug);
 	list_for_each_entry(ioc, &mpt2sas_ioc_list, list)
 		ioc->fwfault_debug = mpt2sas_fwfault_debug;
 	return 0;
@@ -288,9 +284,6 @@ _base_sas_ioc_info(struct MPT2SAS_ADAPTER *ioc, MPI2DefaultReply_t *mpi_reply,
 	if (request_hdr->Function == MPI2_FUNCTION_SCSI_IO_REQUEST ||
 	    request_hdr->Function == MPI2_FUNCTION_RAID_SCSI_IO_PASSTHROUGH ||
 	    request_hdr->Function == MPI2_FUNCTION_EVENT_NOTIFICATION)
-		return;
-
-	if (ioc_status == MPI2_IOCSTATUS_CONFIG_INVALID_PAGE)
 		return;
 
 	switch (ioc_status) {
@@ -525,18 +518,8 @@ _base_display_event_data(struct MPT2SAS_ADAPTER *ioc,
 		desc = "IR Operation Status";
 		break;
 	case MPI2_EVENT_SAS_DISCOVERY:
-	{
-		Mpi2EventDataSasDiscovery_t *event_data =
-		    (Mpi2EventDataSasDiscovery_t *)mpi_reply->EventData;
-		printk(MPT2SAS_INFO_FMT "Discovery: (%s)", ioc->name,
-		    (event_data->ReasonCode == MPI2_EVENT_SAS_DISC_RC_STARTED) ?
-		    "start" : "stop");
-		if (event_data->DiscoveryStatus)
-			printk("discovery_status(0x%08x)",
-			    le32_to_cpu(event_data->DiscoveryStatus));
-		printk("\n");
-		return;
-	}
+		desc =  "Discovery";
+		break;
 	case MPI2_EVENT_SAS_BROADCAST_PRIMITIVE:
 		desc = "SAS Broadcast Primitive";
 		break;
@@ -1239,10 +1222,8 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
 	u32 memap_sz;
 	u32 pio_sz;
 	int i, r = 0;
-	u64 pio_chip = 0;
-	u64 chip_phys = 0;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n",
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n",
 	    ioc->name, __func__));
 
 	ioc->bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -1261,9 +1242,6 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
 		goto out_fail;
 	}
 
-	/* AER (Advanced Error Reporting) hooks */
-	pci_enable_pcie_error_reporting(pdev);
-
 	pci_set_master(pdev);
 
 	if (_base_config_dma_addressing(ioc, pdev) != 0) {
@@ -1274,26 +1252,22 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
 	}
 
 	for (i = 0, memap_sz = 0, pio_sz = 0 ; i < DEVICE_COUNT_RESOURCE; i++) {
-		if (pci_resource_flags(pdev, i) & IORESOURCE_IO) {
+		if (pci_resource_flags(pdev, i) & PCI_BASE_ADDRESS_SPACE_IO) {
 			if (pio_sz)
 				continue;
-			pio_chip = (u64)pci_resource_start(pdev, i);
+			ioc->pio_chip = pci_resource_start(pdev, i);
 			pio_sz = pci_resource_len(pdev, i);
 		} else {
 			if (memap_sz)
 				continue;
-			/* verify memory resource is valid before using */
-			if (pci_resource_flags(pdev, i) & IORESOURCE_MEM) {
-				ioc->chip_phys = pci_resource_start(pdev, i);
-				chip_phys = (u64)ioc->chip_phys;
-				memap_sz = pci_resource_len(pdev, i);
-				ioc->chip = ioremap(ioc->chip_phys, memap_sz);
-				if (ioc->chip == NULL) {
-					printk(MPT2SAS_ERR_FMT "unable to map "
-					    "adapter memory!\n", ioc->name);
-					r = -EINVAL;
-					goto out_fail;
-				}
+			ioc->chip_phys = pci_resource_start(pdev, i);
+			memap_sz = pci_resource_len(pdev, i);
+			ioc->chip = ioremap(ioc->chip_phys, memap_sz);
+			if (ioc->chip == NULL) {
+				printk(MPT2SAS_ERR_FMT "unable to map adapter "
+				    "memory!\n", ioc->name);
+				r = -EINVAL;
+				goto out_fail;
 			}
 		}
 	}
@@ -1306,13 +1280,10 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
 	printk(MPT2SAS_INFO_FMT "%s: IRQ %d\n",
 	    ioc->name,  ((ioc->msix_enable) ? "PCI-MSI-X enabled" :
 	    "IO-APIC enabled"), ioc->pci_irq);
-	printk(MPT2SAS_INFO_FMT "iomem(0x%016llx), mapped(0x%p), size(%d)\n",
-	    ioc->name, (unsigned long long)chip_phys, ioc->chip, memap_sz);
-	printk(MPT2SAS_INFO_FMT "ioport(0x%016llx), size(%d)\n",
-	    ioc->name, (unsigned long long)pio_chip, pio_sz);
-
-	/* Save PCI configuration state for recovery from PCI AER/EEH errors */
-	pci_save_state(pdev);
+	printk(MPT2SAS_INFO_FMT "iomem(0x%lx), mapped(0x%p), size(%d)\n",
+	    ioc->name, ioc->chip_phys, ioc->chip, memap_sz);
+	printk(MPT2SAS_INFO_FMT "ioport(0x%lx), size(%d)\n",
+	    ioc->name, ioc->pio_chip, pio_sz);
 
 	return 0;
 
@@ -1322,7 +1293,6 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
 	ioc->chip_phys = 0;
 	ioc->pci_irq = -1;
 	pci_release_selected_regions(ioc->pdev, ioc->bars);
-	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);
 	return r;
 }
@@ -1868,7 +1838,7 @@ _base_static_config_pages(struct MPT2SAS_ADAPTER *ioc)
 static void
 _base_release_memory_pools(struct MPT2SAS_ADAPTER *ioc)
 {
-	dexitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dexitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	if (ioc->request) {
@@ -1926,10 +1896,7 @@ _base_release_memory_pools(struct MPT2SAS_ADAPTER *ioc)
 		    ioc->config_page, ioc->config_page_dma);
 	}
 
-	if (ioc->scsi_lookup) {
-		free_pages((ulong)ioc->scsi_lookup, ioc->scsi_lookup_pages);
-		ioc->scsi_lookup = NULL;
-	}
+	kfree(ioc->scsi_lookup);
 	kfree(ioc->hpr_lookup);
 	kfree(ioc->internal_lookup);
 }
@@ -1954,7 +1921,7 @@ _base_allocate_memory_pools(struct MPT2SAS_ADAPTER *ioc,  int sleep_flag)
 	u32 retry_sz;
 	u16 max_request_credit;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	retry_sz = 0;
@@ -2141,13 +2108,11 @@ _base_allocate_memory_pools(struct MPT2SAS_ADAPTER *ioc,  int sleep_flag)
 	    ioc->name, (unsigned long long) ioc->request_dma));
 	total_sz += sz;
 
-	sz = ioc->scsiio_depth * sizeof(struct request_tracker);
-	ioc->scsi_lookup_pages = get_order(sz);
-	ioc->scsi_lookup = (struct request_tracker *)__get_free_pages(
-	    GFP_KERNEL, ioc->scsi_lookup_pages);
+	ioc->scsi_lookup = kcalloc(ioc->scsiio_depth,
+	    sizeof(struct request_tracker), GFP_KERNEL);
 	if (!ioc->scsi_lookup) {
-		printk(MPT2SAS_ERR_FMT "scsi_lookup: get_free_pages failed, "
-		    "sz(%d)\n", ioc->name, (int)sz);
+		printk(MPT2SAS_ERR_FMT "scsi_lookup: kcalloc failed\n",
+		    ioc->name);
 		goto out;
 	}
 
@@ -2381,7 +2346,7 @@ _base_wait_for_doorbell_int(struct MPT2SAS_ADAPTER *ioc, int timeout,
 	do {
 		int_status = readl(&ioc->chip->HostInterruptStatus);
 		if (int_status & MPI2_HIS_IOC2SYS_DB_STATUS) {
-			dhsprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+			dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 			    "successfull count(%d), timeout(%d)\n", ioc->name,
 			    __func__, count, timeout));
 			return 0;
@@ -2422,7 +2387,7 @@ _base_wait_for_doorbell_ack(struct MPT2SAS_ADAPTER *ioc, int timeout,
 	do {
 		int_status = readl(&ioc->chip->HostInterruptStatus);
 		if (!(int_status & MPI2_HIS_SYS2IOC_DB_STATUS)) {
-			dhsprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+			dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 			    "successfull count(%d), timeout(%d)\n", ioc->name,
 			    __func__, count, timeout));
 			return 0;
@@ -2470,7 +2435,7 @@ _base_wait_for_doorbell_not_used(struct MPT2SAS_ADAPTER *ioc, int timeout,
 	do {
 		doorbell_reg = readl(&ioc->chip->Doorbell);
 		if (!(doorbell_reg & MPI2_DOORBELL_USED)) {
-			dhsprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+			dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 			    "successfull count(%d), timeout(%d)\n", ioc->name,
 			    __func__, count, timeout));
 			return 0;
@@ -2644,9 +2609,9 @@ _base_handshake_req_reply_wait(struct MPT2SAS_ADAPTER *ioc, int request_bytes,
 
 	if (ioc->logging_level & MPT_DEBUG_INIT) {
 		mfp = (u32 *)reply;
-		printk(KERN_INFO "\toffset:data\n");
+		printk(KERN_DEBUG "\toffset:data\n");
 		for (i = 0; i < reply_bytes/4; i++)
-			printk(KERN_INFO "\t[0x%02x]:%08x\n", i*4,
+			printk(KERN_DEBUG "\t[0x%02x]:%08x\n", i*4,
 			    le32_to_cpu(mfp[i]));
 	}
 	return 0;
@@ -2679,7 +2644,7 @@ mpt2sas_base_sas_iounit_control(struct MPT2SAS_ADAPTER *ioc,
 	void *request;
 	u16 wait_state_count;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	mutex_lock(&ioc->base_cmds.mutex);
@@ -2784,7 +2749,7 @@ mpt2sas_base_scsi_enclosure_processor(struct MPT2SAS_ADAPTER *ioc,
 	void *request;
 	u16 wait_state_count;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	mutex_lock(&ioc->base_cmds.mutex);
@@ -2872,7 +2837,7 @@ _base_get_port_facts(struct MPT2SAS_ADAPTER *ioc, int port, int sleep_flag)
 	Mpi2PortFactsReply_t mpi_reply, *pfacts;
 	int mpi_reply_sz, mpi_request_sz, r;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	mpi_reply_sz = sizeof(Mpi2PortFactsReply_t);
@@ -2914,7 +2879,7 @@ _base_get_ioc_facts(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	Mpi2IOCFactsReply_t mpi_reply, *facts;
 	int mpi_reply_sz, mpi_request_sz, r;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	mpi_reply_sz = sizeof(Mpi2IOCFactsReply_t);
@@ -2986,7 +2951,7 @@ _base_send_ioc_init(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	struct timeval current_time;
 	u16 ioc_status;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	memset(&mpi_request, 0, sizeof(Mpi2IOCInitRequest_t));
@@ -3039,17 +3004,17 @@ _base_send_ioc_init(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	 * since epoch ~ midnight January 1, 1970.
 	 */
 	do_gettimeofday(&current_time);
-	mpi_request.TimeStamp = cpu_to_le64((u64)current_time.tv_sec * 1000 +
-	    (current_time.tv_usec / 1000));
+	mpi_request.TimeStamp = (current_time.tv_sec * 1000) +
+	    (current_time.tv_usec >> 3);
 
 	if (ioc->logging_level & MPT_DEBUG_INIT) {
 		u32 *mfp;
 		int i;
 
 		mfp = (u32 *)&mpi_request;
-		printk(KERN_INFO "\toffset:data\n");
+		printk(KERN_DEBUG "\toffset:data\n");
 		for (i = 0; i < sizeof(Mpi2IOCInitRequest_t)/4; i++)
-			printk(KERN_INFO "\t[0x%02x]:%08x\n", i*4,
+			printk(KERN_DEBUG "\t[0x%02x]:%08x\n", i*4,
 			    le32_to_cpu(mfp[i]));
 	}
 
@@ -3128,7 +3093,7 @@ _base_send_port_enable(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 			r = -ETIME;
 		goto out;
 	} else
-		dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: complete\n",
+		dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: complete\n",
 		    ioc->name, __func__));
 
 	ioc_state = _base_wait_on_iocstate(ioc, MPI2_IOC_STATE_OPERATIONAL,
@@ -3188,7 +3153,7 @@ _base_event_notification(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	int r = 0;
 	int i;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	if (ioc->base_cmds.status & MPT2_CMD_PENDING) {
@@ -3212,7 +3177,7 @@ _base_event_notification(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	mpi_request->VP_ID = 0;
 	for (i = 0; i < MPI2_EVENT_NOTIFY_EVENTMASK_WORDS; i++)
 		mpi_request->EventMasks[i] =
-		    cpu_to_le32(ioc->event_masks[i]);
+		    le32_to_cpu(ioc->event_masks[i]);
 	mpt2sas_base_put_smid_default(ioc, smid);
 	init_completion(&ioc->base_cmds.done);
 	timeleft = wait_for_completion_timeout(&ioc->base_cmds.done, 30*HZ);
@@ -3226,7 +3191,7 @@ _base_event_notification(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 		else
 			r = -ETIME;
 	} else
-		dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: complete\n",
+		dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: complete\n",
 		    ioc->name, __func__));
 	ioc->base_cmds.status = MPT2_CMD_NOT_USED;
 	return r;
@@ -3288,7 +3253,7 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 
 	_base_save_msix_table(ioc);
 
-	drsprintk(ioc, printk(MPT2SAS_INFO_FMT "clear interrupts\n",
+	drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "clear interrupts\n",
 	    ioc->name));
 
 	count = 0;
@@ -3296,7 +3261,7 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 		/* Write magic sequence to WriteSequence register
 		 * Loop until in diagnostic mode
 		 */
-		drsprintk(ioc, printk(MPT2SAS_INFO_FMT "write magic "
+		drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "write magic "
 		    "sequence\n", ioc->name));
 		writel(MPI2_WRSEQ_FLUSH_KEY_VALUE, &ioc->chip->WriteSequence);
 		writel(MPI2_WRSEQ_1ST_KEY_VALUE, &ioc->chip->WriteSequence);
@@ -3316,7 +3281,7 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 			goto out;
 
 		host_diagnostic = readl(&ioc->chip->HostDiagnostic);
-		drsprintk(ioc, printk(MPT2SAS_INFO_FMT "wrote magic "
+		drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "wrote magic "
 		    "sequence: count(%d), host_diagnostic(0x%08x)\n",
 		    ioc->name, count, host_diagnostic));
 
@@ -3324,7 +3289,7 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 
 	hcb_size = readl(&ioc->chip->HCBSize);
 
-	drsprintk(ioc, printk(MPT2SAS_INFO_FMT "diag reset: issued\n",
+	drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "diag reset: issued\n",
 	    ioc->name));
 	writel(host_diagnostic | MPI2_DIAG_RESET_ADAPTER,
 	     &ioc->chip->HostDiagnostic);
@@ -3351,29 +3316,29 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 
 	if (host_diagnostic & MPI2_DIAG_HCB_MODE) {
 
-		drsprintk(ioc, printk(MPT2SAS_INFO_FMT "restart the adapter "
+		drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "restart the adapter "
 		    "assuming the HCB Address points to good F/W\n",
 		    ioc->name));
 		host_diagnostic &= ~MPI2_DIAG_BOOT_DEVICE_SELECT_MASK;
 		host_diagnostic |= MPI2_DIAG_BOOT_DEVICE_SELECT_HCDW;
 		writel(host_diagnostic, &ioc->chip->HostDiagnostic);
 
-		drsprintk(ioc, printk(MPT2SAS_INFO_FMT
+		drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT
 		    "re-enable the HCDW\n", ioc->name));
 		writel(hcb_size | MPI2_HCB_SIZE_HCB_ENABLE,
 		    &ioc->chip->HCBSize);
 	}
 
-	drsprintk(ioc, printk(MPT2SAS_INFO_FMT "restart the adapter\n",
+	drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "restart the adapter\n",
 	    ioc->name));
 	writel(host_diagnostic & ~MPI2_DIAG_HOLD_IOC_RESET,
 	    &ioc->chip->HostDiagnostic);
 
-	drsprintk(ioc, printk(MPT2SAS_INFO_FMT "disable writes to the "
+	drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "disable writes to the "
 	    "diagnostic register\n", ioc->name));
 	writel(MPI2_WRSEQ_FLUSH_KEY_VALUE, &ioc->chip->WriteSequence);
 
-	drsprintk(ioc, printk(MPT2SAS_INFO_FMT "Wait for FW to go to the "
+	drsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "Wait for FW to go to the "
 	    "READY state\n", ioc->name));
 	ioc_state = _base_wait_on_iocstate(ioc, MPI2_IOC_STATE_READY, 20,
 	    sleep_flag);
@@ -3405,23 +3370,19 @@ _base_make_ioc_ready(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
     enum reset_type type)
 {
 	u32 ioc_state;
-	int rc;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
-	if (ioc->pci_error_recovery)
-		return 0;
-
 	ioc_state = mpt2sas_base_get_iocstate(ioc, 0);
-	dhsprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: ioc_state(0x%08x)\n",
+	dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: ioc_state(0x%08x)\n",
 	    ioc->name, __func__, ioc_state));
 
 	if ((ioc_state & MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_READY)
 		return 0;
 
 	if (ioc_state & MPI2_DOORBELL_USED) {
-		dhsprintk(ioc, printk(MPT2SAS_INFO_FMT "unexpected doorbell "
+		dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "unexpected doorbell "
 		    "active!\n", ioc->name));
 		goto issue_diag_reset;
 	}
@@ -3437,15 +3398,11 @@ _base_make_ioc_ready(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
 
 	if ((ioc_state & MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_OPERATIONAL)
 		if (!(_base_send_ioc_reset(ioc,
-		    MPI2_FUNCTION_IOC_MESSAGE_UNIT_RESET, 15, CAN_SLEEP))) {
-			ioc->ioc_reset_count++;
+		    MPI2_FUNCTION_IOC_MESSAGE_UNIT_RESET, 15, CAN_SLEEP)))
 			return 0;
-	}
 
  issue_diag_reset:
-	rc = _base_diag_reset(ioc, CAN_SLEEP);
-	ioc->ioc_reset_count++;
-	return rc;
+	return _base_diag_reset(ioc, CAN_SLEEP);
 }
 
 /**
@@ -3464,18 +3421,12 @@ _base_make_ioc_operational(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	u16 smid;
 	struct _tr_list *delayed_tr, *delayed_tr_next;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	/* clean the delayed target reset list */
 	list_for_each_entry_safe(delayed_tr, delayed_tr_next,
 	    &ioc->delayed_tr_list, list) {
-		list_del(&delayed_tr->list);
-		kfree(delayed_tr);
-	}
-
-	list_for_each_entry_safe(delayed_tr, delayed_tr_next,
-	    &ioc->delayed_tr_volume_list, list) {
 		list_del(&delayed_tr->list);
 		kfree(delayed_tr);
 	}
@@ -3541,13 +3492,6 @@ _base_make_ioc_operational(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	if (sleep_flag == CAN_SLEEP)
 		_base_static_config_pages(ioc);
 
-	if (ioc->wait_for_port_enable_to_complete) {
-		if (diag_buffer_enable != 0)
-			mpt2sas_enable_diag_buffer(ioc, diag_buffer_enable);
-		if (disable_discovery > 0)
-			return r;
-	}
-
 	r = _base_send_port_enable(ioc, sleep_flag);
 	if (r)
 		return r;
@@ -3566,13 +3510,11 @@ mpt2sas_base_free_resources(struct MPT2SAS_ADAPTER *ioc)
 {
 	struct pci_dev *pdev = ioc->pdev;
 
-	dexitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dexitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	_base_mask_interrupts(ioc);
-	ioc->shost_recovery = 1;
 	_base_make_ioc_ready(ioc, CAN_SLEEP, SOFT_RESET);
-	ioc->shost_recovery = 0;
 	if (ioc->pci_irq) {
 		synchronize_irq(pdev->irq);
 		free_irq(ioc->pci_irq, ioc);
@@ -3583,7 +3525,6 @@ mpt2sas_base_free_resources(struct MPT2SAS_ADAPTER *ioc)
 	ioc->pci_irq = -1;
 	ioc->chip_phys = 0;
 	pci_release_selected_regions(ioc->pdev, ioc->bars);
-	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);
 	return;
 }
@@ -3599,7 +3540,7 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 {
 	int r, i;
 
-	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	r = mpt2sas_base_map_resources(ioc);
@@ -3617,10 +3558,8 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 
 	ioc->pfacts = kcalloc(ioc->facts.NumberOfPorts,
 	    sizeof(Mpi2PortFactsReply_t), GFP_KERNEL);
-	if (!ioc->pfacts) {
-		r = -ENOMEM;
+	if (!ioc->pfacts)
 		goto out_free_resources;
-	}
 
 	for (i = 0 ; i < ioc->facts.NumberOfPorts; i++) {
 		r = _base_get_port_facts(ioc, i, CAN_SLEEP);
@@ -3634,19 +3573,6 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 
 	init_waitqueue_head(&ioc->reset_wq);
 
-	/* allocate memory pd handle bitmask list */
-	ioc->pd_handles_sz = (ioc->facts.MaxDevHandle / 8);
-	if (ioc->facts.MaxDevHandle % 8)
-		ioc->pd_handles_sz++;
-	ioc->pd_handles = kzalloc(ioc->pd_handles_sz,
-	    GFP_KERNEL);
-	if (!ioc->pd_handles) {
-		r = -ENOMEM;
-		goto out_free_resources;
-	}
-
-	ioc->fwfault_debug = mpt2sas_fwfault_debug;
-
 	/* base internal command bits */
 	mutex_init(&ioc->base_cmds.mutex);
 	ioc->base_cmds.reply = kzalloc(ioc->reply_sz, GFP_KERNEL);
@@ -3656,11 +3582,6 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 	ioc->transport_cmds.reply = kzalloc(ioc->reply_sz, GFP_KERNEL);
 	ioc->transport_cmds.status = MPT2_CMD_NOT_USED;
 	mutex_init(&ioc->transport_cmds.mutex);
-
-	/* scsih internal command bits */
-	ioc->scsih_cmds.reply = kzalloc(ioc->reply_sz, GFP_KERNEL);
-	ioc->scsih_cmds.status = MPT2_CMD_NOT_USED;
-	mutex_init(&ioc->scsih_cmds.mutex);
 
 	/* task management internal command bits */
 	ioc->tm_cmds.reply = kzalloc(ioc->reply_sz, GFP_KERNEL);
@@ -3674,26 +3595,8 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 
 	/* ctl module internal command bits */
 	ioc->ctl_cmds.reply = kzalloc(ioc->reply_sz, GFP_KERNEL);
-	ioc->ctl_cmds.sense = kzalloc(SCSI_SENSE_BUFFERSIZE, GFP_KERNEL);
 	ioc->ctl_cmds.status = MPT2_CMD_NOT_USED;
 	mutex_init(&ioc->ctl_cmds.mutex);
-
-	if (!ioc->base_cmds.reply || !ioc->transport_cmds.reply ||
-	    !ioc->scsih_cmds.reply || !ioc->tm_cmds.reply ||
-	    !ioc->config_cmds.reply || !ioc->ctl_cmds.reply ||
-	    !ioc->ctl_cmds.sense) {
-		r = -ENOMEM;
-		goto out_free_resources;
-	}
-
-	if (!ioc->base_cmds.reply || !ioc->transport_cmds.reply ||
-	    !ioc->scsih_cmds.reply || !ioc->tm_cmds.reply ||
-	    !ioc->config_cmds.reply || !ioc->ctl_cmds.reply) {
-		r = -ENOMEM;
-		goto out_free_resources;
-	}
-
-	init_completion(&ioc->shost_recovery_done);
 
 	for (i = 0; i < MPI2_EVENT_NOTIFY_EVENTMASK_WORDS; i++)
 		ioc->event_masks[i] = -1;
@@ -3715,6 +3618,8 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 		goto out_free_resources;
 
 	mpt2sas_base_start_watchdog(ioc);
+	if (diag_buffer_enable != 0)
+		mpt2sas_enable_diag_buffer(ioc, diag_buffer_enable);
 	return 0;
 
  out_free_resources:
@@ -3723,19 +3628,15 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 	mpt2sas_base_free_resources(ioc);
 	_base_release_memory_pools(ioc);
 	pci_set_drvdata(ioc->pdev, NULL);
-	kfree(ioc->pd_handles);
 	kfree(ioc->tm_cmds.reply);
 	kfree(ioc->transport_cmds.reply);
-	kfree(ioc->scsih_cmds.reply);
 	kfree(ioc->config_cmds.reply);
 	kfree(ioc->base_cmds.reply);
 	kfree(ioc->ctl_cmds.reply);
-	kfree(ioc->ctl_cmds.sense);
 	kfree(ioc->pfacts);
 	ioc->ctl_cmds.reply = NULL;
 	ioc->base_cmds.reply = NULL;
 	ioc->tm_cmds.reply = NULL;
-	ioc->scsih_cmds.reply = NULL;
 	ioc->transport_cmds.reply = NULL;
 	ioc->config_cmds.reply = NULL;
 	ioc->pfacts = NULL;
@@ -3753,21 +3654,18 @@ void
 mpt2sas_base_detach(struct MPT2SAS_ADAPTER *ioc)
 {
 
-	dexitprintk(ioc, printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+	dexitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
 	    __func__));
 
 	mpt2sas_base_stop_watchdog(ioc);
 	mpt2sas_base_free_resources(ioc);
 	_base_release_memory_pools(ioc);
 	pci_set_drvdata(ioc->pdev, NULL);
-	kfree(ioc->pd_handles);
 	kfree(ioc->pfacts);
 	kfree(ioc->ctl_cmds.reply);
-	kfree(ioc->ctl_cmds.sense);
 	kfree(ioc->base_cmds.reply);
 	kfree(ioc->tm_cmds.reply);
 	kfree(ioc->transport_cmds.reply);
-	kfree(ioc->scsih_cmds.reply);
 	kfree(ioc->config_cmds.reply);
 }
 
@@ -3788,11 +3686,11 @@ _base_reset_handler(struct MPT2SAS_ADAPTER *ioc, int reset_phase)
 {
 	switch (reset_phase) {
 	case MPT2_IOC_PRE_RESET:
-		dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+		dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 		    "MPT2_IOC_PRE_RESET\n", ioc->name, __func__));
 		break;
 	case MPT2_IOC_AFTER_RESET:
-		dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+		dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 		    "MPT2_IOC_AFTER_RESET\n", ioc->name, __func__));
 		if (ioc->transport_cmds.status & MPT2_CMD_PENDING) {
 			ioc->transport_cmds.status |= MPT2_CMD_RESET;
@@ -3807,12 +3705,12 @@ _base_reset_handler(struct MPT2SAS_ADAPTER *ioc, int reset_phase)
 		if (ioc->config_cmds.status & MPT2_CMD_PENDING) {
 			ioc->config_cmds.status |= MPT2_CMD_RESET;
 			mpt2sas_base_free_smid(ioc, ioc->config_cmds.smid);
-			ioc->config_cmds.smid = USHRT_MAX;
+			ioc->config_cmds.smid = USHORT_MAX;
 			complete(&ioc->config_cmds.done);
 		}
 		break;
 	case MPT2_IOC_DONE_RESET:
-		dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: "
+		dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: "
 		    "MPT2_IOC_DONE_RESET\n", ioc->name, __func__));
 		break;
 	}
@@ -3854,7 +3752,7 @@ _wait_for_commands_to_complete(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 		return;
 
 	/* wait for pending commands to complete */
-	wait_event_timeout(ioc->reset_wq, ioc->pending_io_count == 0, 10 * HZ);
+	wait_event_timeout(ioc->reset_wq, ioc->pending_io_count == 0, 3 * HZ);
 }
 
 /**
@@ -3872,37 +3770,19 @@ mpt2sas_base_hard_reset_handler(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
 	int r;
 	unsigned long flags;
 
-	dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: enter\n", ioc->name,
+	dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: enter\n", ioc->name,
 	    __func__));
-
-	if (ioc->pci_error_recovery) {
-		printk(MPT2SAS_ERR_FMT "%s: pci error recovery reset\n",
-		    ioc->name, __func__);
-		r = 0;
-		goto out;
-	}
 
 	if (mpt2sas_fwfault_debug)
 		mpt2sas_halt_firmware(ioc);
 
-	/* TODO - What we really should be doing is pulling
-	 * out all the code associated with NO_SLEEP; its never used.
-	 * That is legacy code from mpt fusion driver, ported over.
-	 * I will leave this BUG_ON here for now till its been resolved.
-	 */
-	BUG_ON(sleep_flag == NO_SLEEP);
-
-	/* wait for an active reset in progress to complete */
-	if (!mutex_trylock(&ioc->reset_in_progress_mutex)) {
-		do {
-			ssleep(1);
-		} while (ioc->shost_recovery == 1);
-		dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: exit\n", ioc->name,
-		    __func__));
-		return ioc->ioc_reset_in_progress_status;
-	}
-
 	spin_lock_irqsave(&ioc->ioc_reset_in_progress_lock, flags);
+	if (ioc->shost_recovery) {
+		spin_unlock_irqrestore(&ioc->ioc_reset_in_progress_lock, flags);
+		printk(MPT2SAS_ERR_FMT "%s: busy\n",
+		    ioc->name, __func__);
+		return -EBUSY;
+	}
 	ioc->shost_recovery = 1;
 	spin_unlock_irqrestore(&ioc->ioc_reset_in_progress_lock, flags);
 
@@ -3917,17 +3797,14 @@ mpt2sas_base_hard_reset_handler(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
 	if (!r)
 		_base_reset_handler(ioc, MPT2_IOC_DONE_RESET);
  out:
-	dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: %s\n",
+	dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: %s\n",
 	    ioc->name, __func__, ((r == 0) ? "SUCCESS" : "FAILED")));
 
 	spin_lock_irqsave(&ioc->ioc_reset_in_progress_lock, flags);
-	ioc->ioc_reset_in_progress_status = r;
 	ioc->shost_recovery = 0;
-	complete(&ioc->shost_recovery_done);
 	spin_unlock_irqrestore(&ioc->ioc_reset_in_progress_lock, flags);
-	mutex_unlock(&ioc->reset_in_progress_mutex);
 
-	dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: exit\n", ioc->name,
-	    __func__));
+	if (!r)
+		_base_reset_handler(ioc, MPT2_IOC_RUNNING);
 	return r;
 }

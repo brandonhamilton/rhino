@@ -39,12 +39,14 @@ static struct macio_chip      *macio_on_hold;
 
 static int macio_bus_match(struct device *dev, struct device_driver *drv) 
 {
-	const struct of_device_id * matches = drv->of_match_table;
+	struct macio_dev * macio_dev = to_macio_device(dev);
+	struct macio_driver * macio_drv = to_macio_driver(drv);
+	const struct of_device_id * matches = macio_drv->match_table;
 
 	if (!matches) 
 		return 0;
 
-	return of_match_device(matches, dev) != NULL;
+	return of_match_device(matches, &macio_dev->ofdev) != NULL;
 }
 
 struct macio_dev *macio_dev_get(struct macio_dev *dev)
@@ -82,7 +84,7 @@ static int macio_device_probe(struct device *dev)
 
 	macio_dev_get(macio_dev);
 
-	match = of_match_device(drv->driver.of_match_table, dev);
+	match = of_match_device(drv->match_table, &macio_dev->ofdev);
 	if (match)
 		error = drv->probe(macio_dev, match);
 	if (error)
@@ -246,7 +248,7 @@ static void macio_create_fixup_irq(struct macio_dev *dev, int index,
 
 static void macio_add_missing_resources(struct macio_dev *dev)
 {
-	struct device_node *np = dev->ofdev.dev.of_node;
+	struct device_node *np = dev->ofdev.node;
 	unsigned int irq_base;
 
 	/* Gatwick has some missing interrupts on child nodes */
@@ -287,7 +289,7 @@ static void macio_add_missing_resources(struct macio_dev *dev)
 
 static void macio_setup_interrupts(struct macio_dev *dev)
 {
-	struct device_node *np = dev->ofdev.dev.of_node;
+	struct device_node *np = dev->ofdev.node;
 	unsigned int irq;
 	int i = 0, j = 0;
 
@@ -315,7 +317,7 @@ static void macio_setup_interrupts(struct macio_dev *dev)
 static void macio_setup_resources(struct macio_dev *dev,
 				  struct resource *parent_res)
 {
-	struct device_node *np = dev->ofdev.dev.of_node;
+	struct device_node *np = dev->ofdev.node;
 	struct resource r;
 	int index;
 
@@ -371,9 +373,9 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 
 	dev->bus = &chip->lbus;
 	dev->media_bay = in_bay;
-	dev->ofdev.dev.of_node = np;
-	dev->ofdev.archdata.dma_mask = 0xffffffffUL;
-	dev->ofdev.dev.dma_mask = &dev->ofdev.archdata.dma_mask;
+	dev->ofdev.node = np;
+	dev->ofdev.dma_mask = 0xffffffffUL;
+	dev->ofdev.dev.dma_mask = &dev->ofdev.dma_mask;
 	dev->ofdev.dev.parent = parent;
 	dev->ofdev.dev.bus = &macio_bus_type;
 	dev->ofdev.dev.release = macio_release_dev;
@@ -492,9 +494,9 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 	}
 
 	/* Add media bay devices if any */
-	if (mbdev) {
-		pnode = mbdev->ofdev.dev.of_node;
-		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
+	if (mbdev)
+		for (np = NULL; (np = of_get_next_child(mbdev->ofdev.node, np))
+			     != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
@@ -502,12 +504,11 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 						 mbdev,  root_res) == NULL)
 				of_node_put(np);
 		}
-	}
 
 	/* Add serial ports if any */
 	if (sdev) {
-		pnode = sdev->ofdev.dev.of_node;
-		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
+		for (np = NULL; (np = of_get_next_child(sdev->ofdev.node, np))
+			     != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
@@ -526,6 +527,7 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 int macio_register_driver(struct macio_driver *drv)
 {
 	/* initialize common driver fields */
+	drv->driver.name = drv->name;
 	drv->driver.bus = &macio_bus_type;
 
 	/* register with core */

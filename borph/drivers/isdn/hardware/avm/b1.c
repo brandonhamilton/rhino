@@ -12,8 +12,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/pci.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/skbuff.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
@@ -21,7 +19,6 @@
 #include <linux/ioport.h>
 #include <linux/capi.h>
 #include <linux/kernelcapi.h>
-#include <linux/slab.h>
 #include <asm/io.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
@@ -637,17 +634,18 @@ irqreturn_t b1_interrupt(int interrupt, void *devptr)
 }
 
 /* ------------------------------------------------------------- */
-static int b1ctl_proc_show(struct seq_file *m, void *v)
+int b1ctl_read_proc(char *page, char **start, off_t off,
+        		int count, int *eof, struct capi_ctr *ctrl)
 {
-	struct capi_ctr *ctrl = m->private;
 	avmctrl_info *cinfo = (avmctrl_info *)(ctrl->driverdata);
 	avmcard *card = cinfo->card;
 	u8 flag;
+	int len = 0;
 	char *s;
 
-	seq_printf(m, "%-16s %s\n", "name", card->name);
-	seq_printf(m, "%-16s 0x%x\n", "io", card->port);
-	seq_printf(m, "%-16s %d\n", "irq", card->irq);
+	len += sprintf(page+len, "%-16s %s\n", "name", card->name);
+	len += sprintf(page+len, "%-16s 0x%x\n", "io", card->port);
+	len += sprintf(page+len, "%-16s %d\n", "irq", card->irq);
 	switch (card->cardtype) {
 	case avm_b1isa: s = "B1 ISA"; break;
 	case avm_b1pci: s = "B1 PCI"; break;
@@ -660,20 +658,20 @@ static int b1ctl_proc_show(struct seq_file *m, void *v)
 	case avm_c2: s = "C2"; break;
 	default: s = "???"; break;
 	}
-	seq_printf(m, "%-16s %s\n", "type", s);
+	len += sprintf(page+len, "%-16s %s\n", "type", s);
 	if (card->cardtype == avm_t1isa)
-		seq_printf(m, "%-16s %d\n", "cardnr", card->cardnr);
+	   len += sprintf(page+len, "%-16s %d\n", "cardnr", card->cardnr);
 	if ((s = cinfo->version[VER_DRIVER]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_driver", s);
+	   len += sprintf(page+len, "%-16s %s\n", "ver_driver", s);
 	if ((s = cinfo->version[VER_CARDTYPE]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_cardtype", s);
+	   len += sprintf(page+len, "%-16s %s\n", "ver_cardtype", s);
 	if ((s = cinfo->version[VER_SERIAL]) != NULL)
-		seq_printf(m, "%-16s %s\n", "ver_serial", s);
+	   len += sprintf(page+len, "%-16s %s\n", "ver_serial", s);
 
 	if (card->cardtype != avm_m1) {
         	flag = ((u8 *)(ctrl->profile.manu))[3];
         	if (flag)
-			seq_printf(m, "%-16s%s%s%s%s%s%s%s\n",
+			len += sprintf(page+len, "%-16s%s%s%s%s%s%s%s\n",
 			"protocol",
 			(flag & 0x01) ? " DSS1" : "",
 			(flag & 0x02) ? " CT1" : "",
@@ -687,7 +685,7 @@ static int b1ctl_proc_show(struct seq_file *m, void *v)
 	if (card->cardtype != avm_m1) {
         	flag = ((u8 *)(ctrl->profile.manu))[5];
 		if (flag)
-			seq_printf(m, "%-16s%s%s%s%s\n",
+			len += sprintf(page+len, "%-16s%s%s%s%s\n",
 			"linetype",
 			(flag & 0x01) ? " point to point" : "",
 			(flag & 0x02) ? " point to multipoint" : "",
@@ -695,24 +693,15 @@ static int b1ctl_proc_show(struct seq_file *m, void *v)
 			(flag & 0x04) ? " leased line with D-channel" : ""
 			);
 	}
-	seq_printf(m, "%-16s %s\n", "cardname", cinfo->cardname);
+	len += sprintf(page+len, "%-16s %s\n", "cardname", cinfo->cardname);
 
-	return 0;
+	if (off+count >= len)
+	   *eof = 1;
+	if (len < off)
+           return 0;
+	*start = page + off;
+	return ((count < len-off) ? count : len-off);
 }
-
-static int b1ctl_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, b1ctl_proc_show, PDE(inode)->data);
-}
-
-const struct file_operations b1ctl_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= b1ctl_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-EXPORT_SYMBOL(b1ctl_proc_fops);
 
 /* ------------------------------------------------------------- */
 
@@ -791,6 +780,8 @@ EXPORT_SYMBOL(b1_send_message);
 
 EXPORT_SYMBOL(b1_parse_version);
 EXPORT_SYMBOL(b1_interrupt);
+
+EXPORT_SYMBOL(b1ctl_read_proc);
 
 static int __init b1_init(void)
 {

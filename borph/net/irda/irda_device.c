@@ -41,7 +41,6 @@
 #include <linux/tty.h>
 #include <linux/kmod.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 
 #include <asm/ioctls.h>
 #include <asm/uaccess.h>

@@ -16,7 +16,6 @@
 #include <linux/delay.h>
 #include <linux/highmem.h>
 #include <linux/memstick.h>
-#include <linux/slab.h>
 
 #define DRIVER_NAME "jmb38x_ms"
 

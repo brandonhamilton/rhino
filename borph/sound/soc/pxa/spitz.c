@@ -28,6 +28,7 @@
 #include <asm/mach-types.h>
 #include <mach/spitz.h>
 #include "../codecs/wm8750.h"
+#include "pxa2xx-pcm.h"
 #include "pxa2xx-i2s.h"
 
 #define SPITZ_HP        0
@@ -106,15 +107,10 @@ static void spitz_ext_control(struct snd_soc_codec *codec)
 static int spitz_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
-
-	mutex_lock(&codec->mutex);
+	struct snd_soc_codec *codec = rtd->socdev->card->codec;
 
 	/* check the jack status at stream startup */
 	spitz_ext_control(codec);
-
-	mutex_unlock(&codec->mutex);
-
 	return 0;
 }
 
@@ -122,8 +118,8 @@ static int spitz_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *codec_dai = rtd->dai->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 	unsigned int clk = 0;
 	int ret = 0;
 
@@ -278,9 +274,8 @@ static const struct snd_kcontrol_new wm8750_spitz_controls[] = {
 /*
  * Logic for a wm8750 as connected on a Sharp SL-Cxx00 Device
  */
-static int spitz_wm8750_init(struct snd_soc_pcm_runtime *rtd)
+static int spitz_wm8750_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
 	int err;
 
 	/* NC codec pins */
@@ -313,10 +308,8 @@ static int spitz_wm8750_init(struct snd_soc_pcm_runtime *rtd)
 static struct snd_soc_dai_link spitz_dai = {
 	.name = "wm8750",
 	.stream_name = "WM8750",
-	.cpu_dai_name = "pxa-is2",
-	.codec_dai_name = "wm8750-hifi",
-	.platform_name = "pxa-pcm-audio",
-	.codec_name = "wm8750-codec.0-001a",
+	.cpu_dai = &pxa_i2s_dai,
+	.codec_dai = &wm8750_dai,
 	.init = spitz_wm8750_init,
 	.ops = &spitz_ops,
 };
@@ -324,8 +317,22 @@ static struct snd_soc_dai_link spitz_dai = {
 /* spitz audio machine driver */
 static struct snd_soc_card snd_soc_spitz = {
 	.name = "Spitz",
+	.platform = &pxa2xx_soc_platform,
 	.dai_link = &spitz_dai,
 	.num_links = 1,
+};
+
+/* spitz audio private data */
+static struct wm8750_setup_data spitz_wm8750_setup = {
+	.i2c_bus = 0,
+	.i2c_address = 0x1b,
+};
+
+/* spitz audio subsystem */
+static struct snd_soc_device spitz_snd_devdata = {
+	.card = &snd_soc_spitz,
+	.codec_dev = &soc_codec_dev_wm8750,
+	.codec_data = &spitz_wm8750_setup,
 };
 
 static struct platform_device *spitz_snd_device;
@@ -341,7 +348,8 @@ static int __init spitz_init(void)
 	if (!spitz_snd_device)
 		return -ENOMEM;
 
-	platform_set_drvdata(spitz_snd_device, &snd_soc_spitz);
+	platform_set_drvdata(spitz_snd_device, &spitz_snd_devdata);
+	spitz_snd_devdata.dev = &spitz_snd_device->dev;
 	ret = platform_device_add(spitz_snd_device);
 
 	if (ret)

@@ -7,13 +7,6 @@
 #include <linux/if_addr.h>
 #include <linux/neighbour.h>
 
-/* rtnetlink families. Values up to 127 are reserved for real address
- * families, values above 128 may be used arbitrarily.
- */
-#define RTNL_FAMILY_IPMR		128
-#define RTNL_FAMILY_IP6MR		129
-#define RTNL_FAMILY_MAX			129
-
 /****
  *		Routing/neighbour discovery messages.
  ****/
@@ -282,7 +275,6 @@ enum rtattr_type_t {
 	RTA_SESSION, /* no longer used */
 	RTA_MP_ALGO, /* no longer used */
 	RTA_TABLE,
-	RTA_MARK,
 	__RTA_MAX
 };
 
@@ -370,17 +362,17 @@ enum {
 #define RTAX_FEATURES RTAX_FEATURES
 	RTAX_RTO_MIN,
 #define RTAX_RTO_MIN RTAX_RTO_MIN
-	RTAX_INITRWND,
-#define RTAX_INITRWND RTAX_INITRWND
 	__RTAX_MAX
 };
 
 #define RTAX_MAX (__RTAX_MAX - 1)
 
 #define RTAX_FEATURE_ECN	0x00000001
-#define RTAX_FEATURE_SACK	0x00000002
-#define RTAX_FEATURE_TIMESTAMP	0x00000004
+#define RTAX_FEATURE_NO_SACK	0x00000002
+#define RTAX_FEATURE_NO_TSTAMP	0x00000004
 #define RTAX_FEATURE_ALLFRAG	0x00000008
+#define RTAX_FEATURE_NO_WSCALE	0x00000010
+#define RTAX_FEATURE_NO_DSACK	0x00000020
 
 struct rta_session {
 	__u8	proto;
@@ -605,7 +597,6 @@ struct tcamsg {
 #ifdef __KERNEL__
 
 #include <linux/mutex.h>
-#include <linux/netdevice.h>
 
 static __inline__ int rtattr_strcmp(const struct rtattr *rta, const char *str)
 {
@@ -746,38 +737,6 @@ extern void rtnl_lock(void);
 extern void rtnl_unlock(void);
 extern int rtnl_trylock(void);
 extern int rtnl_is_locked(void);
-#ifdef CONFIG_PROVE_LOCKING
-extern int lockdep_rtnl_is_held(void);
-#endif /* #ifdef CONFIG_PROVE_LOCKING */
-
-/**
- * rcu_dereference_rtnl - rcu_dereference with debug checking
- * @p: The pointer to read, prior to dereferencing
- *
- * Do an rcu_dereference(p), but check caller either holds rcu_read_lock()
- * or RTNL. Note : Please prefer rtnl_dereference() or rcu_dereference()
- */
-#define rcu_dereference_rtnl(p)					\
-	rcu_dereference_check(p, rcu_read_lock_held() ||	\
-				 lockdep_rtnl_is_held())
-
-/**
- * rtnl_dereference - fetch RCU pointer when updates are prevented by RTNL
- * @p: The pointer to read, prior to dereferencing
- *
- * Return the value of the specified RCU-protected pointer, but omit
- * both the smp_read_barrier_depends() and the ACCESS_ONCE(), because
- * caller holds RTNL.
- */
-#define rtnl_dereference(p)					\
-	rcu_dereference_protected(p, lockdep_rtnl_is_held())
-
-static inline struct netdev_queue *dev_ingress_queue(struct net_device *dev)
-{
-	return rtnl_dereference(dev->ingress_queue);
-}
-
-extern struct netdev_queue *dev_ingress_queue_create(struct net_device *dev);
 
 extern void rtnetlink_init(void);
 extern void __rtnl_unlock(void);

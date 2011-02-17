@@ -67,14 +67,10 @@ static inline long kvm_s390_vcpu_get_memsize(struct kvm_vcpu *vcpu)
 
 static inline void kvm_s390_vcpu_set_mem(struct kvm_vcpu *vcpu)
 {
-	int idx;
 	struct kvm_memory_slot *mem;
-	struct kvm_memslots *memslots;
 
-	idx = srcu_read_lock(&vcpu->kvm->srcu);
-	memslots = kvm_memslots(vcpu->kvm);
-
-	mem = &memslots->memslots[0];
+	down_read(&vcpu->kvm->slots_lock);
+	mem = &vcpu->kvm->memslots[0];
 
 	vcpu->arch.sie_block->gmsor = mem->userspace_addr;
 	vcpu->arch.sie_block->gmslm =
@@ -82,7 +78,7 @@ static inline void kvm_s390_vcpu_set_mem(struct kvm_vcpu *vcpu)
 		(mem->npages << PAGE_SHIFT) +
 		VIRTIODESCSPACE - 1ul;
 
-	srcu_read_unlock(&vcpu->kvm->srcu, idx);
+	up_read(&vcpu->kvm->slots_lock);
 }
 
 /* implemented in priv.c */
@@ -92,7 +88,7 @@ int kvm_s390_handle_b2(struct kvm_vcpu *vcpu);
 int kvm_s390_handle_sigp(struct kvm_vcpu *vcpu);
 
 /* implemented in kvm-s390.c */
-int kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu,
+int __kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu,
 				 unsigned long addr);
 /* implemented in diag.c */
 int kvm_s390_handle_diag(struct kvm_vcpu *vcpu);

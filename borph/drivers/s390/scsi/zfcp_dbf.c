@@ -10,7 +10,6 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/ctype.h>
-#include <linux/slab.h>
 #include <asm/debug.h>
 #include "zfcp_dbf.h"
 #include "zfcp_ext.h"
@@ -141,9 +140,9 @@ void _zfcp_dbf_hba_fsf_response(const char *tag2, int level,
 	memcpy(response->fsf_status_qual,
 	       fsf_status_qual, FSF_STATUS_QUALIFIER_SIZE);
 	response->fsf_req_status = fsf_req->status;
-	response->sbal_first = fsf_req->qdio_req.sbal_first;
-	response->sbal_last = fsf_req->qdio_req.sbal_last;
-	response->sbal_response = fsf_req->qdio_req.sbal_response;
+	response->sbal_first = fsf_req->queue_req.sbal_first;
+	response->sbal_last = fsf_req->queue_req.sbal_last;
+	response->sbal_response = fsf_req->queue_req.sbal_response;
 	response->pool = fsf_req->pool != NULL;
 	response->erp_action = (unsigned long)fsf_req->erp_action;
 
@@ -154,8 +153,7 @@ void _zfcp_dbf_hba_fsf_response(const char *tag2, int level,
 		scsi_cmnd = (struct scsi_cmnd *)fsf_req->data;
 		if (scsi_cmnd) {
 			response->u.fcp.cmnd = (unsigned long)scsi_cmnd;
-			response->u.fcp.data_dir =
-				qtcb->bottom.io.data_direction;
+			response->u.fcp.serial = scsi_cmnd->serial_number;
 		}
 		break;
 
@@ -327,9 +325,9 @@ static void zfcp_dbf_hba_view_response(char **p,
 	case FSF_QTCB_FCP_CMND:
 		if (r->fsf_req_status & ZFCP_STATUS_FSFREQ_TASK_MANAGEMENT)
 			break;
-		zfcp_dbf_out(p, "data_direction", "0x%04x", r->u.fcp.data_dir);
 		zfcp_dbf_out(p, "scsi_cmnd", "0x%0Lx", r->u.fcp.cmnd);
-		*p += sprintf(*p, "\n");
+		zfcp_dbf_out(p, "scsi_serial", "0x%016Lx", r->u.fcp.serial);
+		p += sprintf(*p, "\n");
 		break;
 
 	case FSF_QTCB_OPEN_PORT_WITH_DID:
@@ -480,7 +478,7 @@ static int zfcp_dbf_rec_view_format(debug_info_t *id, struct debug_view *view,
 		zfcp_dbf_out(&p, "fcp_lun", "0x%016Lx", r->u.trigger.fcp_lun);
 		zfcp_dbf_out(&p, "adapter_status", "0x%08x", r->u.trigger.as);
 		zfcp_dbf_out(&p, "port_status", "0x%08x", r->u.trigger.ps);
-		zfcp_dbf_out(&p, "lun_status", "0x%08x", r->u.trigger.ls);
+		zfcp_dbf_out(&p, "unit_status", "0x%08x", r->u.trigger.us);
 		break;
 	case ZFCP_REC_DBF_ID_ACTION:
 		zfcp_dbf_out(&p, "erp_action", "0x%016Lx", r->u.action.action);
@@ -578,8 +576,7 @@ void zfcp_dbf_rec_adapter(char *id, void *ref, struct zfcp_dbf *dbf)
 	struct zfcp_adapter *adapter = dbf->adapter;
 
 	zfcp_dbf_rec_target(id, ref, dbf, &adapter->status,
-			    &adapter->erp_counter, 0, 0,
-			    ZFCP_DBF_INVALID_LUN);
+				  &adapter->erp_counter, 0, 0, 0);
 }
 
 /**
@@ -593,25 +590,24 @@ void zfcp_dbf_rec_port(char *id, void *ref, struct zfcp_port *port)
 	struct zfcp_dbf *dbf = port->adapter->dbf;
 
 	zfcp_dbf_rec_target(id, ref, dbf, &port->status,
-			    &port->erp_counter, port->wwpn, port->d_id,
-			    ZFCP_DBF_INVALID_LUN);
+				  &port->erp_counter, port->wwpn, port->d_id,
+				  0);
 }
 
 /**
- * zfcp_dbf_rec_lun - trace event for LUN state change
+ * zfcp_dbf_rec_unit - trace event for unit state change
  * @id: identifier for trigger of state change
  * @ref: additional reference (e.g. request)
- * @sdev: SCSI device
+ * @unit: unit
  */
-void zfcp_dbf_rec_lun(char *id, void *ref, struct scsi_device *sdev)
+void zfcp_dbf_rec_unit(char *id, void *ref, struct zfcp_unit *unit)
 {
-	struct zfcp_scsi_dev *zfcp_sdev = sdev_to_zfcp(sdev);
-	struct zfcp_port *port = zfcp_sdev->port;
+	struct zfcp_port *port = unit->port;
 	struct zfcp_dbf *dbf = port->adapter->dbf;
 
-	zfcp_dbf_rec_target(id, ref, dbf, &zfcp_sdev->status,
-			    &zfcp_sdev->erp_counter, port->wwpn, port->d_id,
-			    zfcp_scsi_dev_lun(sdev));
+	zfcp_dbf_rec_target(id, ref, dbf, &unit->status,
+				  &unit->erp_counter, port->wwpn, port->d_id,
+				  unit->fcp_lun);
 }
 
 /**
@@ -623,11 +619,11 @@ void zfcp_dbf_rec_lun(char *id, void *ref, struct scsi_device *sdev)
  * @action: address of error recovery action struct
  * @adapter: adapter
  * @port: port
- * @sdev: SCSI device
+ * @unit: unit
  */
 void zfcp_dbf_rec_trigger(char *id2, void *ref, u8 want, u8 need, void *action,
 			  struct zfcp_adapter *adapter, struct zfcp_port *port,
-			  struct scsi_device *sdev)
+			  struct zfcp_unit *unit)
 {
 	struct zfcp_dbf *dbf = adapter->dbf;
 	struct zfcp_dbf_rec_record *r = &dbf->rec_buf;
@@ -646,10 +642,10 @@ void zfcp_dbf_rec_trigger(char *id2, void *ref, u8 want, u8 need, void *action,
 		r->u.trigger.ps = atomic_read(&port->status);
 		r->u.trigger.wwpn = port->wwpn;
 	}
-	if (sdev)
-		r->u.trigger.ls = atomic_read(&sdev_to_zfcp(sdev)->status);
-	r->u.trigger.fcp_lun = sdev ? zfcp_scsi_dev_lun(sdev) :
-				      ZFCP_DBF_INVALID_LUN;
+	if (unit) {
+		r->u.trigger.us = atomic_read(&unit->status);
+		r->u.trigger.fcp_lun = unit->fcp_lun;
+	}
 	debug_event(dbf->rec, action ? 1 : 4, r, sizeof(*r));
 	spin_unlock_irqrestore(&dbf->rec_lock, flags);
 }
@@ -672,7 +668,7 @@ void zfcp_dbf_rec_action(char *id2, struct zfcp_erp_action *erp_action)
 	r->u.action.action = (unsigned long)erp_action;
 	r->u.action.status = erp_action->status;
 	r->u.action.step = erp_action->step;
-	r->u.action.fsf_req = erp_action->fsf_req_id;
+	r->u.action.fsf_req = (unsigned long)erp_action->fsf_req;
 	debug_event(dbf->rec, 5, r, sizeof(*r));
 	spin_unlock_irqrestore(&dbf->rec_lock, flags);
 }
@@ -879,6 +875,7 @@ void _zfcp_dbf_scsi(const char *tag, const char *tag2, int level,
 				}
 				rec->scsi_result = scsi_cmnd->result;
 				rec->scsi_cmnd = (unsigned long)scsi_cmnd;
+				rec->scsi_serial = scsi_cmnd->serial_number;
 				memcpy(rec->scsi_opcode, scsi_cmnd->cmnd,
 					min((int)scsi_cmnd->cmd_len,
 						ZFCP_DBF_SCSI_OPCODE));
@@ -947,6 +944,7 @@ static int zfcp_dbf_scsi_view_format(debug_info_t *id, struct debug_view *view,
 	zfcp_dbf_out(&p, "scsi_lun", "0x%08x", r->scsi_lun);
 	zfcp_dbf_out(&p, "scsi_result", "0x%08x", r->scsi_result);
 	zfcp_dbf_out(&p, "scsi_cmnd", "0x%0Lx", r->scsi_cmnd);
+	zfcp_dbf_out(&p, "scsi_serial", "0x%016Lx", r->scsi_serial);
 	zfcp_dbf_outd(&p, "scsi_opcode", r->scsi_opcode, ZFCP_DBF_SCSI_OPCODE,
 		      0, ZFCP_DBF_SCSI_OPCODE);
 	zfcp_dbf_out(&p, "scsi_retries", "0x%02x", r->scsi_retries);
@@ -1006,7 +1004,7 @@ int zfcp_dbf_adapter_register(struct zfcp_adapter *adapter)
 	char dbf_name[DEBUG_MAX_NAME_LEN];
 	struct zfcp_dbf *dbf;
 
-	dbf = kzalloc(sizeof(struct zfcp_dbf), GFP_KERNEL);
+	dbf = kmalloc(sizeof(struct zfcp_dbf), GFP_KERNEL);
 	if (!dbf)
 		return -ENOMEM;
 

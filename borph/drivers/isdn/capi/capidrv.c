@@ -24,7 +24,6 @@
 #include <linux/isdn.h>
 #include <linux/isdnif.h>
 #include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/capi.h>
 #include <linux/kernelcapi.h>
 #include <linux/ctype.h>
@@ -35,6 +34,7 @@
 #include <linux/isdn/capicmd.h>
 #include "capidrv.h"
 
+static char *revision = "$Revision: 1.1.2.2 $";
 static int debugmode = 0;
 
 MODULE_DESCRIPTION("CAPI4Linux: Interface to ISDN4Linux");
@@ -1450,9 +1450,12 @@ static void handle_dtrace_data(capidrv_contr *card,
     	}
 
 	for (p = data, end = data+len; p < end; p++) {
+		u8 w;
 		PUTBYTE_TO_STATUS(card, ' ');
-		PUTBYTE_TO_STATUS(card, hex_asc_hi(*p));
-		PUTBYTE_TO_STATUS(card, hex_asc_lo(*p));
+		w = (*p >> 4) & 0xf;
+		PUTBYTE_TO_STATUS(card, (w < 10) ? '0'+w : 'A'-10+w);
+		w = *p & 0xf;
+		PUTBYTE_TO_STATUS(card, (w < 10) ? '0'+w : 'A'-10+w);
 	}
 	PUTBYTE_TO_STATUS(card, '\n');
 
@@ -1515,13 +1518,8 @@ static int decodeFVteln(char *teln, unsigned long *bmaskp, int *activep)
 	while (*s) {
 		int digit1 = 0;
 		int digit2 = 0;
-		char *endp;
-
-		digit1 = simple_strtoul(s, &endp, 10);
-		if (s == endp)
-			return -3;
-		s = endp;
-
+		if (!isdigit(*s)) return -3;
+		while (isdigit(*s)) { digit1 = digit1*10 + (*s - '0'); s++; }
 		if (digit1 <= 0 || digit1 > 30) return -4;
 		if (*s == 0 || *s == ',' || *s == ' ') {
 			bmask |= (1 << digit1);
@@ -1531,12 +1529,8 @@ static int decodeFVteln(char *teln, unsigned long *bmaskp, int *activep)
 		}
 		if (*s != '-') return -5;
 		s++;
-
-		digit2 = simple_strtoul(s, &endp, 10);
-		if (s == endp)
-			return -3;
-		s = endp;
-
+		if (!isdigit(*s)) return -3;
+		while (isdigit(*s)) { digit2 = digit2*10 + (*s - '0'); s++; }
 		if (digit2 <= 0 || digit2 > 30) return -4;
 		if (*s == 0 || *s == ',' || *s == ' ') {
 			if (digit1 > digit2)
@@ -2216,72 +2210,95 @@ static int capidrv_delcontr(u16 contr)
 }
 
 
-static int
-lower_callback(struct notifier_block *nb, unsigned long val, void *v)
+static void lower_callback(unsigned int cmd, u32 contr, void *data)
 {
-	capi_profile profile;
-	u32 contr = (long)v;
 
-	switch (val) {
-	case CAPICTR_UP:
+	switch (cmd) {
+	case KCI_CONTRUP:
 		printk(KERN_INFO "capidrv: controller %hu up\n", contr);
-		if (capi20_get_profile(contr, &profile) == CAPI_NOERROR)
-			(void) capidrv_addcontr(contr, &profile);
+		(void) capidrv_addcontr(contr, (capi_profile *) data);
 		break;
-	case CAPICTR_DOWN:
+	case KCI_CONTRDOWN:
 		printk(KERN_INFO "capidrv: controller %hu down\n", contr);
 		(void) capidrv_delcontr(contr);
 		break;
 	}
-	return NOTIFY_OK;
 }
 
 /*
  * /proc/capi/capidrv:
  * nrecvctlpkt nrecvdatapkt nsendctlpkt nsenddatapkt
  */
-static int capidrv_proc_show(struct seq_file *m, void *v)
+static int proc_capidrv_read_proc(char *page, char **start, off_t off,
+                                       int count, int *eof, void *data)
 {
-	seq_printf(m, "%lu %lu %lu %lu\n",
+	int len = 0;
+
+	len += sprintf(page+len, "%lu %lu %lu %lu\n",
 			global.ap.nrecvctlpkt,
 			global.ap.nrecvdatapkt,
 			global.ap.nsentctlpkt,
 			global.ap.nsentdatapkt);
-	return 0;
+	if (off+count >= len)
+	   *eof = 1;
+	if (len < off)
+           return 0;
+	*start = page + off;
+	return ((count < len-off) ? count : len-off);
 }
 
-static int capidrv_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, capidrv_proc_show, NULL);
-}
-
-static const struct file_operations capidrv_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= capidrv_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
+static struct procfsentries {
+  char *name;
+  mode_t mode;
+  int (*read_proc)(char *page, char **start, off_t off,
+                                       int count, int *eof, void *data);
+  struct proc_dir_entry *procent;
+} procfsentries[] = {
+   /* { "capi",		  S_IFDIR, 0 }, */
+   { "capi/capidrv", 	  0	 , proc_capidrv_read_proc },
 };
 
 static void __init proc_init(void)
 {
-	proc_create("capi/capidrv", 0, NULL, &capidrv_proc_fops);
+    int nelem = ARRAY_SIZE(procfsentries);
+    int i;
+
+    for (i=0; i < nelem; i++) {
+        struct procfsentries *p = procfsentries + i;
+	p->procent = create_proc_entry(p->name, p->mode, NULL);
+	if (p->procent) p->procent->read_proc = p->read_proc;
+    }
 }
 
 static void __exit proc_exit(void)
 {
-	remove_proc_entry("capi/capidrv", NULL);
-}
+    int nelem = ARRAY_SIZE(procfsentries);
+    int i;
 
-static struct notifier_block capictr_nb = {
-	.notifier_call = lower_callback,
-};
+    for (i=nelem-1; i >= 0; i--) {
+        struct procfsentries *p = procfsentries + i;
+	if (p->procent) {
+	   remove_proc_entry(p->name, NULL);
+	   p->procent = NULL;
+	}
+    }
+}
 
 static int __init capidrv_init(void)
 {
 	capi_profile profile;
+	char rev[32];
+	char *p;
 	u32 ncontr, contr;
 	u16 errcode;
+
+	if ((p = strchr(revision, ':')) != NULL && p[1]) {
+		strncpy(rev, p + 2, sizeof(rev));
+		rev[sizeof(rev)-1] = 0;
+		if ((p = strchr(rev, '$')) != NULL && p > rev)
+		   *(p-1) = 0;
+	} else
+		strcpy(rev, "1.0");
 
 	global.ap.rparam.level3cnt = -2;  /* number of bchannels twice */
 	global.ap.rparam.datablkcnt = 16;
@@ -2293,7 +2310,7 @@ static int __init capidrv_init(void)
 		return -EIO;
 	}
 
-	register_capictr_notifier(&capictr_nb);
+	capi20_set_callback(&global.ap, lower_callback);
 
 	errcode = capi20_get_profile(0, &profile);
 	if (errcode != CAPI_NOERROR) {
@@ -2310,15 +2327,29 @@ static int __init capidrv_init(void)
 	}
 	proc_init();
 
+	printk(KERN_NOTICE "capidrv: Rev %s: loaded\n", rev);
 	return 0;
 }
 
 static void __exit capidrv_exit(void)
 {
-	unregister_capictr_notifier(&capictr_nb);
+	char rev[32];
+	char *p;
+
+	if ((p = strchr(revision, ':')) != NULL) {
+		strncpy(rev, p + 1, sizeof(rev));
+		rev[sizeof(rev)-1] = 0;
+		if ((p = strchr(rev, '$')) != NULL)
+			*p = 0;
+	} else {
+		strcpy(rev, " ??? ");
+	}
+
 	capi20_release(&global.ap);
 
 	proc_exit();
+
+	printk(KERN_NOTICE "capidrv: Rev%s: unloaded\n", rev);
 }
 
 module_init(capidrv_init);

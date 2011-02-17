@@ -85,16 +85,17 @@ void br_stp_enable_port(struct net_bridge_port *p)
 {
 	br_init_port(p);
 	br_port_state_selection(p->br);
-	br_log_state(p);
 }
 
 /* called under bridge lock */
 void br_stp_disable_port(struct net_bridge_port *p)
 {
-	struct net_bridge *br = p->br;
+	struct net_bridge *br;
 	int wasroot;
 
-	br_log_state(p);
+	br = p->br;
+	printk(KERN_INFO "%s: port %i(%s) entering %s state\n",
+	       br->dev->name, p->port_no, p->dev->name, "disabled");
 
 	wasroot = br_is_root_bridge(br);
 	br_become_designated_port(p);
@@ -107,7 +108,6 @@ void br_stp_disable_port(struct net_bridge_port *p)
 	del_timer(&p->hold_timer);
 
 	br_fdb_delete_by_port(br, p, 0);
-	br_multicast_disable_port(p);
 
 	br_configuration_update(br);
 
@@ -126,10 +126,11 @@ static void br_stp_start(struct net_bridge *br)
 	r = call_usermodehelper(BR_STP_PROG, argv, envp, UMH_WAIT_PROC);
 	if (r == 0) {
 		br->stp_enabled = BR_USER_STP;
-		br_debug(br, "userspace STP started\n");
+		printk(KERN_INFO "%s: userspace STP started\n", br->dev->name);
 	} else {
 		br->stp_enabled = BR_KERNEL_STP;
-		br_debug(br, "using kernel STP\n");
+		printk(KERN_INFO "%s: starting userspace STP failed, "
+				"starting kernel STP\n", br->dev->name);
 
 		/* To start timers on any ports left in blocking */
 		spin_lock_bh(&br->lock);
@@ -146,7 +147,9 @@ static void br_stp_stop(struct net_bridge *br)
 
 	if (br->stp_enabled == BR_USER_STP) {
 		r = call_usermodehelper(BR_STP_PROG, argv, envp, 1);
-		br_info(br, "userspace STP stopped, return code %d\n", r);
+		printk(KERN_INFO "%s: userspace STP stopped, return code %d\n",
+			br->dev->name, r);
+
 
 		/* To start timers on any ports left in blocking */
 		spin_lock_bh(&br->lock);

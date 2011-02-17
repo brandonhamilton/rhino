@@ -17,7 +17,6 @@
 #include <linux/sockios.h>
 #include <linux/spinlock.h>
 #include <linux/net.h>
-#include <linux/gfp.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>

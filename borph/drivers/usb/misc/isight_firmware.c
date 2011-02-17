@@ -25,9 +25,8 @@
 #include <linux/firmware.h>
 #include <linux/errno.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table[] = {
 	{USB_DEVICE(0x05ac, 0x8300)},
 	{},
 };
@@ -112,8 +111,6 @@ out:
 	release_firmware(firmware);
 	return ret;
 }
-
-MODULE_FIRMWARE("isight.fw");
 
 static void isight_firmware_disconnect(struct usb_interface *intf)
 {

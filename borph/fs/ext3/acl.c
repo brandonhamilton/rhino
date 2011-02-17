@@ -205,7 +205,6 @@ ext3_set_acl(handle_t *handle, struct inode *inode, int type,
 					return error;
 				else {
 					inode->i_mode = mode;
-					inode->i_ctime = CURRENT_TIME_SEC;
 					ext3_mark_inode_dirty(handle, inode);
 					if (error == 0)
 						acl = NULL;
@@ -367,12 +366,12 @@ out:
  * Extended attribute handlers
  */
 static size_t
-ext3_xattr_list_acl_access(struct dentry *dentry, char *list, size_t list_len,
-			   const char *name, size_t name_len, int type)
+ext3_xattr_list_acl_access(struct inode *inode, char *list, size_t list_len,
+			   const char *name, size_t name_len)
 {
 	const size_t size = sizeof(POSIX_ACL_XATTR_ACCESS);
 
-	if (!test_opt(dentry->d_sb, POSIX_ACL))
+	if (!test_opt(inode->i_sb, POSIX_ACL))
 		return 0;
 	if (list && size <= list_len)
 		memcpy(list, POSIX_ACL_XATTR_ACCESS, size);
@@ -380,12 +379,12 @@ ext3_xattr_list_acl_access(struct dentry *dentry, char *list, size_t list_len,
 }
 
 static size_t
-ext3_xattr_list_acl_default(struct dentry *dentry, char *list, size_t list_len,
-			    const char *name, size_t name_len, int type)
+ext3_xattr_list_acl_default(struct inode *inode, char *list, size_t list_len,
+			    const char *name, size_t name_len)
 {
 	const size_t size = sizeof(POSIX_ACL_XATTR_DEFAULT);
 
-	if (!test_opt(dentry->d_sb, POSIX_ACL))
+	if (!test_opt(inode->i_sb, POSIX_ACL))
 		return 0;
 	if (list && size <= list_len)
 		memcpy(list, POSIX_ACL_XATTR_DEFAULT, size);
@@ -393,18 +392,15 @@ ext3_xattr_list_acl_default(struct dentry *dentry, char *list, size_t list_len,
 }
 
 static int
-ext3_xattr_get_acl(struct dentry *dentry, const char *name, void *buffer,
-		   size_t size, int type)
+ext3_xattr_get_acl(struct inode *inode, int type, void *buffer, size_t size)
 {
 	struct posix_acl *acl;
 	int error;
 
-	if (strcmp(name, "") != 0)
-		return -EINVAL;
-	if (!test_opt(dentry->d_sb, POSIX_ACL))
+	if (!test_opt(inode->i_sb, POSIX_ACL))
 		return -EOPNOTSUPP;
 
-	acl = ext3_get_acl(dentry->d_inode, type);
+	acl = ext3_get_acl(inode, type);
 	if (IS_ERR(acl))
 		return PTR_ERR(acl);
 	if (acl == NULL)
@@ -416,16 +412,31 @@ ext3_xattr_get_acl(struct dentry *dentry, const char *name, void *buffer,
 }
 
 static int
-ext3_xattr_set_acl(struct dentry *dentry, const char *name, const void *value,
-		   size_t size, int flags, int type)
+ext3_xattr_get_acl_access(struct inode *inode, const char *name,
+			  void *buffer, size_t size)
 {
-	struct inode *inode = dentry->d_inode;
+	if (strcmp(name, "") != 0)
+		return -EINVAL;
+	return ext3_xattr_get_acl(inode, ACL_TYPE_ACCESS, buffer, size);
+}
+
+static int
+ext3_xattr_get_acl_default(struct inode *inode, const char *name,
+			   void *buffer, size_t size)
+{
+	if (strcmp(name, "") != 0)
+		return -EINVAL;
+	return ext3_xattr_get_acl(inode, ACL_TYPE_DEFAULT, buffer, size);
+}
+
+static int
+ext3_xattr_set_acl(struct inode *inode, int type, const void *value,
+		   size_t size)
+{
 	handle_t *handle;
 	struct posix_acl *acl;
 	int error, retries = 0;
 
-	if (strcmp(name, "") != 0)
-		return -EINVAL;
 	if (!test_opt(inode->i_sb, POSIX_ACL))
 		return -EOPNOTSUPP;
 	if (!is_owner_or_cap(inode))
@@ -457,18 +468,34 @@ release_and_out:
 	return error;
 }
 
-const struct xattr_handler ext3_xattr_acl_access_handler = {
+static int
+ext3_xattr_set_acl_access(struct inode *inode, const char *name,
+			  const void *value, size_t size, int flags)
+{
+	if (strcmp(name, "") != 0)
+		return -EINVAL;
+	return ext3_xattr_set_acl(inode, ACL_TYPE_ACCESS, value, size);
+}
+
+static int
+ext3_xattr_set_acl_default(struct inode *inode, const char *name,
+			   const void *value, size_t size, int flags)
+{
+	if (strcmp(name, "") != 0)
+		return -EINVAL;
+	return ext3_xattr_set_acl(inode, ACL_TYPE_DEFAULT, value, size);
+}
+
+struct xattr_handler ext3_xattr_acl_access_handler = {
 	.prefix	= POSIX_ACL_XATTR_ACCESS,
-	.flags	= ACL_TYPE_ACCESS,
 	.list	= ext3_xattr_list_acl_access,
-	.get	= ext3_xattr_get_acl,
-	.set	= ext3_xattr_set_acl,
+	.get	= ext3_xattr_get_acl_access,
+	.set	= ext3_xattr_set_acl_access,
 };
 
-const struct xattr_handler ext3_xattr_acl_default_handler = {
+struct xattr_handler ext3_xattr_acl_default_handler = {
 	.prefix	= POSIX_ACL_XATTR_DEFAULT,
-	.flags	= ACL_TYPE_DEFAULT,
 	.list	= ext3_xattr_list_acl_default,
-	.get	= ext3_xattr_get_acl,
-	.set	= ext3_xattr_set_acl,
+	.get	= ext3_xattr_get_acl_default,
+	.set	= ext3_xattr_set_acl_default,
 };

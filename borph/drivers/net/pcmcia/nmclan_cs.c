@@ -111,8 +111,6 @@ Log: nmclan_cs.c,v
 
 ---------------------------------------------------------------------------- */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define DRV_NAME	"nmclan_cs"
 #define DRV_VERSION	"0.16"
 
@@ -148,6 +146,8 @@ Include Files
 #include <linux/ioport.h>
 #include <linux/bitops.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
@@ -363,6 +363,7 @@ typedef struct _mace_statistics {
 
 typedef struct _mace_private {
 	struct pcmcia_device	*p_dev;
+    dev_node_t node;
     struct net_device_stats linux_stats; /* Linux statistics counters */
     mace_statistics mace_stats; /* MACE chip statistics counters */
 
@@ -436,6 +437,13 @@ static const struct net_device_ops mace_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
+/* ----------------------------------------------------------------------------
+nmclan_attach
+	Creates an "instance" of the driver, allocating local data
+	structures for one device.  The device is registered with Card
+	Services.
+---------------------------------------------------------------------------- */
+
 static int nmclan_probe(struct pcmcia_device *link)
 {
     mace_private *lp;
@@ -452,11 +460,15 @@ static int nmclan_probe(struct pcmcia_device *link)
     link->priv = dev;
     
     spin_lock_init(&lp->bank_lock);
-    link->resource[0]->end = 32;
-    link->resource[0]->flags |= IO_DATA_PATH_WIDTH_AUTO;
-    link->config_flags |= CONF_ENABLE_IRQ;
-    link->config_index = 1;
-    link->config_regs = PRESENT_OPTION;
+    link->io.NumPorts1 = 32;
+    link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+    link->io.IOAddrLines = 5;
+    link->irq.Attributes = IRQ_TYPE_EXCLUSIVE;
+    link->irq.Handler = mace_interrupt;
+    link->conf.Attributes = CONF_ENABLE_IRQ;
+    link->conf.IntType = INT_MEMORY_AND_IO;
+    link->conf.ConfigIndex = 1;
+    link->conf.Present = PRESENT_OPTION;
 
     lp->tx_free_frames=AM2150_MAX_TX_FRAMES;
 
@@ -467,13 +479,22 @@ static int nmclan_probe(struct pcmcia_device *link)
     return nmclan_config(link);
 } /* nmclan_attach */
 
+/* ----------------------------------------------------------------------------
+nmclan_detach
+	This deletes a driver "instance".  The device is de-registered
+	with Card Services.  If it has been released, all local data
+	structures are freed.  Otherwise, the structures will be freed
+	when the device is released.
+---------------------------------------------------------------------------- */
+
 static void nmclan_detach(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
 
     dev_dbg(&link->dev, "nmclan_detach\n");
 
-    unregister_netdev(dev);
+    if (link->dev_node)
+	unregister_netdev(dev);
 
     nmclan_release(link);
 
@@ -504,7 +525,7 @@ static int mace_read(mace_private *lp, unsigned int ioaddr, int reg)
       spin_unlock_irqrestore(&lp->bank_lock, flags);
       break;
   }
-  return data & 0xFF;
+  return (data & 0xFF);
 } /* mace_read */
 
 /* ----------------------------------------------------------------------------
@@ -548,7 +569,7 @@ static int mace_init(mace_private *lp, unsigned int ioaddr, char *enet_addr)
     /* Wait for reset bit to be cleared automatically after <= 200ns */;
     if(++ct > 500)
     {
-	pr_err("reset failed, card removed?\n");
+    	printk(KERN_ERR "mace: reset failed, card removed ?\n");
     	return -1;
     }
     udelay(1);
@@ -595,7 +616,7 @@ static int mace_init(mace_private *lp, unsigned int ioaddr, char *enet_addr)
   {
   	if(++ ct > 500)
   	{
-		pr_err("ADDRCHG timeout, card removed?\n");
+  		printk(KERN_ERR "mace: ADDRCHG timeout, card removed ?\n");
   		return -1;
   	}
   }
@@ -610,6 +631,13 @@ static int mace_init(mace_private *lp, unsigned int ioaddr, char *enet_addr)
   return 0;
 } /* mace_init */
 
+/* ----------------------------------------------------------------------------
+nmclan_config
+	This routine is scheduled to run after a CARD_INSERTION event
+	is received, to configure the PCMCIA socket, and to make the
+	ethernet device available to the system.
+---------------------------------------------------------------------------- */
+
 static int nmclan_config(struct pcmcia_device *link)
 {
   struct net_device *dev = link->priv;
@@ -621,19 +649,18 @@ static int nmclan_config(struct pcmcia_device *link)
 
   dev_dbg(&link->dev, "nmclan_config\n");
 
-  link->io_lines = 5;
-  ret = pcmcia_request_io(link);
+  ret = pcmcia_request_io(link, &link->io);
   if (ret)
 	  goto failed;
-  ret = pcmcia_request_exclusive_irq(link, mace_interrupt);
+  ret = pcmcia_request_irq(link, &link->irq);
   if (ret)
 	  goto failed;
-  ret = pcmcia_enable_device(link);
+  ret = pcmcia_request_configuration(link, &link->conf);
   if (ret)
 	  goto failed;
 
-  dev->irq = link->irq;
-  dev->base_addr = link->resource[0]->start;
+  dev->irq = link->irq.AssignedIRQ;
+  dev->base_addr = link->io.BasePort1;
 
   ioaddr = dev->base_addr;
 
@@ -656,8 +683,8 @@ static int nmclan_config(struct pcmcia_device *link)
       dev_dbg(&link->dev, "nmclan_cs configured: mace id=%x %x\n",
 	    sig[0], sig[1]);
     } else {
-      pr_notice("mace id not found: %x %x should be 0x40 0x?9\n",
-		sig[0], sig[1]);
+      printk(KERN_NOTICE "nmclan_cs: mace id not found: %x %x should"
+	     " be 0x40 0x?9\n", sig[0], sig[1]);
       return -ENODEV;
     }
   }
@@ -669,18 +696,24 @@ static int nmclan_config(struct pcmcia_device *link)
   if (if_port <= 2)
     dev->if_port = if_port;
   else
-    pr_notice("invalid if_port requested\n");
+    printk(KERN_NOTICE "nmclan_cs: invalid if_port requested\n");
 
+  link->dev_node = &lp->node;
   SET_NETDEV_DEV(dev, &link->dev);
 
   i = register_netdev(dev);
   if (i != 0) {
-    pr_notice("register_netdev() failed\n");
+    printk(KERN_NOTICE "nmclan_cs: register_netdev() failed\n");
+    link->dev_node = NULL;
     goto failed;
   }
 
-  netdev_info(dev, "nmclan: port %#3lx, irq %d, %s port, hw_addr %pM\n",
-	      dev->base_addr, dev->irq, if_names[dev->if_port], dev->dev_addr);
+  strcpy(lp->node.dev_name, dev->name);
+
+  printk(KERN_INFO "%s: nmclan: port %#3lx, irq %d, %s port,"
+	 " hw_addr %pM\n",
+	 dev->name, dev->base_addr, dev->irq, if_names[dev->if_port],
+	 dev->dev_addr);
   return 0;
 
 failed:
@@ -688,6 +721,12 @@ failed:
 	return -ENODEV;
 } /* nmclan_config */
 
+/* ----------------------------------------------------------------------------
+nmclan_release
+	After a card is removed, nmclan_release() will unregister the
+	net device, and release the PCMCIA configuration.  If the device
+	is still open, this will be postponed until it is closed.
+---------------------------------------------------------------------------- */
 static void nmclan_release(struct pcmcia_device *link)
 {
 	dev_dbg(&link->dev, "nmclan_release\n");
@@ -727,20 +766,29 @@ static void nmclan_reset(struct net_device *dev)
 
 #if RESET_XILINX
   struct pcmcia_device *link = &lp->link;
-  u8 OrigCorValue;
+  conf_reg_t reg;
+  u_long OrigCorValue; 
 
   /* Save original COR value */
-  pcmcia_read_config_byte(link, CISREG_COR, &OrigCorValue);
+  reg.Function = 0;
+  reg.Action = CS_READ;
+  reg.Offset = CISREG_COR;
+  reg.Value = 0;
+  pcmcia_access_configuration_register(link, &reg);
+  OrigCorValue = reg.Value;
 
   /* Reset Xilinx */
-  dev_dbg(&link->dev, "nmclan_reset: OrigCorValue=0x%x, resetting...\n",
+  reg.Action = CS_WRITE;
+  reg.Offset = CISREG_COR;
+  dev_dbg(&link->dev, "nmclan_reset: OrigCorValue=0x%lX, resetting...\n",
 	OrigCorValue);
-  pcmcia_write_config_byte(link, CISREG_COR, COR_SOFT_RESET);
+  reg.Value = COR_SOFT_RESET;
+  pcmcia_access_configuration_register(link, &reg);
   /* Need to wait for 20 ms for PCMCIA to finish reset. */
 
   /* Restore original COR configuration index */
-  pcmcia_write_config_byte(link, CISREG_COR,
-			  (COR_LEVEL_REQ | (OrigCorValue & COR_CONFIG_MASK)));
+  reg.Value = COR_LEVEL_REQ | (OrigCorValue & COR_CONFIG_MASK);
+  pcmcia_access_configuration_register(link, &reg);
   /* Xilinx is now completely reset along with the MACE chip. */
   lp->tx_free_frames=AM2150_MAX_TX_FRAMES;
 
@@ -768,7 +816,8 @@ static int mace_config(struct net_device *dev, struct ifmap *map)
   if ((map->port != (u_char)(-1)) && (map->port != dev->if_port)) {
     if (map->port <= 2) {
       dev->if_port = map->port;
-      netdev_info(dev, "switched to %s port\n", if_names[dev->if_port]);
+      printk(KERN_INFO "%s: switched to %s port\n", dev->name,
+	     if_names[dev->if_port]);
     } else
       return -EINVAL;
   }
@@ -847,14 +896,14 @@ static void mace_tx_timeout(struct net_device *dev)
   mace_private *lp = netdev_priv(dev);
   struct pcmcia_device *link = lp->p_dev;
 
-  netdev_notice(dev, "transmit timed out -- ");
+  printk(KERN_NOTICE "%s: transmit timed out -- ", dev->name);
 #if RESET_ON_TIMEOUT
-  pr_cont("resetting card\n");
+  printk("resetting card\n");
   pcmcia_reset_card(link->socket);
 #else /* #if RESET_ON_TIMEOUT */
-  pr_cont("NOT resetting card\n");
+  printk("NOT resetting card\n");
 #endif /* #if RESET_ON_TIMEOUT */
-  dev->trans_start = jiffies; /* prevent tx timeout */
+  dev->trans_start = jiffies;
   netif_wake_queue(dev);
 }
 
@@ -896,6 +945,8 @@ static netdev_tx_t mace_start_xmit(struct sk_buff *skb,
       outb(skb->data[skb->len-1], ioaddr + AM2150_XMT);
     }
 
+    dev->trans_start = jiffies;
+
 #if MULTI_TX
     if (lp->tx_free_frames > 0)
       netif_start_queue(dev);
@@ -934,21 +985,22 @@ static irqreturn_t mace_interrupt(int irq, void *dev_id)
   ioaddr = dev->base_addr;
 
   if (lp->tx_irq_disabled) {
-    const char *msg;
-    if (lp->tx_irq_disabled)
-      msg = "Interrupt with tx_irq_disabled";
-    else
-      msg = "Re-entering the interrupt handler";
-    netdev_notice(dev, "%s [isr=%02X, imr=%02X]\n",
-		  msg,
-		  inb(ioaddr + AM2150_MACE_BASE + MACE_IR),
-		  inb(ioaddr + AM2150_MACE_BASE + MACE_IMR));
+    printk(
+      (lp->tx_irq_disabled?
+       KERN_NOTICE "%s: Interrupt with tx_irq_disabled "
+       "[isr=%02X, imr=%02X]\n": 
+       KERN_NOTICE "%s: Re-entering the interrupt handler "
+       "[isr=%02X, imr=%02X]\n"),
+      dev->name,
+      inb(ioaddr + AM2150_MACE_BASE + MACE_IR),
+      inb(ioaddr + AM2150_MACE_BASE + MACE_IMR)
+    );
     /* WARNING: MACE_IR has been read! */
     return IRQ_NONE;
   }
 
   if (!netif_device_present(dev)) {
-    netdev_dbg(dev, "interrupt from dead card\n");
+    pr_debug("%s: interrupt from dead card\n", dev->name);
     return IRQ_NONE;
   }
 
@@ -1263,6 +1315,8 @@ static void update_stats(unsigned int ioaddr, struct net_device *dev)
   lp->linux_stats.tx_fifo_errors = lp->mace_stats.uflo;
   lp->linux_stats.tx_heartbeat_errors = lp->mace_stats.cerr;
   /* lp->linux_stats.tx_window_errors; */
+
+  return;
 } /* update_stats */
 
 /* ----------------------------------------------------------------------------
@@ -1346,8 +1400,9 @@ static void BuildLAF(int *ladrf, int *adr)
     printk(KERN_DEBUG "    adr =%pM\n", adr);
   printk(KERN_DEBUG "    hashcode = %d(decimal), ladrf[0:63] =", hashcode);
   for (i = 0; i < 8; i++)
-    pr_cont(" %02X", ladrf[i]);
-  pr_cont("\n");
+    printk(KERN_CONT " %02X", ladrf[i]);
+  printk(KERN_CONT "\n");
+  }
 #endif
 } /* BuildLAF */
 
@@ -1421,13 +1476,14 @@ static void set_multicast_list(struct net_device *dev)
 {
   mace_private *lp = netdev_priv(dev);
   int adr[ETHER_ADDR_LEN] = {0}; /* Ethernet address */
-  struct netdev_hw_addr *ha;
+  int i;
+  struct dev_mc_list *dmi = dev->mc_list;
 
 #ifdef PCMCIA_DEBUG
   {
     static int old;
-    if (netdev_mc_count(dev) != old) {
-      old = netdev_mc_count(dev);
+    if (dev->mc_count != old) {
+      old = dev->mc_count;
       pr_debug("%s: setting Rx mode to %d addresses.\n",
 	    dev->name, old);
     }
@@ -1435,14 +1491,15 @@ static void set_multicast_list(struct net_device *dev)
 #endif
 
   /* Set multicast_num_addrs. */
-  lp->multicast_num_addrs = netdev_mc_count(dev);
+  lp->multicast_num_addrs = dev->mc_count;
 
   /* Set multicast_ladrf. */
   if (num_addrs > 0) {
     /* Calculate multicast logical address filter */
     memset(lp->multicast_ladrf, 0, MACE_LADRF_LEN);
-    netdev_for_each_mc_addr(ha, dev) {
-      memcpy(adr, ha->addr, ETHER_ADDR_LEN);
+    for (i = 0; i < dev->mc_count; i++) {
+      memcpy(adr, dmi->dmi_addr, ETHER_ADDR_LEN);
+      dmi = dmi->next;
       BuildLAF(lp->multicast_ladrf, adr);
     }
   }
@@ -1481,15 +1538,15 @@ static void set_multicast_list(struct net_device *dev)
 #ifdef PCMCIA_DEBUG
   {
     static int old;
-    if (netdev_mc_count(dev) != old) {
-      old = netdev_mc_count(dev);
+    if (dev->mc_count != old) {
+      old = dev->mc_count;
       pr_debug("%s: setting Rx mode to %d addresses.\n",
 	    dev->name, old);
     }
   }
 #endif
 
-  lp->multicast_num_addrs = netdev_mc_count(dev);
+  lp->multicast_num_addrs = dev->mc_count;
   restore_multicast_list(dev);
 
 } /* set_multicast_list */
@@ -1503,7 +1560,9 @@ MODULE_DEVICE_TABLE(pcmcia, nmclan_ids);
 
 static struct pcmcia_driver nmclan_cs_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "nmclan_cs",
+	.drv		= {
+		.name	= "nmclan_cs",
+	},
 	.probe		= nmclan_probe,
 	.remove		= nmclan_detach,
 	.id_table       = nmclan_ids,

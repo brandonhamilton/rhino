@@ -122,7 +122,7 @@ static int check_free_space(struct bsd_acct_struct *acct, struct file *file)
 	spin_unlock(&acct_lock);
 
 	/* May block */
-	if (vfs_statfs(&file->f_path, &sbuf))
+	if (vfs_statfs(file->f_path.dentry, &sbuf))
 		return res;
 	suspend = sbuf.f_blocks * SUSPEND;
 	resume = sbuf.f_blocks * RESUME;
@@ -216,6 +216,7 @@ static int acct_on(char *name)
 {
 	struct file *file;
 	struct vfsmount *mnt;
+	int error;
 	struct pid_namespace *ns;
 	struct bsd_acct_struct *acct = NULL;
 
@@ -241,6 +242,13 @@ static int acct_on(char *name)
 			filp_close(file, NULL);
 			return -ENOMEM;
 		}
+	}
+
+	error = security_acct(file);
+	if (error) {
+		kfree(acct);
+		filp_close(file, NULL);
+		return error;
 	}
 
 	spin_lock(&acct_lock);
@@ -273,7 +281,7 @@ static int acct_on(char *name)
  */
 SYSCALL_DEFINE1(acct, const char __user *, name)
 {
-	int error = 0;
+	int error;
 
 	if (!capable(CAP_SYS_PACCT))
 		return -EPERM;
@@ -291,11 +299,13 @@ SYSCALL_DEFINE1(acct, const char __user *, name)
 		if (acct == NULL)
 			return 0;
 
-		spin_lock(&acct_lock);
-		acct_file_reopen(acct, NULL, NULL);
-		spin_unlock(&acct_lock);
+		error = security_acct(NULL);
+		if (!error) {
+			spin_lock(&acct_lock);
+			acct_file_reopen(acct, NULL, NULL);
+			spin_unlock(&acct_lock);
+		}
 	}
-
 	return error;
 }
 
@@ -343,18 +353,17 @@ restart:
 
 void acct_exit_ns(struct pid_namespace *ns)
 {
-	struct bsd_acct_struct *acct = ns->bacct;
+	struct bsd_acct_struct *acct;
 
-	if (acct == NULL)
-		return;
-
-	del_timer_sync(&acct->timer);
 	spin_lock(&acct_lock);
-	if (acct->file != NULL)
-		acct_file_reopen(acct, NULL, NULL);
-	spin_unlock(&acct_lock);
+	acct = ns->bacct;
+	if (acct != NULL) {
+		if (acct->file != NULL)
+			acct_file_reopen(acct, NULL, NULL);
 
-	kfree(acct);
+		kfree(acct);
+	}
+	spin_unlock(&acct_lock);
 }
 
 /*
@@ -576,6 +585,16 @@ static void do_acct_process(struct bsd_acct_struct *acct,
 	set_fs(fs);
 out:
 	revert_creds(orig_cred);
+}
+
+/**
+ * acct_init_pacct - initialize a new pacct_struct
+ * @pacct: per-process accounting info struct to initialize
+ */
+void acct_init_pacct(struct pacct_struct *pacct)
+{
+	memset(pacct, 0, sizeof(struct pacct_struct));
+	pacct->ac_utime = pacct->ac_stime = cputime_zero;
 }
 
 /**

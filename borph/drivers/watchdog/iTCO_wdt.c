@@ -29,10 +29,7 @@
  *	document number 313056-003, 313057-017: 82801H (ICH8)
  *	document number 316972-004, 316973-012: 82801I (ICH9)
  *	document number 319973-002, 319974-002: 82801J (ICH10)
- *	document number 322169-001, 322170-003: 5 Series, 3400 Series (PCH)
- *	document number 320066-003, 320257-008: EP80597 (IICH)
- *	document number TBD                   : Cougar Point (CPT)
- *	document number TBD                   : Patsburg (PBG)
+ *	document number 322169-001, 322170-001: 5 Series, 3400 Series (PCH)
  */
 
 /*
@@ -41,7 +38,7 @@
 
 /* Module and version information */
 #define DRV_NAME	"iTCO_wdt"
-#define DRV_VERSION	"1.06"
+#define DRV_VERSION	"1.05"
 #define PFX		DRV_NAME ": "
 
 /* Includes */
@@ -102,53 +99,7 @@ enum iTCO_chipsets {
 	TCO_ICH10DO,	/* ICH10DO */
 	TCO_PCH,	/* PCH Desktop Full Featured */
 	TCO_PCHM,	/* PCH Mobile Full Featured */
-	TCO_P55,	/* P55 */
-	TCO_PM55,	/* PM55 */
-	TCO_H55,	/* H55 */
-	TCO_QM57,	/* QM57 */
-	TCO_H57,	/* H57 */
-	TCO_HM55,	/* HM55 */
-	TCO_Q57,	/* Q57 */
-	TCO_HM57,	/* HM57 */
 	TCO_PCHMSFF,	/* PCH Mobile SFF Full Featured */
-	TCO_QS57,	/* QS57 */
-	TCO_3400,	/* 3400 */
-	TCO_3420,	/* 3420 */
-	TCO_3450,	/* 3450 */
-	TCO_EP80579,	/* EP80579 */
-	TCO_CPT1,	/* Cougar Point */
-	TCO_CPT2,	/* Cougar Point Desktop */
-	TCO_CPT3,	/* Cougar Point Mobile */
-	TCO_CPT4,	/* Cougar Point */
-	TCO_CPT5,	/* Cougar Point */
-	TCO_CPT6,	/* Cougar Point */
-	TCO_CPT7,	/* Cougar Point */
-	TCO_CPT8,	/* Cougar Point */
-	TCO_CPT9,	/* Cougar Point */
-	TCO_CPT10,	/* Cougar Point */
-	TCO_CPT11,	/* Cougar Point */
-	TCO_CPT12,	/* Cougar Point */
-	TCO_CPT13,	/* Cougar Point */
-	TCO_CPT14,	/* Cougar Point */
-	TCO_CPT15,	/* Cougar Point */
-	TCO_CPT16,	/* Cougar Point */
-	TCO_CPT17,	/* Cougar Point */
-	TCO_CPT18,	/* Cougar Point */
-	TCO_CPT19,	/* Cougar Point */
-	TCO_CPT20,	/* Cougar Point */
-	TCO_CPT21,	/* Cougar Point */
-	TCO_CPT22,	/* Cougar Point */
-	TCO_CPT23,	/* Cougar Point */
-	TCO_CPT24,	/* Cougar Point */
-	TCO_CPT25,	/* Cougar Point */
-	TCO_CPT26,	/* Cougar Point */
-	TCO_CPT27,	/* Cougar Point */
-	TCO_CPT28,	/* Cougar Point */
-	TCO_CPT29,	/* Cougar Point */
-	TCO_CPT30,	/* Cougar Point */
-	TCO_CPT31,	/* Cougar Point */
-	TCO_PBG1,	/* Patsburg */
-	TCO_PBG2,	/* Patsburg */
 };
 
 static struct {
@@ -191,53 +142,7 @@ static struct {
 	{"ICH10DO", 2},
 	{"PCH Desktop Full Featured", 2},
 	{"PCH Mobile Full Featured", 2},
-	{"P55", 2},
-	{"PM55", 2},
-	{"H55", 2},
-	{"QM57", 2},
-	{"H57", 2},
-	{"HM55", 2},
-	{"Q57", 2},
-	{"HM57", 2},
 	{"PCH Mobile SFF Full Featured", 2},
-	{"QS57", 2},
-	{"3400", 2},
-	{"3420", 2},
-	{"3450", 2},
-	{"EP80579", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Cougar Point", 2},
-	{"Patsburg", 2},
-	{"Patsburg", 2},
 	{NULL, 0}
 };
 
@@ -308,53 +213,7 @@ static struct pci_device_id iTCO_wdt_pci_tbl[] = {
 	{ ITCO_PCI_DEVICE(0x3a14,				TCO_ICH10DO)},
 	{ ITCO_PCI_DEVICE(0x3b00,				TCO_PCH)},
 	{ ITCO_PCI_DEVICE(0x3b01,				TCO_PCHM)},
-	{ ITCO_PCI_DEVICE(0x3b02,				TCO_P55)},
-	{ ITCO_PCI_DEVICE(0x3b03,				TCO_PM55)},
-	{ ITCO_PCI_DEVICE(0x3b06,				TCO_H55)},
-	{ ITCO_PCI_DEVICE(0x3b07,				TCO_QM57)},
-	{ ITCO_PCI_DEVICE(0x3b08,				TCO_H57)},
-	{ ITCO_PCI_DEVICE(0x3b09,				TCO_HM55)},
-	{ ITCO_PCI_DEVICE(0x3b0a,				TCO_Q57)},
-	{ ITCO_PCI_DEVICE(0x3b0b,				TCO_HM57)},
 	{ ITCO_PCI_DEVICE(0x3b0d,				TCO_PCHMSFF)},
-	{ ITCO_PCI_DEVICE(0x3b0f,				TCO_QS57)},
-	{ ITCO_PCI_DEVICE(0x3b12,				TCO_3400)},
-	{ ITCO_PCI_DEVICE(0x3b14,				TCO_3420)},
-	{ ITCO_PCI_DEVICE(0x3b16,				TCO_3450)},
-	{ ITCO_PCI_DEVICE(0x5031,				TCO_EP80579)},
-	{ ITCO_PCI_DEVICE(0x1c41,				TCO_CPT1)},
-	{ ITCO_PCI_DEVICE(0x1c42,				TCO_CPT2)},
-	{ ITCO_PCI_DEVICE(0x1c43,				TCO_CPT3)},
-	{ ITCO_PCI_DEVICE(0x1c44,				TCO_CPT4)},
-	{ ITCO_PCI_DEVICE(0x1c45,				TCO_CPT5)},
-	{ ITCO_PCI_DEVICE(0x1c46,				TCO_CPT6)},
-	{ ITCO_PCI_DEVICE(0x1c47,				TCO_CPT7)},
-	{ ITCO_PCI_DEVICE(0x1c48,				TCO_CPT8)},
-	{ ITCO_PCI_DEVICE(0x1c49,				TCO_CPT9)},
-	{ ITCO_PCI_DEVICE(0x1c4a,				TCO_CPT10)},
-	{ ITCO_PCI_DEVICE(0x1c4b,				TCO_CPT11)},
-	{ ITCO_PCI_DEVICE(0x1c4c,				TCO_CPT12)},
-	{ ITCO_PCI_DEVICE(0x1c4d,				TCO_CPT13)},
-	{ ITCO_PCI_DEVICE(0x1c4e,				TCO_CPT14)},
-	{ ITCO_PCI_DEVICE(0x1c4f,				TCO_CPT15)},
-	{ ITCO_PCI_DEVICE(0x1c50,				TCO_CPT16)},
-	{ ITCO_PCI_DEVICE(0x1c51,				TCO_CPT17)},
-	{ ITCO_PCI_DEVICE(0x1c52,				TCO_CPT18)},
-	{ ITCO_PCI_DEVICE(0x1c53,				TCO_CPT19)},
-	{ ITCO_PCI_DEVICE(0x1c54,				TCO_CPT20)},
-	{ ITCO_PCI_DEVICE(0x1c55,				TCO_CPT21)},
-	{ ITCO_PCI_DEVICE(0x1c56,				TCO_CPT22)},
-	{ ITCO_PCI_DEVICE(0x1c57,				TCO_CPT23)},
-	{ ITCO_PCI_DEVICE(0x1c58,				TCO_CPT24)},
-	{ ITCO_PCI_DEVICE(0x1c59,				TCO_CPT25)},
-	{ ITCO_PCI_DEVICE(0x1c5a,				TCO_CPT26)},
-	{ ITCO_PCI_DEVICE(0x1c5b,				TCO_CPT27)},
-	{ ITCO_PCI_DEVICE(0x1c5c,				TCO_CPT28)},
-	{ ITCO_PCI_DEVICE(0x1c5d,				TCO_CPT29)},
-	{ ITCO_PCI_DEVICE(0x1c5e,				TCO_CPT30)},
-	{ ITCO_PCI_DEVICE(0x1c5f,				TCO_CPT31)},
-	{ ITCO_PCI_DEVICE(0x1d40,				TCO_PBG1)},
-	{ ITCO_PCI_DEVICE(0x1d41,				TCO_PBG2)},
 	{ 0, },			/* End of list */
 };
 MODULE_DEVICE_TABLE(pci, iTCO_wdt_pci_tbl);
@@ -381,7 +240,7 @@ static char expect_release;
 static struct {		/* this is private data for the iTCO_wdt device */
 	/* TCO version/generation */
 	unsigned int iTCO_version;
-	/* The device's ACPIBASE address (TCOBASE = ACPIBASE+0x60) */
+	/* The cards ACPIBASE address (TCOBASE = ACPIBASE+0x60) */
 	unsigned long ACPIBASE;
 	/* NO_REBOOT flag is Memory-Mapped GCS register bit 5 (TCO version 2)*/
 	unsigned long __iomem *gcs;
@@ -398,8 +257,8 @@ static struct platform_device *iTCO_wdt_platform_device;
 #define WATCHDOG_HEARTBEAT 30	/* 30 sec default heartbeat */
 static int heartbeat = WATCHDOG_HEARTBEAT;  /* in seconds */
 module_param(heartbeat, int, 0);
-MODULE_PARM_DESC(heartbeat, "Watchdog timeout in seconds. "
-	"5..76 (TCO v1) or 3..614 (TCO v2), default="
+MODULE_PARM_DESC(heartbeat, "Watchdog heartbeat in seconds. "
+	"(2<heartbeat<39 (TCO v1) or 613 (TCO v2), default="
 				__MODULE_STRING(WATCHDOG_HEARTBEAT) ")");
 
 static int nowayout = WATCHDOG_NOWAYOUT;
@@ -474,7 +333,7 @@ static int iTCO_wdt_start(void)
 	if (iTCO_wdt_unset_NO_REBOOT_bit()) {
 		spin_unlock(&iTCO_wdt_private.io_lock);
 		printk(KERN_ERR PFX "failed to reset NO_REBOOT flag, "
-					"reboot disabled by hardware/BIOS\n");
+					"reboot disabled by hardware\n");
 		return -EIO;
 	}
 
@@ -530,13 +389,8 @@ static int iTCO_wdt_keepalive(void)
 	/* Reload the timer by writing to the TCO Timer Counter register */
 	if (iTCO_wdt_private.iTCO_version == 2)
 		outw(0x01, TCO_RLD);
-	else if (iTCO_wdt_private.iTCO_version == 1) {
-		/* Reset the timeout status bit so that the timer
-		 * needs to count down twice again before rebooting */
-		outw(0x0008, TCO1_STS);	/* write 1 to clear bit */
-
+	else if (iTCO_wdt_private.iTCO_version == 1)
 		outb(0x01, TCO_RLD);
-	}
 
 	spin_unlock(&iTCO_wdt_private.io_lock);
 	return 0;
@@ -549,11 +403,6 @@ static int iTCO_wdt_set_heartbeat(int t)
 	unsigned int tmrval;
 
 	tmrval = seconds_to_ticks(t);
-
-	/* For TCO v1 the timer counts down twice before rebooting */
-	if (iTCO_wdt_private.iTCO_version == 1)
-		tmrval /= 2;
-
 	/* from the specs: */
 	/* "Values of 0h-3h are ignored and should not be attempted" */
 	if (tmrval < 0x04)
@@ -610,8 +459,6 @@ static int iTCO_wdt_get_timeleft(int *time_left)
 		spin_lock(&iTCO_wdt_private.io_lock);
 		val8 = inb(TCO_RLD);
 		val8 &= 0x3f;
-		if (!(inw(TCO1_STS) & 0x0008))
-			val8 += (inb(TCOv1_TMR) & 0x3f);
 		spin_unlock(&iTCO_wdt_private.io_lock);
 
 		*time_left = (val8 * 6) / 10;
@@ -690,7 +537,7 @@ static long iTCO_wdt_ioctl(struct file *file, unsigned int cmd,
 	int new_heartbeat;
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options =		WDIOF_SETTIMEOUT |
 					WDIOF_KEEPALIVEPING |
 					WDIOF_MAGICCLOSE,
@@ -788,8 +635,8 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	base_address &= 0x0000ff80;
 	if (base_address == 0x00000000) {
 		/* Something's wrong here, ACPIBASE has to be set */
-		printk(KERN_ERR PFX "failed to get TCOBASE address, "
-					"device disabled by hardware/BIOS\n");
+		printk(KERN_ERR PFX "failed to get TCOBASE address\n");
+		pci_dev_put(pdev);
 		return -ENODEV;
 	}
 	iTCO_wdt_private.iTCO_version =
@@ -804,8 +651,7 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	if (iTCO_wdt_private.iTCO_version == 2) {
 		pci_read_config_dword(pdev, 0xf0, &base_address);
 		if ((base_address & 1) == 0) {
-			printk(KERN_ERR PFX "RCBA is disabled by hardware"
-						"/BIOS, device disabled\n");
+			printk(KERN_ERR PFX "RCBA is disabled by harddware\n");
 			ret = -ENODEV;
 			goto out;
 		}
@@ -815,8 +661,8 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 
 	/* Check chipset's NO_REBOOT bit */
 	if (iTCO_wdt_unset_NO_REBOOT_bit() && iTCO_vendor_check_noreboot_on()) {
-		printk(KERN_INFO PFX "unable to reset NO_REBOOT flag, "
-					"device disabled by hardware/BIOS\n");
+		printk(KERN_ERR PFX "failed to reset NO_REBOOT flag, "
+					"reboot disabled by hardware\n");
 		ret = -ENODEV;	/* Cannot reset NO_REBOOT bit */
 		goto out_unmap;
 	}
@@ -827,8 +673,7 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	/* The TCO logic uses the TCO_EN bit in the SMI_EN register */
 	if (!request_region(SMI_EN, 4, "iTCO_wdt")) {
 		printk(KERN_ERR PFX
-			"I/O address 0x%04lx already in use, "
-						"device disabled\n", SMI_EN);
+			"I/O address 0x%04lx already in use\n", SMI_EN);
 		ret = -EIO;
 		goto out_unmap;
 	}
@@ -840,8 +685,8 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	/* The TCO I/O registers reside in a 32-byte range pointed to
 	   by the TCOBASE value */
 	if (!request_region(TCOBASE, 0x20, "iTCO_wdt")) {
-		printk(KERN_ERR PFX "I/O address 0x%04lx already in use "
-						"device disabled\n", TCOBASE);
+		printk(KERN_ERR PFX "I/O address 0x%04lx already in use\n",
+			TCOBASE);
 		ret = -EIO;
 		goto unreg_smi_en;
 	}
@@ -853,9 +698,9 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 			TCOBASE);
 
 	/* Clear out the (probably old) status */
-	outw(0x0008, TCO1_STS);	/* Clear the Time Out Status bit */
-	outw(0x0002, TCO2_STS);	/* Clear SECOND_TO_STS bit */
-	outw(0x0004, TCO2_STS);	/* Clear BOOT_STS bit */
+	outb(8, TCO1_STS);	/* Clear the Time Out Status bit */
+	outb(2, TCO2_STS);	/* Clear SECOND_TO_STS bit */
+	outb(4, TCO2_STS);	/* Clear BOOT_STS bit */
 
 	/* Make sure the watchdog is not running */
 	iTCO_wdt_stop();
@@ -865,7 +710,8 @@ static int __devinit iTCO_wdt_init(struct pci_dev *pdev,
 	if (iTCO_wdt_set_heartbeat(heartbeat)) {
 		iTCO_wdt_set_heartbeat(WATCHDOG_HEARTBEAT);
 		printk(KERN_INFO PFX
-			"timeout value out of range, using %d\n", heartbeat);
+			"heartbeat value must be 2 < heartbeat < 39 (TCO v1) "
+				"or 613 (TCO v2), using %d\n", heartbeat);
 	}
 
 	ret = misc_register(&iTCO_wdt_miscdev);
@@ -889,6 +735,7 @@ out_unmap:
 	if (iTCO_wdt_private.iTCO_version == 2)
 		iounmap(iTCO_wdt_private.gcs);
 out:
+	pci_dev_put(iTCO_wdt_private.pdev);
 	iTCO_wdt_private.ACPIBASE = 0;
 	return ret;
 }
@@ -911,7 +758,6 @@ static void __devexit iTCO_wdt_cleanup(void)
 
 static int __devinit iTCO_wdt_probe(struct platform_device *dev)
 {
-	int ret = -ENODEV;
 	int found = 0;
 	struct pci_dev *pdev = NULL;
 	const struct pci_device_id *ent;
@@ -921,17 +767,19 @@ static int __devinit iTCO_wdt_probe(struct platform_device *dev)
 	for_each_pci_dev(pdev) {
 		ent = pci_match_id(iTCO_wdt_pci_tbl, pdev);
 		if (ent) {
-			found++;
-			ret = iTCO_wdt_init(pdev, ent, dev);
-			if (!ret)
+			if (!(iTCO_wdt_init(pdev, ent, dev))) {
+				found++;
 				break;
+			}
 		}
 	}
 
-	if (!found)
-		printk(KERN_INFO PFX "No device detected.\n");
+	if (!found) {
+		printk(KERN_INFO PFX "No card detected\n");
+		return -ENODEV;
+	}
 
-	return ret;
+	return 0;
 }
 
 static int __devexit iTCO_wdt_remove(struct platform_device *dev)

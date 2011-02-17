@@ -28,6 +28,7 @@
 #include <linux/namei.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/syscalls.h>
 #include <linux/utsname.h>
 #include <linux/vfs.h>
@@ -144,7 +145,7 @@ static int hpux_ustat(dev_t dev, struct hpux_ustat __user *ubuf)
 	s = user_get_super(dev);
 	if (s == NULL)
 		goto out;
-	err = statfs_by_dentry(s->s_root, &sbuf);
+	err = vfs_statfs(s->s_root, &sbuf);
 	drop_super(s);
 	if (err)
 		goto out;
@@ -185,12 +186,12 @@ struct hpux_statfs {
      int16_t f_pad;
 };
 
-static int do_statfs_hpux(struct path *path, struct hpux_statfs *buf)
+static int vfs_statfs_hpux(struct dentry *dentry, struct hpux_statfs *buf)
 {
 	struct kstatfs st;
 	int retval;
 	
-	retval = vfs_statfs(path, &st);
+	retval = vfs_statfs(dentry, &st);
 	if (retval)
 		return retval;
 
@@ -218,7 +219,7 @@ asmlinkage long hpux_statfs(const char __user *pathname,
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct hpux_statfs tmp;
-		error = do_statfs_hpux(&path, &tmp);
+		error = vfs_statfs_hpux(path.dentry, &tmp);
 		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 			error = -EFAULT;
 		path_put(&path);
@@ -236,7 +237,7 @@ asmlinkage long hpux_fstatfs(unsigned int fd, struct hpux_statfs __user * buf)
 	file = fget(fd);
 	if (!file)
 		goto out;
-	error = do_statfs_hpux(&file->f_path, &tmp);
+	error = vfs_statfs_hpux(file->f_path.dentry, &tmp);
 	if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 		error = -EFAULT;
 	fput(file);
@@ -444,7 +445,12 @@ done:
 
 int hpux_pipe(int *kstack_fildes)
 {
-	return do_pipe_flags(kstack_fildes, 0);
+	int error;
+
+	lock_kernel();
+	error = do_pipe_flags(kstack_fildes, 0);
+	unlock_kernel();
+	return error;
 }
 
 /* lies - says it works, but it really didn't lock anything */

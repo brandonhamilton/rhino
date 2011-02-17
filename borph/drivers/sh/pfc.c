@@ -7,8 +7,6 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -73,7 +71,7 @@ static void gpio_write_bit(struct pinmux_data_reg *dr,
 
 	pos = dr->reg_width - (in_pos + 1);
 
-	pr_debug("write_bit addr = %lx, value = %d, pos = %ld, "
+	pr_debug("write_bit addr = %lx, value = %ld, pos = %ld, "
 		 "r_width = %ld\n",
 		 dr->reg, !!value, pos, dr->reg_width);
 
@@ -339,39 +337,12 @@ static int pinmux_config_gpio(struct pinmux_info *gpioc, unsigned gpio,
 		if (!enum_id)
 			break;
 
-		/* first check if this is a function enum */
 		in_range = enum_in_range(enum_id, &gpioc->function);
-		if (!in_range) {
-			/* not a function enum */
-			if (range) {
-				/*
-				 * other range exists, so this pin is
-				 * a regular GPIO pin that now is being
-				 * bound to a specific direction.
-				 *
-				 * for this case we only allow function enums
-				 * and the enums that match the other range.
-				 */
-				in_range = enum_in_range(enum_id, range);
+		if (!in_range && range) {
+			in_range = enum_in_range(enum_id, range);
 
-				/*
-				 * special case pass through for fixed
-				 * input-only or output-only pins without
-				 * function enum register association.
-				 */
-				if (in_range && enum_id == range->force)
-					continue;
-			} else {
-				/*
-				 * no other range exists, so this pin
-				 * must then be of the function type.
-				 *
-				 * allow function type pins to select
-				 * any combination of function/in/out
-				 * in their MARK lists.
-				 */
-				in_range = 1;
-			}
+			if (in_range && enum_id == range->force)
+				continue;
 		}
 
 		if (!in_range)
@@ -561,8 +532,10 @@ static int sh_gpio_get_value(struct pinmux_info *gpioc, unsigned gpio)
 	struct pinmux_data_reg *dr = NULL;
 	int bit = 0;
 
-	if (!gpioc || get_data_reg(gpioc, gpio, &dr, &bit) != 0)
-		return -EINVAL;
+	if (!gpioc || get_data_reg(gpioc, gpio, &dr, &bit) != 0) {
+		BUG();
+		return 0;
+	}
 
 	return gpio_read_reg(dr->reg, dr->reg_width, 1, bit);
 }
@@ -581,7 +554,7 @@ int register_pinmux(struct pinmux_info *pip)
 {
 	struct gpio_chip *chip = &pip->chip;
 
-	pr_info("%s handling gpio %d -> %d\n",
+	pr_info("sh pinmux: %s handling gpio %d -> %d\n",
 		pip->name, pip->first_gpio, pip->last_gpio);
 
 	setup_data_regs(pip);
@@ -601,11 +574,4 @@ int register_pinmux(struct pinmux_info *pip)
 	chip->ngpio = (pip->last_gpio - pip->first_gpio) + 1;
 
 	return gpiochip_add(chip);
-}
-
-int unregister_pinmux(struct pinmux_info *pip)
-{
-	pr_info("%s deregistering\n", pip->name);
-
-	return gpiochip_remove(&pip->chip);
 }

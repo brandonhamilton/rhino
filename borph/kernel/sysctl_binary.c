@@ -13,8 +13,6 @@
 #include <linux/file.h>
 #include <linux/ctype.h>
 #include <linux/netdevice.h>
-#include <linux/kernel.h>
-#include <linux/slab.h>
 
 #ifdef CONFIG_SYSCTL_SYSCALL
 
@@ -225,6 +223,7 @@ static const struct bin_table bin_net_ipv4_route_table[] = {
 	{ CTL_INT,	NET_IPV4_ROUTE_MTU_EXPIRES,		"mtu_expires" },
 	{ CTL_INT,	NET_IPV4_ROUTE_MIN_PMTU,		"min_pmtu" },
 	{ CTL_INT,	NET_IPV4_ROUTE_MIN_ADVMSS,		"min_adv_mss" },
+	{ CTL_INT,	NET_IPV4_ROUTE_SECRET_INTERVAL,		"secret_interval" },
 	{}
 };
 
@@ -1125,6 +1124,11 @@ out:
 	return result;
 }
 
+static unsigned hex_value(int ch)
+{
+	return isdigit(ch) ? ch - '0' : ((ch | 0x20) - 'a') + 10;
+}
+
 static ssize_t bin_uuid(struct file *file,
 	void __user *oldval, size_t oldlen, void __user *newval, size_t newlen)
 {
@@ -1152,8 +1156,7 @@ static ssize_t bin_uuid(struct file *file,
 			if (!isxdigit(str[0]) || !isxdigit(str[1]))
 				goto out;
 
-			uuid[i] = (hex_to_bin(str[0]) << 4) |
-					hex_to_bin(str[1]);
+			uuid[i] = (hex_value(str[0]) << 4) | hex_value(str[1]);
 			str += 2;
 			if (*str == '-')
 				str++;
@@ -1328,7 +1331,7 @@ static ssize_t binary_sysctl(const int *name, int nlen,
 	ssize_t result;
 	char *pathname;
 	int flags;
-	int acc_mode;
+	int acc_mode, fmode;
 
 	pathname = sysctl_getname(name, nlen, &table);
 	result = PTR_ERR(pathname);
@@ -1339,12 +1342,15 @@ static ssize_t binary_sysctl(const int *name, int nlen,
 	if (oldval && oldlen && newval && newlen) {
 		flags = O_RDWR;
 		acc_mode = MAY_READ | MAY_WRITE;
+		fmode = FMODE_READ | FMODE_WRITE;
 	} else if (newval && newlen) {
 		flags = O_WRONLY;
 		acc_mode = MAY_WRITE;
+		fmode = FMODE_WRITE;
 	} else if (oldval && oldlen) {
 		flags = O_RDONLY;
 		acc_mode = MAY_READ;
+		fmode = FMODE_READ;
 	} else {
 		result = 0;
 		goto out_putname;
@@ -1355,7 +1361,7 @@ static ssize_t binary_sysctl(const int *name, int nlen,
 	if (result)
 		goto out_putname;
 
-	result = may_open(&nd.path, acc_mode, flags);
+	result = may_open(&nd.path, acc_mode, fmode);
 	if (result)
 		goto out_putpath;
 
@@ -1393,13 +1399,6 @@ static void deprecated_sysctl_warning(const int *name, int nlen)
 {
 	int i;
 
-	/*
-	 * CTL_KERN/KERN_VERSION is used by older glibc and cannot
-	 * ever go away.
-	 */
-	if (name[0] == CTL_KERN && name[1] == KERN_VERSION)
-		return;
-
 	if (printk_ratelimit()) {
 		printk(KERN_INFO
 			"warning: process `%s' used the deprecated sysctl "
@@ -1409,35 +1408,6 @@ static void deprecated_sysctl_warning(const int *name, int nlen)
 		printk("\n");
 	}
 	return;
-}
-
-#define WARN_ONCE_HASH_BITS 8
-#define WARN_ONCE_HASH_SIZE (1<<WARN_ONCE_HASH_BITS)
-
-static DECLARE_BITMAP(warn_once_bitmap, WARN_ONCE_HASH_SIZE);
-
-#define FNV32_OFFSET 2166136261U
-#define FNV32_PRIME 0x01000193
-
-/*
- * Print each legacy sysctl (approximately) only once.
- * To avoid making the tables non-const use a external
- * hash-table instead.
- * Worst case hash collision: 6, but very rarely.
- * NOTE! We don't use the SMP-safe bit tests. We simply
- * don't care enough.
- */
-static void warn_on_bintable(const int *name, int nlen)
-{
-	int i;
-	u32 hash = FNV32_OFFSET;
-
-	for (i = 0; i < nlen; i++)
-		hash = (hash ^ name[i]) * FNV32_PRIME;
-	hash %= WARN_ONCE_HASH_SIZE;
-	if (__test_and_set_bit(hash, warn_once_bitmap))
-		return;
-	deprecated_sysctl_warning(name, nlen);
 }
 
 static ssize_t do_sysctl(int __user *args_name, int nlen,
@@ -1454,7 +1424,7 @@ static ssize_t do_sysctl(int __user *args_name, int nlen,
 		if (get_user(name[i], args_name + i))
 			return -EFAULT;
 
-	warn_on_bintable(name, nlen);
+	deprecated_sysctl_warning(name, nlen);
 
 	return binary_sysctl(name, nlen, oldval, oldlen, newval, newlen);
 }

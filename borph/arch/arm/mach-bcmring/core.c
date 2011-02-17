@@ -91,23 +91,14 @@ static struct clk uart_clk = {
 	.parent = &pll1_clk,
 };
 
-static struct clk dummy_apb_pclk = {
-	.name = "BUSCLK",
-	.type = CLK_TYPE_PRIMARY,
-	.mode = CLK_MODE_XTAL,
-};
-
 static struct clk_lookup lookups[] = {
-	{			/* Bus clock */
-		.con_id = "apb_pclk",
-		.clk = &dummy_apb_pclk,
-	}, {			/* UART0 */
-		.dev_id = "uarta",
-		.clk = &uart_clk,
-	}, {			/* UART1 */
-		.dev_id = "uartb",
-		.clk = &uart_clk,
-	}
+	{			/* UART0 */
+	 .dev_id = "uarta",
+	 .clk = &uart_clk,
+	 }, {			/* UART1 */
+	     .dev_id = "uartb",
+	     .clk = &uart_clk,
+	     }
 };
 
 static struct amba_device *amba_devs[] __initdata = {
@@ -151,7 +142,8 @@ void __init bcmring_amba_init(void)
 
 	chipcHw_busInterfaceClockEnable(bus_clock);
 
-	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
+	for (i = 0; i < ARRAY_SIZE(lookups); i++)
+		clkdev_add(&lookups[i]);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];

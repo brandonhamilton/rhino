@@ -33,7 +33,6 @@
 #include <linux/string.h>
 #include <linux/skbuff.h>
 #include <linux/audit.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>

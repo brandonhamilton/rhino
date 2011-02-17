@@ -4,7 +4,6 @@
 
 #include <linux/hdreg.h>
 #include <linux/ide.h>
-#include <linux/slab.h>
 
 static const struct ide_ioctl_devset ide_ioctl_settings[] = {
 { HDIO_GET_32BIT,	 HDIO_SET_32BIT,	&ide_devset_io_32bit  },

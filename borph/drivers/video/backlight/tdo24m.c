@@ -17,7 +17,6 @@
 #include <linux/spi/tdo24m.h>
 #include <linux/fb.h>
 #include <linux/lcd.h>
-#include <linux/slab.h>
 
 #define POWER_IS_ON(pwr)	((pwr) <= FB_BLANK_NORMAL)
 

@@ -14,7 +14,6 @@
 #include <linux/etherdevice.h>
 #include <linux/rtnetlink.h>
 #include <linux/llc.h>
-#include <linux/slab.h>
 #include <net/llc.h>
 #include <net/llc_pdu.h>
 #include <net/garp.h>
@@ -346,8 +345,8 @@ int garp_request_join(const struct net_device *dev,
 		      const struct garp_application *appl,
 		      const void *data, u8 len, u8 type)
 {
-	struct garp_port *port = rtnl_dereference(dev->garp_port);
-	struct garp_applicant *app = rtnl_dereference(port->applicants[appl->type]);
+	struct garp_port *port = dev->garp_port;
+	struct garp_applicant *app = port->applicants[appl->type];
 	struct garp_attr *attr;
 
 	spin_lock_bh(&app->lock);
@@ -366,8 +365,8 @@ void garp_request_leave(const struct net_device *dev,
 			const struct garp_application *appl,
 			const void *data, u8 len, u8 type)
 {
-	struct garp_port *port = rtnl_dereference(dev->garp_port);
-	struct garp_applicant *app = rtnl_dereference(port->applicants[appl->type]);
+	struct garp_port *port = dev->garp_port;
+	struct garp_applicant *app = port->applicants[appl->type];
 	struct garp_attr *attr;
 
 	spin_lock_bh(&app->lock);
@@ -546,11 +545,11 @@ static int garp_init_port(struct net_device *dev)
 
 static void garp_release_port(struct net_device *dev)
 {
-	struct garp_port *port = rtnl_dereference(dev->garp_port);
+	struct garp_port *port = dev->garp_port;
 	unsigned int i;
 
 	for (i = 0; i <= GARP_APPLICATION_MAX; i++) {
-		if (rtnl_dereference(port->applicants[i]))
+		if (port->applicants[i])
 			return;
 	}
 	rcu_assign_pointer(dev->garp_port, NULL);
@@ -565,7 +564,7 @@ int garp_init_applicant(struct net_device *dev, struct garp_application *appl)
 
 	ASSERT_RTNL();
 
-	if (!rtnl_dereference(dev->garp_port)) {
+	if (!dev->garp_port) {
 		err = garp_init_port(dev);
 		if (err < 0)
 			goto err1;
@@ -576,7 +575,7 @@ int garp_init_applicant(struct net_device *dev, struct garp_application *appl)
 	if (!app)
 		goto err2;
 
-	err = dev_mc_add(dev, appl->proto.group_address);
+	err = dev_mc_add(dev, appl->proto.group_address, ETH_ALEN, 0);
 	if (err < 0)
 		goto err3;
 
@@ -601,8 +600,8 @@ EXPORT_SYMBOL_GPL(garp_init_applicant);
 
 void garp_uninit_applicant(struct net_device *dev, struct garp_application *appl)
 {
-	struct garp_port *port = rtnl_dereference(dev->garp_port);
-	struct garp_applicant *app = rtnl_dereference(port->applicants[appl->type]);
+	struct garp_port *port = dev->garp_port;
+	struct garp_applicant *app = port->applicants[appl->type];
 
 	ASSERT_RTNL();
 
@@ -616,7 +615,7 @@ void garp_uninit_applicant(struct net_device *dev, struct garp_application *appl
 	garp_pdu_queue(app);
 	garp_queue_xmit(app);
 
-	dev_mc_del(dev, appl->proto.group_address);
+	dev_mc_delete(dev, appl->proto.group_address, ETH_ALEN, 0);
 	kfree(app);
 	garp_release_port(dev);
 }

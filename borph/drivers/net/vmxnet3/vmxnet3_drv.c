@@ -35,7 +35,7 @@ char vmxnet3_driver_name[] = "vmxnet3";
  * PCI Device ID Table
  * Last entry must be all 0s
  */
-static DEFINE_PCI_DEVICE_TABLE(vmxnet3_pciid_table) = {
+static const struct pci_device_id vmxnet3_pciid_table[] = {
 	{PCI_VDEVICE(VMWARE, PCI_DEVICE_ID_VMWARE_VMXNET3)},
 	{0}
 };
@@ -72,8 +72,6 @@ vmxnet3_enable_all_intrs(struct vmxnet3_adapter *adapter)
 
 	for (i = 0; i < adapter->intr.num_intrs; i++)
 		vmxnet3_enable_intr(adapter, i);
-	adapter->shared->devRead.intrConf.intrCtrl &=
-					cpu_to_le32(~VMXNET3_IC_DISABLE_ALL);
 }
 
 
@@ -82,8 +80,6 @@ vmxnet3_disable_all_intrs(struct vmxnet3_adapter *adapter)
 {
 	int i;
 
-	adapter->shared->devRead.intrConf.intrCtrl |=
-					cpu_to_le32(VMXNET3_IC_DISABLE_ALL);
 	for (i = 0; i < adapter->intr.num_intrs; i++)
 		vmxnet3_disable_intr(adapter, i);
 }
@@ -132,7 +128,7 @@ vmxnet3_tq_stop(struct vmxnet3_tx_queue *tq, struct vmxnet3_adapter *adapter)
  * Check the link state. This may start or stop the tx queue.
  */
 static void
-vmxnet3_check_link(struct vmxnet3_adapter *adapter, bool affectTxQueue)
+vmxnet3_check_link(struct vmxnet3_adapter *adapter)
 {
 	u32 ret;
 
@@ -145,16 +141,14 @@ vmxnet3_check_link(struct vmxnet3_adapter *adapter, bool affectTxQueue)
 		if (!netif_carrier_ok(adapter->netdev))
 			netif_carrier_on(adapter->netdev);
 
-		if (affectTxQueue)
-			vmxnet3_tq_start(&adapter->tx_queue, adapter);
+		vmxnet3_tq_start(&adapter->tx_queue, adapter);
 	} else {
 		printk(KERN_INFO "%s: NIC Link is Down\n",
 		       adapter->netdev->name);
 		if (netif_carrier_ok(adapter->netdev))
 			netif_carrier_off(adapter->netdev);
 
-		if (affectTxQueue)
-			vmxnet3_tq_stop(&adapter->tx_queue, adapter);
+		vmxnet3_tq_stop(&adapter->tx_queue, adapter);
 	}
 }
 
@@ -169,7 +163,7 @@ vmxnet3_process_events(struct vmxnet3_adapter *adapter)
 
 	/* Check if link state has changed */
 	if (events & VMXNET3_ECR_LINK)
-		vmxnet3_check_link(adapter, true);
+		vmxnet3_check_link(adapter);
 
 	/* Check if there is an error on xmit/recv queues */
 	if (events & (VMXNET3_ECR_TQERR | VMXNET3_ECR_RQERR)) {
@@ -664,13 +658,8 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 	while (len) {
 		u32 buf_size;
 
-		if (len < VMXNET3_MAX_TX_BUF_SIZE) {
-			buf_size = len;
-			dw2 |= len;
-		} else {
-			buf_size = VMXNET3_MAX_TX_BUF_SIZE;
-			/* spec says that for TxDesc.len, 0 == 2^14 */
-		}
+		buf_size = len > VMXNET3_MAX_TX_BUF_SIZE ?
+			   VMXNET3_MAX_TX_BUF_SIZE : len;
 
 		tbi = tq->buf_info + tq->tx_ring.next2fill;
 		tbi->map_type = VMXNET3_MAP_SINGLE;
@@ -678,13 +667,13 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 				skb->data + buf_offset, buf_size,
 				PCI_DMA_TODEVICE);
 
-		tbi->len = buf_size;
+		tbi->len = buf_size; /* this automatically convert 2^14 to 0 */
 
 		gdesc = tq->tx_ring.base + tq->tx_ring.next2fill;
 		BUG_ON(gdesc->txd.gen == tq->tx_ring.gen);
 
 		gdesc->txd.addr = cpu_to_le64(tbi->dma_addr);
-		gdesc->dword[2] = cpu_to_le32(dw2);
+		gdesc->dword[2] = cpu_to_le32(dw2 | buf_size);
 		gdesc->dword[3] = 0;
 
 		dev_dbg(&adapter->netdev->dev,
@@ -873,7 +862,7 @@ vmxnet3_tq_xmit(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 	count = VMXNET3_TXD_NEEDED(skb_headlen(skb)) +
 		skb_shinfo(skb)->nr_frags + 1;
 
-	ctx.ipv4 = (skb->protocol == cpu_to_be16(ETH_P_IP));
+	ctx.ipv4 = (skb->protocol == __constant_ntohs(ETH_P_IP));
 
 	ctx.mss = skb_shinfo(skb)->gso_size;
 	if (ctx.mss) {
@@ -1003,6 +992,7 @@ vmxnet3_tq_xmit(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 		VMXNET3_WRITE_BAR0_REG(adapter, VMXNET3_REG_TXPROD,
 				       tq->tx_ring.next2fill);
 	}
+	netdev->trans_start = jiffies;
 
 	return NETDEV_TX_OK;
 
@@ -1042,11 +1032,11 @@ vmxnet3_rx_csum(struct vmxnet3_adapter *adapter,
 				skb->csum = htons(gdesc->rcd.csum);
 				skb->ip_summed = CHECKSUM_PARTIAL;
 			} else {
-				skb_checksum_none_assert(skb);
+				skb->ip_summed = CHECKSUM_NONE;
 			}
 		}
 	} else {
-		skb_checksum_none_assert(skb);
+		skb->ip_summed = CHECKSUM_NONE;
 	}
 }
 
@@ -1184,6 +1174,7 @@ vmxnet3_rq_rx_complete(struct vmxnet3_rx_queue *rq,
 				netif_receive_skb(skb);
 			}
 
+			adapter->netdev->last_rx = jiffies;
 			ctx->skb = NULL;
 		}
 
@@ -1380,12 +1371,13 @@ vmxnet3_rq_create(struct vmxnet3_rx_queue *rq, struct vmxnet3_adapter *adapter)
 
 	sz = sizeof(struct vmxnet3_rx_buf_info) * (rq->rx_ring[0].size +
 						   rq->rx_ring[1].size);
-	bi = kzalloc(sz, GFP_KERNEL);
+	bi = kmalloc(sz, GFP_KERNEL);
 	if (!bi) {
 		printk(KERN_ERR "%s: failed to allocate rx bufinfo\n",
 		       adapter->netdev->name);
 		goto err;
 	}
+	memset(bi, 0, sz);
 	rq->buf_info[0] = bi;
 	rq->buf_info[1] = bi + rq->rx_ring[0].size;
 
@@ -1548,6 +1540,23 @@ vmxnet3_free_irqs(struct vmxnet3_adapter *adapter)
 	}
 }
 
+
+inline void set_flag_le16(__le16 *data, u16 flag)
+{
+	*data = cpu_to_le16(le16_to_cpu(*data) | flag);
+}
+
+inline void set_flag_le64(__le64 *data, u64 flag)
+{
+	*data = cpu_to_le64(le64_to_cpu(*data) | flag);
+}
+
+inline void reset_flag_le64(__le64 *data, u64 flag)
+{
+	*data = cpu_to_le64(le64_to_cpu(*data) & ~flag);
+}
+
+
 static void
 vmxnet3_vlan_rx_register(struct net_device *netdev, struct vlan_group *grp)
 {
@@ -1563,7 +1572,8 @@ vmxnet3_vlan_rx_register(struct net_device *netdev, struct vlan_group *grp)
 			adapter->vlan_grp = grp;
 
 			/* update FEATURES to device */
-			devRead->misc.uptFeatures |= UPT1_F_RXVLAN;
+			set_flag_le64(&devRead->misc.uptFeatures,
+				      UPT1_F_RXVLAN);
 			VMXNET3_WRITE_BAR1_REG(adapter, VMXNET3_REG_CMD,
 					       VMXNET3_CMD_UPDATE_FEATURE);
 			/*
@@ -1586,7 +1596,7 @@ vmxnet3_vlan_rx_register(struct net_device *netdev, struct vlan_group *grp)
 		struct Vmxnet3_DSDevRead *devRead = &shared->devRead;
 		adapter->vlan_grp = NULL;
 
-		if (devRead->misc.uptFeatures & UPT1_F_RXVLAN) {
+		if (le64_to_cpu(devRead->misc.uptFeatures) & UPT1_F_RXVLAN) {
 			int i;
 
 			for (i = 0; i < VMXNET3_VFT_SIZE; i++) {
@@ -1599,7 +1609,8 @@ vmxnet3_vlan_rx_register(struct net_device *netdev, struct vlan_group *grp)
 					       VMXNET3_CMD_UPDATE_VLAN_FILTERS);
 
 			/* update FEATURES to device */
-			devRead->misc.uptFeatures &= ~UPT1_F_RXVLAN;
+			reset_flag_le64(&devRead->misc.uptFeatures,
+					UPT1_F_RXVLAN);
 			VMXNET3_WRITE_BAR1_REG(adapter, VMXNET3_REG_CMD,
 					       VMXNET3_CMD_UPDATE_FEATURE);
 		}
@@ -1615,7 +1626,7 @@ vmxnet3_restore_vlan(struct vmxnet3_adapter *adapter)
 		u32 *vfTable = adapter->shared->devRead.rxFilterConf.vfTable;
 		bool activeVlan = false;
 
-		for (vid = 0; vid < VLAN_N_VID; vid++) {
+		for (vid = 0; vid < VLAN_GROUP_ARRAY_LEN; vid++) {
 			if (vlan_group_get_device(adapter->vlan_grp, vid)) {
 				VMXNET3_SET_VFTABLE_ENTRY(vfTable, vid);
 				activeVlan = true;
@@ -1657,19 +1668,22 @@ static u8 *
 vmxnet3_copy_mc(struct net_device *netdev)
 {
 	u8 *buf = NULL;
-	u32 sz = netdev_mc_count(netdev) * ETH_ALEN;
+	u32 sz = netdev->mc_count * ETH_ALEN;
 
 	/* struct Vmxnet3_RxFilterConf.mfTableLen is u16. */
 	if (sz <= 0xffff) {
 		/* We may be called with BH disabled */
 		buf = kmalloc(sz, GFP_ATOMIC);
 		if (buf) {
-			struct netdev_hw_addr *ha;
-			int i = 0;
+			int i;
+			struct dev_mc_list *mc = netdev->mc_list;
 
-			netdev_for_each_mc_addr(ha, netdev)
-				memcpy(buf + i++ * ETH_ALEN, ha->addr,
+			for (i = 0; i < netdev->mc_count; i++) {
+				BUG_ON(!mc);
+				memcpy(buf + i * ETH_ALEN, mc->dmi_addr,
 				       ETH_ALEN);
+				mc = mc->next;
+			}
 		}
 	}
 	return buf;
@@ -1694,12 +1708,12 @@ vmxnet3_set_mc(struct net_device *netdev)
 	if (netdev->flags & IFF_ALLMULTI)
 		new_mode |= VMXNET3_RXM_ALL_MULTI;
 	else
-		if (!netdev_mc_empty(netdev)) {
+		if (netdev->mc_count > 0) {
 			new_table = vmxnet3_copy_mc(netdev);
 			if (new_table) {
 				new_mode |= VMXNET3_RXM_MCAST;
 				rxConf->mfTableLen = cpu_to_le16(
-					netdev_mc_count(netdev) * ETH_ALEN);
+						netdev->mc_count * ETH_ALEN);
 				rxConf->mfTablePA = cpu_to_le64(virt_to_phys(
 						    new_table));
 			} else {
@@ -1760,15 +1774,15 @@ vmxnet3_setup_driver_shared(struct vmxnet3_adapter *adapter)
 
 	/* set up feature flags */
 	if (adapter->rxcsum)
-		devRead->misc.uptFeatures |= UPT1_F_RXCSUM;
+		set_flag_le64(&devRead->misc.uptFeatures, UPT1_F_RXCSUM);
 
 	if (adapter->lro) {
-		devRead->misc.uptFeatures |= UPT1_F_LRO;
+		set_flag_le64(&devRead->misc.uptFeatures, UPT1_F_LRO);
 		devRead->misc.maxNumRxSG = cpu_to_le16(1 + MAX_SKB_FRAGS);
 	}
 	if ((adapter->netdev->features & NETIF_F_HW_VLAN_RX) &&
 	    adapter->vlan_grp) {
-		devRead->misc.uptFeatures |= UPT1_F_RXVLAN;
+		set_flag_le64(&devRead->misc.uptFeatures, UPT1_F_RXVLAN);
 	}
 
 	devRead->misc.mtu = cpu_to_le32(adapter->netdev->mtu);
@@ -1817,7 +1831,6 @@ vmxnet3_setup_driver_shared(struct vmxnet3_adapter *adapter)
 		devRead->intrConf.modLevels[i] = adapter->intr.mod_levels[i];
 
 	devRead->intrConf.eventIntrIdx = adapter->intr.event_intr_idx;
-	devRead->intrConf.intrCtrl |= cpu_to_le32(VMXNET3_IC_DISABLE_ALL);
 
 	/* rx filter settings */
 	devRead->rxFilterConf.rxMode = 0;
@@ -1882,7 +1895,7 @@ vmxnet3_activate_dev(struct vmxnet3_adapter *adapter)
 	 * Check link state when first activating device. It will start the
 	 * tx queue if the link is up.
 	 */
-	vmxnet3_check_link(adapter, true);
+	vmxnet3_check_link(adapter);
 
 	napi_enable(&adapter->napi);
 	vmxnet3_enable_all_intrs(adapter);
@@ -2288,13 +2301,9 @@ vmxnet3_alloc_intr_resources(struct vmxnet3_adapter *adapter)
 	adapter->intr.mask_mode = (cfg >> 2) & 0x3;
 
 	if (adapter->intr.type == VMXNET3_IT_AUTO) {
-		adapter->intr.type = VMXNET3_IT_MSIX;
-	}
-
-#ifdef CONFIG_PCI_MSI
-	if (adapter->intr.type == VMXNET3_IT_MSIX) {
 		int err;
 
+#ifdef CONFIG_PCI_MSI
 		adapter->intr.msix_entries[0].entry = 0;
 		err = pci_enable_msix(adapter->pdev, adapter->intr.msix_entries,
 				      VMXNET3_LINUX_MAX_MSIX_VECT);
@@ -2303,18 +2312,15 @@ vmxnet3_alloc_intr_resources(struct vmxnet3_adapter *adapter)
 			adapter->intr.type = VMXNET3_IT_MSIX;
 			return;
 		}
-		adapter->intr.type = VMXNET3_IT_MSI;
-	}
+#endif
 
-	if (adapter->intr.type == VMXNET3_IT_MSI) {
-		int err;
 		err = pci_enable_msi(adapter->pdev);
 		if (!err) {
 			adapter->intr.num_intrs = 1;
+			adapter->intr.type = VMXNET3_IT_MSI;
 			return;
 		}
 	}
-#endif /* CONFIG_PCI_MSI */
 
 	adapter->intr.type = VMXNET3_IT_INTX;
 
@@ -2358,7 +2364,6 @@ vmxnet3_reset_work(struct work_struct *data)
 		return;
 
 	/* if the device is closed, we must leave it alone */
-	rtnl_lock();
 	if (netif_running(adapter->netdev)) {
 		printk(KERN_INFO "%s: resetting\n", adapter->netdev->name);
 		vmxnet3_quiesce_dev(adapter);
@@ -2367,7 +2372,6 @@ vmxnet3_reset_work(struct work_struct *data)
 	} else {
 		printk(KERN_INFO "%s: already closed\n", adapter->netdev->name);
 	}
-	rtnl_unlock();
 
 	clear_bit(VMXNET3_STATE_BIT_RESETTING, &adapter->state);
 }
@@ -2493,7 +2497,6 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 	}
 
 	set_bit(VMXNET3_STATE_BIT_QUIESCED, &adapter->state);
-	vmxnet3_check_link(adapter, false);
 	atomic_inc(&devices_found);
 	return 0;
 
@@ -2575,7 +2578,7 @@ vmxnet3_suspend(struct device *device)
 		memcpy(pmConf->filters[i].pattern, netdev->dev_addr, ETH_ALEN);
 		pmConf->filters[i].mask[0] = 0x3F; /* LSB ETH_ALEN bits */
 
-		pmConf->wakeUpEvents |= VMXNET3_PM_WAKEUP_FILTER;
+		set_flag_le16(&pmConf->wakeUpEvents, VMXNET3_PM_WAKEUP_FILTER);
 		i++;
 	}
 
@@ -2617,13 +2620,13 @@ vmxnet3_suspend(struct device *device)
 		pmConf->filters[i].mask[5] = 0x03; /* IPv4 TIP */
 		in_dev_put(in_dev);
 
-		pmConf->wakeUpEvents |= VMXNET3_PM_WAKEUP_FILTER;
+		set_flag_le16(&pmConf->wakeUpEvents, VMXNET3_PM_WAKEUP_FILTER);
 		i++;
 	}
 
 skip_arp:
 	if (adapter->wol & WAKE_MAGIC)
-		pmConf->wakeUpEvents |= VMXNET3_PM_WAKEUP_MAGIC;
+		set_flag_le16(&pmConf->wakeUpEvents, VMXNET3_PM_WAKEUP_MAGIC);
 
 	pmConf->numFilters = i;
 
@@ -2665,7 +2668,7 @@ vmxnet3_resume(struct device *device)
 	adapter->shared->devRead.pmConfDesc.confVer = cpu_to_le32(1);
 	adapter->shared->devRead.pmConfDesc.confLen = cpu_to_le32(sizeof(
 								  *pmConf));
-	adapter->shared->devRead.pmConfDesc.confPA = cpu_to_le64(virt_to_phys(
+	adapter->shared->devRead.pmConfDesc.confPA = cpu_to_le32(virt_to_phys(
 								 pmConf));
 
 	netif_device_attach(netdev);

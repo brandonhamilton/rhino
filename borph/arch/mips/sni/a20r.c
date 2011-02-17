@@ -10,7 +10,6 @@
 
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/platform_device.h>
 #include <linux/serial_8250.h>
 
@@ -189,7 +188,7 @@ static void end_a20r_irq(unsigned int irq)
 }
 
 static struct irq_chip a20r_irq_type = {
-	.name		= "A20R",
+	.typename	= "A20R",
 	.ack		= mask_a20r_irq,
 	.mask		= mask_a20r_irq,
 	.mask_ack	= mask_a20r_irq,

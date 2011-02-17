@@ -23,7 +23,6 @@
 #include <linux/errno.h>
 #include <linux/fb.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
 
@@ -631,8 +630,6 @@ static void xenfb_backend_changed(struct xenbus_device *dev,
 	switch (backend_state) {
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
-	case XenbusStateReconfiguring:
-	case XenbusStateReconfigured:
 	case XenbusStateUnknown:
 	case XenbusStateClosed:
 		break;
@@ -686,7 +683,7 @@ static struct xenbus_driver xenfb_driver = {
 
 static int __init xenfb_init(void)
 {
-	if (!xen_pv_domain())
+	if (!xen_domain())
 		return -ENODEV;
 
 	/* Nothing to do if running in dom0. */

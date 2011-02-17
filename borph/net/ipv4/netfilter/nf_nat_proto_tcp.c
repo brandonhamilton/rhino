@@ -20,13 +20,14 @@
 
 static u_int16_t tcp_port_rover;
 
-static void
+static bool
 tcp_unique_tuple(struct nf_conntrack_tuple *tuple,
 		 const struct nf_nat_range *range,
 		 enum nf_nat_manip_type maniptype,
 		 const struct nf_conn *ct)
 {
-	nf_nat_proto_unique_tuple(tuple, range, maniptype, ct, &tcp_port_rover);
+	return nf_nat_proto_unique_tuple(tuple, range, maniptype, ct,
+					 &tcp_port_rover);
 }
 
 static bool

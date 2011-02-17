@@ -15,7 +15,6 @@
 #include <linux/acpi.h>
 #include <linux/libata.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <scsi/scsi_device.h>
 #include "libata.h"
 
@@ -65,7 +64,7 @@ void ata_acpi_associate_sata_port(struct ata_port *ap)
 	WARN_ON(!(ap->flags & ATA_FLAG_ACPI_SATA));
 
 	if (!sata_pmp_attached(ap)) {
-		u64 adr = SATA_ADR(ap->port_no, NO_PORT_MULT);
+		acpi_integer adr = SATA_ADR(ap->port_no, NO_PORT_MULT);
 
 		ap->link.device->acpi_handle =
 			acpi_get_child(ap->host->acpi_handle, adr);
@@ -75,7 +74,7 @@ void ata_acpi_associate_sata_port(struct ata_port *ap)
 		ap->link.device->acpi_handle = NULL;
 
 		ata_for_each_link(link, ap, EDGE) {
-			u64 adr = SATA_ADR(ap->port_no, link->pmp);
+			acpi_integer adr = SATA_ADR(ap->port_no, link->pmp);
 
 			link->device->acpi_handle =
 				acpi_get_child(ap->host->acpi_handle, adr);
@@ -145,6 +144,12 @@ static void ata_acpi_handle_hotplug(struct ata_port *ap, struct ata_device *dev,
 	struct ata_eh_info *ehi = &ap->link.eh_info;
 	int wait = 0;
 	unsigned long flags;
+	acpi_handle handle;
+
+	if (dev)
+		handle = dev->acpi_handle;
+	else
+		handle = ap->acpi_handle;
 
 	spin_lock_irqsave(ap->lock, flags);
 	/*

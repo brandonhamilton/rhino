@@ -75,10 +75,6 @@
 /* MUSB ULPI VBUSCONTROL */
 #define MUSB_ULPI_USE_EXTVBUS	0x01
 #define MUSB_ULPI_USE_EXTVBUSIND 0x02
-/* ULPI_REG_CONTROL */
-#define MUSB_ULPI_REG_REQ	(1 << 0)
-#define MUSB_ULPI_REG_CMPLT	(1 << 1)
-#define MUSB_ULPI_RDN_WR	(1 << 2)
 
 /* TESTMODE */
 #define MUSB_TEST_FORCE_HOST	0x80
@@ -255,12 +251,6 @@
 /* REVISIT: vctrl/vstatus: optional vendor utmi+phy register at 0x68 */
 #define MUSB_HWVERS		0x6C	/* 8 bit */
 #define MUSB_ULPI_BUSCONTROL	0x70	/* 8 bit */
-#define MUSB_ULPI_INT_MASK	0x72	/* 8 bit */
-#define MUSB_ULPI_INT_SRC	0x73	/* 8 bit */
-#define MUSB_ULPI_REG_DATA	0x74	/* 8 bit */
-#define MUSB_ULPI_REG_ADDR	0x75	/* 8 bit */
-#define MUSB_ULPI_REG_CONTROL	0x76	/* 8 bit */
-#define MUSB_ULPI_RAW_DATA	0x77	/* 8 bit */
 
 #define MUSB_EPINFO		0x78	/* 8 bit */
 #define MUSB_RAMINFO		0x79	/* 8 bit */
@@ -336,11 +326,6 @@ static inline void  musb_write_rxfifoadd(void __iomem *mbase, u16 c_off)
 	musb_writew(mbase, MUSB_RXFIFOADD, c_off);
 }
 
-static inline void musb_write_ulpi_buscontrol(void __iomem *mbase, u8 val)
-{
-	musb_writeb(mbase, MUSB_ULPI_BUSCONTROL, val);
-}
-
 static inline u8 musb_read_txfifosz(void __iomem *mbase)
 {
 	return musb_readb(mbase, MUSB_TXFIFOSZ);
@@ -359,11 +344,6 @@ static inline u8 musb_read_rxfifosz(void __iomem *mbase)
 static inline u16  musb_read_rxfifoadd(void __iomem *mbase)
 {
 	return musb_readw(mbase, MUSB_RXFIFOADD);
-}
-
-static inline u8 musb_read_ulpi_buscontrol(void __iomem *mbase)
-{
-	return musb_readb(mbase, MUSB_ULPI_BUSCONTROL);
 }
 
 static inline u8 musb_read_configdata(void __iomem *mbase)
@@ -511,7 +491,7 @@ static inline u8  musb_read_txhubport(void __iomem *mbase, u8 epnum)
 #define MUSB_FLAT_OFFSET(_epnum, _offset)	\
 	(USB_OFFSET(USB_EP_NI0_TXMAXP) + (0x40 * (_epnum)) + (_offset))
 
-/* Not implemented - HW has separate Tx/Rx FIFO */
+/* Not implemented - HW has seperate Tx/Rx FIFO */
 #define MUSB_TXCSR_MODE			0x0000
 
 static inline void musb_write_txfifosz(void __iomem *mbase, u8 c_size)
@@ -530,33 +510,20 @@ static inline void  musb_write_rxfifoadd(void __iomem *mbase, u16 c_off)
 {
 }
 
-static inline void musb_write_ulpi_buscontrol(void __iomem *mbase, u8 val)
-{
-}
-
 static inline u8 musb_read_txfifosz(void __iomem *mbase)
 {
-	return 0;
 }
 
 static inline u16 musb_read_txfifoadd(void __iomem *mbase)
 {
-	return 0;
 }
 
 static inline u8 musb_read_rxfifosz(void __iomem *mbase)
 {
-	return 0;
 }
 
 static inline u16  musb_read_rxfifoadd(void __iomem *mbase)
 {
-	return 0;
-}
-
-static inline u8 musb_read_ulpi_buscontrol(void __iomem *mbase)
-{
-	return 0;
 }
 
 static inline u8 musb_read_configdata(void __iomem *mbase)
@@ -566,11 +533,7 @@ static inline u8 musb_read_configdata(void __iomem *mbase)
 
 static inline u16 musb_read_hwvers(void __iomem *mbase)
 {
-	/*
-	 * This register is invisible on Blackfin, actually the MUSB
-	 * RTL version of Blackfin is 1.9, so just harcode its value.
-	 */
-	return MUSB_HWVERS_1900;
+	return 0;
 }
 
 static inline void __iomem *musb_read_target_reg_base(u8 i, void __iomem *mbase)
@@ -610,32 +573,26 @@ static inline void  musb_write_txhubport(void __iomem *mbase, u8 epnum,
 
 static inline u8 musb_read_rxfunaddr(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
 static inline u8 musb_read_rxhubaddr(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
 static inline u8 musb_read_rxhubport(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
 static inline u8  musb_read_txfunaddr(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
 static inline u8  musb_read_txhubaddr(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
-static inline u8 musb_read_txhubport(void __iomem *mbase, u8 epnum)
+static inline void  musb_read_txhubport(void __iomem *mbase, u8 epnum)
 {
-	return 0;
 }
 
 #endif /* CONFIG_BLACKFIN */

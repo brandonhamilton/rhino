@@ -152,6 +152,7 @@ static char *version =
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -637,9 +638,7 @@ static void eth16i_initialize(struct net_device *dev, int boot)
 
 	/* Set interface port type */
 	if(boot) {
-		static const char * const porttype[] = {
-			"BNC", "DIX", "TP", "AUTO", "FROM_EPROM"
-		};
+		char *porttype[] = {"BNC", "DIX", "TP", "AUTO", "FROM_EPROM" };
 
 		switch(dev->if_port)
 		{
@@ -796,7 +795,7 @@ static int eth16i_receive_probe_packet(int ioaddr)
 
 			if(eth16i_debug > 1)
 				printk(KERN_DEBUG "RECEIVE_PACKET\n");
-			return 0; /* Found receive packet */
+			return(0); /* Found receive packet */
 		}
 	}
 
@@ -805,7 +804,7 @@ static int eth16i_receive_probe_packet(int ioaddr)
 		printk(KERN_DEBUG "RX_STATUS_REG = %x\n", inb(ioaddr + RX_STATUS_REG));
 	}
 
-	return 0; /* Return success */
+	return(0); /* Return success */
 }
 
 #if 0
@@ -841,7 +840,7 @@ static int __init eth16i_get_irq(int ioaddr)
 
 	if( ioaddr < 0x1000) {
 		cbyte = inb(ioaddr + JUMPERLESS_CONFIG);
-		return eth16i_irqmap[((cbyte & 0xC0) >> 6)];
+		return( eth16i_irqmap[ ((cbyte & 0xC0) >> 6) ] );
 	} else {  /* Oh..the card is EISA so method getting IRQ different */
 		unsigned short index = 0;
 		cbyte = inb(ioaddr + EISA_IRQ_REG);
@@ -849,7 +848,7 @@ static int __init eth16i_get_irq(int ioaddr)
 			cbyte = cbyte >> 1;
 			index++;
 		}
-		return eth32i_irqmap[index];
+		return( eth32i_irqmap[ index ] );
 	}
 }
 
@@ -909,7 +908,7 @@ static int eth16i_read_eeprom(int ioaddr, int offset)
 	data = eth16i_read_eeprom_word(ioaddr);
 	outb(CS_0 | SK_0, ioaddr + EEPROM_CTRL_REG);
 
-	return data;
+	return(data);
 }
 
 static int eth16i_read_eeprom_word(int ioaddr)
@@ -928,7 +927,7 @@ static int eth16i_read_eeprom_word(int ioaddr)
 		eeprom_slow_io();
 	}
 
-	return data;
+	return(data);
 }
 
 static void eth16i_eeprom_cmd(int ioaddr, unsigned char command)
@@ -1029,7 +1028,7 @@ static void eth16i_timeout(struct net_device *dev)
 	inw(ioaddr + TX_STATUS_REG),  (inb(ioaddr + TX_STATUS_REG) & TX_DONE) ?
 		       "IRQ conflict" : "network cable problem");
 
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 
 	/* Let's dump all registers */
 	if(eth16i_debug > 0) {
@@ -1049,7 +1048,7 @@ static void eth16i_timeout(struct net_device *dev)
 	}
 	dev->stats.tx_errors++;
 	eth16i_reset(dev);
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	outw(ETH16I_INTR_ON, ioaddr + TX_INTR_REG);
 	netif_wake_queue(dev);
 }
@@ -1111,6 +1110,7 @@ static netdev_tx_t eth16i_tx(struct sk_buff *skb, struct net_device *dev)
 		outb(TX_START | lp->tx_queue, ioaddr + TRANSMIT_START_REG);
 		lp->tx_queue = 0;
 		lp->tx_queue_len = 0;
+		dev->trans_start = jiffies;
 		lp->tx_started = 1;
 		netif_wake_queue(dev);
 	}
@@ -1359,7 +1359,7 @@ static void eth16i_multicast(struct net_device *dev)
 {
 	int ioaddr = dev->base_addr;
 
-	if (!netdev_mc_empty(dev) || dev->flags&(IFF_ALLMULTI|IFF_PROMISC))
+	if(dev->mc_count || dev->flags&(IFF_ALLMULTI|IFF_PROMISC))
 	{
 		outb(3, ioaddr + RECEIVE_MODE_REG);
 	} else {
@@ -1444,10 +1444,8 @@ int __init init_module(void)
 		dev->if_port = eth16i_parse_mediatype(mediatype[this_dev]);
 
 		if(io[this_dev] == 0) {
-			if (this_dev != 0) { /* Only autoprobe 1st one */
-				free_netdev(dev);
+			if(this_dev != 0) /* Only autoprobe 1st one */
 				break;
-			}
 
 			printk(KERN_NOTICE "eth16i.c: Presently autoprobing (not recommended) for a single card.\n");
 		}

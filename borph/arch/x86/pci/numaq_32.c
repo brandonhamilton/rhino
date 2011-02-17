@@ -8,13 +8,17 @@
 #include <asm/apic.h>
 #include <asm/mpspec.h>
 #include <asm/pci_x86.h>
-#include <asm/numaq.h>
+
+#define XQUAD_PORTIO_BASE 0xfe400000
+#define XQUAD_PORTIO_QUAD 0x40000  /* 256k per quad. */
 
 #define BUS2QUAD(global) (mp_bus_id_to_node[global])
 
 #define BUS2LOCAL(global) (mp_bus_id_to_local[global])
 
 #define QUADLOCAL2BUS(quad,local) (quad_local_to_mp_bus_id[quad][local])
+
+#define XQUAD_PORT_ADDR(port, quad) (xquad_portio + (XQUAD_PORTIO_QUAD*quad) + port)
 
 #define PCI_CONF1_MQ_ADDRESS(bus, devfn, reg) \
 	(0x80000000 | (BUS2LOCAL(bus) << 16) | (devfn << 8) | (reg & ~3))
@@ -37,7 +41,7 @@ static int pci_conf1_mq_read(unsigned int seg, unsigned int bus,
 	if (!value || (bus >= MAX_MP_BUSSES) || (devfn > 255) || (reg > 255))
 		return -EINVAL;
 
-	raw_spin_lock_irqsave(&pci_config_lock, flags);
+	spin_lock_irqsave(&pci_config_lock, flags);
 
 	write_cf8(bus, devfn, reg);
 
@@ -62,7 +66,7 @@ static int pci_conf1_mq_read(unsigned int seg, unsigned int bus,
 		break;
 	}
 
-	raw_spin_unlock_irqrestore(&pci_config_lock, flags);
+	spin_unlock_irqrestore(&pci_config_lock, flags);
 
 	return 0;
 }
@@ -76,7 +80,7 @@ static int pci_conf1_mq_write(unsigned int seg, unsigned int bus,
 	if ((bus >= MAX_MP_BUSSES) || (devfn > 255) || (reg > 255)) 
 		return -EINVAL;
 
-	raw_spin_lock_irqsave(&pci_config_lock, flags);
+	spin_lock_irqsave(&pci_config_lock, flags);
 
 	write_cf8(bus, devfn, reg);
 
@@ -101,7 +105,7 @@ static int pci_conf1_mq_write(unsigned int seg, unsigned int bus,
 		break;
 	}
 
-	raw_spin_unlock_irqrestore(&pci_config_lock, flags);
+	spin_unlock_irqrestore(&pci_config_lock, flags);
 
 	return 0;
 }
@@ -148,7 +152,13 @@ int __init pci_numaq_init(void)
 {
 	int quad;
 
+	if (!found_numaq)
+		return 0;
+
 	raw_pci_ops = &pci_direct_conf1_mq;
+
+	if (pcibios_scanned++)
+		return 0;
 
 	pci_root_bus = pcibios_scan_root(0);
 	if (pci_root_bus)

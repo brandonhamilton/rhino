@@ -34,6 +34,7 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/uinput.h>
@@ -283,6 +284,7 @@ static int uinput_open(struct inode *inode, struct file *file)
 	if (!newdev)
 		return -ENOMEM;
 
+	lock_kernel();
 	mutex_init(&newdev->mutex);
 	spin_lock_init(&newdev->requests_lock);
 	init_waitqueue_head(&newdev->requests_waitq);
@@ -290,7 +292,7 @@ static int uinput_open(struct inode *inode, struct file *file)
 	newdev->state = UIST_NEW_DEVICE;
 
 	file->private_data = newdev;
-	nonseekable_open(inode, file);
+	unlock_kernel();
 
 	return 0;
 }
@@ -300,29 +302,25 @@ static int uinput_validate_absbits(struct input_dev *dev)
 	unsigned int cnt;
 	int retval = 0;
 
-	for (cnt = 0; cnt < ABS_CNT; cnt++) {
+	for (cnt = 0; cnt < ABS_MAX + 1; cnt++) {
 		if (!test_bit(cnt, dev->absbit))
 			continue;
 
-		if (input_abs_get_max(dev, cnt) <= input_abs_get_min(dev, cnt)) {
+		if ((dev->absmax[cnt] <= dev->absmin[cnt])) {
 			printk(KERN_DEBUG
 				"%s: invalid abs[%02x] min:%d max:%d\n",
 				UINPUT_NAME, cnt,
-				input_abs_get_min(dev, cnt),
-				input_abs_get_max(dev, cnt));
+				dev->absmin[cnt], dev->absmax[cnt]);
 			retval = -EINVAL;
 			break;
 		}
 
-		if (input_abs_get_flat(dev, cnt) >
-		    input_abs_get_max(dev, cnt) - input_abs_get_min(dev, cnt)) {
+		if (dev->absflat[cnt] > (dev->absmax[cnt] - dev->absmin[cnt])) {
 			printk(KERN_DEBUG
-				"%s: abs_flat #%02x out of range: %d "
+				"%s: absflat[%02x] out of range: %d "
 				"(min:%d/max:%d)\n",
-				UINPUT_NAME, cnt,
-				input_abs_get_flat(dev, cnt),
-				input_abs_get_min(dev, cnt),
-				input_abs_get_max(dev, cnt));
+				UINPUT_NAME, cnt, dev->absflat[cnt],
+				dev->absmin[cnt], dev->absmax[cnt]);
 			retval = -EINVAL;
 			break;
 		}
@@ -347,7 +345,7 @@ static int uinput_setup_device(struct uinput_device *udev, const char __user *bu
 	struct uinput_user_dev	*user_dev;
 	struct input_dev	*dev;
 	char			*name;
-	int			i, size;
+	int			size;
 	int			retval;
 
 	if (count != sizeof(struct uinput_user_dev))
@@ -391,12 +389,11 @@ static int uinput_setup_device(struct uinput_device *udev, const char __user *bu
 	dev->id.product	= user_dev->id.product;
 	dev->id.version	= user_dev->id.version;
 
-	for (i = 0; i < ABS_CNT; i++) {
-		input_abs_set_max(dev, i, user_dev->absmax[i]);
-		input_abs_set_min(dev, i, user_dev->absmin[i]);
-		input_abs_set_fuzz(dev, i, user_dev->absfuzz[i]);
-		input_abs_set_flat(dev, i, user_dev->absflat[i]);
-	}
+	size = sizeof(int) * (ABS_MAX + 1);
+	memcpy(dev->absmax, user_dev->absmax, size);
+	memcpy(dev->absmin, user_dev->absmin, size);
+	memcpy(dev->absfuzz, user_dev->absfuzz, size);
+	memcpy(dev->absflat, user_dev->absflat, size);
 
 	/* check if absmin/absmax/absfuzz/absflat are filled as
 	 * told in Documentation/input/input-programming.txt */
@@ -404,13 +401,6 @@ static int uinput_setup_device(struct uinput_device *udev, const char __user *bu
 		retval = uinput_validate_absbits(dev);
 		if (retval < 0)
 			goto exit;
-		if (test_bit(ABS_MT_SLOT, dev->absbit)) {
-			int nslot = input_abs_get_max(dev, ABS_MT_SLOT) + 1;
-			input_mt_create_slots(dev, nslot);
-			input_set_events_per_packet(dev, 6 * nslot);
-		} else if (test_bit(ABS_MT_POSITION_X, dev->absbit)) {
-			input_set_events_per_packet(dev, 60);
-		}
 	}
 
 	udev->state = UIST_SETUP_COMPLETE;
@@ -811,7 +801,6 @@ static const struct file_operations uinput_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= uinput_compat_ioctl,
 #endif
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice uinput_misc = {
@@ -819,8 +808,6 @@ static struct miscdevice uinput_misc = {
 	.minor		= UINPUT_MINOR,
 	.name		= UINPUT_NAME,
 };
-MODULE_ALIAS_MISCDEV(UINPUT_MINOR);
-MODULE_ALIAS("devname:" UINPUT_NAME);
 
 static int __init uinput_init(void)
 {

@@ -6,7 +6,6 @@
  * Copyright (C) 1992 - 1997, 2000-2006 Silicon Graphics, Inc. All rights reserved.
  */
 
-#include <linux/slab.h>
 #include <asm/sn/types.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/io.h>

@@ -29,7 +29,6 @@
 #ifdef __KERNEL__
 
 #include <linux/posix_acl.h>
-#include <linux/sunrpc/xdr.h>
 
 /* Maximum number of ACL entries over NFS */
 #define NFS_ACL_MAX_ENTRIES	1024

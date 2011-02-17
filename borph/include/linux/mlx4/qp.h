@@ -109,11 +109,10 @@ struct mlx4_qp_path {
 	__be32			tclass_flowlabel;
 	u8			rgid[16];
 	u8			sched_queue;
-	u8			vlan_index;
+	u8			snooper_flags;
 	u8			reserved3[2];
 	u8			counter_index;
-	u8			reserved4;
-	u8			dmac[6];
+	u8			reserved4[7];
 };
 
 struct mlx4_qp_context {
@@ -167,7 +166,6 @@ enum {
 	MLX4_WQE_CTRL_TCP_UDP_CSUM	= 1 << 5,
 	MLX4_WQE_CTRL_INS_VLAN		= 1 << 6,
 	MLX4_WQE_CTRL_STRONG_ORDER	= 1 << 7,
-	MLX4_WQE_CTRL_FORCE_LOOPBACK	= 1 << 0,
 };
 
 struct mlx4_wqe_ctrl_seg {
@@ -221,8 +219,7 @@ struct mlx4_wqe_datagram_seg {
 	__be32			av[8];
 	__be32			dqpn;
 	__be32			qkey;
-	__be16			vlan;
-	u8			mac[6];
+	__be32			reservd[2];
 };
 
 struct mlx4_wqe_lso_seg {
@@ -286,13 +283,6 @@ struct mlx4_wqe_raddr_seg {
 struct mlx4_wqe_atomic_seg {
 	__be64			swap_add;
 	__be64			compare;
-};
-
-struct mlx4_wqe_masked_atomic_seg {
-	__be64			swap_add;
-	__be64			compare;
-	__be64			swap_add_mask;
-	__be64			compare_mask;
 };
 
 struct mlx4_wqe_data_seg {

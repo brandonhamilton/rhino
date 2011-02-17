@@ -26,6 +26,7 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/suspend.h>
+#include <linux/slab.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/ucb1400.h>

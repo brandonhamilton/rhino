@@ -107,14 +107,13 @@ typedef pte_t *pgtable_t;
 #define __pgd(x)        ((pgd_t) { (x) } )
 #define __pgprot(x)     ((pgprot_t) { (x) } )
 
+/* default storage key used for all pages */
+extern unsigned int default_storage_key;
+
 static inline void
-page_set_storage_key(unsigned long addr, unsigned int skey, int mapped)
+page_set_storage_key(unsigned long addr, unsigned int skey)
 {
-	if (!mapped)
-		asm volatile(".insn rrf,0xb22b0000,%0,%1,8,0"
-			     : : "d" (skey), "a" (addr));
-	else
-		asm volatile("sske %0,%1" : : "d" (skey), "a" (addr));
+	asm volatile("sske %0,%1" : : "d" (skey), "a" (addr));
 }
 
 static inline unsigned int
@@ -129,11 +128,6 @@ page_get_storage_key(unsigned long addr)
 struct page;
 void arch_free_page(struct page *page, int order);
 void arch_alloc_page(struct page *page, int order);
-
-static inline int devmem_is_allowed(unsigned long pfn)
-{
-	return 0;
-}
 
 #define HAVE_ARCH_FREE_PAGE
 #define HAVE_ARCH_ALLOC_PAGE

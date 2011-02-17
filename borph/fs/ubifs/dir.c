@@ -104,7 +104,14 @@ struct inode *ubifs_new_inode(struct ubifs_info *c, const struct inode *dir,
 	 */
 	inode->i_flags |= (S_NOCMTIME);
 
-	inode_init_owner(inode, dir, mode);
+	inode->i_uid = current_fsuid();
+	if (dir->i_mode & S_ISGID) {
+		inode->i_gid = dir->i_gid;
+		if (S_ISDIR(mode))
+			mode |= S_ISGID;
+	} else
+		inode->i_gid = current_fsgid();
+	inode->i_mode = mode;
 	inode->i_mtime = inode->i_atime = inode->i_ctime =
 			 ubifs_current_time(inode);
 	inode->i_mapping->nrpages = 0;
@@ -550,7 +557,7 @@ static int ubifs_link(struct dentry *old_dentry, struct inode *dir,
 
 	lock_2_inodes(dir, inode);
 	inc_nlink(inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	inode->i_ctime = ubifs_current_time(inode);
 	dir->i_size += sz_change;
 	dir_ui->ui_size = dir->i_size;
@@ -1113,7 +1120,7 @@ static int ubifs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (release)
 		ubifs_release_budget(c, &ino_req);
 	if (IS_SYNC(old_inode))
-		err = old_inode->i_sb->s_op->write_inode(old_inode, NULL);
+		err = old_inode->i_sb->s_op->write_inode(old_inode, 1);
 	return err;
 
 out_cancel:

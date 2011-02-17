@@ -17,7 +17,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
 
@@ -34,29 +33,21 @@ MODULE_DESCRIPTION("Softmac Prism54 common code");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("prism54common");
 
-static int p54_sta_add_remove(struct ieee80211_hw *hw,
-			      struct ieee80211_vif *vif,
-			      struct ieee80211_sta *sta)
-{
-	struct p54_common *priv = hw->priv;
-
-	/*
-	 * Notify the firmware that we don't want or we don't
-	 * need to buffer frames for this station anymore.
-	 */
-
-	p54_sta_unlock(priv, sta->addr);
-
-	return 0;
-}
-
 static void p54_sta_notify(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
 			      enum sta_notify_cmd notify_cmd,
 			      struct ieee80211_sta *sta)
 {
 	struct p54_common *priv = dev->priv;
-
 	switch (notify_cmd) {
+	case STA_NOTIFY_ADD:
+	case STA_NOTIFY_REMOVE:
+		/*
+		 * Notify the firmware that we don't want or we don't
+		 * need to buffer frames for this station anymore.
+		 */
+
+		p54_sta_unlock(priv, sta->addr);
+		break;
 	case STA_NOTIFY_AWAKE:
 		/* update the firmware's filter table */
 		p54_sta_unlock(priv, sta->addr);
@@ -225,7 +216,7 @@ static void p54_stop(struct ieee80211_hw *dev)
 }
 
 static int p54_add_interface(struct ieee80211_hw *dev,
-			     struct ieee80211_vif *vif)
+			     struct ieee80211_if_init_conf *conf)
 {
 	struct p54_common *priv = dev->priv;
 
@@ -235,28 +226,28 @@ static int p54_add_interface(struct ieee80211_hw *dev,
 		return -EOPNOTSUPP;
 	}
 
-	priv->vif = vif;
+	priv->vif = conf->vif;
 
-	switch (vif->type) {
+	switch (conf->type) {
 	case NL80211_IFTYPE_STATION:
 	case NL80211_IFTYPE_ADHOC:
 	case NL80211_IFTYPE_AP:
 	case NL80211_IFTYPE_MESH_POINT:
-		priv->mode = vif->type;
+		priv->mode = conf->type;
 		break;
 	default:
 		mutex_unlock(&priv->conf_mutex);
 		return -EOPNOTSUPP;
 	}
 
-	memcpy(priv->mac_addr, vif->addr, ETH_ALEN);
+	memcpy(priv->mac_addr, conf->mac_addr, ETH_ALEN);
 	p54_setup_mac(priv);
 	mutex_unlock(&priv->conf_mutex);
 	return 0;
 }
 
 static void p54_remove_interface(struct ieee80211_hw *dev,
-				 struct ieee80211_vif *vif)
+				 struct ieee80211_if_init_conf *conf)
 {
 	struct p54_common *priv = dev->priv;
 
@@ -367,6 +358,16 @@ static int p54_get_stats(struct ieee80211_hw *dev,
 	return 0;
 }
 
+static int p54_get_tx_stats(struct ieee80211_hw *dev,
+			    struct ieee80211_tx_queue_stats *stats)
+{
+	struct p54_common *priv = dev->priv;
+
+	memcpy(stats, &priv->tx_stats[P54_QUEUE_DATA],
+	       sizeof(stats[0]) * dev->queues);
+	return 0;
+}
+
 static void p54_bss_info_changed(struct ieee80211_hw *dev,
 				 struct ieee80211_vif *vif,
 				 struct ieee80211_bss_conf *info,
@@ -429,8 +430,8 @@ static int p54_set_key(struct ieee80211_hw *dev, enum set_key_cmd cmd,
 
 	mutex_lock(&priv->conf_mutex);
 	if (cmd == SET_KEY) {
-		switch (key->cipher) {
-		case WLAN_CIPHER_SUITE_TKIP:
+		switch (key->alg) {
+		case ALG_TKIP:
 			if (!(priv->privacy_caps & (BR_DESC_PRIV_CAP_MICHAEL |
 			      BR_DESC_PRIV_CAP_TKIP))) {
 				ret = -EOPNOTSUPP;
@@ -439,8 +440,7 @@ static int p54_set_key(struct ieee80211_hw *dev, enum set_key_cmd cmd,
 			key->flags |= IEEE80211_KEY_FLAG_GENERATE_IV;
 			algo = P54_CRYPTO_TKIPMICHAEL;
 			break;
-		case WLAN_CIPHER_SUITE_WEP40:
-		case WLAN_CIPHER_SUITE_WEP104:
+		case ALG_WEP:
 			if (!(priv->privacy_caps & BR_DESC_PRIV_CAP_WEP)) {
 				ret = -EOPNOTSUPP;
 				goto out_unlock;
@@ -448,7 +448,7 @@ static int p54_set_key(struct ieee80211_hw *dev, enum set_key_cmd cmd,
 			key->flags |= IEEE80211_KEY_FLAG_GENERATE_IV;
 			algo = P54_CRYPTO_WEP;
 			break;
-		case WLAN_CIPHER_SUITE_CCMP:
+		case ALG_CCMP:
 			if (!(priv->privacy_caps & BR_DESC_PRIV_CAP_AESCCMP)) {
 				ret = -EOPNOTSUPP;
 				goto out_unlock;
@@ -508,22 +508,6 @@ out_unlock:
 	return ret;
 }
 
-static int p54_get_survey(struct ieee80211_hw *dev, int idx,
-				struct survey_info *survey)
-{
-	struct p54_common *priv = dev->priv;
-	struct ieee80211_conf *conf = &dev->conf;
-
-	if (idx != 0)
-		return -ENOENT;
-
-	survey->channel = conf->channel;
-	survey->filled = SURVEY_INFO_NOISE_DBM;
-	survey->noise = clamp_t(s8, priv->noise, -128, 127);
-
-	return 0;
-}
-
 static const struct ieee80211_ops p54_ops = {
 	.tx			= p54_tx_80211,
 	.start			= p54_start,
@@ -532,15 +516,13 @@ static const struct ieee80211_ops p54_ops = {
 	.remove_interface	= p54_remove_interface,
 	.set_tim		= p54_set_tim,
 	.sta_notify		= p54_sta_notify,
-	.sta_add		= p54_sta_add_remove,
-	.sta_remove		= p54_sta_add_remove,
 	.set_key		= p54_set_key,
 	.config			= p54_config,
 	.bss_info_changed	= p54_bss_info_changed,
 	.configure_filter	= p54_configure_filter,
 	.conf_tx		= p54_conf_tx,
 	.get_stats		= p54_get_stats,
-	.get_survey		= p54_get_survey,
+	.get_tx_stats		= p54_get_tx_stats
 };
 
 struct ieee80211_hw *p54_init_common(size_t priv_data_len)
@@ -564,7 +546,7 @@ struct ieee80211_hw *p54_init_common(size_t priv_data_len)
 		     IEEE80211_HW_SUPPORTS_PS |
 		     IEEE80211_HW_PS_NULLFUNC_STACK |
 		     IEEE80211_HW_BEACON_FILTER |
-		     IEEE80211_HW_REPORTS_TX_ACK_STATUS;
+		     IEEE80211_HW_NOISE_DBM;
 
 	dev->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 				      BIT(NL80211_IFTYPE_ADHOC) |

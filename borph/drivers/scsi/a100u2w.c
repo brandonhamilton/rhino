@@ -69,6 +69,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/dma-mapping.h>
 
 #include <asm/io.h>
@@ -491,7 +492,7 @@ static void init_alloc_map(struct orc_host * host)
  *	init_orchid		-	initialise the host adapter
  *	@host:host adapter to initialise
  *
- *	Initialise the controller and if necessary load the firmware.
+ *	Initialise the controller and if neccessary load the firmware.
  *
  *	Returns -1 if the initialisation fails.
  */
@@ -911,7 +912,7 @@ static int inia100_build_scb(struct orc_host * host, struct orc_scb * scb, struc
  *	queue the command down to the controller
  */
 
-static int inia100_queue_lck(struct scsi_cmnd * cmd, void (*done) (struct scsi_cmnd *))
+static int inia100_queue(struct scsi_cmnd * cmd, void (*done) (struct scsi_cmnd *))
 {
 	struct orc_scb *scb;
 	struct orc_host *host;		/* Point to Host adapter control block */
@@ -929,8 +930,6 @@ static int inia100_queue_lck(struct scsi_cmnd * cmd, void (*done) (struct scsi_c
 	orc_exec_scb(host, scb);	/* Start execute SCB            */
 	return 0;
 }
-
-static DEF_SCSI_QCMD(inia100_queue)
 
 /*****************************************************************************
  Function name  : inia100_abort

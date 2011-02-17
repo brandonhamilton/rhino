@@ -45,23 +45,23 @@ xfs_readlink_by_handle(
 extern int
 xfs_attrmulti_attr_get(
 	struct inode		*inode,
-	unsigned char		*name,
-	unsigned char		__user *ubuf,
+	char			*name,
+	char			__user *ubuf,
 	__uint32_t		*len,
 	__uint32_t		flags);
 
 extern int
-xfs_attrmulti_attr_set(
+	xfs_attrmulti_attr_set(
 	struct inode		*inode,
-	unsigned char		*name,
-	const unsigned char	__user *ubuf,
+	char			*name,
+	const char		__user *ubuf,
 	__uint32_t		len,
 	__uint32_t		flags);
 
 extern int
 xfs_attrmulti_attr_remove(
 	struct inode		*inode,
-	unsigned char		*name,
+	char			*name,
 	__uint32_t		flags);
 
 extern struct dentry *

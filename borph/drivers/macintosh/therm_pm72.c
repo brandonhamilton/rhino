@@ -114,6 +114,7 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
@@ -148,7 +149,7 @@
  * Driver statics
  */
 
-static struct platform_device *		of_dev;
+static struct of_device *		of_dev;
 static struct i2c_adapter *		u3_0;
 static struct i2c_adapter *		u3_1;
 static struct i2c_adapter *		k2;
@@ -947,16 +948,10 @@ static void do_monitor_cpu_combined(void)
 		printk(KERN_WARNING "Warning ! Temperature way above maximum (%d) !\n",
 		       temp_combi >> 16);
 		state0->overtemp += CPU_MAX_OVERTEMP / 4;
-	} else if (temp_combi > (state0->mpu.tmax << 16)) {
+	} else if (temp_combi > (state0->mpu.tmax << 16))
 		state0->overtemp++;
-		printk(KERN_WARNING "Temperature %d above max %d. overtemp %d\n",
-		       temp_combi >> 16, state0->mpu.tmax, state0->overtemp);
-	} else {
-		if (state0->overtemp)
-			printk(KERN_WARNING "Temperature back down to %d\n",
-			       temp_combi >> 16);
+	else
 		state0->overtemp = 0;
-	}
 	if (state0->overtemp >= CPU_MAX_OVERTEMP)
 		critical_state = 1;
 	if (state0->overtemp > 0) {
@@ -1028,16 +1023,10 @@ static void do_monitor_cpu_split(struct cpu_pid_state *state)
 		       " (%d) !\n",
 		       state->index, temp >> 16);
 		state->overtemp += CPU_MAX_OVERTEMP / 4;
-	} else if (temp > (state->mpu.tmax << 16)) {
+	} else if (temp > (state->mpu.tmax << 16))
 		state->overtemp++;
-		printk(KERN_WARNING "CPU %d temperature %d above max %d. overtemp %d\n",
-		       state->index, temp >> 16, state->mpu.tmax, state->overtemp);
-	} else {
-		if (state->overtemp)
-			printk(KERN_WARNING "CPU %d temperature back down to %d\n",
-			       state->index, temp >> 16);
+	else
 		state->overtemp = 0;
-	}
 	if (state->overtemp >= CPU_MAX_OVERTEMP)
 		critical_state = 1;
 	if (state->overtemp > 0) {
@@ -1096,16 +1085,10 @@ static void do_monitor_cpu_rack(struct cpu_pid_state *state)
 		       " (%d) !\n",
 		       state->index, temp >> 16);
 		state->overtemp = CPU_MAX_OVERTEMP / 4;
-	} else if (temp > (state->mpu.tmax << 16)) {
+	} else if (temp > (state->mpu.tmax << 16))
 		state->overtemp++;
-		printk(KERN_WARNING "CPU %d temperature %d above max %d. overtemp %d\n",
-		       state->index, temp >> 16, state->mpu.tmax, state->overtemp);
-	} else {
-		if (state->overtemp)
-			printk(KERN_WARNING "CPU %d temperature back down to %d\n",
-			       state->index, temp >> 16);
+	else
 		state->overtemp = 0;
-	}
 	if (state->overtemp >= CPU_MAX_OVERTEMP)
 		critical_state = 1;
 	if (state->overtemp > 0) {
@@ -1916,7 +1899,7 @@ static int create_control_loops(void)
 	 */
 	if (rackmac)
 		cpu_pid_type = CPU_PID_TYPE_RACKMAC;
-	else if (of_machine_is_compatible("PowerMac7,3")
+	else if (machine_is_compatible("PowerMac7,3")
 	    && (cpu_count > 1)
 	    && fcu_fans[CPUA_PUMP_RPM_INDEX].id != FCU_FAN_ABSENT_ID
 	    && fcu_fans[CPUB_PUMP_RPM_INDEX].id != FCU_FAN_ABSENT_ID) {
@@ -2210,25 +2193,25 @@ static void fcu_lookup_fans(struct device_node *fcu_node)
 	}
 }
 
-static int fcu_of_probe(struct platform_device* dev, const struct of_device_id *match)
+static int fcu_of_probe(struct of_device* dev, const struct of_device_id *match)
 {
 	state = state_detached;
 
 	/* Lookup the fans in the device tree */
-	fcu_lookup_fans(dev->dev.of_node);
+	fcu_lookup_fans(dev->node);
 
 	/* Add the driver */
 	return i2c_add_driver(&therm_pm72_driver);
 }
 
-static int fcu_of_remove(struct platform_device* dev)
+static int fcu_of_remove(struct of_device* dev)
 {
 	i2c_del_driver(&therm_pm72_driver);
 
 	return 0;
 }
 
-static const struct of_device_id fcu_match[] = 
+static struct of_device_id fcu_match[] = 
 {
 	{
 	.type		= "fcu",
@@ -2238,11 +2221,8 @@ static const struct of_device_id fcu_match[] =
 
 static struct of_platform_driver fcu_of_platform_driver = 
 {
-	.driver = {
-		.name = "temperature",
-		.owner = THIS_MODULE,
-		.of_match_table = fcu_match,
-	},
+	.name 		= "temperature",
+	.match_table	= fcu_match,
 	.probe		= fcu_of_probe,
 	.remove		= fcu_of_remove
 };
@@ -2254,10 +2234,10 @@ static int __init therm_pm72_init(void)
 {
 	struct device_node *np;
 
-	rackmac = of_machine_is_compatible("RackMac3,1");
+	rackmac = machine_is_compatible("RackMac3,1");
 
-	if (!of_machine_is_compatible("PowerMac7,2") &&
-	    !of_machine_is_compatible("PowerMac7,3") &&
+	if (!machine_is_compatible("PowerMac7,2") &&
+	    !machine_is_compatible("PowerMac7,3") &&
 	    !rackmac)
 	    	return -ENODEV;
 

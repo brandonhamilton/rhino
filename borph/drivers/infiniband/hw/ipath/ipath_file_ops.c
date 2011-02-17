@@ -36,10 +36,10 @@
 #include <linux/cdev.h>
 #include <linux/swap.h>
 #include <linux/vmalloc.h>
-#include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/io.h>
 #include <linux/jiffies.h>
+#include <linux/smp_lock.h>
 #include <asm/pgtable.h>
 
 #include "ipath_kernel.h"
@@ -62,8 +62,7 @@ static const struct file_operations ipath_file_ops = {
 	.open = ipath_open,
 	.release = ipath_close,
 	.poll = ipath_poll,
-	.mmap = ipath_mmap,
-	.llseek = noop_llseek,
+	.mmap = ipath_mmap
 };
 
 /*
@@ -2055,7 +2054,7 @@ static int ipath_close(struct inode *in, struct file *fp)
 
 	mutex_lock(&ipath_mutex);
 
-	fd = fp->private_data;
+	fd = (struct ipath_filedata *) fp->private_data;
 	fp->private_data = NULL;
 	pd = fd->pd;
 	if (!pd) {

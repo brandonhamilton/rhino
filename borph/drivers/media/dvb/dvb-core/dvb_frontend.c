@@ -95,10 +95,6 @@ MODULE_PARM_DESC(dvb_mfe_wait_time, "Wait up to <mfe_wait_time> seconds on open(
  * FESTATE_LOSTLOCK. When the lock has been lost, and we're searching it again.
  */
 
-#define DVB_FE_NO_EXIT	0
-#define DVB_FE_NORMAL_EXIT	1
-#define DVB_FE_DEVICE_REMOVED	2
-
 static DEFINE_MUTEX(frontend_mutex);
 
 struct dvb_frontend_private {
@@ -464,7 +460,7 @@ static void dvb_frontend_swzigzag(struct dvb_frontend *fe)
 	if ((fepriv->state & FESTATE_SEARCHING_FAST) || (fepriv->state & FESTATE_RETUNE)) {
 		fepriv->delay = fepriv->min_delay;
 
-		/* perform a tune */
+		/* peform a tune */
 		retval = dvb_frontend_swzigzag_autotune(fe,
 							fepriv->check_wrapped);
 		if (retval < 0) {
@@ -501,7 +497,7 @@ static int dvb_frontend_is_exiting(struct dvb_frontend *fe)
 {
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 
-	if (fepriv->exit != DVB_FE_NO_EXIT)
+	if (fepriv->exit)
 		return 1;
 
 	if (fepriv->dvbdev->writers == 1)
@@ -563,7 +559,7 @@ restart:
 
 		if (kthread_should_stop() || dvb_frontend_is_exiting(fe)) {
 			/* got signal or quitting */
-			fepriv->exit = DVB_FE_NORMAL_EXIT;
+			fepriv->exit = 1;
 			break;
 		}
 
@@ -677,10 +673,7 @@ restart:
 	}
 
 	fepriv->thread = NULL;
-	if (kthread_should_stop())
-		fepriv->exit = DVB_FE_DEVICE_REMOVED;
-	else
-		fepriv->exit = DVB_FE_NO_EXIT;
+	fepriv->exit = 0;
 	mb();
 
 	dvb_frontend_wakeup(fe);
@@ -693,7 +686,7 @@ static void dvb_frontend_stop(struct dvb_frontend *fe)
 
 	dprintk ("%s\n", __func__);
 
-	fepriv->exit = DVB_FE_NORMAL_EXIT;
+	fepriv->exit = 1;
 	mb();
 
 	if (!fepriv->thread)
@@ -701,7 +694,7 @@ static void dvb_frontend_stop(struct dvb_frontend *fe)
 
 	kthread_stop(fepriv->thread);
 
-	sema_init(&fepriv->sem, 1);
+	init_MUTEX (&fepriv->sem);
 	fepriv->state = FESTATE_IDLE;
 
 	/* paranoia check in case a signal arrived */
@@ -762,7 +755,7 @@ static int dvb_frontend_start(struct dvb_frontend *fe)
 	dprintk ("%s\n", __func__);
 
 	if (fepriv->thread) {
-		if (fepriv->exit == DVB_FE_NO_EXIT)
+		if (!fepriv->exit)
 			return 0;
 		else
 			dvb_frontend_stop (fe);
@@ -774,7 +767,7 @@ static int dvb_frontend_start(struct dvb_frontend *fe)
 		return -EINTR;
 
 	fepriv->state = FESTATE_IDLE;
-	fepriv->exit = DVB_FE_NO_EXIT;
+	fepriv->exit = 0;
 	fepriv->thread = NULL;
 	mb();
 
@@ -790,7 +783,7 @@ static int dvb_frontend_start(struct dvb_frontend *fe)
 	return 0;
 }
 
-static void dvb_frontend_get_frequency_limits(struct dvb_frontend *fe,
+static void dvb_frontend_get_frequeny_limits(struct dvb_frontend *fe,
 					u32 *freq_min, u32 *freq_max)
 {
 	*freq_min = max(fe->ops.info.frequency_min, fe->ops.tuner_ops.info.frequency_min);
@@ -814,7 +807,7 @@ static int dvb_frontend_check_parameters(struct dvb_frontend *fe,
 	u32 freq_max;
 
 	/* range check: frequency */
-	dvb_frontend_get_frequency_limits(fe, &freq_min, &freq_max);
+	dvb_frontend_get_frequeny_limits(fe, &freq_min, &freq_max);
 	if ((freq_min && parms->frequency < freq_min) ||
 	    (freq_max && parms->frequency > freq_max)) {
 		printk(KERN_WARNING "DVB: adapter %i frontend %i frequency %u out of range (%u..%u)\n",
@@ -1195,16 +1188,18 @@ static void dtv_property_cache_submit(struct dvb_frontend *fe)
 	}
 }
 
-static int dvb_frontend_ioctl_legacy(struct file *file,
+static int dvb_frontend_ioctl_legacy(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg);
-static int dvb_frontend_ioctl_properties(struct file *file,
+static int dvb_frontend_ioctl_properties(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg);
 
 static int dtv_property_process_get(struct dvb_frontend *fe,
 				    struct dtv_property *tvp,
-				    struct file *file)
+				    struct inode *inode, struct file *file)
 {
 	int r = 0;
+
+	dtv_property_dump(tvp);
 
 	/* Allow the frontend to validate incoming properties */
 	if (fe->ops.get_property)
@@ -1328,13 +1323,12 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 		r = -1;
 	}
 
-	dtv_property_dump(tvp);
-
 	return r;
 }
 
 static int dtv_property_process_set(struct dvb_frontend *fe,
 				    struct dtv_property *tvp,
+				    struct inode *inode,
 				    struct file *file)
 {
 	int r = 0;
@@ -1365,7 +1359,7 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 		dprintk("%s() Finalised property cache\n", __func__);
 		dtv_property_cache_submit(fe);
 
-		r |= dvb_frontend_ioctl_legacy(file, FE_SET_FRONTEND,
+		r |= dvb_frontend_ioctl_legacy(inode, file, FE_SET_FRONTEND,
 			&fepriv->parameters);
 		break;
 	case DTV_FREQUENCY:
@@ -1397,12 +1391,12 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 		break;
 	case DTV_VOLTAGE:
 		fe->dtv_property_cache.voltage = tvp->u.data;
-		r = dvb_frontend_ioctl_legacy(file, FE_SET_VOLTAGE,
+		r = dvb_frontend_ioctl_legacy(inode, file, FE_SET_VOLTAGE,
 			(void *)fe->dtv_property_cache.voltage);
 		break;
 	case DTV_TONE:
 		fe->dtv_property_cache.sectone = tvp->u.data;
-		r = dvb_frontend_ioctl_legacy(file, FE_SET_TONE,
+		r = dvb_frontend_ioctl_legacy(inode, file, FE_SET_TONE,
 			(void *)fe->dtv_property_cache.sectone);
 		break;
 	case DTV_CODE_RATE_HP:
@@ -1486,7 +1480,7 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 	return r;
 }
 
-static int dvb_frontend_ioctl(struct file *file,
+static int dvb_frontend_ioctl(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -1494,9 +1488,9 @@ static int dvb_frontend_ioctl(struct file *file,
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 	int err = -EOPNOTSUPP;
 
-	dprintk("%s (%d)\n", __func__, _IOC_NR(cmd));
+	dprintk ("%s\n", __func__);
 
-	if (fepriv->exit != DVB_FE_NO_EXIT)
+	if (fepriv->exit)
 		return -ENODEV;
 
 	if ((file->f_flags & O_ACCMODE) == O_RDONLY &&
@@ -1508,17 +1502,17 @@ static int dvb_frontend_ioctl(struct file *file,
 		return -ERESTARTSYS;
 
 	if ((cmd == FE_SET_PROPERTY) || (cmd == FE_GET_PROPERTY))
-		err = dvb_frontend_ioctl_properties(file, cmd, parg);
+		err = dvb_frontend_ioctl_properties(inode, file, cmd, parg);
 	else {
 		fe->dtv_property_cache.state = DTV_UNDEFINED;
-		err = dvb_frontend_ioctl_legacy(file, cmd, parg);
+		err = dvb_frontend_ioctl_legacy(inode, file, cmd, parg);
 	}
 
 	up(&fepriv->sem);
 	return err;
 }
 
-static int dvb_frontend_ioctl_properties(struct file *file,
+static int dvb_frontend_ioctl_properties(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -1542,7 +1536,8 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		if ((tvps->num == 0) || (tvps->num > DTV_IOCTL_MAX_MSGS))
 			return -EINVAL;
 
-		tvp = kmalloc(tvps->num * sizeof(struct dtv_property), GFP_KERNEL);
+		tvp = (struct dtv_property *) kmalloc(tvps->num *
+			sizeof(struct dtv_property), GFP_KERNEL);
 		if (!tvp) {
 			err = -ENOMEM;
 			goto out;
@@ -1554,7 +1549,7 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		}
 
 		for (i = 0; i < tvps->num; i++) {
-			(tvp + i)->result = dtv_property_process_set(fe, tvp + i, file);
+			(tvp + i)->result = dtv_property_process_set(fe, tvp + i, inode, file);
 			err |= (tvp + i)->result;
 		}
 
@@ -1574,7 +1569,8 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		if ((tvps->num == 0) || (tvps->num > DTV_IOCTL_MAX_MSGS))
 			return -EINVAL;
 
-		tvp = kmalloc(tvps->num * sizeof(struct dtv_property), GFP_KERNEL);
+		tvp = (struct dtv_property *) kmalloc(tvps->num *
+			sizeof(struct dtv_property), GFP_KERNEL);
 		if (!tvp) {
 			err = -ENOMEM;
 			goto out;
@@ -1586,7 +1582,7 @@ static int dvb_frontend_ioctl_properties(struct file *file,
 		}
 
 		for (i = 0; i < tvps->num; i++) {
-			(tvp + i)->result = dtv_property_process_get(fe, tvp + i, file);
+			(tvp + i)->result = dtv_property_process_get(fe, tvp + i, inode, file);
 			err |= (tvp + i)->result;
 		}
 
@@ -1603,7 +1599,7 @@ out:
 	return err;
 }
 
-static int dvb_frontend_ioctl_legacy(struct file *file,
+static int dvb_frontend_ioctl_legacy(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -1626,7 +1622,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 	case FE_GET_INFO: {
 		struct dvb_frontend_info* info = parg;
 		memcpy(info, &fe->ops.info, sizeof(struct dvb_frontend_info));
-		dvb_frontend_get_frequency_limits(fe, &info->frequency_min, &info->frequency_max);
+		dvb_frontend_get_frequeny_limits(fe, &info->frequency_min, &info->frequency_max);
 
 		/* Force the CAN_INVERSION_AUTO bit on. If the frontend doesn't
 		 * do it, it is done for it. */
@@ -1725,7 +1721,7 @@ static int dvb_frontend_ioctl_legacy(struct file *file,
 			 * (stv0299 for instance) take longer than 8msec to
 			 * respond to a set_voltage command.  Those switches
 			 * need custom routines to switch properly.  For all
-			 * other frontends, the following should work ok.
+			 * other frontends, the following shoule work ok.
 			 * Dish network legacy switches (as used by Dish500)
 			 * are controlled by sending 9-bit command words
 			 * spaced 8msec apart.
@@ -1922,8 +1918,6 @@ static int dvb_frontend_open(struct inode *inode, struct file *file)
 	int ret;
 
 	dprintk ("%s\n", __func__);
-	if (fepriv->exit == DVB_FE_DEVICE_REMOVED)
-		return -ENODEV;
 
 	if (adapter->mfe_shared) {
 		mutex_lock (&adapter->mfe_lock);
@@ -2016,7 +2010,7 @@ static int dvb_frontend_release(struct inode *inode, struct file *file)
 	ret = dvb_generic_release (inode, file);
 
 	if (dvbdev->users == -1) {
-		if (fepriv->exit != DVB_FE_NO_EXIT) {
+		if (fepriv->exit == 1) {
 			fops_put(file->f_op);
 			file->f_op = NULL;
 			wake_up(&dvbdev->wait_queue);
@@ -2030,11 +2024,10 @@ static int dvb_frontend_release(struct inode *inode, struct file *file)
 
 static const struct file_operations dvb_frontend_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= dvb_generic_ioctl,
+	.ioctl		= dvb_generic_ioctl,
 	.poll		= dvb_frontend_poll,
 	.open		= dvb_frontend_open,
-	.release	= dvb_frontend_release,
-	.llseek		= noop_llseek,
+	.release	= dvb_frontend_release
 };
 
 int dvb_register_frontend(struct dvb_adapter* dvb,
@@ -2061,7 +2054,7 @@ int dvb_register_frontend(struct dvb_adapter* dvb,
 	}
 	fepriv = fe->frontend_priv;
 
-	sema_init(&fepriv->sem, 1);
+	init_MUTEX (&fepriv->sem);
 	init_waitqueue_head (&fepriv->wait_queue);
 	init_waitqueue_head (&fepriv->events.wait_queue);
 	mutex_init(&fepriv->events.mtx);

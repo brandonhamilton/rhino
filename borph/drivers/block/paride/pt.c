@@ -146,7 +146,7 @@ static int (*drives[4])[6] = {&drive0, &drive1, &drive2, &drive3};
 #include <linux/mtio.h>
 #include <linux/device.h>
 #include <linux/sched.h>	/* current, TASK_*, schedule_timeout() */
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -189,7 +189,6 @@ module_param_array(drive3, int, NULL, 0);
 #define ATAPI_MODE_SENSE	0x1a
 #define ATAPI_LOG_SENSE		0x4d
 
-static DEFINE_MUTEX(pt_mutex);
 static int pt_open(struct inode *inode, struct file *file);
 static long pt_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 static int pt_release(struct inode *inode, struct file *file);
@@ -240,7 +239,6 @@ static const struct file_operations pt_fops = {
 	.unlocked_ioctl = pt_ioctl,
 	.open = pt_open,
 	.release = pt_release,
-	.llseek = noop_llseek,
 };
 
 /* sysfs class support */
@@ -276,11 +274,11 @@ static int pt_wait(struct pt_unit *tape, int go, int stop, char *fun, char *msg)
 	       && (j++ < PT_SPIN))
 		udelay(PT_SPIN_DEL);
 
-	if ((r & (STAT_ERR & stop)) || (j > PT_SPIN)) {
+	if ((r & (STAT_ERR & stop)) || (j >= PT_SPIN)) {
 		s = read_reg(pi, 7);
 		e = read_reg(pi, 1);
 		p = read_reg(pi, 2);
-		if (j > PT_SPIN)
+		if (j >= PT_SPIN)
 			e |= 0x100;
 		if (fun)
 			printk("%s: %s %s: alt=0x%x stat=0x%x err=0x%x"
@@ -652,9 +650,9 @@ static int pt_open(struct inode *inode, struct file *file)
 	struct pt_unit *tape = pt + unit;
 	int err;
 
-	mutex_lock(&pt_mutex);
+	lock_kernel();
 	if (unit >= PT_UNITS || (!tape->present)) {
-		mutex_unlock(&pt_mutex);
+		unlock_kernel();
 		return -ENODEV;
 	}
 
@@ -683,12 +681,12 @@ static int pt_open(struct inode *inode, struct file *file)
 	}
 
 	file->private_data = tape;
-	mutex_unlock(&pt_mutex);
+	unlock_kernel();
 	return 0;
 
 out:
 	atomic_inc(&tape->available);
-	mutex_unlock(&pt_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -706,15 +704,15 @@ static long pt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		switch (mtop.mt_op) {
 
 		case MTREW:
-			mutex_lock(&pt_mutex);
+			lock_kernel();
 			pt_rewind(tape);
-			mutex_unlock(&pt_mutex);
+			unlock_kernel();
 			return 0;
 
 		case MTWEOF:
-			mutex_lock(&pt_mutex);
+			lock_kernel();
 			pt_write_fm(tape);
-			mutex_unlock(&pt_mutex);
+			unlock_kernel();
 			return 0;
 
 		default:

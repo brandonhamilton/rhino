@@ -40,8 +40,6 @@ struct kvm_pit {
 	struct kvm_kpit_state pit_state;
 	int irq_source_id;
 	struct kvm_irq_mask_notifier mask_notifier;
-	struct workqueue_struct *wq;
-	struct work_struct expired;
 };
 
 #define KVM_PIT_BASE_ADDRESS	    0x40

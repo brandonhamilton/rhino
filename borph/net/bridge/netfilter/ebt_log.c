@@ -24,16 +24,16 @@
 
 static DEFINE_SPINLOCK(ebt_log_lock);
 
-static int ebt_log_tg_check(const struct xt_tgchk_param *par)
+static bool ebt_log_tg_check(const struct xt_tgchk_param *par)
 {
 	struct ebt_log_info *info = par->targinfo;
 
 	if (info->bitmask & ~EBT_LOG_MASK)
-		return -EINVAL;
+		return false;
 	if (info->loglevel >= 8)
-		return -EINVAL;
+		return false;
 	info->prefix[EBT_LOG_PREFIX_SIZE - 1] = '\0';
-	return 0;
+	return true;
 }
 
 struct tcpudphdr
@@ -171,7 +171,7 @@ out:
 }
 
 static unsigned int
-ebt_log_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ebt_log_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	const struct ebt_log_info *info = par->targinfo;
 	struct nf_loginfo li;
@@ -195,7 +195,7 @@ static struct xt_target ebt_log_tg_reg __read_mostly = {
 	.family		= NFPROTO_BRIDGE,
 	.target		= ebt_log_tg,
 	.checkentry	= ebt_log_tg_check,
-	.targetsize	= sizeof(struct ebt_log_info),
+	.targetsize	= XT_ALIGN(sizeof(struct ebt_log_info)),
 	.me		= THIS_MODULE,
 };
 

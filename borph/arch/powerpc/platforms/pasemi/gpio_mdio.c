@@ -24,7 +24,6 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/ioport.h>
@@ -216,11 +215,11 @@ static int gpio_mdio_reset(struct mii_bus *bus)
 }
 
 
-static int __devinit gpio_mdio_probe(struct platform_device *ofdev,
+static int __devinit gpio_mdio_probe(struct of_device *ofdev,
 				     const struct of_device_id *match)
 {
 	struct device *dev = &ofdev->dev;
-	struct device_node *np = ofdev->dev.of_node;
+	struct device_node *np = ofdev->node;
 	struct mii_bus *new_bus;
 	struct gpio_priv *priv;
 	const unsigned int *prop;
@@ -275,7 +274,7 @@ out:
 }
 
 
-static int gpio_mdio_remove(struct platform_device *dev)
+static int gpio_mdio_remove(struct of_device *dev)
 {
 	struct mii_bus *bus = dev_get_drvdata(&dev->dev);
 
@@ -301,12 +300,11 @@ MODULE_DEVICE_TABLE(of, gpio_mdio_match);
 
 static struct of_platform_driver gpio_mdio_driver =
 {
+	.match_table	= gpio_mdio_match,
 	.probe		= gpio_mdio_probe,
 	.remove		= gpio_mdio_remove,
-	.driver = {
-		.name = "gpio-mdio-bitbang",
-		.owner = THIS_MODULE,
-		.of_match_table = gpio_mdio_match,
+	.driver		= {
+		.name	= "gpio-mdio-bitbang",
 	},
 };
 

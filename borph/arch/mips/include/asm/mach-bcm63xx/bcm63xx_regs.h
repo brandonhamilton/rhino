@@ -770,3 +770,4 @@
 #define DMIPSPLLCFG_N2_MASK		(0x7 << DMIPSPLLCFG_N2_SHIFT)
 
 #endif /* BCM63XX_REGS_H_ */
+

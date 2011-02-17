@@ -22,7 +22,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
 #include <linux/usb.h>
 #include <linux/usb/cdc.h>
 #include <linux/netdevice.h>
@@ -97,9 +96,8 @@ static void tx_complete(struct urb *req)
 	struct sk_buff *skb = req->context;
 	struct net_device *dev = skb->dev;
 	struct usbpn_dev *pnd = netdev_priv(dev);
-	int status = req->status;
 
-	switch (status) {
+	switch (req->status) {
 	case 0:
 		dev->stats.tx_bytes += skb->len;
 		break;
@@ -110,7 +108,7 @@ static void tx_complete(struct urb *req)
 		dev->stats.tx_aborted_errors++;
 	default:
 		dev->stats.tx_errors++;
-		dev_dbg(&dev->dev, "TX error (%d)\n", status);
+		dev_dbg(&dev->dev, "TX error (%d)\n", req->status);
 	}
 	dev->stats.tx_packets++;
 
@@ -151,9 +149,8 @@ static void rx_complete(struct urb *req)
 	struct page *page = virt_to_page(req->transfer_buffer);
 	struct sk_buff *skb;
 	unsigned long flags;
-	int status = req->status;
 
-	switch (status) {
+	switch (req->status) {
 	case 0:
 		spin_lock_irqsave(&pnd->rx_lock, flags);
 		skb = pnd->rx_skb;

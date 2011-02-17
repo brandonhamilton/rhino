@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 
 #include <asm/segment.h>
 #include <asm/page.h>
@@ -23,6 +24,7 @@
 
 /*
  * Map some physical address range into the kernel address space.
+ * The code is copied and adapted from map_chunk().
  */
 
 unsigned long kernel_map(unsigned long paddr, unsigned long size,

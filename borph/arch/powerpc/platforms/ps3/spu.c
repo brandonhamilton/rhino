@@ -20,7 +20,6 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/mmzone.h>
 #include <linux/io.h>
 #include <linux/mm.h>

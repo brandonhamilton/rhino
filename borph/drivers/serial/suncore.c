@@ -55,12 +55,7 @@ EXPORT_SYMBOL(sunserial_unregister_minors);
 int sunserial_console_match(struct console *con, struct device_node *dp,
 			    struct uart_driver *drv, int line, bool ignore_line)
 {
-	if (!con)
-		return 0;
-
-	drv->cons = con;
-
-	if (of_console_device != dp)
+	if (!con || of_console_device != dp)
 		return 0;
 
 	if (!ignore_line) {
@@ -74,10 +69,10 @@ int sunserial_console_match(struct console *con, struct device_node *dp,
 			return 0;
 	}
 
-	if (!console_set_on_cmdline) {
-		con->index = line;
-		add_preferred_console(con->name, line, NULL);
-	}
+	con->index = line;
+	drv->cons = con;
+	add_preferred_console(con->name, line, NULL);
+
 	return 1;
 }
 EXPORT_SYMBOL(sunserial_console_match);

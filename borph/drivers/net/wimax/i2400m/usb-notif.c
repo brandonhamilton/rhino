@@ -56,7 +56,6 @@
  *     i2400mu_rx_kick()
  */
 #include <linux/usb.h>
-#include <linux/slab.h>
 #include "i2400m-usb.h"
 
 
@@ -178,6 +177,7 @@ error_submit:
 out:
 	d_fnend(4, dev, "(urb %p status %d actual_length %d) = void\n",
 		urb, urb->status, urb->actual_length);
+	return;
 }
 
 

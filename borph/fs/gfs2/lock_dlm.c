@@ -9,7 +9,6 @@
 
 #include <linux/fs.h>
 #include <linux/dlm.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/gfs2_ondisk.h>
 
@@ -22,7 +21,6 @@ static void gdlm_ast(void *arg)
 {
 	struct gfs2_glock *gl = arg;
 	unsigned ret = gl->gl_state;
-	struct gfs2_sbd *sdp = gl->gl_sbd;
 
 	BUG_ON(gl->gl_lksb.sb_flags & DLM_SBF_DEMOTED);
 
@@ -31,20 +29,15 @@ static void gdlm_ast(void *arg)
 
 	switch (gl->gl_lksb.sb_status) {
 	case -DLM_EUNLOCK: /* Unlocked, so glock can be freed */
-		if (gl->gl_ops->go_flags & GLOF_ASPACE)
-			kmem_cache_free(gfs2_glock_aspace_cachep, gl);
-		else
-			kmem_cache_free(gfs2_glock_cachep, gl);
-		if (atomic_dec_and_test(&sdp->sd_glock_disposal))
-			wake_up(&sdp->sd_glock_wait);
+		kmem_cache_free(gfs2_glock_cachep, gl);
 		return;
 	case -DLM_ECANCEL: /* Cancel while getting lock */
 		ret |= LM_OUT_CANCELED;
 		goto out;
 	case -EAGAIN: /* Try lock fails */
-	case -EDEADLK: /* Deadlock detected */
 		goto out;
-	case -ETIMEDOUT: /* Canceled due to timeout */
+	case -EINVAL: /* Invalid */
+	case -ENOMEM: /* Out of memory */
 		ret |= LM_OUT_ERROR;
 		goto out;
 	case 0: /* Success */
@@ -171,16 +164,14 @@ static unsigned int gdlm_lock(struct gfs2_glock *gl,
 	return LM_OUT_ASYNC;
 }
 
-static void gdlm_put_lock(struct kmem_cache *cachep, struct gfs2_glock *gl)
+static void gdlm_put_lock(struct kmem_cache *cachep, void *ptr)
 {
-	struct gfs2_sbd *sdp = gl->gl_sbd;
-	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
+	struct gfs2_glock *gl = ptr;
+	struct lm_lockstruct *ls = &gl->gl_sbd->sd_lockstruct;
 	int error;
 
 	if (gl->gl_lksb.sb_lkid == 0) {
 		kmem_cache_free(cachep, gl);
-		if (atomic_dec_and_test(&sdp->sd_glock_disposal))
-			wake_up(&sdp->sd_glock_wait);
 		return;
 	}
 

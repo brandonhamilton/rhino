@@ -17,7 +17,6 @@
  * We currently support a mixer device, but it is currently non-functional.
  */
 
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -364,13 +363,13 @@ static void vidc_audio_trigger(int dev, int enable_bits)
 	struct audio_operations *adev = audio_devs[dev];
 
 	if (enable_bits & PCM_ENABLE_OUTPUT) {
-		if (!(adev->dmap_out->flags & DMA_ACTIVE)) {
+		if (!(adev->flags & DMA_ACTIVE)) {
 			unsigned long flags;
 
 			local_irq_save(flags);
 
 			/* prevent recusion */
-			adev->dmap_out->flags |= DMA_ACTIVE;
+			adev->flags |= DMA_ACTIVE;
 
 			dma_interrupt = vidc_audio_dma_interrupt;
 			vidc_sound_dma_irq(0, NULL);
@@ -491,6 +490,9 @@ static void __init attach_vidc(struct address_info *hw_config)
 	vidc_adev = adev;
 	vidc_mixer_set(SOUND_MIXER_VOLUME, (85 | 85 << 8));
 
+#if defined(CONFIG_SOUND_SOFTOSS) || defined(CONFIG_SOUND_SOFTOSS_MODULE)
+	softoss_dev = adev;
+#endif
 	return;
 
 irq_failed:

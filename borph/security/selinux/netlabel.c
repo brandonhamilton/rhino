@@ -29,7 +29,6 @@
 
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
-#include <linux/gfp.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <net/sock.h>
@@ -132,21 +131,21 @@ void selinux_netlbl_err(struct sk_buff *skb, int error, int gateway)
 
 /**
  * selinux_netlbl_sk_security_free - Free the NetLabel fields
- * @sksec: the sk_security_struct
+ * @sssec: the sk_security_struct
  *
  * Description:
  * Free all of the memory in the NetLabel fields of a sk_security_struct.
  *
  */
-void selinux_netlbl_sk_security_free(struct sk_security_struct *sksec)
+void selinux_netlbl_sk_security_free(struct sk_security_struct *ssec)
 {
-	if (sksec->nlbl_secattr != NULL)
-		netlbl_secattr_free(sksec->nlbl_secattr);
+	if (ssec->nlbl_secattr != NULL)
+		netlbl_secattr_free(ssec->nlbl_secattr);
 }
 
 /**
  * selinux_netlbl_sk_security_reset - Reset the NetLabel fields
- * @sksec: the sk_security_struct
+ * @ssec: the sk_security_struct
  * @family: the socket family
  *
  * Description:
@@ -154,9 +153,9 @@ void selinux_netlbl_sk_security_free(struct sk_security_struct *sksec)
  * The caller is responsibile for all the NetLabel sk_security_struct locking.
  *
  */
-void selinux_netlbl_sk_security_reset(struct sk_security_struct *sksec)
+void selinux_netlbl_sk_security_reset(struct sk_security_struct *ssec)
 {
-	sksec->nlbl_state = NLBL_UNSET;
+	ssec->nlbl_state = NLBL_UNSET;
 }
 
 /**

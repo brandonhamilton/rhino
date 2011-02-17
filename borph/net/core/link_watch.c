@@ -19,6 +19,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/jiffies.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/bitops.h>
 #include <asm/types.h>
@@ -243,4 +244,5 @@ void linkwatch_fire_event(struct net_device *dev)
 
 	linkwatch_schedule_work(urgent);
 }
+
 EXPORT_SYMBOL(linkwatch_fire_event);

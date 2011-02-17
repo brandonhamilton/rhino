@@ -42,7 +42,6 @@
 #include <linux/skbuff.h>
 #include <linux/io.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <asm/unaligned.h>
 
 #include "b43.h"
@@ -68,12 +67,7 @@ MODULE_AUTHOR("Gábor Stefanik");
 MODULE_LICENSE("GPL");
 
 MODULE_FIRMWARE(B43_SUPPORTED_FIRMWARE_ID);
-MODULE_FIRMWARE("b43/ucode11.fw");
-MODULE_FIRMWARE("b43/ucode13.fw");
-MODULE_FIRMWARE("b43/ucode14.fw");
-MODULE_FIRMWARE("b43/ucode15.fw");
-MODULE_FIRMWARE("b43/ucode5.fw");
-MODULE_FIRMWARE("b43/ucode9.fw");
+
 
 static int modparam_bad_frames_preempt;
 module_param_named(bad_frames_preempt, modparam_bad_frames_preempt, int, 0444);
@@ -108,9 +102,6 @@ int b43_modparam_verbose = B43_VERBOSITY_DEFAULT;
 module_param_named(verbose, b43_modparam_verbose, int, 0644);
 MODULE_PARM_DESC(verbose, "Log message verbosity: 0=error, 1=warn, 2=info(default), 3=debug");
 
-static int b43_modparam_pio = B43_PIO_DEFAULT;
-module_param_named(pio, b43_modparam_pio, int, 0644);
-MODULE_PARM_DESC(pio, "Use PIO accesses by default: 0=DMA, 1=PIO");
 
 static const struct ssb_device_id b43_ssb_tbl[] = {
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 5),
@@ -119,7 +110,6 @@ static const struct ssb_device_id b43_ssb_tbl[] = {
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 9),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 10),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 11),
-	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 12),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 13),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 15),
 	SSB_DEVICE(SSB_VENDOR_BROADCOM, SSB_DEV_80211, 16),
@@ -638,17 +628,10 @@ static void b43_upload_card_macaddress(struct b43_wldev *dev)
 static void b43_set_slot_time(struct b43_wldev *dev, u16 slot_time)
 {
 	/* slot_time is in usec. */
-	/* This test used to exit for all but a G PHY. */
-	if (b43_current_band(dev->wl) == IEEE80211_BAND_5GHZ)
+	if (dev->phy.type != B43_PHYTYPE_G)
 		return;
-	b43_write16(dev, B43_MMIO_IFSSLOT, 510 + slot_time);
-	/* Shared memory location 0x0010 is the slot time and should be
-	 * set to slot_time; however, this register is initially 0 and changing
-	 * the value adversely affects the transmit rate for BCM4311
-	 * devices. Until this behavior is unterstood, delete this step
-	 *
-	 * b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, slot_time);
-	 */
+	b43_write16(dev, 0x684, 510 + slot_time);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, slot_time);
 }
 
 static void b43_short_slot_timing_enable(struct b43_wldev *dev)
@@ -852,10 +835,8 @@ static void rx_tkip_phase1_write(struct b43_wldev *dev, u8 index, u32 iv32,
 }
 
 static void b43_op_update_tkip_key(struct ieee80211_hw *hw,
-				   struct ieee80211_vif *vif,
-				   struct ieee80211_key_conf *keyconf,
-				   struct ieee80211_sta *sta,
-				   u32 iv32, u16 *phase1key)
+			struct ieee80211_key_conf *keyconf, const u8 *addr,
+			u32 iv32, u16 *phase1key)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev;
@@ -864,19 +845,19 @@ static void b43_op_update_tkip_key(struct ieee80211_hw *hw,
 	if (B43_WARN_ON(!modparam_hwtkip))
 		return;
 
-	/* This is only called from the RX path through mac80211, where
-	 * our mutex is already locked. */
-	B43_WARN_ON(!mutex_is_locked(&wl->mutex));
+	mutex_lock(&wl->mutex);
+
 	dev = wl->current_dev;
-	B43_WARN_ON(!dev || b43_status(dev) < B43_STAT_INITIALIZED);
+	if (!dev || b43_status(dev) < B43_STAT_INITIALIZED)
+		goto out_unlock;
 
 	keymac_write(dev, index, NULL);	/* First zero out mac to avoid race */
 
 	rx_tkip_phase1_write(dev, index, iv32, phase1key);
-	/* only pairwise TKIP keys are supported right now */
-	if (WARN_ON(!sta))
-		return;
-	keymac_write(dev, index, sta->addr);
+	keymac_write(dev, index, addr);
+
+out_unlock:
+	mutex_unlock(&wl->mutex);
 }
 
 static void do_key_write(struct b43_wldev *dev,
@@ -1804,10 +1785,9 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 			       dma_reason[2], dma_reason[3],
 			       dma_reason[4], dma_reason[5]);
 			b43err(dev->wl, "This device does not support DMA "
-			       "on your system. It will now be switched to PIO.\n");
-			/* Fall back to PIO transfers if we get fatal DMA errors! */
-			dev->use_pio = 1;
-			b43_controller_restart(dev, "DMA error");
+			       "on your system. Please use PIO instead.\n");
+			b43err(dev->wl, "CONFIG_B43_FORCE_PIO must be set in "
+			       "your kernel configuration.\n");
 			return;
 		}
 		if (merged_dma_reason & B43_DMAIRQ_NONFATALMASK) {
@@ -2280,7 +2260,6 @@ out:
 
 static int b43_upload_microcode(struct b43_wldev *dev)
 {
-	struct wiphy *wiphy = dev->wl->hw->wiphy;
 	const size_t hdr_len = sizeof(struct b43_fw_header);
 	const __be32 *data;
 	unsigned int i, len;
@@ -2405,10 +2384,6 @@ static int b43_upload_microcode(struct b43_wldev *dev)
 			b43_print_fw_helptext(dev->wl, 0);
 		}
 	}
-
-	snprintf(wiphy->fw_version, sizeof(wiphy->fw_version), "%u.%u",
-			dev->fw.rev, dev->fw.patch);
-	wiphy->hw_version = dev->dev->id.coreid;
 
 	if (b43_is_old_txhdr_format(dev)) {
 		/* We're over the deadline, but we keep support for old fw
@@ -3363,6 +3338,27 @@ out_unlock:
 	return err;
 }
 
+static int b43_op_get_tx_stats(struct ieee80211_hw *hw,
+			       struct ieee80211_tx_queue_stats *stats)
+{
+	struct b43_wl *wl = hw_to_b43_wl(hw);
+	struct b43_wldev *dev;
+	int err = -ENODEV;
+
+	mutex_lock(&wl->mutex);
+	dev = wl->current_dev;
+	if (dev && b43_status(dev) >= B43_STAT_STARTED) {
+		if (b43_using_pio_transfers(dev))
+			b43_pio_get_tx_stats(dev, stats);
+		else
+			b43_dma_get_tx_stats(dev, stats);
+		err = 0;
+	}
+	mutex_unlock(&wl->mutex);
+
+	return err;
+}
+
 static int b43_op_get_stats(struct ieee80211_hw *hw,
 			    struct ieee80211_low_level_stats *stats)
 {
@@ -3566,12 +3562,6 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 	dev = wl->current_dev;
 	phy = &dev->phy;
 
-	if (conf_is_ht(conf))
-		phy->is_40mhz =
-			(conf_is_ht40_minus(conf) || conf_is_ht40_plus(conf));
-	else
-		phy->is_40mhz = false;
-
 	b43_mac_suspend(dev);
 
 	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS)
@@ -3759,17 +3749,17 @@ static int b43_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	}
 
 	err = -EINVAL;
-	switch (key->cipher) {
-	case WLAN_CIPHER_SUITE_WEP40:
-		algorithm = B43_SEC_ALGO_WEP40;
+	switch (key->alg) {
+	case ALG_WEP:
+		if (key->keylen == WLAN_KEY_LEN_WEP40)
+			algorithm = B43_SEC_ALGO_WEP40;
+		else
+			algorithm = B43_SEC_ALGO_WEP104;
 		break;
-	case WLAN_CIPHER_SUITE_WEP104:
-		algorithm = B43_SEC_ALGO_WEP104;
-		break;
-	case WLAN_CIPHER_SUITE_TKIP:
+	case ALG_TKIP:
 		algorithm = B43_SEC_ALGO_TKIP;
 		break;
-	case WLAN_CIPHER_SUITE_CCMP:
+	case ALG_CCMP:
 		algorithm = B43_SEC_ALGO_AES;
 		break;
 	default:
@@ -3973,7 +3963,6 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
 	}
 
 	/* We are ready to run. */
-	ieee80211_wake_queues(dev->wl->hw);
 	b43_set_status(dev, B43_STAT_STARTED);
 
 	/* Start data flow (TX/RX). */
@@ -4255,10 +4244,6 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
 	B43_WARN_ON(dev && b43_status(dev) > B43_STAT_INITIALIZED);
 	if (!dev || b43_status(dev) != B43_STAT_INITIALIZED)
 		return;
-
-	/* Unregister HW RNG driver */
-	b43_rng_exit(dev->wl);
-
 	b43_set_status(dev, B43_STAT_UNINIT);
 
 	/* Stop the microcode PSM. */
@@ -4358,16 +4343,17 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_set_phytxctl_defaults(dev);
 
 	/* Minimum Contention Window */
-	if (phy->type == B43_PHYTYPE_B)
+	if (phy->type == B43_PHYTYPE_B) {
 		b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MINCONT, 0x1F);
-	else
+	} else {
 		b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MINCONT, 0xF);
+	}
 	/* Maximum Contention Window */
 	b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MAXCONT, 0x3FF);
 
 	if ((dev->dev->bus->bustype == SSB_BUSTYPE_PCMCIA) ||
 	    (dev->dev->bus->bustype == SSB_BUSTYPE_SDIO) ||
-	    dev->use_pio) {
+	    B43_FORCE_PIO) {
 		dev->__using_pio_transfers = 1;
 		err = b43_pio_init(dev);
 	} else {
@@ -4386,10 +4372,9 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 
 	ieee80211_wake_queues(dev->wl->hw);
 
-	b43_set_status(dev, B43_STAT_INITIALIZED);
+	ieee80211_wake_queues(dev->wl->hw);
 
-	/* Register HW RNG driver */
-	b43_rng_init(dev->wl);
+	b43_set_status(dev, B43_STAT_INITIALIZED);
 
 out:
 	return err;
@@ -4403,7 +4388,7 @@ err_busdown:
 }
 
 static int b43_op_add_interface(struct ieee80211_hw *hw,
-				struct ieee80211_vif *vif)
+				struct ieee80211_if_init_conf *conf)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev;
@@ -4411,24 +4396,24 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
 
 	/* TODO: allow WDS/AP devices to coexist */
 
-	if (vif->type != NL80211_IFTYPE_AP &&
-	    vif->type != NL80211_IFTYPE_MESH_POINT &&
-	    vif->type != NL80211_IFTYPE_STATION &&
-	    vif->type != NL80211_IFTYPE_WDS &&
-	    vif->type != NL80211_IFTYPE_ADHOC)
+	if (conf->type != NL80211_IFTYPE_AP &&
+	    conf->type != NL80211_IFTYPE_MESH_POINT &&
+	    conf->type != NL80211_IFTYPE_STATION &&
+	    conf->type != NL80211_IFTYPE_WDS &&
+	    conf->type != NL80211_IFTYPE_ADHOC)
 		return -EOPNOTSUPP;
 
 	mutex_lock(&wl->mutex);
 	if (wl->operating)
 		goto out_mutex_unlock;
 
-	b43dbg(wl, "Adding Interface type %d\n", vif->type);
+	b43dbg(wl, "Adding Interface type %d\n", conf->type);
 
 	dev = wl->current_dev;
 	wl->operating = 1;
-	wl->vif = vif;
-	wl->if_type = vif->type;
-	memcpy(wl->mac_addr, vif->addr, ETH_ALEN);
+	wl->vif = conf->vif;
+	wl->if_type = conf->type;
+	memcpy(wl->mac_addr, conf->mac_addr, ETH_ALEN);
 
 	b43_adjust_opmode(dev);
 	b43_set_pretbtt(dev);
@@ -4443,17 +4428,17 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
 }
 
 static void b43_op_remove_interface(struct ieee80211_hw *hw,
-				    struct ieee80211_vif *vif)
+				    struct ieee80211_if_init_conf *conf)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev = wl->current_dev;
 
-	b43dbg(wl, "Removing Interface type %d\n", vif->type);
+	b43dbg(wl, "Removing Interface type %d\n", conf->type);
 
 	mutex_lock(&wl->mutex);
 
 	B43_WARN_ON(!wl->operating);
-	B43_WARN_ON(wl->vif != vif);
+	B43_WARN_ON(wl->vif != conf->vif);
 	wl->vif = NULL;
 
 	wl->operating = 0;
@@ -4583,23 +4568,6 @@ static void b43_op_sw_scan_complete_notifier(struct ieee80211_hw *hw)
 	mutex_unlock(&wl->mutex);
 }
 
-static int b43_op_get_survey(struct ieee80211_hw *hw, int idx,
-			     struct survey_info *survey)
-{
-	struct b43_wl *wl = hw_to_b43_wl(hw);
-	struct b43_wldev *dev = wl->current_dev;
-	struct ieee80211_conf *conf = &hw->conf;
-
-	if (idx != 0)
-		return -ENOENT;
-
-	survey->channel = conf->channel;
-	survey->filled = SURVEY_INFO_NOISE_DBM;
-	survey->noise = dev->stats.link_noise;
-
-	return 0;
-}
-
 static const struct ieee80211_ops b43_hw_ops = {
 	.tx			= b43_op_tx,
 	.conf_tx		= b43_op_conf_tx,
@@ -4611,6 +4579,7 @@ static const struct ieee80211_ops b43_hw_ops = {
 	.set_key		= b43_op_set_key,
 	.update_tkip_key	= b43_op_update_tkip_key,
 	.get_stats		= b43_op_get_stats,
+	.get_tx_stats		= b43_op_get_tx_stats,
 	.get_tsf		= b43_op_get_tsf,
 	.set_tsf		= b43_op_set_tsf,
 	.start			= b43_op_start,
@@ -4619,7 +4588,6 @@ static const struct ieee80211_ops b43_hw_ops = {
 	.sta_notify		= b43_op_sta_notify,
 	.sw_scan_start		= b43_op_sw_scan_start_notifier,
 	.sw_scan_complete	= b43_op_sw_scan_complete_notifier,
-	.get_survey		= b43_op_get_survey,
 	.rfkill_poll		= b43_rfkill_poll,
 };
 
@@ -4855,7 +4823,6 @@ static int b43_one_core_attach(struct ssb_device *dev, struct b43_wl *wl)
 	if (!wldev)
 		goto out;
 
-	wldev->use_pio = b43_modparam_pio;
 	wldev->dev = dev;
 	wldev->wl = wl;
 	b43_set_status(wldev, B43_STAT_UNINIT);
@@ -4935,7 +4902,8 @@ static int b43_wireless_init(struct ssb_device *dev)
 
 	/* fill hw info */
 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
-		    IEEE80211_HW_SIGNAL_DBM;
+		    IEEE80211_HW_SIGNAL_DBM |
+		    IEEE80211_HW_NOISE_DBM;
 
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_AP) |
@@ -4996,6 +4964,7 @@ static int b43_probe(struct ssb_device *dev, const struct ssb_device_id *id)
 		if (err)
 			goto err_one_core_detach;
 		b43_leds_register(wl->current_dev);
+		b43_rng_init(wl);
 	}
 
       out:
@@ -5031,6 +5000,7 @@ static void b43_remove(struct ssb_device *dev)
 	b43_one_core_detach(dev);
 
 	if (list_empty(&wl->devlist)) {
+		b43_rng_exit(wl);
 		b43_leds_unregister(wl);
 		/* Last core on the chip unregistered.
 		 * We can destroy common struct b43_wl.

@@ -8,7 +8,6 @@
 
 #include <asm/io.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <asm/macio.h>
 #include <linux/pci.h>

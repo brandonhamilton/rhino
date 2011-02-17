@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/rtnetlink.h>
-#include <linux/slab.h>
 #include <linux/wireless.h>
 #include <linux/uaccess.h>
 #include <net/cfg80211.h>
@@ -29,226 +28,226 @@ typedef int (*wext_ioctl_func)(struct net_device *, struct iwreq *,
  * know about.
  */
 static const struct iw_ioctl_description standard_ioctl[] = {
-	[IW_IOCTL_IDX(SIOCSIWCOMMIT)] = {
+	[SIOCSIWCOMMIT	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_NULL,
 	},
-	[IW_IOCTL_IDX(SIOCGIWNAME)] = {
+	[SIOCGIWNAME	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_CHAR,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWNWID)] = {
+	[SIOCSIWNWID	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 		.flags		= IW_DESCR_FLAG_EVENT,
 	},
-	[IW_IOCTL_IDX(SIOCGIWNWID)] = {
+	[SIOCGIWNWID	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWFREQ)] = {
+	[SIOCSIWFREQ	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_FREQ,
 		.flags		= IW_DESCR_FLAG_EVENT,
 	},
-	[IW_IOCTL_IDX(SIOCGIWFREQ)] = {
+	[SIOCGIWFREQ	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_FREQ,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWMODE)] = {
+	[SIOCSIWMODE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_UINT,
 		.flags		= IW_DESCR_FLAG_EVENT,
 	},
-	[IW_IOCTL_IDX(SIOCGIWMODE)] = {
+	[SIOCGIWMODE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_UINT,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWSENS)] = {
+	[SIOCSIWSENS	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWSENS)] = {
+	[SIOCGIWSENS	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWRANGE)] = {
+	[SIOCSIWRANGE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_NULL,
 	},
-	[IW_IOCTL_IDX(SIOCGIWRANGE)] = {
+	[SIOCGIWRANGE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= sizeof(struct iw_range),
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWPRIV)] = {
+	[SIOCSIWPRIV	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_NULL,
 	},
-	[IW_IOCTL_IDX(SIOCGIWPRIV)] = { /* (handled directly by us) */
+	[SIOCGIWPRIV	- SIOCIWFIRST] = { /* (handled directly by us) */
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct iw_priv_args),
 		.max_tokens	= 16,
 		.flags		= IW_DESCR_FLAG_NOMAX,
 	},
-	[IW_IOCTL_IDX(SIOCSIWSTATS)] = {
+	[SIOCSIWSTATS	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_NULL,
 	},
-	[IW_IOCTL_IDX(SIOCGIWSTATS)] = { /* (handled directly by us) */
+	[SIOCGIWSTATS	- SIOCIWFIRST] = { /* (handled directly by us) */
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= sizeof(struct iw_statistics),
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWSPY)] = {
+	[SIOCSIWSPY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct sockaddr),
 		.max_tokens	= IW_MAX_SPY,
 	},
-	[IW_IOCTL_IDX(SIOCGIWSPY)] = {
+	[SIOCGIWSPY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct sockaddr) +
 				  sizeof(struct iw_quality),
 		.max_tokens	= IW_MAX_SPY,
 	},
-	[IW_IOCTL_IDX(SIOCSIWTHRSPY)] = {
+	[SIOCSIWTHRSPY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct iw_thrspy),
 		.min_tokens	= 1,
 		.max_tokens	= 1,
 	},
-	[IW_IOCTL_IDX(SIOCGIWTHRSPY)] = {
+	[SIOCGIWTHRSPY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct iw_thrspy),
 		.min_tokens	= 1,
 		.max_tokens	= 1,
 	},
-	[IW_IOCTL_IDX(SIOCSIWAP)] = {
+	[SIOCSIWAP	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 	},
-	[IW_IOCTL_IDX(SIOCGIWAP)] = {
+	[SIOCGIWAP	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWMLME)] = {
+	[SIOCSIWMLME	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.min_tokens	= sizeof(struct iw_mlme),
 		.max_tokens	= sizeof(struct iw_mlme),
 	},
-	[IW_IOCTL_IDX(SIOCGIWAPLIST)] = {
+	[SIOCGIWAPLIST	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= sizeof(struct sockaddr) +
 				  sizeof(struct iw_quality),
 		.max_tokens	= IW_MAX_AP,
 		.flags		= IW_DESCR_FLAG_NOMAX,
 	},
-	[IW_IOCTL_IDX(SIOCSIWSCAN)] = {
+	[SIOCSIWSCAN	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.min_tokens	= 0,
 		.max_tokens	= sizeof(struct iw_scan_req),
 	},
-	[IW_IOCTL_IDX(SIOCGIWSCAN)] = {
+	[SIOCGIWSCAN	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_SCAN_MAX_DATA,
 		.flags		= IW_DESCR_FLAG_NOMAX,
 	},
-	[IW_IOCTL_IDX(SIOCSIWESSID)] = {
+	[SIOCSIWESSID	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ESSID_MAX_SIZE,
 		.flags		= IW_DESCR_FLAG_EVENT,
 	},
-	[IW_IOCTL_IDX(SIOCGIWESSID)] = {
+	[SIOCGIWESSID	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ESSID_MAX_SIZE,
 		.flags		= IW_DESCR_FLAG_DUMP,
 	},
-	[IW_IOCTL_IDX(SIOCSIWNICKN)] = {
+	[SIOCSIWNICKN	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ESSID_MAX_SIZE,
 	},
-	[IW_IOCTL_IDX(SIOCGIWNICKN)] = {
+	[SIOCGIWNICKN	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ESSID_MAX_SIZE,
 	},
-	[IW_IOCTL_IDX(SIOCSIWRATE)] = {
+	[SIOCSIWRATE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWRATE)] = {
+	[SIOCGIWRATE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWRTS)] = {
+	[SIOCSIWRTS	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWRTS)] = {
+	[SIOCGIWRTS	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWFRAG)] = {
+	[SIOCSIWFRAG	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWFRAG)] = {
+	[SIOCGIWFRAG	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWTXPOW)] = {
+	[SIOCSIWTXPOW	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWTXPOW)] = {
+	[SIOCGIWTXPOW	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWRETRY)] = {
+	[SIOCSIWRETRY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWRETRY)] = {
+	[SIOCGIWRETRY	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWENCODE)] = {
+	[SIOCSIWENCODE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ENCODING_TOKEN_MAX,
 		.flags		= IW_DESCR_FLAG_EVENT | IW_DESCR_FLAG_RESTRICT,
 	},
-	[IW_IOCTL_IDX(SIOCGIWENCODE)] = {
+	[SIOCGIWENCODE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_ENCODING_TOKEN_MAX,
 		.flags		= IW_DESCR_FLAG_DUMP | IW_DESCR_FLAG_RESTRICT,
 	},
-	[IW_IOCTL_IDX(SIOCSIWPOWER)] = {
+	[SIOCSIWPOWER	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWPOWER)] = {
+	[SIOCGIWPOWER	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWGENIE)] = {
+	[SIOCSIWGENIE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_GENERIC_IE_MAX,
 	},
-	[IW_IOCTL_IDX(SIOCGIWGENIE)] = {
+	[SIOCGIWGENIE	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_GENERIC_IE_MAX,
 	},
-	[IW_IOCTL_IDX(SIOCSIWAUTH)] = {
+	[SIOCSIWAUTH	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCGIWAUTH)] = {
+	[SIOCGIWAUTH	- SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_PARAM,
 	},
-	[IW_IOCTL_IDX(SIOCSIWENCODEEXT)] = {
+	[SIOCSIWENCODEEXT - SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.min_tokens	= sizeof(struct iw_encode_ext),
 		.max_tokens	= sizeof(struct iw_encode_ext) +
 				  IW_ENCODING_TOKEN_MAX,
 	},
-	[IW_IOCTL_IDX(SIOCGIWENCODEEXT)] = {
+	[SIOCGIWENCODEEXT - SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.min_tokens	= sizeof(struct iw_encode_ext),
 		.max_tokens	= sizeof(struct iw_encode_ext) +
 				  IW_ENCODING_TOKEN_MAX,
 	},
-	[IW_IOCTL_IDX(SIOCSIWPMKSA)] = {
+	[SIOCSIWPMKSA - SIOCIWFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.min_tokens	= sizeof(struct iw_pmksa),
@@ -262,44 +261,44 @@ static const unsigned standard_ioctl_num = ARRAY_SIZE(standard_ioctl);
  * we know about.
  */
 static const struct iw_ioctl_description standard_event[] = {
-	[IW_EVENT_IDX(IWEVTXDROP)] = {
+	[IWEVTXDROP	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 	},
-	[IW_EVENT_IDX(IWEVQUAL)] = {
+	[IWEVQUAL	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_QUAL,
 	},
-	[IW_EVENT_IDX(IWEVCUSTOM)] = {
+	[IWEVCUSTOM	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_CUSTOM_MAX,
 	},
-	[IW_EVENT_IDX(IWEVREGISTERED)] = {
+	[IWEVREGISTERED	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 	},
-	[IW_EVENT_IDX(IWEVEXPIRED)] = {
+	[IWEVEXPIRED	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_ADDR,
 	},
-	[IW_EVENT_IDX(IWEVGENIE)] = {
+	[IWEVGENIE	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_GENERIC_IE_MAX,
 	},
-	[IW_EVENT_IDX(IWEVMICHAELMICFAILURE)] = {
+	[IWEVMICHAELMICFAILURE	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= sizeof(struct iw_michaelmicfailure),
 	},
-	[IW_EVENT_IDX(IWEVASSOCREQIE)] = {
+	[IWEVASSOCREQIE	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_GENERIC_IE_MAX,
 	},
-	[IW_EVENT_IDX(IWEVASSOCRESPIE)] = {
+	[IWEVASSOCRESPIE	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= IW_GENERIC_IE_MAX,
 	},
-	[IW_EVENT_IDX(IWEVPMKIDCAND)] = {
+	[IWEVPMKIDCAND	- IWEVFIRST] = {
 		.header_type	= IW_HEADER_TYPE_POINT,
 		.token_size	= 1,
 		.max_tokens	= sizeof(struct iw_pmkid_cand),
@@ -450,11 +449,11 @@ void wireless_send_event(struct net_device *	dev,
 
 	/* Get the description of the Event */
 	if (cmd <= SIOCIWLAST) {
-		cmd_index = IW_IOCTL_IDX(cmd);
+		cmd_index = cmd - SIOCIWFIRST;
 		if (cmd_index < standard_ioctl_num)
 			descr = &(standard_ioctl[cmd_index]);
 	} else {
-		cmd_index = IW_EVENT_IDX(cmd);
+		cmd_index = cmd - IWEVFIRST;
 		if (cmd_index < standard_event_num)
 			descr = &(standard_event[cmd_index]);
 	}
@@ -611,7 +610,7 @@ struct iw_statistics *get_wireless_stats(struct net_device *dev)
 #endif
 
 #ifdef CONFIG_CFG80211_WEXT
-	if (dev->ieee80211_ptr &&
+	if (dev->ieee80211_ptr && dev->ieee80211_ptr &&
 	    dev->ieee80211_ptr->wiphy &&
 	    dev->ieee80211_ptr->wiphy->wext &&
 	    dev->ieee80211_ptr->wiphy->wext->get_wireless_stats)
@@ -663,7 +662,7 @@ static iw_handler get_handler(struct net_device *dev, unsigned int cmd)
 		return NULL;
 
 	/* Try as a standard command */
-	index = IW_IOCTL_IDX(cmd);
+	index = cmd - SIOCIWFIRST;
 	if (index < handlers->num_standard)
 		return handlers->standard[index];
 
@@ -780,22 +779,6 @@ static int ioctl_standard_iw_point(struct iw_point *iwp, unsigned int cmd,
 			if (iwp->length < sizeof(*ee) + ee->key_len)
 				return -EFAULT;
 		}
-	}
-
-	if (IW_IS_GET(cmd) && !(descr->flags & IW_DESCR_FLAG_NOMAX)) {
-		/*
-		 * If this is a GET, but not NOMAX, it means that the extra
-		 * data is not bounded by userspace, but by max_tokens. Thus
-		 * set the length to max_tokens. This matches the extra data
-		 * allocation.
-		 * The driver should fill it with the number of tokens it
-		 * provided, and it may check iwp->length rather than having
-		 * knowledge of max_tokens. If the driver doesn't change the
-		 * iwp->length, this ioctl just copies back max_token tokens
-		 * filled with zeroes. Hopefully the driver isn't claiming
-		 * them to be valid data.
-		 */
-		iwp->length = descr->max_tokens;
 	}
 
 	err = handler(dev, info, (union iwreq_data *) iwp, extra);
@@ -971,9 +954,9 @@ static int ioctl_standard_call(struct net_device *	dev,
 	int					ret = -EINVAL;
 
 	/* Get the description of the IOCTL */
-	if (IW_IOCTL_IDX(cmd) >= standard_ioctl_num)
+	if ((cmd - SIOCIWFIRST) >= standard_ioctl_num)
 		return -EOPNOTSUPP;
-	descr = &(standard_ioctl[IW_IOCTL_IDX(cmd)]);
+	descr = &(standard_ioctl[cmd - SIOCIWFIRST]);
 
 	/* Check if we have a pointer to user space data or not */
 	if (descr->header_type != IW_HEADER_TYPE_POINT) {
@@ -1029,7 +1012,7 @@ static int compat_standard_call(struct net_device	*dev,
 	struct iw_point iwp;
 	int err;
 
-	descr = standard_ioctl + IW_IOCTL_IDX(cmd);
+	descr = standard_ioctl + (cmd - SIOCIWFIRST);
 
 	if (descr->header_type != IW_HEADER_TYPE_POINT)
 		return ioctl_standard_call(dev, iwr, cmd, info, handler);

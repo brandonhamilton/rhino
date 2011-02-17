@@ -54,7 +54,7 @@ enum dma_ch {
 #define DMACH_LOW_LEVEL	(1<<28)	/* use this to specifiy hardware ch no */
 
 /* we have 4 dma channels */
-#if !defined(CONFIG_CPU_S3C2443) && !defined(CONFIG_CPU_S3C2416)
+#ifndef CONFIG_CPU_S3C2443
 #define S3C_DMA_CHANNELS		(4)
 #else
 #define S3C_DMA_CHANNELS		(6)

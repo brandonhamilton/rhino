@@ -26,7 +26,6 @@
 
 #include <linux/kernel.h>
 #include <linux/mmc/sdio_func.h>
-#include <linux/slab.h>
 #include <linux/ctype.h>
 #include "fw-msg.h"
 #include "iwmc3200top.h"

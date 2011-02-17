@@ -24,7 +24,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/socket.h>
 #include <asm/ioctls.h>
 #include <net/sock.h>
@@ -52,19 +51,6 @@ static int pn_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		answ = skb ? skb->len : 0;
 		release_sock(sk);
 		return put_user(answ, (int __user *)arg);
-
-	case SIOCPNADDRESOURCE:
-	case SIOCPNDELRESOURCE: {
-			u32 res;
-			if (get_user(res, (u32 __user *)arg))
-				return -EFAULT;
-			if (res >= 256)
-				return -EINVAL;
-			if (cmd == SIOCPNADDRESOURCE)
-				return pn_sock_bind_res(sk, res);
-			else
-				return pn_sock_unbind_res(sk, res);
-		}
 	}
 
 	return -ENOIOCTLCMD;
@@ -89,8 +75,7 @@ static int pn_sendmsg(struct kiocb *iocb, struct sock *sk,
 	struct sk_buff *skb;
 	int err;
 
-	if (msg->msg_flags & ~(MSG_DONTWAIT|MSG_EOR|MSG_NOSIGNAL|
-				MSG_CMSG_COMPAT))
+	if (msg->msg_flags & MSG_OOB)
 		return -EOPNOTSUPP;
 
 	if (msg->msg_name == NULL)
@@ -134,8 +119,7 @@ static int pn_recvmsg(struct kiocb *iocb, struct sock *sk,
 	int rval = -EOPNOTSUPP;
 	int copylen;
 
-	if (flags & ~(MSG_PEEK|MSG_TRUNC|MSG_DONTWAIT|MSG_NOSIGNAL|
-			MSG_CMSG_COMPAT))
+	if (flags & MSG_OOB)
 		goto out_nofree;
 
 	if (addr_len)

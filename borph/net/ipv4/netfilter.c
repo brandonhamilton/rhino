@@ -4,7 +4,6 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/ip.h>
 #include <linux/skbuff.h>
-#include <linux/gfp.h>
 #include <net/route.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
@@ -17,7 +16,7 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 	const struct iphdr *iph = ip_hdr(skb);
 	struct rtable *rt;
 	struct flowi fl = {};
-	unsigned long orefdst;
+	struct dst_entry *odst;
 	unsigned int hh_len;
 	unsigned int type;
 
@@ -43,7 +42,7 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 
 		/* Drop old route. */
 		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
+		skb_dst_set(skb, &rt->u.dst);
 	} else {
 		/* non-local src, find valid iif to satisfy
 		 * rp-filter when calling ip_route_input. */
@@ -51,14 +50,14 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 		if (ip_route_output_key(net, &rt, &fl) != 0)
 			return -1;
 
-		orefdst = skb->_skb_refdst;
+		odst = skb_dst(skb);
 		if (ip_route_input(skb, iph->daddr, iph->saddr,
-				   RT_TOS(iph->tos), rt->dst.dev) != 0) {
-			dst_release(&rt->dst);
+				   RT_TOS(iph->tos), rt->u.dst.dev) != 0) {
+			dst_release(&rt->u.dst);
 			return -1;
 		}
-		dst_release(&rt->dst);
-		refdst_drop(orefdst);
+		dst_release(&rt->u.dst);
+		dst_release(odst);
 	}
 
 	if (skb_dst(skb)->error)
@@ -212,7 +211,9 @@ static __sum16 nf_ip_checksum_partial(struct sk_buff *skb, unsigned int hook,
 		skb->csum = csum_tcpudp_nofold(iph->saddr, iph->daddr, protocol,
 					       skb->len - dataoff, 0);
 		skb->ip_summed = CHECKSUM_NONE;
-		return __skb_checksum_complete_head(skb, dataoff + len);
+		csum = __skb_checksum_complete_head(skb, dataoff + len);
+		if (!csum)
+			skb->ip_summed = CHECKSUM_UNNECESSARY;
 	}
 	return csum;
 }

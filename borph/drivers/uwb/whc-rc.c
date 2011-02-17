@@ -45,7 +45,6 @@
 #include <linux/sched.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/uwb.h>
 #include <linux/uwb/whci.h>

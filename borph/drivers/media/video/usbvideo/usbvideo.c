@@ -282,15 +282,19 @@ static void usbvideo_OverlayChar(struct uvd *uvd, struct usbvideo_frame *frame,
 	};
 	unsigned short digit;
 	int ix, iy;
-	int value;
 
 	if ((uvd == NULL) || (frame == NULL))
 		return;
 
-	value = hex_to_bin(ch);
-	if (value < 0)
+	if (ch >= '0' && ch <= '9')
+		ch -= '0';
+	else if (ch >= 'A' && ch <= 'F')
+		ch = 10 + (ch - 'A');
+	else if (ch >= 'a' && ch <= 'f')
+		ch = 10 + (ch - 'a');
+	else
 		return;
-	digit = digits[value];
+	digit = digits[ch];
 
 	for (iy=0; iy < 5; iy++) {
 		for (ix=0; ix < 3; ix++) {
@@ -1049,9 +1053,9 @@ int usbvideo_RegisterVideoDevice(struct uvd *uvd)
 			 "%s: video_register_device() successful\n", __func__);
 	}
 
-	dev_info(&uvd->dev->dev, "%s on %s: canvas=%s videosize=%s\n",
+	dev_info(&uvd->dev->dev, "%s on /dev/video%d: canvas=%s videosize=%s\n",
 		 (uvd->handle != NULL) ? uvd->handle->drvName : "???",
-		 video_device_node_name(&uvd->vdev), tmp2, tmp1);
+		 uvd->vdev.num, tmp2, tmp1);
 
 	usb_get_dev(uvd->dev);
 	return 0;

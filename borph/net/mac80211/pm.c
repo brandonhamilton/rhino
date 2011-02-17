@@ -10,7 +10,9 @@ int __ieee80211_suspend(struct ieee80211_hw *hw)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_if_init_conf conf;
 	struct sta_info *sta;
+	unsigned long flags;
 
 	ieee80211_scan_cancel(local);
 
@@ -40,32 +42,39 @@ int __ieee80211_suspend(struct ieee80211_hw *hw)
 	list_for_each_entry(sdata, &local->interfaces, list)
 		ieee80211_disable_keys(sdata);
 
-	/* tear down aggregation sessions and remove STAs */
-	mutex_lock(&local->sta_mtx);
-	list_for_each_entry(sta, &local->sta_list, list) {
-		if (hw->flags & IEEE80211_HW_AMPDU_AGGREGATION) {
-			set_sta_flags(sta, WLAN_STA_BLOCK_BA);
-			ieee80211_sta_tear_down_BA_sessions(sta, true);
-		}
+	/* Tear down aggregation sessions */
 
-		if (sta->uploaded) {
+	rcu_read_lock();
+
+	if (hw->flags & IEEE80211_HW_AMPDU_AGGREGATION) {
+		list_for_each_entry_rcu(sta, &local->sta_list, list) {
+			set_sta_flags(sta, WLAN_STA_SUSPEND);
+			ieee80211_sta_tear_down_BA_sessions(sta);
+		}
+	}
+
+	rcu_read_unlock();
+
+	/* remove STAs */
+	spin_lock_irqsave(&local->sta_lock, flags);
+	list_for_each_entry(sta, &local->sta_list, list) {
+		if (local->ops->sta_notify) {
 			sdata = sta->sdata;
 			if (sdata->vif.type == NL80211_IFTYPE_AP_VLAN)
 				sdata = container_of(sdata->bss,
 					     struct ieee80211_sub_if_data,
 					     u.ap);
 
-			drv_sta_remove(local, sdata, &sta->sta);
+			drv_sta_notify(local, &sdata->vif, STA_NOTIFY_REMOVE,
+				       &sta->sta);
 		}
 
 		mesh_plink_quiesce(sta);
 	}
-	mutex_unlock(&local->sta_mtx);
+	spin_unlock_irqrestore(&local->sta_lock, flags);
 
 	/* remove all interfaces */
 	list_for_each_entry(sdata, &local->interfaces, list) {
-		cancel_work_sync(&sdata->work);
-
 		switch(sdata->vif.type) {
 		case NL80211_IFTYPE_STATION:
 			ieee80211_sta_quiesce(sdata);
@@ -84,14 +93,17 @@ int __ieee80211_suspend(struct ieee80211_hw *hw)
 			break;
 		}
 
-		if (!ieee80211_sdata_running(sdata))
+		if (!netif_running(sdata->dev))
 			continue;
 
 		/* disable beaconing */
 		ieee80211_bss_info_change_notify(sdata,
 			BSS_CHANGED_BEACON_ENABLED);
 
-		drv_remove_interface(local, &sdata->vif);
+		conf.vif = &sdata->vif;
+		conf.type = sdata->vif.type;
+		conf.mac_addr = sdata->dev->dev_addr;
+		drv_remove_interface(local, &conf);
 	}
 
 	/* stop hardware - this must stop RX */

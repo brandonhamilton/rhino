@@ -20,7 +20,6 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
-#include <linux/slab.h>
 
 #include <linux/mfd/pcf50633/core.h>
 

@@ -28,12 +28,11 @@ my $lineno = 0;
 my $filename;
 
 foreach my $file (@files) {
+	local *FH;
 	$filename = $file;
-
-	open(my $fh, '<', $filename)
-		or die "$filename: $!\n";
+	open(FH, "<$filename") or die "$filename: $!\n";
 	$lineno = 0;
-	while ($line = <$fh>) {
+	while ($line = <FH>) {
 		$lineno++;
 		&check_include();
 		&check_asm_types();
@@ -41,7 +40,7 @@ foreach my $file (@files) {
 		&check_declarations();
 		# Dropped for now. Too much noise &check_config();
 	}
-	close $fh;
+	close FH;
 }
 exit $ret;
 
@@ -79,7 +78,7 @@ sub check_config
 }
 
 my $linux_asm_types;
-sub check_asm_types
+sub check_asm_types()
 {
 	if ($filename =~ /types.h|int-l64.h|int-ll64.h/o) {
 		return;

@@ -28,7 +28,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/vmalloc.h>
 #include <linux/clk.h>
-#include <linux/gfp.h>
 
 #include <mach/lcdc.h>
 #include <plat/dma.h>
@@ -390,7 +389,7 @@ static int omap_lcdc_enable_plane(int plane, int enable)
 /*
  * Configure the LCD DMA for a palette load operation and do the palette
  * downloading synchronously. We don't use the frame+palette load mode of
- * the controller, since the palette can always be downloaded separately.
+ * the controller, since the palette can always be downloaded seperately.
  */
 static void load_palette(void)
 {
@@ -572,12 +571,22 @@ static enum omapfb_update_mode omap_lcdc_get_update_mode(void)
 /* PM code called only in internal controller mode */
 static void omap_lcdc_suspend(void)
 {
-	omap_lcdc_set_update_mode(OMAPFB_UPDATE_DISABLED);
+	if (lcdc.update_mode == OMAPFB_AUTO_UPDATE) {
+		disable_controller();
+		omap_stop_lcd_dma();
+	}
 }
 
 static void omap_lcdc_resume(void)
 {
-	omap_lcdc_set_update_mode(OMAPFB_AUTO_UPDATE);
+	if (lcdc.update_mode == OMAPFB_AUTO_UPDATE) {
+		setup_regs();
+		load_palette();
+		setup_lcd_dma();
+		set_load_mode(OMAP_LCDC_LOAD_FRAME);
+		enable_irqs(OMAP_LCDC_IRQ_DONE);
+		enable_controller();
+	}
 }
 
 static void omap_lcdc_get_caps(int plane, struct omapfb_caps *caps)

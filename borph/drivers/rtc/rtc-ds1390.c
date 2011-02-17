@@ -19,7 +19,6 @@
 #include <linux/rtc.h>
 #include <linux/spi/spi.h>
 #include <linux/bcd.h>
-#include <linux/slab.h>
 
 #define DS1390_REG_100THS		0x00
 #define DS1390_REG_SECONDS		0x01

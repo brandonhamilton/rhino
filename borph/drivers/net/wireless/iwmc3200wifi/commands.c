@@ -41,7 +41,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ieee80211.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 
 #include "iwm.h"
 #include "bus.h"
@@ -507,7 +506,7 @@ static int iwm_target_read(struct iwm_priv *iwm, __le32 address,
 		return ret;
 	}
 
-	/* When succeeding, the send_target routine returns the seq number */
+	/* When succeding, the send_target routine returns the seq number */
 	seq_num = ret;
 
 	ret = wait_event_interruptible_timeout(iwm->nonwifi_queue,
@@ -782,9 +781,10 @@ int iwm_send_mlme_profile(struct iwm_priv *iwm)
 	return 0;
 }
 
-int __iwm_invalidate_mlme_profile(struct iwm_priv *iwm)
+int iwm_invalidate_mlme_profile(struct iwm_priv *iwm)
 {
 	struct iwm_umac_invalidate_profile invalid;
+	int ret;
 
 	invalid.hdr.oid = UMAC_WIFI_IF_CMD_INVALIDATE_PROFILE;
 	invalid.hdr.buf_size =
@@ -793,14 +793,7 @@ int __iwm_invalidate_mlme_profile(struct iwm_priv *iwm)
 
 	invalid.reason = WLAN_REASON_UNSPECIFIED;
 
-	return iwm_send_wifi_if_cmd(iwm, &invalid, sizeof(invalid), 1);
-}
-
-int iwm_invalidate_mlme_profile(struct iwm_priv *iwm)
-{
-	int ret;
-
-	ret = __iwm_invalidate_mlme_profile(iwm);
+	ret = iwm_send_wifi_if_cmd(iwm, &invalid, sizeof(invalid), 1);
 	if (ret)
 		return ret;
 
@@ -979,10 +972,6 @@ int iwm_send_pmkid_update(struct iwm_priv *iwm,
 	int ret;
 
 	memset(&update, 0, sizeof(struct iwm_umac_pmkid_update));
-
-	update.hdr.oid = UMAC_WIFI_IF_CMD_PMKID_UPDATE;
-	update.hdr.buf_size = cpu_to_le16(sizeof(struct iwm_umac_pmkid_update) -
-					  sizeof(struct iwm_umac_wifi_if));
 
 	update.command = cpu_to_le32(command);
 	if (pmksa->bssid)

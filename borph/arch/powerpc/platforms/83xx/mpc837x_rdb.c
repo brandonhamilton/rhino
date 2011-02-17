@@ -72,13 +72,12 @@ static struct of_device_id mpc837x_ids[] = {
 	{ .compatible = "soc", },
 	{ .compatible = "simple-bus", },
 	{ .compatible = "gianfar", },
-	{ .compatible = "gpio-leds", },
 	{},
 };
 
 static int __init mpc837x_declare_of_platform_devices(void)
 {
-	/* Publish platform_device */
+	/* Publish of_device */
 	of_platform_bus_probe(NULL, mpc837x_ids, NULL);
 
 	return 0;

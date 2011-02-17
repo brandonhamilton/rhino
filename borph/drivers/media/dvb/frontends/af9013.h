@@ -1,5 +1,5 @@
 /*
- * Afatech AF9013 demodulator driver
+ * DVB USB Linux driver for Afatech AF9015 DVB-T USB2.0 receiver
  *
  * Copyright (C) 2007 Antti Palosaari <crope@iki.fi>
  *
@@ -44,8 +44,6 @@ enum af9013_tuner {
 	AF9013_TUNER_MT2060_2   = 147, /* Microtune */
 	AF9013_TUNER_TDA18271   = 156, /* NXP */
 	AF9013_TUNER_QT1010A    = 162, /* Quantek */
-	AF9013_TUNER_MXL5007T   = 177, /* MaxLinear */
-	AF9013_TUNER_TDA18218   = 179, /* NXP */
 };
 
 /* AF9013/5 GPIOs (mostly guessed)

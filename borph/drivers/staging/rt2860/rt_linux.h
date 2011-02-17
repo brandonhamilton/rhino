@@ -409,6 +409,9 @@ struct os_cookie {
 /***********************************************************************************
  *	OS debugging and printing related definitions and data structure
  ***********************************************************************************/
+#define PRINT_MAC(addr)	\
+	addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
+
 #ifdef DBG
 extern unsigned long RTDebugLevel;
 
@@ -452,11 +455,10 @@ void hex_dump(char *str, unsigned char *pSrcBufVA, unsigned int SrcBufLen);
  * Device DMA Access related definitions and data structures.
  **********************************************************************************/
 #ifdef RTMP_MAC_PCI
-struct rt_rtmp_adapter;
-dma_addr_t linux_pci_map_single(struct rt_rtmp_adapter *pAd, void *ptr,
-				size_t size, int sd_idx, int direction);
-void linux_pci_unmap_single(struct rt_rtmp_adapter *pAd, dma_addr_t dma_addr,
-			    size_t size, int direction);
+dma_addr_t linux_pci_map_single(void *handle, void *ptr, size_t size,
+				int sd_idx, int direction);
+void linux_pci_unmap_single(void *handle, dma_addr_t dma_addr, size_t size,
+			    int direction);
 
 #define PCI_MAP_SINGLE(_handle, _ptr, _size, _sd_idx, _dir) \
 	linux_pci_map_single(_handle, _ptr, _size, _sd_idx, _dir)
@@ -473,6 +475,11 @@ void linux_pci_unmap_single(struct rt_rtmp_adapter *pAd, dma_addr_t dma_addr,
 #define DEV_ALLOC_SKB(_length) \
 	dev_alloc_skb(_length)
 #endif /* RTMP_MAC_PCI // */
+#ifdef RTMP_MAC_USB
+#define PCI_MAP_SINGLE(_handle, _ptr, _size, _dir) (unsigned long)0
+
+#define PCI_UNMAP_SINGLE(_handle, _ptr, _size, _dir)
+#endif /* RTMP_MAC_USB // */
 
 /*
  * unsigned long
@@ -651,9 +658,9 @@ void linux_pci_unmap_single(struct rt_rtmp_adapter *pAd, dma_addr_t dma_addr,
 		(RTPKT_TO_OSPKT(_pkt)->len) = (_len)
 
 #define GET_OS_PKT_DATATAIL(_pkt) \
-		(skb_tail_pointer(RTPKT_TO_OSPKT(_pkt))
+		(RTPKT_TO_OSPKT(_pkt)->tail)
 #define SET_OS_PKT_DATATAIL(_pkt, _start, _len)	\
-		(skb_set_tail_pointer(RTPKT_TO_OSPKT(_pkt), _len))
+		((RTPKT_TO_OSPKT(_pkt))->tail) = (u8 *)((_start) + (_len))
 
 #define GET_OS_PKT_HEAD(_pkt) \
 		(RTPKT_TO_OSPKT(_pkt)->head)

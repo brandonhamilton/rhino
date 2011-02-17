@@ -88,7 +88,6 @@ typedef struct siginfo {
 #ifdef __ARCH_SI_TRAPNO
 			int _trapno;	/* TRAP # which caused the signal */
 #endif
-			short _addr_lsb;
 		} _sigfault;
 
 		/* SIGPOLL, SIGXFSZ (To do ...)  */

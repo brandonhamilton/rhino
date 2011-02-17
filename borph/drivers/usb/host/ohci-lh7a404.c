@@ -28,8 +28,8 @@ extern int usb_disabled(void);
 
 static void lh7a404_start_hc(struct platform_device *dev)
 {
-	printk(KERN_DEBUG "%s: starting LH7A404 OHCI USB Controller\n",
-	       __FILE__);
+	printk(KERN_DEBUG __FILE__
+	       ": starting LH7A404 OHCI USB Controller\n");
 
 	/*
 	 * Now, carefully enable the USB clock, and take
@@ -39,13 +39,14 @@ static void lh7a404_start_hc(struct platform_device *dev)
 	udelay(1000);
 	USBH_CMDSTATUS = OHCI_HCR;
 
-	printk(KERN_DEBUG "%s: Clock to USB host has been enabled \n", __FILE__);
+	printk(KERN_DEBUG __FILE__
+		   ": Clock to USB host has been enabled \n");
 }
 
 static void lh7a404_stop_hc(struct platform_device *dev)
 {
-	printk(KERN_DEBUG "%s: stopping LH7A404 OHCI USB Controller\n",
-	       __FILE__);
+	printk(KERN_DEBUG __FILE__
+	       ": stopping LH7A404 OHCI USB Controller\n");
 
 	CSC_PWRCNT &= ~CSC_PWRCNT_USBH_EN; /* Disable clock */
 }

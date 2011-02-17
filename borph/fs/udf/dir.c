@@ -45,8 +45,8 @@ static int do_udf_readdir(struct inode *dir, struct file *filp,
 	int block, iblock;
 	loff_t nf_pos = (filp->f_pos - 1) << 2;
 	int flen;
-	unsigned char *fname = NULL;
-	unsigned char *nameptr;
+	char *fname = NULL;
+	char *nameptr;
 	uint16_t liu;
 	uint8_t lfi;
 	loff_t size = udf_ext0_offset(dir) + dir->i_size;
@@ -207,9 +207,8 @@ static int udf_readdir(struct file *filp, void *dirent, filldir_t filldir)
 
 /* readdir and lookup functions */
 const struct file_operations udf_dir_operations = {
-	.llseek			= generic_file_llseek,
 	.read			= generic_read_dir,
 	.readdir		= udf_readdir,
-	.unlocked_ioctl		= udf_ioctl,
-	.fsync			= generic_file_fsync,
+	.ioctl			= udf_ioctl,
+	.fsync			= simple_fsync,
 };

@@ -16,6 +16,13 @@
 
 #include <asm/stacktrace.h>
 
+#include "dumpstack.h"
+
+/* Just a stub for now */
+int x86_is_stack_id(int id, char *name)
+{
+	return 0;
+}
 
 void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
@@ -51,7 +58,7 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 		context = (struct thread_info *)
 			((unsigned long)stack & (~(THREAD_SIZE - 1)));
-		bp = ops->walk_stack(context, stack, bp, ops, data, NULL, &graph);
+		bp = print_context_stack(context, stack, bp, ops, data, NULL, &graph);
 
 		stack = (unsigned long *)context->previous_esp;
 		if (!stack)
@@ -82,11 +89,11 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		if (kstack_end(stack))
 			break;
 		if (i && ((i % STACKSLOTS_PER_LINE) == 0))
-			printk(KERN_CONT "\n");
-		printk(KERN_CONT " %08lx", *stack++);
+			printk("\n%s", log_lvl);
+		printk(" %08lx", *stack++);
 		touch_nmi_watchdog();
 	}
-	printk(KERN_CONT "\n");
+	printk("\n");
 	show_trace_log_lvl(task, regs, sp, bp, log_lvl);
 }
 

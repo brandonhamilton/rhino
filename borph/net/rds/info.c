@@ -32,7 +32,6 @@
  */
 #include <linux/percpu.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 #include <linux/proc_fs.h>
 
 #include "rds.h"
@@ -76,7 +75,7 @@ void rds_info_register_func(int optname, rds_info_func func)
 	BUG_ON(optname < RDS_INFO_FIRST || optname > RDS_INFO_LAST);
 
 	spin_lock(&rds_info_lock);
-	BUG_ON(rds_info_funcs[offset]);
+	BUG_ON(rds_info_funcs[offset] != NULL);
 	rds_info_funcs[offset] = func;
 	spin_unlock(&rds_info_lock);
 }
@@ -102,7 +101,7 @@ EXPORT_SYMBOL_GPL(rds_info_deregister_func);
  */
 void rds_info_iter_unmap(struct rds_info_iterator *iter)
 {
-	if (iter->addr) {
+	if (iter->addr != NULL) {
 		kunmap_atomic(iter->addr, KM_USER0);
 		iter->addr = NULL;
 	}
@@ -117,7 +116,7 @@ void rds_info_copy(struct rds_info_iterator *iter, void *data,
 	unsigned long this;
 
 	while (bytes) {
-		if (!iter->addr)
+		if (iter->addr == NULL)
 			iter->addr = kmap_atomic(*iter->pages, KM_USER0);
 
 		this = min(bytes, PAGE_SIZE - iter->offset);
@@ -188,7 +187,7 @@ int rds_info_getsockopt(struct socket *sock, int optname, char __user *optval,
 			>> PAGE_SHIFT;
 
 	pages = kmalloc(nr_pages * sizeof(struct page *), GFP_KERNEL);
-	if (!pages) {
+	if (pages == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -206,7 +205,7 @@ int rds_info_getsockopt(struct socket *sock, int optname, char __user *optval,
 
 call_func:
 	func = rds_info_funcs[optname - RDS_INFO_FIRST];
-	if (!func) {
+	if (func == NULL) {
 		ret = -ENOPROTOOPT;
 		goto out;
 	}
@@ -234,7 +233,7 @@ call_func:
 		ret = -EFAULT;
 
 out:
-	for (i = 0; pages && i < nr_pages; i++)
+	for (i = 0; pages != NULL && i < nr_pages; i++)
 		put_page(pages[i]);
 	kfree(pages);
 

@@ -39,8 +39,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/gfp.h>
-
 #include "ehca_tools.h"
 #include "ehca_iverbs.h"
 #include "hcp_if.h"

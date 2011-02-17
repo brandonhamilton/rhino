@@ -24,7 +24,6 @@
 #include <linux/bootmem.h>
 #include <linux/pagemap.h>
 #include <linux/poison.h>
-#include <linux/gfp.h>
 
 #include <asm/sections.h>
 #include <asm/system.h>

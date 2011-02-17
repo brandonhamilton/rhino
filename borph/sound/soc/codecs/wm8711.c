@@ -20,7 +20,6 @@
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -31,9 +30,11 @@
 
 #include "wm8711.h"
 
+static struct snd_soc_codec *wm8711_codec;
+
 /* codec private data */
 struct wm8711_priv {
-	enum snd_soc_control_type bus_type;
+	struct snd_soc_codec codec;
 	u16 reg_cache[WM8711_CACHEREGNUM];
 	unsigned int sysclk;
 };
@@ -161,7 +162,7 @@ static int wm8711_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	struct snd_soc_codec *codec = dai->codec;
-	struct wm8711_priv *wm8711 =  snd_soc_codec_get_drvdata(codec);
+	struct wm8711_priv *wm8711 = codec->private_data;
 	u16 iface = snd_soc_read(codec, WM8711_IFACE) & 0xfffc;
 	int i = get_coeff(wm8711->sysclk, params_rate(params));
 	u16 srate = (coeff_div[i].sr << 2) |
@@ -225,7 +226,7 @@ static int wm8711_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 		int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct wm8711_priv *wm8711 =  snd_soc_codec_get_drvdata(codec);
+	struct wm8711_priv *wm8711 = codec->private_data;
 
 	switch (freq) {
 	case 11289600:
@@ -336,8 +337,8 @@ static struct snd_soc_dai_ops wm8711_ops = {
 	.set_fmt = wm8711_set_dai_fmt,
 };
 
-static struct snd_soc_dai_driver wm8711_dai = {
-	.name = "wm8711-hifi",
+struct snd_soc_dai wm8711_dai = {
+	.name = "WM8711",
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 1,
@@ -347,16 +348,22 @@ static struct snd_soc_dai_driver wm8711_dai = {
 	},
 	.ops = &wm8711_ops,
 };
+EXPORT_SYMBOL_GPL(wm8711_dai);
 
-static int wm8711_suspend(struct snd_soc_codec *codec, pm_message_t state)
+static int wm8711_suspend(struct platform_device *pdev, pm_message_t state)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	snd_soc_write(codec, WM8711_ACTIVE, 0x0);
 	wm8711_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
 
-static int wm8711_resume(struct snd_soc_codec *codec)
+static int wm8711_resume(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
 	int i;
 	u8 data[2];
 	u16 *cache = codec->reg_cache;
@@ -368,26 +375,101 @@ static int wm8711_resume(struct snd_soc_codec *codec)
 		codec->hw_write(codec->control_data, data, 2);
 	}
 	wm8711_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	wm8711_set_bias_level(codec, codec->suspend_bias_level);
+	return 0;
+}
+
+static int wm8711_probe(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec;
+	int ret = 0;
+
+	if (wm8711_codec == NULL) {
+		dev_err(&pdev->dev, "Codec device not registered\n");
+		return -ENODEV;
+	}
+
+	socdev->card->codec = wm8711_codec;
+	codec = wm8711_codec;
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
+	if (ret < 0) {
+		dev_err(codec->dev, "failed to create pcms: %d\n", ret);
+		goto pcm_err;
+	}
+
+	snd_soc_add_controls(codec, wm8711_snd_controls,
+			     ARRAY_SIZE(wm8711_snd_controls));
+	wm8711_add_widgets(codec);
+
+	return ret;
+
+pcm_err:
+	return ret;
+}
+
+/* power down chip */
+static int wm8711_remove(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
 
 	return 0;
 }
 
-static int wm8711_probe(struct snd_soc_codec *codec)
-{
-	struct wm8711_priv *wm8711 = snd_soc_codec_get_drvdata(codec);
-	int ret, reg;
+struct snd_soc_codec_device soc_codec_dev_wm8711 = {
+	.probe = 	wm8711_probe,
+	.remove = 	wm8711_remove,
+	.suspend = 	wm8711_suspend,
+	.resume =	wm8711_resume,
+};
+EXPORT_SYMBOL_GPL(soc_codec_dev_wm8711);
 
-	ret = snd_soc_codec_set_cache_io(codec, 7, 9, wm8711->bus_type);
+static int wm8711_register(struct wm8711_priv *wm8711,
+			   enum snd_soc_control_type control)
+{
+	int ret;
+	struct snd_soc_codec *codec = &wm8711->codec;
+	u16 reg;
+
+	if (wm8711_codec) {
+		dev_err(codec->dev, "Another WM8711 is registered\n");
+		return -EINVAL;
+	}
+
+	mutex_init(&codec->mutex);
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
+	codec->private_data = wm8711;
+	codec->name = "WM8711";
+	codec->owner = THIS_MODULE;
+	codec->bias_level = SND_SOC_BIAS_OFF;
+	codec->set_bias_level = wm8711_set_bias_level;
+	codec->dai = &wm8711_dai;
+	codec->num_dai = 1;
+	codec->reg_cache_size = WM8711_CACHEREGNUM;
+	codec->reg_cache = &wm8711->reg_cache;
+
+	memcpy(codec->reg_cache, wm8711_reg, sizeof(wm8711_reg));
+
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, control);
 	if (ret < 0) {
 		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
-		return ret;
+		goto err;
 	}
 
 	ret = wm8711_reset(codec);
 	if (ret < 0) {
 		dev_err(codec->dev, "Failed to issue reset\n");
-		return ret;
+		goto err;
 	}
+
+	wm8711_dai.dev = codec->dev;
 
 	wm8711_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
@@ -397,62 +479,70 @@ static int wm8711_probe(struct snd_soc_codec *codec)
 	reg = snd_soc_read(codec, WM8711_ROUT1V);
 	snd_soc_write(codec, WM8711_ROUT1V, reg | 0x0100);
 
-	snd_soc_add_controls(codec, wm8711_snd_controls,
-			     ARRAY_SIZE(wm8711_snd_controls));
-	wm8711_add_widgets(codec);
+	wm8711_codec = codec;
 
-	return ret;
+	ret = snd_soc_register_codec(codec);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to register codec: %d\n", ret);
+		goto err;
+	}
 
-}
+	ret = snd_soc_register_dai(&wm8711_dai);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to register DAI: %d\n", ret);
+		goto err_codec;
+	}
 
-/* power down chip */
-static int wm8711_remove(struct snd_soc_codec *codec)
-{
-	wm8711_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
+
+err_codec:
+	snd_soc_unregister_codec(codec);
+err:
+	kfree(wm8711);
+	return ret;
 }
 
-static struct snd_soc_codec_driver soc_codec_dev_wm8711 = {
-	.probe =	wm8711_probe,
-	.remove =	wm8711_remove,
-	.suspend =	wm8711_suspend,
-	.resume =	wm8711_resume,
-	.set_bias_level = wm8711_set_bias_level,
-	.reg_cache_size = ARRAY_SIZE(wm8711_reg),
-	.reg_word_size = sizeof(u16),
-	.reg_cache_default = wm8711_reg,
-};
+static void wm8711_unregister(struct wm8711_priv *wm8711)
+{
+	wm8711_set_bias_level(&wm8711->codec, SND_SOC_BIAS_OFF);
+	snd_soc_unregister_dai(&wm8711_dai);
+	snd_soc_unregister_codec(&wm8711->codec);
+	kfree(wm8711);
+	wm8711_codec = NULL;
+}
 
 #if defined(CONFIG_SPI_MASTER)
 static int __devinit wm8711_spi_probe(struct spi_device *spi)
 {
+	struct snd_soc_codec *codec;
 	struct wm8711_priv *wm8711;
-	int ret;
 
 	wm8711 = kzalloc(sizeof(struct wm8711_priv), GFP_KERNEL);
 	if (wm8711 == NULL)
 		return -ENOMEM;
 
-	spi_set_drvdata(spi, wm8711);
-	wm8711->bus_type = SND_SOC_SPI;
+	codec = &wm8711->codec;
+	codec->control_data = spi;
+	codec->dev = &spi->dev;
 
-	ret = snd_soc_register_codec(&spi->dev,
-			&soc_codec_dev_wm8711, &wm8711_dai, 1);
-	if (ret < 0)
-		kfree(wm8711);
-	return ret;
+	dev_set_drvdata(&spi->dev, wm8711);
+
+	return wm8711_register(wm8711, SND_SOC_SPI);
 }
 
 static int __devexit wm8711_spi_remove(struct spi_device *spi)
 {
-	snd_soc_unregister_codec(&spi->dev);
-	kfree(spi_get_drvdata(spi));
+	struct wm8711_priv *wm8711 = dev_get_drvdata(&spi->dev);
+
+	wm8711_unregister(wm8711);
+
 	return 0;
 }
 
 static struct spi_driver wm8711_spi_driver = {
 	.driver = {
-		.name	= "wm8711-codec",
+		.name	= "wm8711",
+		.bus	= &spi_bus_type,
 		.owner	= THIS_MODULE,
 	},
 	.probe		= wm8711_spi_probe,
@@ -461,30 +551,31 @@ static struct spi_driver wm8711_spi_driver = {
 #endif /* CONFIG_SPI_MASTER */
 
 #if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-static __devinit int wm8711_i2c_probe(struct i2c_client *client,
+static __devinit int wm8711_i2c_probe(struct i2c_client *i2c,
 				      const struct i2c_device_id *id)
 {
 	struct wm8711_priv *wm8711;
-	int ret;
+	struct snd_soc_codec *codec;
 
 	wm8711 = kzalloc(sizeof(struct wm8711_priv), GFP_KERNEL);
 	if (wm8711 == NULL)
 		return -ENOMEM;
 
-	i2c_set_clientdata(client, wm8711);
-	wm8711->bus_type = SND_SOC_I2C;
+	codec = &wm8711->codec;
+	codec->hw_write = (hw_write_t)i2c_master_send;
 
-	ret =  snd_soc_register_codec(&client->dev,
-			&soc_codec_dev_wm8711, &wm8711_dai, 1);
-	if (ret < 0)
-		kfree(wm8711);
-	return ret;
+	i2c_set_clientdata(i2c, wm8711);
+	codec->control_data = i2c;
+
+	codec->dev = &i2c->dev;
+
+	return wm8711_register(wm8711, SND_SOC_I2C);
 }
 
 static __devexit int wm8711_i2c_remove(struct i2c_client *client)
 {
-	snd_soc_unregister_codec(&client->dev);
-	kfree(i2c_get_clientdata(client));
+	struct wm8711_priv *wm8711 = i2c_get_clientdata(client);
+	wm8711_unregister(wm8711);
 	return 0;
 }
 
@@ -496,7 +587,7 @@ MODULE_DEVICE_TABLE(i2c, wm8711_i2c_id);
 
 static struct i2c_driver wm8711_i2c_driver = {
 	.driver = {
-		.name = "wm8711-codec",
+		.name = "WM8711 I2C Codec",
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm8711_i2c_probe,

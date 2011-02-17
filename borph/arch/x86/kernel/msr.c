@@ -30,13 +30,13 @@
 #include <linux/init.h>
 #include <linux/poll.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/major.h>
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/cpu.h>
 #include <linux/notifier.h>
 #include <linux/uaccess.h>
-#include <linux/gfp.h>
 
 #include <asm/processor.h>
 #include <asm/msr.h>
@@ -172,10 +172,11 @@ static long msr_ioctl(struct file *file, unsigned int ioc, unsigned long arg)
 
 static int msr_open(struct inode *inode, struct file *file)
 {
-	unsigned int cpu;
-	struct cpuinfo_x86 *c;
+	unsigned int cpu = iminor(file->f_path.dentry->d_inode);
+	struct cpuinfo_x86 *c = &cpu_data(cpu);
 
 	cpu = iminor(file->f_path.dentry->d_inode);
+
 	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
 		return -ENXIO;	/* No such CPU */
 
@@ -229,7 +230,7 @@ static int __cpuinit msr_class_cpu_callback(struct notifier_block *nfb,
 		msr_device_destroy(cpu);
 		break;
 	}
-	return notifier_from_errno(err);
+	return err ? NOTIFY_BAD : NOTIFY_OK;
 }
 
 static struct notifier_block __refdata msr_class_cpu_notifier = {
@@ -246,7 +247,7 @@ static int __init msr_init(void)
 	int i, err = 0;
 	i = 0;
 
-	if (__register_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr", &msr_fops)) {
+	if (register_chrdev(MSR_MAJOR, "cpu/msr", &msr_fops)) {
 		printk(KERN_ERR "msr: unable to get major %d for msr\n",
 		       MSR_MAJOR);
 		err = -EBUSY;
@@ -274,7 +275,7 @@ out_class:
 		msr_device_destroy(i);
 	class_destroy(msr_class);
 out_chrdev:
-	__unregister_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr");
+	unregister_chrdev(MSR_MAJOR, "cpu/msr");
 out:
 	return err;
 }
@@ -285,7 +286,7 @@ static void __exit msr_exit(void)
 	for_each_online_cpu(cpu)
 		msr_device_destroy(cpu);
 	class_destroy(msr_class);
-	__unregister_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr");
+	unregister_chrdev(MSR_MAJOR, "cpu/msr");
 	unregister_hotcpu_notifier(&msr_class_cpu_notifier);
 }
 

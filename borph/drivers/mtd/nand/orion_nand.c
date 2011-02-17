@@ -60,13 +60,7 @@ static void orion_nand_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 	}
 	buf64 = (uint64_t *)buf;
 	while (i < len/8) {
-		/*
-		 * Since GCC has no proper constraint (PR 43518)
-		 * force x variable to r2/r3 registers as ldrd instruction
-		 * requires first register to be even.
-		 */
-		register uint64_t x asm ("r2");
-
+		uint64_t x;
 		asm volatile ("ldrd\t%0, [%1]" : "=&r" (x) : "r" (io_base));
 		buf64[i++] = x;
 	}
@@ -80,7 +74,6 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 	struct mtd_info *mtd;
 	struct nand_chip *nc;
 	struct orion_nand_data *board;
-	struct resource *res;
 	void __iomem *io_base;
 	int ret = 0;
 #ifdef CONFIG_MTD_PARTITIONS
@@ -96,13 +89,8 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 	}
 	mtd = (struct mtd_info *)(nc + 1);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		ret = -ENODEV;
-		goto no_res;
-	}
-
-	io_base = ioremap(res->start, resource_size(res));
+	io_base = ioremap(pdev->resource[0].start,
+			pdev->resource[0].end - pdev->resource[0].start + 1);
 	if (!io_base) {
 		printk(KERN_ERR "orion_nand: ioremap failed\n");
 		ret = -EIO;
@@ -125,9 +113,6 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 
 	if (board->width == 16)
 		nc->options |= NAND_BUSWIDTH_16;
-
-	if (board->dev_ready)
-		nc->dev_ready = board->dev_ready;
 
 	platform_set_drvdata(pdev, mtd);
 

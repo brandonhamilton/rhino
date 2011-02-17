@@ -10,7 +10,6 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/mm.h>
-#include <linux/gfp.h>
 #include <linux/init.h>
 
 #define ESSA_SET_STABLE		1

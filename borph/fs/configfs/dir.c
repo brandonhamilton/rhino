@@ -645,7 +645,6 @@ static void detach_groups(struct config_group *group)
 
 		configfs_detach_group(sd->s_element);
 		child->d_inode->i_flags |= S_DEAD;
-		dont_mount(child);
 
 		mutex_unlock(&child->d_inode->i_mutex);
 
@@ -841,7 +840,6 @@ static int configfs_attach_item(struct config_item *parent_item,
 			mutex_lock(&dentry->d_inode->i_mutex);
 			configfs_remove_dir(item);
 			dentry->d_inode->i_flags |= S_DEAD;
-			dont_mount(dentry);
 			mutex_unlock(&dentry->d_inode->i_mutex);
 			d_delete(dentry);
 		}
@@ -884,7 +882,6 @@ static int configfs_attach_group(struct config_item *parent_item,
 		if (ret) {
 			configfs_detach_item(item);
 			dentry->d_inode->i_flags |= S_DEAD;
-			dont_mount(dentry);
 		}
 		configfs_adjust_dir_dirent_depth_after_populate(sd);
 		mutex_unlock(&dentry->d_inode->i_mutex);
@@ -1728,7 +1725,6 @@ void configfs_unregister_subsystem(struct configfs_subsystem *subsys)
 	mutex_unlock(&configfs_symlink_mutex);
 	configfs_detach_group(&group->cg_item);
 	dentry->d_inode->i_flags |= S_DEAD;
-	dont_mount(dentry);
 	mutex_unlock(&dentry->d_inode->i_mutex);
 
 	d_delete(dentry);

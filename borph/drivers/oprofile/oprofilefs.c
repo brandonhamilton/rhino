@@ -28,7 +28,6 @@ static struct inode *oprofilefs_get_inode(struct super_block *sb, int mode)
 	struct inode *inode = new_inode(sb);
 
 	if (inode) {
-		inode->i_ino = get_next_ino();
 		inode->i_mode = mode;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	}
@@ -92,20 +91,16 @@ static ssize_t ulong_read_file(struct file *file, char __user *buf, size_t count
 
 static ssize_t ulong_write_file(struct file *file, char const __user *buf, size_t count, loff_t *offset)
 {
-	unsigned long value;
+	unsigned long *value = file->private_data;
 	int retval;
 
 	if (*offset)
 		return -EINVAL;
 
-	retval = oprofilefs_ulong_from_user(&value, buf, count);
+	retval = oprofilefs_ulong_from_user(value, buf, count);
+
 	if (retval)
 		return retval;
-
-	retval = oprofile_set_ulong(file->private_data, value);
-	if (retval)
-		return retval;
-
 	return count;
 }
 
@@ -122,52 +117,59 @@ static const struct file_operations ulong_fops = {
 	.read		= ulong_read_file,
 	.write		= ulong_write_file,
 	.open		= default_open,
-	.llseek		= default_llseek,
 };
 
 
 static const struct file_operations ulong_ro_fops = {
 	.read		= ulong_read_file,
 	.open		= default_open,
-	.llseek		= default_llseek,
 };
 
 
-static int __oprofilefs_create_file(struct super_block *sb,
+static struct dentry *__oprofilefs_create_file(struct super_block *sb,
 	struct dentry *root, char const *name, const struct file_operations *fops,
-	int perm, void *priv)
+	int perm)
 {
 	struct dentry *dentry;
 	struct inode *inode;
 
 	dentry = d_alloc_name(root, name);
 	if (!dentry)
-		return -ENOMEM;
+		return NULL;
 	inode = oprofilefs_get_inode(sb, S_IFREG | perm);
 	if (!inode) {
 		dput(dentry);
-		return -ENOMEM;
+		return NULL;
 	}
 	inode->i_fop = fops;
 	d_add(dentry, inode);
-	dentry->d_inode->i_private = priv;
-	return 0;
+	return dentry;
 }
 
 
 int oprofilefs_create_ulong(struct super_block *sb, struct dentry *root,
 	char const *name, unsigned long *val)
 {
-	return __oprofilefs_create_file(sb, root, name,
-					&ulong_fops, 0644, val);
+	struct dentry *d = __oprofilefs_create_file(sb, root, name,
+						     &ulong_fops, 0644);
+	if (!d)
+		return -EFAULT;
+
+	d->d_inode->i_private = val;
+	return 0;
 }
 
 
 int oprofilefs_create_ro_ulong(struct super_block *sb, struct dentry *root,
 	char const *name, unsigned long *val)
 {
-	return __oprofilefs_create_file(sb, root, name,
-					&ulong_ro_fops, 0444, val);
+	struct dentry *d = __oprofilefs_create_file(sb, root, name,
+						     &ulong_ro_fops, 0444);
+	if (!d)
+		return -EFAULT;
+
+	d->d_inode->i_private = val;
+	return 0;
 }
 
 
@@ -181,29 +183,37 @@ static ssize_t atomic_read_file(struct file *file, char __user *buf, size_t coun
 static const struct file_operations atomic_ro_fops = {
 	.read		= atomic_read_file,
 	.open		= default_open,
-	.llseek		= default_llseek,
 };
 
 
 int oprofilefs_create_ro_atomic(struct super_block *sb, struct dentry *root,
 	char const *name, atomic_t *val)
 {
-	return __oprofilefs_create_file(sb, root, name,
-					&atomic_ro_fops, 0444, val);
+	struct dentry *d = __oprofilefs_create_file(sb, root, name,
+						     &atomic_ro_fops, 0444);
+	if (!d)
+		return -EFAULT;
+
+	d->d_inode->i_private = val;
+	return 0;
 }
 
 
 int oprofilefs_create_file(struct super_block *sb, struct dentry *root,
 	char const *name, const struct file_operations *fops)
 {
-	return __oprofilefs_create_file(sb, root, name, fops, 0644, NULL);
+	if (!__oprofilefs_create_file(sb, root, name, fops, 0644))
+		return -EFAULT;
+	return 0;
 }
 
 
 int oprofilefs_create_file_perm(struct super_block *sb, struct dentry *root,
 	char const *name, const struct file_operations *fops, int perm)
 {
-	return __oprofilefs_create_file(sb, root, name, fops, perm, NULL);
+	if (!__oprofilefs_create_file(sb, root, name, fops, perm))
+		return -EFAULT;
+	return 0;
 }
 
 
@@ -259,17 +269,17 @@ static int oprofilefs_fill_super(struct super_block *sb, void *data, int silent)
 }
 
 
-static struct dentry *oprofilefs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int oprofilefs_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, data, oprofilefs_fill_super);
+	return get_sb_single(fs_type, flags, data, oprofilefs_fill_super, mnt);
 }
 
 
 static struct file_system_type oprofilefs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "oprofilefs",
-	.mount		= oprofilefs_mount,
+	.get_sb		= oprofilefs_get_sb,
 	.kill_sb	= kill_litter_super,
 };
 

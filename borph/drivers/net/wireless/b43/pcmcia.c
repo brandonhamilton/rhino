@@ -24,8 +24,9 @@
 #include "pcmcia.h"
 
 #include <linux/ssb/ssb.h>
-#include <linux/slab.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ciscode.h>
 #include <pcmcia/ds.h>
@@ -62,6 +63,8 @@ static int b43_pcmcia_resume(struct pcmcia_device *dev)
 static int __devinit b43_pcmcia_probe(struct pcmcia_device *dev)
 {
 	struct ssb_bus *ssb;
+	win_req_t win;
+	memreq_t mem;
 	int err = -ENOMEM;
 	int res = 0;
 
@@ -71,28 +74,40 @@ static int __devinit b43_pcmcia_probe(struct pcmcia_device *dev)
 
 	err = -ENODEV;
 
-	dev->config_flags |= CONF_ENABLE_IRQ;
+	dev->conf.Attributes = CONF_ENABLE_IRQ;
+	dev->conf.IntType = INT_MEMORY_AND_IO;
 
-	dev->resource[2]->flags |=  WIN_ENABLE | WIN_DATA_WIDTH_16 |
+	dev->io.BasePort2 = 0;
+	dev->io.NumPorts2 = 0;
+	dev->io.Attributes2 = 0;
+
+	win.Attributes = WIN_ADDR_SPACE_MEM | WIN_MEMORY_TYPE_CM |
+			 WIN_ENABLE | WIN_DATA_WIDTH_16 |
 			 WIN_USE_WAIT;
-	dev->resource[2]->start = 0;
-	dev->resource[2]->end = SSB_CORE_SIZE;
-	res = pcmcia_request_window(dev, dev->resource[2], 250);
+	win.Base = 0;
+	win.Size = SSB_CORE_SIZE;
+	win.AccessSpeed = 250;
+	res = pcmcia_request_window(dev, &win, &dev->win);
 	if (res != 0)
 		goto err_kfree_ssb;
 
-	res = pcmcia_map_mem_page(dev, dev->resource[2], 0);
+	mem.CardOffset = 0;
+	mem.Page = 0;
+	res = pcmcia_map_mem_page(dev, dev->win, &mem);
 	if (res != 0)
 		goto err_disable;
 
-	if (!dev->irq)
-		goto err_disable;
-
-	res = pcmcia_enable_device(dev);
+	dev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
+	dev->irq.Handler = NULL; /* The handler is registered later. */
+	res = pcmcia_request_irq(dev, &dev->irq);
 	if (res != 0)
 		goto err_disable;
 
-	err = ssb_bus_pcmciabus_register(ssb, dev, dev->resource[2]->start);
+	res = pcmcia_request_configuration(dev, &dev->conf);
+	if (res != 0)
+		goto err_disable;
+
+	err = ssb_bus_pcmciabus_register(ssb, dev, win.Base);
 	if (err)
 		goto err_disable;
 	dev->priv = ssb;
@@ -121,7 +136,9 @@ static void __devexit b43_pcmcia_remove(struct pcmcia_device *dev)
 
 static struct pcmcia_driver b43_pcmcia_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "b43-pcmcia",
+	.drv		= {
+				.name = "b43-pcmcia",
+			},
 	.id_table	= b43_pcmcia_tbl,
 	.probe		= b43_pcmcia_probe,
 	.remove		= __devexit_p(b43_pcmcia_remove),

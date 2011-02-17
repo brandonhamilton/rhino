@@ -2,8 +2,7 @@
  * NFTL mount code with extensive checks
  *
  * Author: Fabrice Bellard (fabrice.bellard@netgem.com)
- * Copyright © 2000 Netgem S.A.
- * Copyright © 1999-2010 David Woodhouse <dwmw2@infradead.org>
+ * Copyright (C) 2000 Netgem S.A.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

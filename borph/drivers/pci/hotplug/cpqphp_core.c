@@ -583,6 +583,30 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	return 0;
 }
 
+static int get_max_bus_speed (struct hotplug_slot *hotplug_slot, enum pci_bus_speed *value)
+{
+	struct slot *slot = hotplug_slot->private;
+	struct controller *ctrl = slot->ctrl;
+
+	dbg("%s - physical_slot = %s\n", __func__, slot_name(slot));
+
+	*value = ctrl->speed_capability;
+
+	return 0;
+}
+
+static int get_cur_bus_speed (struct hotplug_slot *hotplug_slot, enum pci_bus_speed *value)
+{
+	struct slot *slot = hotplug_slot->private;
+	struct controller *ctrl = slot->ctrl;
+
+	dbg("%s - physical_slot = %s\n", __func__, slot_name(slot));
+
+	*value = ctrl->speed;
+
+	return 0;
+}
+
 static struct hotplug_slot_ops cpqphp_hotplug_slot_ops = {
 	.set_attention_status =	set_attention_status,
 	.enable_slot =		process_SI,
@@ -592,6 +616,8 @@ static struct hotplug_slot_ops cpqphp_hotplug_slot_ops = {
 	.get_attention_status =	get_attention_status,
 	.get_latch_status =	get_latch_status,
 	.get_adapter_status =	get_adapter_status,
+	.get_max_bus_speed =	get_max_bus_speed,
+	.get_cur_bus_speed =	get_cur_bus_speed,
 };
 
 #define SLOT_NAME_SIZE 10
@@ -603,7 +629,6 @@ static int ctrl_slot_setup(struct controller *ctrl,
 	struct slot *slot;
 	struct hotplug_slot *hotplug_slot;
 	struct hotplug_slot_info *hotplug_slot_info;
-	struct pci_bus *bus = ctrl->pci_bus;
 	u8 number_of_slots;
 	u8 slot_device;
 	u8 slot_number;
@@ -669,7 +694,7 @@ static int ctrl_slot_setup(struct controller *ctrl,
 			slot->capabilities |= PCISLOT_64_BIT_SUPPORTED;
 		if (is_slot66mhz(slot))
 			slot->capabilities |= PCISLOT_66_MHZ_SUPPORTED;
-		if (bus->cur_bus_speed == PCI_SPEED_66MHz)
+		if (ctrl->speed == PCI_SPEED_66MHz)
 			slot->capabilities |= PCISLOT_66_MHZ_OPERATION;
 
 		ctrl_slot =
@@ -819,7 +844,6 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	u32 rc;
 	struct controller *ctrl;
 	struct pci_func *func;
-	struct pci_bus *bus;
 	int err;
 
 	err = pci_enable_device(pdev);
@@ -827,14 +851,6 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk(KERN_ERR MY_NAME ": cannot enable PCI device %s (%d)\n",
 			pci_name(pdev), err);
 		return err;
-	}
-
-	bus = pdev->subordinate;
-	if (!bus) {
-		dev_notice(&pdev->dev, "the device is not a bridge, "
-				"skipping\n");
-		rc = -ENODEV;
-		goto err_disable_device;
 	}
 
 	/* Need to read VID early b/c it's used to differentiate CPQ and INTC
@@ -855,7 +871,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_disable_device;
 	}
 
-	/* Check for the proper subsystem ID's
+	/* Check for the proper subsytem ID's
 	 * Intel uses a different SSID programming model than Compaq.
 	 * For Intel, each SSID bit identifies a PHP capability.
 	 * Also Intel HPC's may have RID=0.
@@ -913,22 +929,22 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			pci_read_config_byte(pdev, 0x41, &bus_cap);
 			if (bus_cap & 0x80) {
 				dbg("bus max supports 133MHz PCI-X\n");
-				bus->max_bus_speed = PCI_SPEED_133MHz_PCIX;
+				ctrl->speed_capability = PCI_SPEED_133MHz_PCIX;
 				break;
 			}
 			if (bus_cap & 0x40) {
 				dbg("bus max supports 100MHz PCI-X\n");
-				bus->max_bus_speed = PCI_SPEED_100MHz_PCIX;
+				ctrl->speed_capability = PCI_SPEED_100MHz_PCIX;
 				break;
 			}
 			if (bus_cap & 20) {
 				dbg("bus max supports 66MHz PCI-X\n");
-				bus->max_bus_speed = PCI_SPEED_66MHz_PCIX;
+				ctrl->speed_capability = PCI_SPEED_66MHz_PCIX;
 				break;
 			}
 			if (bus_cap & 10) {
 				dbg("bus max supports 66MHz PCI\n");
-				bus->max_bus_speed = PCI_SPEED_66MHz;
+				ctrl->speed_capability = PCI_SPEED_66MHz;
 				break;
 			}
 
@@ -939,7 +955,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		case PCI_SUB_HPC_ID:
 			/* Original 6500/7000 implementation */
 			ctrl->slot_switch_type = 1;
-			bus->max_bus_speed = PCI_SPEED_33MHz;
+			ctrl->speed_capability = PCI_SPEED_33MHz;
 			ctrl->push_button = 0;
 			ctrl->pci_config_space = 1;
 			ctrl->defeature_PHP = 1;
@@ -950,7 +966,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			/* First Pushbutton implementation */
 			ctrl->push_flag = 1;
 			ctrl->slot_switch_type = 1;
-			bus->max_bus_speed = PCI_SPEED_33MHz;
+			ctrl->speed_capability = PCI_SPEED_33MHz;
 			ctrl->push_button = 1;
 			ctrl->pci_config_space = 1;
 			ctrl->defeature_PHP = 1;
@@ -960,7 +976,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		case PCI_SUB_HPC_ID_INTC:
 			/* Third party (6500/7000) */
 			ctrl->slot_switch_type = 1;
-			bus->max_bus_speed = PCI_SPEED_33MHz;
+			ctrl->speed_capability = PCI_SPEED_33MHz;
 			ctrl->push_button = 0;
 			ctrl->pci_config_space = 1;
 			ctrl->defeature_PHP = 1;
@@ -971,7 +987,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			/* First 66 Mhz implementation */
 			ctrl->push_flag = 1;
 			ctrl->slot_switch_type = 1;
-			bus->max_bus_speed = PCI_SPEED_66MHz;
+			ctrl->speed_capability = PCI_SPEED_66MHz;
 			ctrl->push_button = 1;
 			ctrl->pci_config_space = 1;
 			ctrl->defeature_PHP = 1;
@@ -982,7 +998,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			/* First PCI-X implementation, 100MHz */
 			ctrl->push_flag = 1;
 			ctrl->slot_switch_type = 1;
-			bus->max_bus_speed = PCI_SPEED_100MHz_PCIX;
+			ctrl->speed_capability = PCI_SPEED_100MHz_PCIX;
 			ctrl->push_button = 1;
 			ctrl->pci_config_space = 1;
 			ctrl->defeature_PHP = 1;
@@ -999,9 +1015,9 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	case PCI_VENDOR_ID_INTEL:
 		/* Check for speed capability (0=33, 1=66) */
 		if (subsystem_deviceid & 0x0001)
-			bus->max_bus_speed = PCI_SPEED_66MHz;
+			ctrl->speed_capability = PCI_SPEED_66MHz;
 		else
-			bus->max_bus_speed = PCI_SPEED_33MHz;
+			ctrl->speed_capability = PCI_SPEED_33MHz;
 
 		/* Check for push button */
 		if (subsystem_deviceid & 0x0002)
@@ -1063,7 +1079,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 					pdev->bus->number);
 
 	dbg("Hotplug controller capabilities:\n");
-	dbg("    speed_capability       %d\n", bus->max_bus_speed);
+	dbg("    speed_capability       %d\n", ctrl->speed_capability);
 	dbg("    slot_switch_type       %s\n", ctrl->slot_switch_type ?
 					"switch present" : "no switch");
 	dbg("    defeature_PHP          %s\n", ctrl->defeature_PHP ?
@@ -1082,12 +1098,13 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* make our own copy of the pci bus structure,
 	 * as we like tweaking it a lot */
-	ctrl->pci_bus = kmemdup(pdev->bus, sizeof(*ctrl->pci_bus), GFP_KERNEL);
+	ctrl->pci_bus = kmalloc(sizeof(*ctrl->pci_bus), GFP_KERNEL);
 	if (!ctrl->pci_bus) {
 		err("out of memory\n");
 		rc = -ENOMEM;
 		goto err_free_ctrl;
 	}
+	memcpy(ctrl->pci_bus, pdev->bus, sizeof(*ctrl->pci_bus));
 
 	ctrl->bus = pdev->bus->number;
 	ctrl->rev = pdev->revision;
@@ -1125,7 +1142,7 @@ static int cpqhpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* Check for 66Mhz operation */
-	bus->cur_bus_speed = get_controller_speed(ctrl);
+	ctrl->speed = get_controller_speed(ctrl);
 
 
 	/********************************************************

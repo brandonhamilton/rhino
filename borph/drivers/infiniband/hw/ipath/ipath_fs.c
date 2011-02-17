@@ -37,7 +37,6 @@
 #include <linux/pagemap.h>
 #include <linux/init.h>
 #include <linux/namei.h>
-#include <linux/slab.h>
 
 #include "ipath_kernel.h"
 
@@ -57,7 +56,6 @@ static int ipathfs_mknod(struct inode *dir, struct dentry *dentry,
 		goto bail;
 	}
 
-	inode->i_ino = get_next_ino();
 	inode->i_mode = mode;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	inode->i_private = data;
@@ -104,7 +102,6 @@ static ssize_t atomic_stats_read(struct file *file, char __user *buf,
 
 static const struct file_operations atomic_stats_ops = {
 	.read = atomic_stats_read,
-	.llseek = default_llseek,
 };
 
 static ssize_t atomic_counters_read(struct file *file, char __user *buf,
@@ -122,7 +119,6 @@ static ssize_t atomic_counters_read(struct file *file, char __user *buf,
 
 static const struct file_operations atomic_counters_ops = {
 	.read = atomic_counters_read,
-	.llseek = default_llseek,
 };
 
 static ssize_t flash_read(struct file *file, char __user *buf,
@@ -227,7 +223,6 @@ bail:
 static const struct file_operations flash_ops = {
 	.read = flash_read,
 	.write = flash_write,
-	.llseek = default_llseek,
 };
 
 static int create_device_files(struct super_block *sb,
@@ -351,8 +346,10 @@ static int ipathfs_fill_super(struct super_block *sb, void *data,
 	list_for_each_entry_safe(dd, tmp, &ipath_dev_list, ipath_list) {
 		spin_unlock_irqrestore(&ipath_devs_lock, flags);
 		ret = create_device_files(sb, dd);
-		if (ret)
+		if (ret) {
+			deactivate_locked_super(sb);
 			goto bail;
+		}
 		spin_lock_irqsave(&ipath_devs_lock, flags);
 	}
 
@@ -362,13 +359,13 @@ bail:
 	return ret;
 }
 
-static struct dentry *ipathfs_mount(struct file_system_type *fs_type,
-			int flags, const char *dev_name, void *data)
+static int ipathfs_get_sb(struct file_system_type *fs_type, int flags,
+			const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	struct dentry *ret;
-	ret = mount_single(fs_type, flags, data, ipathfs_fill_super);
-	if (!IS_ERR(ret))
-		ipath_super = ret->d_sb;
+	int ret = get_sb_single(fs_type, flags, data,
+				    ipathfs_fill_super, mnt);
+	if (ret >= 0)
+		ipath_super = mnt->mnt_sb;
 	return ret;
 }
 
@@ -411,7 +408,7 @@ bail:
 static struct file_system_type ipathfs_fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"ipathfs",
-	.mount =	ipathfs_mount,
+	.get_sb =	ipathfs_get_sb,
 	.kill_sb =	ipathfs_kill_super,
 };
 

@@ -150,19 +150,20 @@ static const char addressbits[256] = {
 };
 
 /**
- * __nand_calculate_ecc - [NAND Interface] Calculate 3-byte ECC for 256/512-byte
+ * nand_calculate_ecc - [NAND Interface] Calculate 3-byte ECC for 256/512-byte
  *			 block
+ * @mtd:	MTD block structure
  * @buf:	input buffer with raw data
- * @eccsize:	data bytes per ecc step (256 or 512)
  * @code:	output buffer with ECC
  */
-void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
+int nand_calculate_ecc(struct mtd_info *mtd, const unsigned char *buf,
 		       unsigned char *code)
 {
 	int i;
 	const uint32_t *bp = (uint32_t *)buf;
 	/* 256 or 512 bytes/ecc  */
-	const uint32_t eccsize_mult = eccsize >> 8;
+	const uint32_t eccsize_mult =
+			(((struct nand_chip *)mtd->priv)->ecc.size) >> 8;
 	uint32_t cur;		/* current value in buffer */
 	/* rp0..rp15..rp17 are the various accumulated parities (per byte) */
 	uint32_t rp0, rp1, rp2, rp3, rp4, rp5, rp6, rp7;
@@ -411,22 +412,6 @@ void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
 		    (invparity[par & 0x55] << 2) |
 		    (invparity[rp17] << 1) |
 		    (invparity[rp16] << 0);
-}
-EXPORT_SYMBOL(__nand_calculate_ecc);
-
-/**
- * nand_calculate_ecc - [NAND Interface] Calculate 3-byte ECC for 256/512-byte
- *			 block
- * @mtd:	MTD block structure
- * @buf:	input buffer with raw data
- * @code:	output buffer with ECC
- */
-int nand_calculate_ecc(struct mtd_info *mtd, const unsigned char *buf,
-		       unsigned char *code)
-{
-	__nand_calculate_ecc(buf,
-			((struct nand_chip *)mtd->priv)->ecc.size, code);
-
 	return 0;
 }
 EXPORT_SYMBOL(nand_calculate_ecc);

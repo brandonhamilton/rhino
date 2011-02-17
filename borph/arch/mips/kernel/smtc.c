@@ -25,8 +25,6 @@
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
 #include <linux/module.h>
-#include <linux/ftrace.h>
-#include <linux/slab.h>
 
 #include <asm/cpu.h>
 #include <asm/processor.h>
@@ -182,7 +180,7 @@ static int vpemask[2][8] = {
 	{0, 0, 0, 0, 0, 0, 0, 1}
 };
 int tcnoprog[NR_CPUS];
-static atomic_t idle_hook_initialized = ATOMIC_INIT(0);
+static atomic_t idle_hook_initialized = {0};
 static int clock_hang_reported[NR_CPUS];
 
 #endif /* CONFIG_SMTC_IDLE_HOOK_DEBUG */
@@ -941,29 +939,23 @@ static void ipi_call_interrupt(void)
 
 DECLARE_PER_CPU(struct clock_event_device, mips_clockevent_device);
 
-static void __irq_entry smtc_clock_tick_interrupt(void)
+void ipi_decode(struct smtc_ipi *pipi)
 {
 	unsigned int cpu = smp_processor_id();
 	struct clock_event_device *cd;
-	int irq = MIPS_CPU_IRQ_BASE + 1;
-
-	irq_enter();
-	kstat_incr_irqs_this_cpu(irq, irq_to_desc(irq));
-	cd = &per_cpu(mips_clockevent_device, cpu);
-	cd->event_handler(cd);
-	irq_exit();
-}
-
-void ipi_decode(struct smtc_ipi *pipi)
-{
 	void *arg_copy = pipi->arg;
 	int type_copy = pipi->type;
+	int irq = MIPS_CPU_IRQ_BASE + 1;
 
 	smtc_ipi_nq(&freeIPIq, pipi);
 
 	switch (type_copy) {
 	case SMTC_CLOCK_TICK:
-		smtc_clock_tick_interrupt();
+		irq_enter();
+		kstat_incr_irqs_this_cpu(irq, irq_to_desc(irq));
+		cd = &per_cpu(mips_clockevent_device, cpu);
+		cd->event_handler(cd);
+		irq_exit();
 		break;
 
 	case LINUX_SMP_IPI:
@@ -975,7 +967,8 @@ void ipi_decode(struct smtc_ipi *pipi)
 			ipi_call_interrupt();
 			break;
 		default:
-			printk("Impossible SMTC IPI Argument %p\n", arg_copy);
+			printk("Impossible SMTC IPI Argument 0x%x\n",
+				(int)arg_copy);
 			break;
 		}
 		break;
@@ -1038,7 +1031,7 @@ void deferred_smtc_ipi(void)
 		 * but it's more efficient, given that we're already
 		 * running down the IPI queue.
 		 */
-		__arch_local_irq_restore(flags);
+		__raw_local_irq_restore(flags);
 	}
 }
 
@@ -1190,7 +1183,7 @@ void smtc_ipi_replay(void)
 		/*
 		 ** But use a raw restore here to avoid recursion.
 		 */
-		__arch_local_irq_restore(flags);
+		__raw_local_irq_restore(flags);
 
 		if (pipi) {
 			self_ipi(pipi);

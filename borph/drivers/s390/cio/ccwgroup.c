@@ -123,10 +123,8 @@ ccwgroup_release (struct device *dev)
 
 	for (i = 0; i < gdev->count; i++) {
 		if (gdev->cdev[i]) {
-			spin_lock_irq(gdev->cdev[i]->ccwlock);
 			if (dev_get_drvdata(&gdev->cdev[i]->dev) == gdev)
 				dev_set_drvdata(&gdev->cdev[i]->dev, NULL);
-			spin_unlock_irq(gdev->cdev[i]->ccwlock);
 			put_device(&gdev->cdev[i]->dev);
 		}
 	}
@@ -264,14 +262,11 @@ int ccwgroup_create_from_string(struct device *root, unsigned int creator_id,
 			goto error;
 		}
 		/* Don't allow a device to belong to more than one group. */
-		spin_lock_irq(gdev->cdev[i]->ccwlock);
 		if (dev_get_drvdata(&gdev->cdev[i]->dev)) {
-			spin_unlock_irq(gdev->cdev[i]->ccwlock);
 			rc = -EINVAL;
 			goto error;
 		}
 		dev_set_drvdata(&gdev->cdev[i]->dev, gdev);
-		spin_unlock_irq(gdev->cdev[i]->ccwlock);
 	}
 	/* Check for sufficient number of bus ids. */
 	if (i < num_devices && !curr_buf) {
@@ -308,10 +303,8 @@ int ccwgroup_create_from_string(struct device *root, unsigned int creator_id,
 error:
 	for (i = 0; i < num_devices; i++)
 		if (gdev->cdev[i]) {
-			spin_lock_irq(gdev->cdev[i]->ccwlock);
 			if (dev_get_drvdata(&gdev->cdev[i]->dev) == gdev)
 				dev_set_drvdata(&gdev->cdev[i]->dev, NULL);
-			spin_unlock_irq(gdev->cdev[i]->ccwlock);
 			put_device(&gdev->cdev[i]->dev);
 			gdev->cdev[i] = NULL;
 		}

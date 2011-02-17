@@ -36,7 +36,6 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/sysctl.h>
-#include <linux/slab.h>
 #include <net/arp.h>
 #include <net/net_namespace.h>
 
@@ -145,7 +144,7 @@ static int tr_header(struct sk_buff *skb, struct net_device *dev,
 	{
 		memcpy(trh->daddr,daddr,dev->addr_len);
 		tr_source_route(skb, trh, dev);
-		return hdr_len;
+		return(hdr_len);
 	}
 
 	return -hdr_len;

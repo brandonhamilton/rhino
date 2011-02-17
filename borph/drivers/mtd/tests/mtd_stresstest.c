@@ -24,7 +24,6 @@
 #include <linux/moduleparam.h>
 #include <linux/err.h>
 #include <linux/mtd/mtd.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 
@@ -221,15 +220,12 @@ static int scan_for_bad_eraseblocks(void)
 {
 	int i, bad = 0;
 
-	bbt = kzalloc(ebcnt, GFP_KERNEL);
+	bbt = kmalloc(ebcnt, GFP_KERNEL);
 	if (!bbt) {
 		printk(PRINT_PREF "error: cannot allocate memory\n");
 		return -ENOMEM;
 	}
-
-	/* NOR flash does not implement block_isbad */
-	if (mtd->block_isbad == NULL)
-		return 0;
+	memset(bbt, 0 , ebcnt);
 
 	printk(PRINT_PREF "scanning for bad eraseblocks\n");
 	for (i = 0; i < ebcnt; ++i) {
@@ -269,7 +265,7 @@ static int __init mtd_stresstest_init(void)
 	tmp = mtd->size;
 	do_div(tmp, mtd->erasesize);
 	ebcnt = tmp;
-	pgcnt = mtd->erasesize / pgsize;
+	pgcnt = mtd->erasesize / mtd->writesize;
 
 	printk(PRINT_PREF "MTD device size %llu, eraseblock size %u, "
 	       "page size %u, count of eraseblocks %u, pages per "

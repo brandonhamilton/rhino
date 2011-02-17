@@ -13,6 +13,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/ioport.h>
@@ -177,7 +178,7 @@ static void vesafb_destroy(struct fb_info *info)
 {
 	if (info->screen_base)
 		iounmap(info->screen_base);
-	release_mem_region(info->apertures->ranges[0].base, info->apertures->ranges[0].size);
+	release_mem_region(info->aperture_base, info->aperture_size);
 	framebuffer_release(info);
 }
 
@@ -253,7 +254,7 @@ static int __init vesafb_probe(struct platform_device *dev)
 	size_vmode = vesafb_defined.yres * vesafb_fix.line_length;
 
 	/*   size_total -- all video memory we have. Used for mtrr
-	 *                 entries, resource allocation and bounds
+	 *                 entries, ressource allocation and bounds
 	 *                 checking. */
 	size_total = screen_info.lfb_size * 65536;
 	if (vram_total)
@@ -295,13 +296,8 @@ static int __init vesafb_probe(struct platform_device *dev)
 	info->par = NULL;
 
 	/* set vesafb aperture size for generic probing */
-	info->apertures = alloc_apertures(1);
-	if (!info->apertures) {
-		err = -ENOMEM;
-		goto err;
-	}
-	info->apertures->ranges[0].base = screen_info.lfb_base;
-	info->apertures->ranges[0].size = size_total;
+	info->aperture_base = screen_info.lfb_base;
+	info->aperture_size = size_total;
 
 	info->screen_base = ioremap(vesafb_fix.smem_start, vesafb_fix.smem_len);
 	if (!info->screen_base) {
@@ -481,6 +477,7 @@ err:
 }
 
 static struct platform_driver vesafb_driver = {
+	.probe	= vesafb_probe,
 	.driver	= {
 		.name	= "vesafb",
 	},
@@ -496,21 +493,20 @@ static int __init vesafb_init(void)
 	/* ignore error return of fb_get_options */
 	fb_get_options("vesafb", &option);
 	vesafb_setup(option);
+	ret = platform_driver_register(&vesafb_driver);
 
-	vesafb_device = platform_device_alloc("vesafb", 0);
-	if (!vesafb_device)
-		return -ENOMEM;
-
-	ret = platform_device_add(vesafb_device);
 	if (!ret) {
-		ret = platform_driver_probe(&vesafb_driver, vesafb_probe);
-		if (ret)
-			platform_device_del(vesafb_device);
-	}
+		vesafb_device = platform_device_alloc("vesafb", 0);
 
-	if (ret) {
-		platform_device_put(vesafb_device);
-		vesafb_device = NULL;
+		if (vesafb_device)
+			ret = platform_device_add(vesafb_device);
+		else
+			ret = -ENOMEM;
+
+		if (ret) {
+			platform_device_put(vesafb_device);
+			platform_driver_unregister(&vesafb_driver);
+		}
 	}
 
 	return ret;

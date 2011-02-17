@@ -1,25 +1,11 @@
 /*
  * MTD device concatenation layer
  *
- * Copyright © 2002 Robert Kaiser <rkaiser@sysgo.de>
- * Copyright © 2002-2010 David Woodhouse <dwmw2@infradead.org>
+ * (C) 2002 Robert Kaiser <rkaiser@sysgo.de>
  *
  * NAND support by Christian Gan <cgan@iders.ca>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- *
+ * This code is GPL
  */
 
 #include <linux/kernel.h>
@@ -197,9 +183,10 @@ concat_writev(struct mtd_info *mtd, const struct kvec *vecs,
 	}
 
 	/* make a copy of vecs */
-	vecs_copy = kmemdup(vecs, sizeof(struct kvec) * count, GFP_KERNEL);
+	vecs_copy = kmalloc(sizeof(struct kvec) * count, GFP_KERNEL);
 	if (!vecs_copy)
 		return -ENOMEM;
+	memcpy(vecs_copy, vecs, sizeof(struct kvec) * count);
 
 	entry_low = 0;
 	for (i = 0; i < concat->num_subdev; i++) {
@@ -554,12 +541,10 @@ static int concat_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 		else
 			size = len;
 
-		if (subdev->lock) {
-			err = subdev->lock(subdev, ofs, size);
-			if (err)
-				break;
-		} else
-			err = -EOPNOTSUPP;
+		err = subdev->lock(subdev, ofs, size);
+
+		if (err)
+			break;
 
 		len -= size;
 		if (len == 0)
@@ -594,12 +579,10 @@ static int concat_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 		else
 			size = len;
 
-		if (subdev->unlock) {
-			err = subdev->unlock(subdev, ofs, size);
-			if (err)
-				break;
-		} else
-			err = -EOPNOTSUPP;
+		err = subdev->unlock(subdev, ofs, size);
+
+		if (err)
+			break;
 
 		len -= size;
 		if (len == 0)

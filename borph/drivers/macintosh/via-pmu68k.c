@@ -25,6 +25,7 @@
 #include <linux/miscdevice.h>
 #include <linux/blkdev.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 

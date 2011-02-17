@@ -35,7 +35,6 @@
 #include <linux/audit.h>
 #include <linux/tty.h>
 #include <linux/security.h>
-#include <linux/gfp.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>

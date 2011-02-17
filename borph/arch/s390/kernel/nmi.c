@@ -95,6 +95,7 @@ EXPORT_SYMBOL_GPL(s390_handle_mcck);
 static int notrace s390_revalidate_registers(struct mci *mci)
 {
 	int kill_task;
+	u64 tmpclock;
 	u64 zero;
 	void *fpt_save_area, *fpt_creg_save_area;
 
@@ -213,10 +214,11 @@ static int notrace s390_revalidate_registers(struct mci *mci)
 			: "0", "cc");
 #endif
 	/* Revalidate clock comparator register */
-	if (S390_lowcore.clock_comparator == -1)
-		set_clock_comparator(S390_lowcore.mcck_clock);
-	else
-		set_clock_comparator(S390_lowcore.clock_comparator);
+	asm volatile(
+		"	stck	0(%1)\n"
+		"	sckc	0(%1)"
+		: "=m" (tmpclock) : "a" (&(tmpclock)) : "cc", "memory");
+
 	/* Check if old PSW is valid */
 	if (!mci->wp)
 		/*
@@ -253,8 +255,7 @@ void notrace s390_do_machine_check(struct pt_regs *regs)
 	int umode;
 
 	nmi_enter();
-	s390_idle_check(regs, S390_lowcore.mcck_clock,
-			S390_lowcore.mcck_enter_timer);
+	s390_idle_check();
 
 	mci = (struct mci *) &S390_lowcore.mcck_interruption_code;
 	mcck = &__get_cpu_var(cpu_mcck);

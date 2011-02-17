@@ -154,6 +154,7 @@ good_area:
 	 * the fault.
 	 */
 
+ survive:
 	fault = handle_mm_fault(mm, vma, address, write ? FAULT_FLAG_WRITE : 0);
 #ifdef DEBUG
 	printk("handle_mm_fault returns %d\n",fault);
@@ -179,10 +180,15 @@ good_area:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (!user_mode(regs))
-		goto no_context;
-	pagefault_out_of_memory();
-	return 0;
+	if (is_global_init(current)) {
+		yield();
+		down_read(&mm->mmap_sem);
+		goto survive;
+	}
+
+	printk("VM: killing process %s\n", current->comm);
+	if (user_mode(regs))
+		do_group_exit(SIGKILL);
 
 no_context:
 	current->thread.signo = SIGBUS;

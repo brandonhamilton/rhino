@@ -35,41 +35,6 @@ static struct omap_video_timings generic_panel_timings = {
 	.vbp		= 7,
 };
 
-static int generic_panel_power_on(struct omap_dss_device *dssdev)
-{
-	int r;
-
-	if (dssdev->state == OMAP_DSS_DISPLAY_ACTIVE)
-		return 0;
-
-	r = omapdss_dpi_display_enable(dssdev);
-	if (r)
-		goto err0;
-
-	if (dssdev->platform_enable) {
-		r = dssdev->platform_enable(dssdev);
-		if (r)
-			goto err1;
-	}
-
-	return 0;
-err1:
-	omapdss_dpi_display_disable(dssdev);
-err0:
-	return r;
-}
-
-static void generic_panel_power_off(struct omap_dss_device *dssdev)
-{
-	if (dssdev->state != OMAP_DSS_DISPLAY_ACTIVE)
-		return;
-
-	if (dssdev->platform_disable)
-		dssdev->platform_disable(dssdev);
-
-	omapdss_dpi_display_disable(dssdev);
-}
-
 static int generic_panel_probe(struct omap_dss_device *dssdev)
 {
 	dssdev->panel.config = OMAP_DSS_LCD_TFT;
@@ -86,58 +51,27 @@ static int generic_panel_enable(struct omap_dss_device *dssdev)
 {
 	int r = 0;
 
-	r = generic_panel_power_on(dssdev);
-	if (r)
-		return r;
+	if (dssdev->platform_enable)
+		r = dssdev->platform_enable(dssdev);
 
-	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
-
-	return 0;
+	return r;
 }
 
 static void generic_panel_disable(struct omap_dss_device *dssdev)
 {
-	generic_panel_power_off(dssdev);
-
-	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
+	if (dssdev->platform_disable)
+		dssdev->platform_disable(dssdev);
 }
 
 static int generic_panel_suspend(struct omap_dss_device *dssdev)
 {
-	generic_panel_power_off(dssdev);
-	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
+	generic_panel_disable(dssdev);
 	return 0;
 }
 
 static int generic_panel_resume(struct omap_dss_device *dssdev)
 {
-	int r = 0;
-
-	r = generic_panel_power_on(dssdev);
-	if (r)
-		return r;
-
-	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
-
-	return 0;
-}
-
-static void generic_panel_set_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
-{
-	dpi_set_timings(dssdev, timings);
-}
-
-static void generic_panel_get_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
-{
-	*timings = dssdev->panel.timings;
-}
-
-static int generic_panel_check_timings(struct omap_dss_device *dssdev,
-		struct omap_video_timings *timings)
-{
-	return dpi_check_timings(dssdev, timings);
+	return generic_panel_enable(dssdev);
 }
 
 static struct omap_dss_driver generic_driver = {
@@ -148,10 +82,6 @@ static struct omap_dss_driver generic_driver = {
 	.disable	= generic_panel_disable,
 	.suspend	= generic_panel_suspend,
 	.resume		= generic_panel_resume,
-
-	.set_timings	= generic_panel_set_timings,
-	.get_timings	= generic_panel_get_timings,
-	.check_timings	= generic_panel_check_timings,
 
 	.driver         = {
 		.name   = "generic_panel",

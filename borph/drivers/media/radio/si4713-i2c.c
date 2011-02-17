@@ -26,7 +26,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/i2c.h>
-#include <linux/slab.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-common.h>
@@ -1009,10 +1008,8 @@ static int si4713_write_econtrol_string(struct si4713_device *sdev,
 			goto exit;
 		}
 		rval = copy_from_user(ps_name, control->string, len);
-		if (rval) {
-			rval = -EFAULT;
+		if (rval < 0)
 			goto exit;
-		}
 		ps_name[len] = '\0';
 
 		if (strlen(ps_name) % vqc.step) {
@@ -1033,10 +1030,8 @@ static int si4713_write_econtrol_string(struct si4713_device *sdev,
 			goto exit;
 		}
 		rval = copy_from_user(radio_text, control->string, len);
-		if (rval) {
-			rval = -EFAULT;
+		if (rval < 0)
 			goto exit;
-		}
 		radio_text[len] = '\0';
 
 		if (strlen(radio_text) % vqc.step) {
@@ -1371,8 +1366,6 @@ static int si4713_read_econtrol_string(struct si4713_device *sdev,
 		}
 		rval = copy_to_user(control->string, sdev->rds_info.ps_name,
 					strlen(sdev->rds_info.ps_name) + 1);
-		if (rval)
-			rval = -EFAULT;
 		break;
 
 	case V4L2_CID_RDS_TX_RADIO_TEXT:
@@ -1383,8 +1376,6 @@ static int si4713_read_econtrol_string(struct si4713_device *sdev,
 		}
 		rval = copy_to_user(control->string, sdev->rds_info.radio_text,
 					strlen(sdev->rds_info.radio_text) + 1);
-		if (rval)
-			rval = -EFAULT;
 		break;
 
 	default:
@@ -1804,7 +1795,7 @@ static int si4713_g_modulator(struct v4l2_subdev *sd, struct v4l2_modulator *vm)
 
 	strncpy(vm->name, "FM Modulator", 32);
 	vm->capability = V4L2_TUNER_CAP_STEREO | V4L2_TUNER_CAP_LOW |
-		V4L2_TUNER_CAP_RDS | V4L2_TUNER_CAP_RDS_CONTROLS;
+						V4L2_TUNER_CAP_RDS;
 
 	/* Report current frequency range limits */
 	vm->rangelow = si4713_to_v4l2(FREQ_RANGE_LOW);

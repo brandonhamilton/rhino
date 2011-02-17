@@ -49,6 +49,8 @@
 #include "config.h"
 
 
+#define TIPC_MOD_VER "1.6.4"
+
 #ifndef CONFIG_TIPC_ZONES
 #define CONFIG_TIPC_ZONES 3
 #endif
@@ -96,35 +98,16 @@ int tipc_net_id;
 int tipc_remote_management;
 
 
-/**
- * tipc_buf_acquire - creates a TIPC message buffer
- * @size: message size (including TIPC header)
- *
- * Returns a new buffer with data pointers set to the specified size.
- *
- * NOTE: Headroom is reserved to allow prepending of a data link header.
- *       There may also be unrequested tailroom present at the buffer's end.
- */
-
-struct sk_buff *tipc_buf_acquire(u32 size)
+int tipc_get_mode(void)
 {
-	struct sk_buff *skb;
-	unsigned int buf_size = (BUF_HEADROOM + size + 3) & ~3u;
-
-	skb = alloc_skb_fclone(buf_size, GFP_ATOMIC);
-	if (skb) {
-		skb_reserve(skb, BUF_HEADROOM);
-		skb_put(skb, size);
-		skb->next = NULL;
-	}
-	return skb;
+	return tipc_mode;
 }
 
 /**
  * tipc_core_stop_net - shut down TIPC networking sub-systems
  */
 
-static void tipc_core_stop_net(void)
+void tipc_core_stop_net(void)
 {
 	tipc_eth_media_stop();
 	tipc_net_stop();
@@ -149,7 +132,7 @@ int tipc_core_start_net(unsigned long addr)
  * tipc_core_stop - switch TIPC from SINGLE NODE to NOT RUNNING mode
  */
 
-static void tipc_core_stop(void)
+void tipc_core_stop(void)
 {
 	if (tipc_mode != TIPC_NODE_MODE)
 		return;
@@ -164,14 +147,13 @@ static void tipc_core_stop(void)
 	tipc_nametbl_stop();
 	tipc_ref_table_stop();
 	tipc_socket_stop();
-	tipc_log_resize(0);
 }
 
 /**
  * tipc_core_start - switch TIPC from NOT RUNNING to SINGLE NODE mode
  */
 
-static int tipc_core_start(void)
+int tipc_core_start(void)
 {
 	int res;
 
@@ -199,9 +181,7 @@ static int __init tipc_init(void)
 {
 	int res;
 
-	if (tipc_log_resize(CONFIG_TIPC_LOG) != 0)
-		warn("Unable to create log buffer\n");
-
+	tipc_log_resize(CONFIG_TIPC_LOG);
 	info("Activated (version " TIPC_MOD_VER
 	     " compiled " __DATE__ " " __TIME__ ")\n");
 
@@ -209,11 +189,11 @@ static int __init tipc_init(void)
 	tipc_remote_management = 1;
 	tipc_max_publications = 10000;
 	tipc_max_subscriptions = 2000;
-	tipc_max_ports = CONFIG_TIPC_PORTS;
-	tipc_max_zones = CONFIG_TIPC_ZONES;
-	tipc_max_clusters = CONFIG_TIPC_CLUSTERS;
-	tipc_max_nodes = CONFIG_TIPC_NODES;
-	tipc_max_slaves = CONFIG_TIPC_SLAVE_NODES;
+	tipc_max_ports = delimit(CONFIG_TIPC_PORTS, 127, 65536);
+	tipc_max_zones = delimit(CONFIG_TIPC_ZONES, 1, 255);
+	tipc_max_clusters = delimit(CONFIG_TIPC_CLUSTERS, 1, 1);
+	tipc_max_nodes = delimit(CONFIG_TIPC_NODES, 8, 2047);
+	tipc_max_slaves = delimit(CONFIG_TIPC_SLAVE_NODES, 0, 2047);
 	tipc_net_id = 4711;
 
 	if ((res = tipc_core_start()))
@@ -228,6 +208,7 @@ static void __exit tipc_exit(void)
 	tipc_core_stop_net();
 	tipc_core_stop();
 	info("Deactivated\n");
+	tipc_log_resize(0);
 }
 
 module_init(tipc_init);
@@ -241,6 +222,8 @@ MODULE_VERSION(TIPC_MOD_VER);
 
 EXPORT_SYMBOL(tipc_attach);
 EXPORT_SYMBOL(tipc_detach);
+EXPORT_SYMBOL(tipc_get_addr);
+EXPORT_SYMBOL(tipc_get_mode);
 EXPORT_SYMBOL(tipc_createport);
 EXPORT_SYMBOL(tipc_deleteport);
 EXPORT_SYMBOL(tipc_ownidentity);
@@ -255,10 +238,23 @@ EXPORT_SYMBOL(tipc_withdraw);
 EXPORT_SYMBOL(tipc_connect2port);
 EXPORT_SYMBOL(tipc_disconnect);
 EXPORT_SYMBOL(tipc_shutdown);
+EXPORT_SYMBOL(tipc_isconnected);
+EXPORT_SYMBOL(tipc_peer);
+EXPORT_SYMBOL(tipc_ref_valid);
 EXPORT_SYMBOL(tipc_send);
+EXPORT_SYMBOL(tipc_send_buf);
 EXPORT_SYMBOL(tipc_send2name);
+EXPORT_SYMBOL(tipc_forward2name);
+EXPORT_SYMBOL(tipc_send_buf2name);
+EXPORT_SYMBOL(tipc_forward_buf2name);
 EXPORT_SYMBOL(tipc_send2port);
+EXPORT_SYMBOL(tipc_forward2port);
+EXPORT_SYMBOL(tipc_send_buf2port);
+EXPORT_SYMBOL(tipc_forward_buf2port);
 EXPORT_SYMBOL(tipc_multicast);
+/* EXPORT_SYMBOL(tipc_multicast_buf); not available yet */
+EXPORT_SYMBOL(tipc_ispublished);
+EXPORT_SYMBOL(tipc_available_nodes);
 
 /* TIPC API for external bearers (see tipc_bearer.h) */
 
@@ -275,4 +271,6 @@ EXPORT_SYMBOL(tipc_createport_raw);
 EXPORT_SYMBOL(tipc_reject_msg);
 EXPORT_SYMBOL(tipc_send_buf_fast);
 EXPORT_SYMBOL(tipc_acknowledge);
+EXPORT_SYMBOL(tipc_get_port);
+EXPORT_SYMBOL(tipc_get_handle);
 

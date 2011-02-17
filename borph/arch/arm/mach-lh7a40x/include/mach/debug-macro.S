@@ -14,10 +14,12 @@
 	@ It is not known if this will be appropriate for every 40x
 	@ board.
 
-		.macro  addruart, rp, rv
-		mov     \rp, #0x00000700        @ offset from base
-		orr     \rv, \rp, #0xf8000000   @ virtual base
-		orr     \rp, \rp, #0x80000000   @ physical base
+		.macro  addruart,rx
+		mrc     p15, 0, \rx, c1, c0
+		tst     \rx, #1                 @ MMU enabled?
+		mov     \rx, #0x00000700        @ offset from base
+		orreq   \rx, \rx, #0x80000000   @ physical base
+		orrne   \rx, \rx, #0xf8000000   @ virtual base
 		.endm
 
 		.macro  senduart,rd,rx

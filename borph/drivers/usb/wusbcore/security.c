@@ -23,7 +23,6 @@
  * FIXME: docs
  */
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/usb/ch9.h>
 #include <linux/random.h>
 #include "wusbhc.h"

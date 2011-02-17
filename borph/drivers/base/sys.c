@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/pm.h>
 #include <linux/device.h>
@@ -53,7 +54,7 @@ sysdev_store(struct kobject *kobj, struct attribute *attr,
 	return -EIO;
 }
 
-static const struct sysfs_ops sysfs_ops = {
+static struct sysfs_ops sysfs_ops = {
 	.show	= sysdev_show,
 	.store	= sysdev_store,
 };
@@ -88,7 +89,7 @@ static ssize_t sysdev_class_show(struct kobject *kobj, struct attribute *attr,
 	struct sysdev_class_attribute *class_attr = to_sysdev_class_attr(attr);
 
 	if (class_attr->show)
-		return class_attr->show(class, class_attr, buffer);
+		return class_attr->show(class, buffer);
 	return -EIO;
 }
 
@@ -99,11 +100,11 @@ static ssize_t sysdev_class_store(struct kobject *kobj, struct attribute *attr,
 	struct sysdev_class_attribute *class_attr = to_sysdev_class_attr(attr);
 
 	if (class_attr->store)
-		return class_attr->store(class, class_attr, buffer, count);
+		return class_attr->store(class, buffer, count);
 	return -EIO;
 }
 
-static const struct sysfs_ops sysfs_class_ops = {
+static struct sysfs_ops sysfs_class_ops = {
 	.show	= sysdev_class_show,
 	.store	= sysdev_class_store,
 };
@@ -144,20 +145,13 @@ int sysdev_class_register(struct sysdev_class *cls)
 	if (retval)
 		return retval;
 
-	retval = kset_register(&cls->kset);
-	if (!retval && cls->attrs)
-		retval = sysfs_create_files(&cls->kset.kobj,
-					    (const struct attribute **)cls->attrs);
-	return retval;
+	return kset_register(&cls->kset);
 }
 
 void sysdev_class_unregister(struct sysdev_class *cls)
 {
 	pr_debug("Unregistering sysdev class '%s'\n",
 		 kobject_name(&cls->kset.kobj));
-	if (cls->attrs)
-		sysfs_remove_files(&cls->kset.kobj,
-				   (const struct attribute **)cls->attrs);
 	kset_unregister(&cls->kset);
 }
 
@@ -432,13 +426,13 @@ int sysdev_suspend(pm_message_t state)
 	/* resume current sysdev */
 cls_driver:
 	drv = NULL;
-	printk(KERN_ERR "Class suspend failed for %s: %d\n",
-		kobject_name(&sysdev->kobj), ret);
+	printk(KERN_ERR "Class suspend failed for %s\n",
+		kobject_name(&sysdev->kobj));
 
 aux_driver:
 	if (drv)
-		printk(KERN_ERR "Class driver suspend failed for %s: %d\n",
-				kobject_name(&sysdev->kobj), ret);
+		printk(KERN_ERR "Class driver suspend failed for %s\n",
+				kobject_name(&sysdev->kobj));
 	list_for_each_entry(err_drv, &cls->drivers, entry) {
 		if (err_drv == drv)
 			break;

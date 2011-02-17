@@ -59,7 +59,6 @@ typedef enum {
 #include <linux/wait.h>
 #include <linux/fcntl.h>	/* For O_CLOEXEC and O_NONBLOCK */
 #include <linux/kmemcheck.h>
-#include <linux/rcupdate.h>
 
 struct poll_table_struct;
 struct pipe_inode_info;
@@ -117,21 +116,16 @@ enum sock_shutdown_cmd {
 	SHUT_RDWR	= 2,
 };
 
-struct socket_wq {
-	wait_queue_head_t	wait;
-	struct fasync_struct	*fasync_list;
-	struct rcu_head		rcu;
-} ____cacheline_aligned_in_smp;
-
 /**
  *  struct socket - general BSD socket
  *  @state: socket state (%SS_CONNECTED, etc)
  *  @type: socket type (%SOCK_STREAM, etc)
  *  @flags: socket flags (%SOCK_ASYNC_NOSPACE, etc)
  *  @ops: protocol specific socket operations
+ *  @fasync_list: Asynchronous wake up list
  *  @file: File back pointer for gc
  *  @sk: internal networking protocol agnostic socket representation
- *  @wq: wait queue for several uses
+ *  @wait: wait queue for several uses
  */
 struct socket {
 	socket_state		state;
@@ -141,8 +135,11 @@ struct socket {
 	kmemcheck_bitfield_end(type);
 
 	unsigned long		flags;
-
-	struct socket_wq	*wq;
+	/*
+	 * Please keep fasync_list & wait fields in the same cache line
+	 */
+	struct fasync_struct	*fasync_list;
+	wait_queue_head_t	wait;
 
 	struct file		*file;
 	struct sock		*sk;
@@ -177,22 +174,18 @@ struct proto_ops {
 				      struct poll_table_struct *wait);
 	int		(*ioctl)     (struct socket *sock, unsigned int cmd,
 				      unsigned long arg);
-#ifdef CONFIG_COMPAT
 	int	 	(*compat_ioctl) (struct socket *sock, unsigned int cmd,
 				      unsigned long arg);
-#endif
 	int		(*listen)    (struct socket *sock, int len);
 	int		(*shutdown)  (struct socket *sock, int flags);
 	int		(*setsockopt)(struct socket *sock, int level,
 				      int optname, char __user *optval, unsigned int optlen);
 	int		(*getsockopt)(struct socket *sock, int level,
 				      int optname, char __user *optval, int __user *optlen);
-#ifdef CONFIG_COMPAT
 	int		(*compat_setsockopt)(struct socket *sock, int level,
 				      int optname, char __user *optval, unsigned int optlen);
 	int		(*compat_getsockopt)(struct socket *sock, int level,
 				      int optname, char __user *optval, int __user *optlen);
-#endif
 	int		(*sendmsg)   (struct kiocb *iocb, struct socket *sock,
 				      struct msghdr *m, size_t total_len);
 	int		(*recvmsg)   (struct kiocb *iocb, struct socket *sock,
@@ -229,8 +222,6 @@ enum {
 extern int	     sock_wake_async(struct socket *sk, int how, int band);
 extern int	     sock_register(const struct net_proto_family *fam);
 extern void	     sock_unregister(int family);
-extern int	     __sock_create(struct net *net, int family, int type, int proto,
-				 struct socket **res, int kern);
 extern int	     sock_create(int family, int type, int proto,
 				 struct socket **res);
 extern int	     sock_create_kern(int family, int type, int proto,

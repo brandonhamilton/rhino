@@ -142,6 +142,9 @@ void __init mxc_init_irq(void __iomem *irqbase)
 	for (i = 0; i < 8; i++)
 		__raw_writel(0, avic_base + AVIC_NIPRIORITY(i));
 
+	/* init architectures chained interrupt handler */
+	mxc_register_gpios();
+
 #ifdef CONFIG_FIQ
 	/* Initialize FIQ */
 	init_FIQ();

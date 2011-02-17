@@ -9,7 +9,6 @@
  */
 #include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
-#include <linux/writeback.h>
 #include "adfs.h"
 
 /*
@@ -50,19 +49,10 @@ static int adfs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
-	int ret;
-
 	*pagep = NULL;
-	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				adfs_get_block,
 				&ADFS_I(mapping->host)->mmu_private);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
-
-	return ret;
 }
 
 static sector_t _adfs_bmap(struct address_space *mapping, sector_t block)
@@ -331,9 +321,11 @@ adfs_notify_change(struct dentry *dentry, struct iattr *attr)
 	if (error)
 		goto out;
 
-	/* XXX: this is missing some actual on-disk truncation.. */
 	if (ia_valid & ATTR_SIZE)
-		truncate_setsize(inode, attr->ia_size);
+		error = vmtruncate(inode, attr->ia_size);
+
+	if (error)
+		goto out;
 
 	if (ia_valid & ATTR_MTIME) {
 		inode->i_mtime = attr->ia_mtime;
@@ -368,7 +360,7 @@ out:
  * The adfs-specific inode data has already been updated by
  * adfs_notify_change()
  */
-int adfs_write_inode(struct inode *inode, struct writeback_control *wbc)
+int adfs_write_inode(struct inode *inode, int wait)
 {
 	struct super_block *sb = inode->i_sb;
 	struct object_info obj;
@@ -383,7 +375,7 @@ int adfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	obj.attr	= ADFS_I(inode)->attr;
 	obj.size	= inode->i_size;
 
-	ret = adfs_dir_update(sb, &obj, wbc->sync_mode == WB_SYNC_ALL);
+	ret = adfs_dir_update(sb, &obj, wait);
 	unlock_kernel();
 	return ret;
 }

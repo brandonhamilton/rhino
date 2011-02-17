@@ -35,12 +35,14 @@
 
 #include "debug.h"
 
+#include "iface.h"
 #include "viafbdev.h"
 #include "chip.h"
 #include "accel.h"
 #include "share.h"
 #include "dvi.h"
 #include "viamode.h"
+#include "via_i2c.h"
 #include "hw.h"
 
 #include "lcd.h"
@@ -48,6 +50,7 @@
 #include "via_utility.h"
 #include "vt1636.h"
 #include "tblDPASetting.h"
+#include "tbl1636.h"
 
 /* External struct*/
 
@@ -65,6 +68,8 @@ extern int viafb_refresh;
 extern int viafb_refresh1;
 extern int viafb_lcd_dsp_method;
 extern int viafb_lcd_mode;
+extern int viafb_bpp;
+extern int viafb_bpp1;
 
 extern int viafb_CRT_ON;
 extern int viafb_hotplug_Xres;

@@ -7,8 +7,6 @@
 #define irq_canonicalize(i)	(i)
 #endif
 
-#define NR_IRQS_LEGACY	16
-
 /*
  * Use this value to indicate lack of interrupt
  * capability
@@ -19,7 +17,6 @@
 
 #ifndef __ASSEMBLY__
 struct irqaction;
-struct pt_regs;
 extern void migrate_irqs(void);
 
 extern void asm_do_IRQ(unsigned int, struct pt_regs *);

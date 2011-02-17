@@ -9,6 +9,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <asm/cpuinfo.h>
 #include <asm/pvr.h>
 
@@ -30,8 +31,6 @@ const struct cpu_ver_key cpu_ver_lookup[] = {
 	{"7.20.c", 0x0e},
 	{"7.20.d", 0x0f},
 	{"7.30.a", 0x10},
-	{"7.30.b", 0x11},
-	{"8.00.a", 0x12},
 	{NULL, 0},
 };
 

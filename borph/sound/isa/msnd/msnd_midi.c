@@ -25,7 +25,6 @@
  */
 
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/ioport.h>
 #include <linux/errno.h>
@@ -163,7 +162,7 @@ int snd_msndmidi_new(struct snd_card *card, int device)
 	err = snd_rawmidi_new(card, "MSND-MIDI", device, 1, 1, &rmidi);
 	if (err < 0)
 		return err;
-	mpu = kzalloc(sizeof(*mpu), GFP_KERNEL);
+	mpu = kcalloc(1, sizeof(*mpu), GFP_KERNEL);
 	if (mpu == NULL) {
 		snd_device_free(card, rmidi);
 		return -ENOMEM;

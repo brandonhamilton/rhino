@@ -22,7 +22,6 @@
 #include <linux/pci.h>
 #include <linux/ioc4.h>
 #include <linux/serial_core.h>
-#include <linux/slab.h>
 
 /*
  * interesting things about the ioc4
@@ -1685,12 +1684,11 @@ ioc4_change_speed(struct uart_port *the_port,
 {
 	struct ioc4_port *port = get_ioc4_port(the_port, 0);
 	int baud, bits;
-	unsigned cflag, iflag;
+	unsigned cflag;
 	int new_parity = 0, new_parity_enable = 0, new_stop = 0, new_data = 8;
 	struct uart_state *state = the_port->state;
 
 	cflag = new_termios->c_cflag;
-	iflag = new_termios->c_iflag;
 
 	switch (cflag & CSIZE) {
 	case CS5:
@@ -1742,12 +1740,12 @@ ioc4_change_speed(struct uart_port *the_port,
 
 	state->port.tty->low_latency = 1;
 
-	if (iflag & IGNPAR)
+	if (I_IGNPAR(state->port.tty))
 		the_port->ignore_status_mask &= ~(N_PARITY_ERROR
 						| N_FRAMING_ERROR);
-	if (iflag & IGNBRK) {
+	if (I_IGNBRK(state->port.tty)) {
 		the_port->ignore_status_mask &= ~N_BREAK;
-		if (iflag & IGNPAR)
+		if (I_IGNPAR(state->port.tty))
 			the_port->ignore_status_mask &= ~N_OVERRUN_ERROR;
 	}
 	if (!(cflag & CREAD)) {

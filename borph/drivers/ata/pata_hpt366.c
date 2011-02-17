@@ -11,7 +11,9 @@
  *
  *
  * TODO
- *	Look into engine reset on timeout errors. Should not be required.
+ *	Maybe PLL mode
+ *	Look into engine reset on timeout errors. Should not be
+ *		required.
  */
 
 
@@ -25,7 +27,7 @@
 #include <linux/libata.h>
 
 #define DRV_NAME	"pata_hpt366"
-#define DRV_VERSION	"0.6.8"
+#define DRV_VERSION	"0.6.7"
 
 struct hpt_clock {
 	u8	xfer_mode;
@@ -182,7 +184,7 @@ static unsigned long hpt366_filter(struct ata_device *adev, unsigned long mask)
 	} else if (adev->class == ATA_DEV_ATAPI)
 		mask &= ~(ATA_MASK_MWDMA | ATA_MASK_UDMA);
 
-	return mask;
+	return ata_bmdma_mode_filter(adev, mask);
 }
 
 static int hpt36x_cable_detect(struct ata_port *ap)
@@ -205,8 +207,17 @@ static void hpt366_set_mode(struct ata_port *ap, struct ata_device *adev,
 {
 	struct hpt_clock *clocks = ap->host->private_data;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	u32 addr = 0x40 + 4 * adev->devno;
+	u32 addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
+	u32 addr2 = 0x51 + 4 * ap->port_no;
 	u32 mask, reg;
+	u8 fast;
+
+	/* Fast interrupt prediction disable, hold off interrupt disable */
+	pci_read_config_byte(pdev, addr2, &fast);
+	if (fast & 0x80) {
+		fast &= ~0x80;
+		pci_write_config_byte(pdev, addr2, fast);
+	}
 
 	/* determine timing mask and find matching clock entry */
 	if (mode < XFER_MW_DMA_0)
@@ -229,9 +240,9 @@ static void hpt366_set_mode(struct ata_port *ap, struct ata_device *adev,
 	 * on-chip PIO FIFO/buffer (and PIO MST mode as well) to avoid
 	 * problems handling I/O errors later.
 	 */
-	pci_read_config_dword(pdev, addr, &reg);
+	pci_read_config_dword(pdev, addr1, &reg);
 	reg = ((reg & ~mask) | (clocks->timing & mask)) & ~0xc0000000;
-	pci_write_config_dword(pdev, addr, reg);
+	pci_write_config_dword(pdev, addr1, reg);
 }
 
 /**
@@ -361,7 +372,7 @@ static int hpt36x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 			break;
 	}
 	/* Now kick off ATA set up */
-	return ata_pci_bmdma_init_one(dev, ppi, &hpt36x_sht, hpriv, 0);
+	return ata_pci_sff_init_one(dev, ppi, &hpt36x_sht, hpriv);
 }
 
 #ifdef CONFIG_PM

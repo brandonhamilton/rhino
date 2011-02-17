@@ -51,11 +51,8 @@ static int __init mpc5121_generic_probe(void)
 define_machine(mpc5121_generic) {
 	.name			= "MPC5121 generic",
 	.probe			= mpc5121_generic_probe,
-	.init			= mpc512x_init,
-	.init_early		= mpc512x_init_diu,
-	.setup_arch		= mpc512x_setup_diu,
+	.init			= mpc512x_declare_of_platform_devices,
 	.init_IRQ		= mpc512x_init_IRQ,
 	.get_irq		= ipic_get_irq,
 	.calibrate_decr		= generic_calibrate_decr,
-	.restart		= mpc512x_restart,
 };

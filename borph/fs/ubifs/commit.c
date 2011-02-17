@@ -45,7 +45,6 @@
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>
-#include <linux/slab.h>
 #include "ubifs.h"
 
 /**
@@ -63,9 +62,7 @@ static int do_commit(struct ubifs_info *c)
 	struct ubifs_lp_stats lst;
 
 	dbg_cmt("start");
-	ubifs_assert(!c->ro_media && !c->ro_mount);
-
-	if (c->ro_error) {
+	if (c->ro_media) {
 		err = -EROFS;
 		goto out_up;
 	}

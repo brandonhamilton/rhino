@@ -32,7 +32,6 @@
 #include <linux/init.h>
 
 #include <asm/bootinfo.h>
-#include <asm/mach-au1x00/au1000.h>
 
 #include <prom.h>
 
@@ -58,9 +57,4 @@ void __init prom_init(void)
 	else
 		strict_strtoul(memsize_str, 0, &memsize);
 	add_memory_region(0, memsize, BOOT_MEM_RAM);
-}
-
-void prom_putchar(unsigned char c)
-{
-	alchemy_uart_putchar(UART0_PHYS_ADDR, c);
 }

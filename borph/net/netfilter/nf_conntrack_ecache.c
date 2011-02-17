@@ -18,7 +18,6 @@
 #include <linux/percpu.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_core.h>
@@ -26,10 +25,10 @@
 
 static DEFINE_MUTEX(nf_ct_ecache_mutex);
 
-struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb __read_mostly;
+struct nf_ct_event_notifier *nf_conntrack_event_cb __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_event_cb);
 
-struct nf_exp_event_notifier __rcu *nf_expect_event_cb __read_mostly;
+struct nf_exp_event_notifier *nf_expect_event_cb __read_mostly;
 EXPORT_SYMBOL_GPL(nf_expect_event_cb);
 
 /* deliver cached events and clear cache entry - must be called with locally
@@ -85,8 +84,7 @@ int nf_conntrack_register_notifier(struct nf_ct_event_notifier *new)
 	struct nf_ct_event_notifier *notify;
 
 	mutex_lock(&nf_ct_ecache_mutex);
-	notify = rcu_dereference_protected(nf_conntrack_event_cb,
-					   lockdep_is_held(&nf_ct_ecache_mutex));
+	notify = rcu_dereference(nf_conntrack_event_cb);
 	if (notify != NULL) {
 		ret = -EBUSY;
 		goto out_unlock;
@@ -106,8 +104,7 @@ void nf_conntrack_unregister_notifier(struct nf_ct_event_notifier *new)
 	struct nf_ct_event_notifier *notify;
 
 	mutex_lock(&nf_ct_ecache_mutex);
-	notify = rcu_dereference_protected(nf_conntrack_event_cb,
-					   lockdep_is_held(&nf_ct_ecache_mutex));
+	notify = rcu_dereference(nf_conntrack_event_cb);
 	BUG_ON(notify != new);
 	rcu_assign_pointer(nf_conntrack_event_cb, NULL);
 	mutex_unlock(&nf_ct_ecache_mutex);
@@ -120,8 +117,7 @@ int nf_ct_expect_register_notifier(struct nf_exp_event_notifier *new)
 	struct nf_exp_event_notifier *notify;
 
 	mutex_lock(&nf_ct_ecache_mutex);
-	notify = rcu_dereference_protected(nf_expect_event_cb,
-					   lockdep_is_held(&nf_ct_ecache_mutex));
+	notify = rcu_dereference(nf_expect_event_cb);
 	if (notify != NULL) {
 		ret = -EBUSY;
 		goto out_unlock;
@@ -141,8 +137,7 @@ void nf_ct_expect_unregister_notifier(struct nf_exp_event_notifier *new)
 	struct nf_exp_event_notifier *notify;
 
 	mutex_lock(&nf_ct_ecache_mutex);
-	notify = rcu_dereference_protected(nf_expect_event_cb,
-					   lockdep_is_held(&nf_ct_ecache_mutex));
+	notify = rcu_dereference(nf_expect_event_cb);
 	BUG_ON(notify != new);
 	rcu_assign_pointer(nf_expect_event_cb, NULL);
 	mutex_unlock(&nf_ct_ecache_mutex);

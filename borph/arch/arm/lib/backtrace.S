@@ -110,13 +110,13 @@ no_frame:	ldmfd	sp!, {r4 - r8, pc}
 ENDPROC(__backtrace)
 ENDPROC(c_backtrace)
 		
-		.pushsection __ex_table,"a"
+		.section __ex_table,"a"
 		.align	3
 		.long	1001b, 1006b
 		.long	1002b, 1006b
 		.long	1003b, 1006b
 		.long	1004b, 1006b
-		.popsection
+		.previous
 
 #define instr r4
 #define reg   r5

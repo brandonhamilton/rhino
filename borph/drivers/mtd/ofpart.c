@@ -1,11 +1,11 @@
 /*
  * Flash partitions described by the OF (or flattened) device tree
  *
- * Copyright © 2006 MontaVista Software Inc.
+ * Copyright (C) 2006 MontaVista Software Inc.
  * Author: Vitaly Wool <vwool@ru.mvista.com>
  *
  * Revised to handle newer style flash binding by:
- *   Copyright © 2007 David Gibson, IBM Corporation.
+ *   Copyright (C) 2007 David Gibson, IBM Corporation.
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -17,7 +17,6 @@
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/mtd/mtd.h>
-#include <linux/slab.h>
 #include <linux/mtd/partitions.h>
 
 int __devinit of_mtd_parse_partitions(struct device *dev,
@@ -44,7 +43,7 @@ int __devinit of_mtd_parse_partitions(struct device *dev,
 	pp = NULL;
 	i = 0;
 	while ((pp = of_get_next_child(node, pp))) {
-		const __be32 *reg;
+		const u32 *reg;
 		int len;
 
 		reg = of_get_property(pp, "reg", &len);
@@ -53,8 +52,8 @@ int __devinit of_mtd_parse_partitions(struct device *dev,
 			continue;
 		}
 
-		(*pparts)[i].offset = be32_to_cpu(reg[0]);
-		(*pparts)[i].size = be32_to_cpu(reg[1]);
+		(*pparts)[i].offset = reg[0];
+		(*pparts)[i].size = reg[1];
 
 		partname = of_get_property(pp, "label", &len);
 		if (!partname)

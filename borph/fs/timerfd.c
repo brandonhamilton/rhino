@@ -14,7 +14,6 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/time.h>
@@ -110,14 +109,31 @@ static ssize_t timerfd_read(struct file *file, char __user *buf, size_t count,
 	struct timerfd_ctx *ctx = file->private_data;
 	ssize_t res;
 	u64 ticks = 0;
+	DECLARE_WAITQUEUE(wait, current);
 
 	if (count < sizeof(ticks))
 		return -EINVAL;
 	spin_lock_irq(&ctx->wqh.lock);
-	if (file->f_flags & O_NONBLOCK)
-		res = -EAGAIN;
-	else
-		res = wait_event_interruptible_locked_irq(ctx->wqh, ctx->ticks);
+	res = -EAGAIN;
+	if (!ctx->ticks && !(file->f_flags & O_NONBLOCK)) {
+		__add_wait_queue(&ctx->wqh, &wait);
+		for (res = 0;;) {
+			set_current_state(TASK_INTERRUPTIBLE);
+			if (ctx->ticks) {
+				res = 0;
+				break;
+			}
+			if (signal_pending(current)) {
+				res = -ERESTARTSYS;
+				break;
+			}
+			spin_unlock_irq(&ctx->wqh.lock);
+			schedule();
+			spin_lock_irq(&ctx->wqh.lock);
+		}
+		__remove_wait_queue(&ctx->wqh, &wait);
+		__set_current_state(TASK_RUNNING);
+	}
 	if (ctx->ticks) {
 		ticks = ctx->ticks;
 		if (ctx->expired && ctx->tintv.tv64) {
@@ -144,7 +160,6 @@ static const struct file_operations timerfd_fops = {
 	.release	= timerfd_release,
 	.poll		= timerfd_poll,
 	.read		= timerfd_read,
-	.llseek		= noop_llseek,
 };
 
 static struct file *timerfd_fget(int fd)
@@ -185,7 +200,7 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 	hrtimer_init(&ctx->tmr, clockid, HRTIMER_MODE_ABS);
 
 	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
-			       O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
+			       flags & TFD_SHARED_FCNTL_FLAGS);
 	if (ufd < 0)
 		kfree(ctx);
 

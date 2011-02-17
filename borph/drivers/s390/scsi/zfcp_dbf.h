@@ -30,8 +30,6 @@
 #define ZFCP_DBF_TAG_SIZE      4
 #define ZFCP_DBF_ID_SIZE       7
 
-#define ZFCP_DBF_INVALID_LUN	0xFFFFFFFFFFFFFFFFull
-
 struct zfcp_dbf_dump {
 	u8 tag[ZFCP_DBF_TAG_SIZE];
 	u32 total_size;		/* size of total dump data */
@@ -60,7 +58,7 @@ struct zfcp_dbf_rec_record_trigger {
 	u8 need;
 	u32 as;
 	u32 ps;
-	u32 ls;
+	u32 us;
 	u64 ref;
 	u64 action;
 	u64 wwpn;
@@ -110,7 +108,7 @@ struct zfcp_dbf_hba_record_response {
 	union {
 		struct {
 			u64 cmnd;
-			u32 data_dir;
+			u64 serial;
 		} fcp;
 		struct {
 			u64 wwpn;
@@ -194,9 +192,9 @@ struct zfcp_dbf_san_record {
 		struct zfcp_dbf_san_record_ct_response ct_resp;
 		struct zfcp_dbf_san_record_els els;
 	} u;
-} __attribute__ ((packed));
-
 #define ZFCP_DBF_SAN_MAX_PAYLOAD 1024
+	u8 payload[32];
+} __attribute__ ((packed));
 
 struct zfcp_dbf_scsi_record {
 	u8 tag[ZFCP_DBF_TAG_SIZE];
@@ -205,6 +203,7 @@ struct zfcp_dbf_scsi_record {
 	u32 scsi_lun;
 	u32 scsi_result;
 	u64 scsi_cmnd;
+	u64 scsi_serial;
 #define ZFCP_DBF_SCSI_OPCODE	16
 	u8 scsi_opcode[ZFCP_DBF_SCSI_OPCODE];
 	u8 scsi_retries;
@@ -302,31 +301,17 @@ void zfcp_dbf_scsi(const char *tag, const char *tag2, int level,
 
 /**
  * zfcp_dbf_scsi_result - trace event for SCSI command completion
- * @dbf: adapter dbf trace
+ * @tag: tag indicating success or failure of SCSI command
+ * @level: trace level applicable for this event
+ * @adapter: adapter that has been used to issue the SCSI command
  * @scmd: SCSI command pointer
- * @req: FSF request used to issue SCSI command
+ * @fsf_req: request used to issue SCSI command (might be NULL)
  */
 static inline
-void zfcp_dbf_scsi_result(struct zfcp_dbf *dbf, struct scsi_cmnd *scmd,
-			  struct zfcp_fsf_req *req)
+void zfcp_dbf_scsi_result(const char *tag, int level, struct zfcp_dbf *dbf,
+			  struct scsi_cmnd *scmd, struct zfcp_fsf_req *fsf_req)
 {
-	if (scmd->result != 0)
-		zfcp_dbf_scsi("rslt", "erro", 3, dbf, scmd, req, 0);
-	else if (scmd->retries > 0)
-		zfcp_dbf_scsi("rslt", "retr", 4, dbf, scmd, req, 0);
-	else
-		zfcp_dbf_scsi("rslt", "norm", 6, dbf, scmd, req, 0);
-}
-
-/**
- * zfcp_dbf_scsi_fail_send - trace event for failure to send SCSI command
- * @dbf: adapter dbf trace
- * @scmd: SCSI command pointer
- */
-static inline
-void zfcp_dbf_scsi_fail_send(struct zfcp_dbf *dbf, struct scsi_cmnd *scmd)
-{
-	zfcp_dbf_scsi("rslt", "fail", 4, dbf, scmd, NULL, 0);
+	zfcp_dbf_scsi("rslt", tag, level, dbf, scmd, fsf_req, 0);
 }
 
 /**
@@ -348,16 +333,16 @@ void zfcp_dbf_scsi_abort(const char *tag, struct zfcp_dbf *dbf,
 /**
  * zfcp_dbf_scsi_devreset - trace event for Logical Unit or Target Reset
  * @tag: tag indicating success or failure of reset operation
- * @scmnd: SCSI command which caused this error recovery
  * @flag: indicates type of reset (Target Reset, Logical Unit Reset)
+ * @unit: unit that needs reset
+ * @scsi_cmnd: SCSI command which caused this error recovery
  */
 static inline
-void zfcp_dbf_scsi_devreset(const char *tag, struct scsi_cmnd *scmnd, u8 flag)
+void zfcp_dbf_scsi_devreset(const char *tag, u8 flag, struct zfcp_unit *unit,
+			    struct scsi_cmnd *scsi_cmnd)
 {
-	struct zfcp_scsi_dev *zfcp_sdev = sdev_to_zfcp(scmnd->device);
-
 	zfcp_dbf_scsi(flag == FCP_TMF_TGT_RESET ? "trst" : "lrst", tag, 1,
-		      zfcp_sdev->port->adapter->dbf, scmnd, NULL, 0);
+			    unit->port->adapter->dbf, scsi_cmnd, NULL, 0);
 }
 
 #endif /* ZFCP_DBF_H */

@@ -30,7 +30,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/mm.h>
 #include <linux/blkdev.h>
@@ -65,7 +64,7 @@ static struct scsi_host_template snirm710_template = {
 	.module		= THIS_MODULE,
 };
 
-static int __devinit snirm710_probe(struct platform_device *dev)
+static int __init snirm710_probe(struct platform_device *dev)
 {
 	unsigned long base;
 	struct NCR_700_Host_Parameters *hostdata;

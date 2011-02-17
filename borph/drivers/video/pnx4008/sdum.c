@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/tty.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -28,7 +29,6 @@
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
-#include <linux/gfp.h>
 #include <asm/uaccess.h>
 #include <mach/gpio.h>
 

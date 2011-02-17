@@ -52,7 +52,7 @@ static int sd_getcolors(struct gspca_dev *gspca_dev, __s32 *val);
 static int sd_setautogain(struct gspca_dev *gspca_dev, __s32 val);
 static int sd_getautogain(struct gspca_dev *gspca_dev, __s32 *val);
 
-static const struct ctrl sd_ctrls[] = {
+static struct ctrl sd_ctrls[] = {
 	{
 	 {
 	  .id = V4L2_CID_BRIGHTNESS,
@@ -710,9 +710,9 @@ static void Et_setgainG(struct gspca_dev *gspca_dev, __u8 gain)
 }
 
 #define BLIMIT(bright) \
-	(u8)((bright > 0x1f) ? 0x1f : ((bright < 4) ? 3 : bright))
+	(__u8)((bright > 0x1f)?0x1f:((bright < 4)?3:bright))
 #define LIMIT(color) \
-	(u8)((color > 0xff) ? 0xff : ((color < 0) ? 0 : color))
+	(unsigned char)((color > 0xff)?0xff:((color < 0)?0:color))
 
 static void do_autogain(struct gspca_dev *gspca_dev)
 {
@@ -851,7 +851,7 @@ static int sd_getautogain(struct gspca_dev *gspca_dev, __s32 *val)
 }
 
 /* sub-driver description */
-static const struct sd_desc sd_desc = {
+static struct sd_desc sd_desc = {
 	.name = MODULE_NAME,
 	.ctrls = sd_ctrls,
 	.nctrls = ARRAY_SIZE(sd_ctrls),
@@ -864,7 +864,7 @@ static const struct sd_desc sd_desc = {
 };
 
 /* -- module initialisation -- */
-static const struct usb_device_id device_table[] __devinitconst = {
+static __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x102c, 0x6151), .driver_info = SENSOR_PAS106},
 #if !defined CONFIG_USB_ET61X251 && !defined CONFIG_USB_ET61X251_MODULE
 	{USB_DEVICE(0x102c, 0x6251), .driver_info = SENSOR_TAS5130CXX},
@@ -875,7 +875,7 @@ static const struct usb_device_id device_table[] __devinitconst = {
 MODULE_DEVICE_TABLE(usb, device_table);
 
 /* -- device connect -- */
-static int __devinit sd_probe(struct usb_interface *intf,
+static int sd_probe(struct usb_interface *intf,
 		    const struct usb_device_id *id)
 {
 	return gspca_dev_probe(intf, id, &sd_desc, sizeof(struct sd),
@@ -896,12 +896,18 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init sd_mod_init(void)
 {
-	return usb_register(&sd_driver);
+	int ret;
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	PDEBUG(D_PROBE, "registered");
+	return 0;
 }
 
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
+	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(sd_mod_init);

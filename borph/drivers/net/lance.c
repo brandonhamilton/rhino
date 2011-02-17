@@ -248,6 +248,7 @@ struct lance_private {
 	int cur_rx, cur_tx;			/* The next free ring entry */
 	int dirty_rx, dirty_tx;		/* The ring entries to be free()ed. */
 	int dma;
+	struct net_device_stats stats;
 	unsigned char chip_version;	/* See lance_chip_type. */
 	spinlock_t devlock;
 };
@@ -924,7 +925,7 @@ static void lance_tx_timeout (struct net_device *dev)
 	printk ("%s: transmit timed out, status %4.4x, resetting.\n",
 		dev->name, inw (ioaddr + LANCE_DATA));
 	outw (0x0004, ioaddr + LANCE_DATA);
-	dev->stats.tx_errors++;
+	lp->stats.tx_errors++;
 #ifndef final_version
 	if (lance_debug > 3) {
 		int i;
@@ -944,7 +945,7 @@ static void lance_tx_timeout (struct net_device *dev)
 #endif
 	lance_restart (dev, 0x0043, 1);
 
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue (dev);
 }
 
@@ -988,7 +989,7 @@ static netdev_tx_t lance_start_xmit(struct sk_buff *skb,
 
 	lp->tx_ring[entry].misc = 0x0000;
 
-	dev->stats.tx_bytes += skb->len;
+	lp->stats.tx_bytes += skb->len;
 
 	/* If any part of this buffer is >16M we must copy it to a low-memory
 	   buffer. */
@@ -1009,6 +1010,8 @@ static netdev_tx_t lance_start_xmit(struct sk_buff *skb,
 	/* Trigger an immediate send poll. */
 	outw(0x0000, ioaddr+LANCE_ADDR);
 	outw(0x0048, ioaddr+LANCE_DATA);
+
+	dev->trans_start = jiffies;
 
 	if ((lp->cur_tx - lp->dirty_tx) >= TX_RING_SIZE)
 		netif_stop_queue(dev);
@@ -1061,16 +1064,13 @@ static irqreturn_t lance_interrupt(int irq, void *dev_id)
 				if (status & 0x40000000) {
 					/* There was an major error, log it. */
 					int err_status = lp->tx_ring[entry].misc;
-					dev->stats.tx_errors++;
-					if (err_status & 0x0400)
-						dev->stats.tx_aborted_errors++;
-					if (err_status & 0x0800)
-						dev->stats.tx_carrier_errors++;
-					if (err_status & 0x1000)
-						dev->stats.tx_window_errors++;
+					lp->stats.tx_errors++;
+					if (err_status & 0x0400) lp->stats.tx_aborted_errors++;
+					if (err_status & 0x0800) lp->stats.tx_carrier_errors++;
+					if (err_status & 0x1000) lp->stats.tx_window_errors++;
 					if (err_status & 0x4000) {
 						/* Ackk!  On FIFO errors the Tx unit is turned off! */
-						dev->stats.tx_fifo_errors++;
+						lp->stats.tx_fifo_errors++;
 						/* Remove this verbosity later! */
 						printk("%s: Tx FIFO error! Status %4.4x.\n",
 							   dev->name, csr0);
@@ -1079,8 +1079,8 @@ static irqreturn_t lance_interrupt(int irq, void *dev_id)
 					}
 				} else {
 					if (status & 0x18000000)
-						dev->stats.collisions++;
-					dev->stats.tx_packets++;
+						lp->stats.collisions++;
+					lp->stats.tx_packets++;
 				}
 
 				/* We must free the original skb if it's not a data-only copy
@@ -1110,10 +1110,8 @@ static irqreturn_t lance_interrupt(int irq, void *dev_id)
 		}
 
 		/* Log misc errors. */
-		if (csr0 & 0x4000)
-			dev->stats.tx_errors++; /* Tx babble. */
-		if (csr0 & 0x1000)
-			dev->stats.rx_errors++; /* Missed a Rx frame. */
+		if (csr0 & 0x4000) lp->stats.tx_errors++; /* Tx babble. */
+		if (csr0 & 0x1000) lp->stats.rx_errors++; /* Missed a Rx frame. */
 		if (csr0 & 0x0800) {
 			printk("%s: Bus master arbitration failure, status %4.4x.\n",
 				   dev->name, csr0);
@@ -1159,15 +1157,11 @@ lance_rx(struct net_device *dev)
 			   buffers it's possible for a jabber packet to use two
 			   buffers, with only the last correctly noting the error. */
 			if (status & 0x01)	/* Only count a general error at the */
-				dev->stats.rx_errors++; /* end of a packet.*/
-			if (status & 0x20)
-				dev->stats.rx_frame_errors++;
-			if (status & 0x10)
-				dev->stats.rx_over_errors++;
-			if (status & 0x08)
-				dev->stats.rx_crc_errors++;
-			if (status & 0x04)
-				dev->stats.rx_fifo_errors++;
+				lp->stats.rx_errors++; /* end of a packet.*/
+			if (status & 0x20) lp->stats.rx_frame_errors++;
+			if (status & 0x10) lp->stats.rx_over_errors++;
+			if (status & 0x08) lp->stats.rx_crc_errors++;
+			if (status & 0x04) lp->stats.rx_fifo_errors++;
 			lp->rx_ring[entry].base &= 0x03ffffff;
 		}
 		else
@@ -1179,7 +1173,7 @@ lance_rx(struct net_device *dev)
 			if(pkt_len<60)
 			{
 				printk("%s: Runt packet!\n",dev->name);
-				dev->stats.rx_errors++;
+				lp->stats.rx_errors++;
 			}
 			else
 			{
@@ -1193,7 +1187,7 @@ lance_rx(struct net_device *dev)
 
 					if (i > RX_RING_SIZE -2)
 					{
-						dev->stats.rx_dropped++;
+						lp->stats.rx_dropped++;
 						lp->rx_ring[entry].base |= 0x80000000;
 						lp->cur_rx++;
 					}
@@ -1206,8 +1200,8 @@ lance_rx(struct net_device *dev)
 					pkt_len);
 				skb->protocol=eth_type_trans(skb,dev);
 				netif_rx(skb);
-				dev->stats.rx_packets++;
-				dev->stats.rx_bytes += pkt_len;
+				lp->stats.rx_packets++;
+				lp->stats.rx_bytes+=pkt_len;
 			}
 		}
 		/* The docs say that the buffer length isn't touched, but Andrew Boyd
@@ -1233,7 +1227,7 @@ lance_close(struct net_device *dev)
 
 	if (chip_table[lp->chip_version].flags & LANCE_HAS_MISSED_FRAME) {
 		outw(112, ioaddr+LANCE_ADDR);
-		dev->stats.rx_missed_errors = inw(ioaddr+LANCE_DATA);
+		lp->stats.rx_missed_errors = inw(ioaddr+LANCE_DATA);
 	}
 	outw(0, ioaddr+LANCE_ADDR);
 
@@ -1270,12 +1264,12 @@ static struct net_device_stats *lance_get_stats(struct net_device *dev)
 		spin_lock_irqsave(&lp->devlock, flags);
 		saved_addr = inw(ioaddr+LANCE_ADDR);
 		outw(112, ioaddr+LANCE_ADDR);
-		dev->stats.rx_missed_errors = inw(ioaddr+LANCE_DATA);
+		lp->stats.rx_missed_errors = inw(ioaddr+LANCE_DATA);
 		outw(saved_addr, ioaddr+LANCE_ADDR);
 		spin_unlock_irqrestore(&lp->devlock, flags);
 	}
 
-	return &dev->stats;
+	return &lp->stats;
 }
 
 /* Set or clear the multicast filter for this adaptor.
@@ -1294,7 +1288,7 @@ static void set_multicast_list(struct net_device *dev)
 	} else {
 		short multicast_table[4];
 		int i;
-		int num_addrs=netdev_mc_count(dev);
+		int num_addrs=dev->mc_count;
 		if(dev->flags&IFF_ALLMULTI)
 			num_addrs=1;
 		/* FIXIT: We don't use the multicast table, but rely on upper-layer filtering. */

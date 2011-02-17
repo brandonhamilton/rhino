@@ -24,17 +24,14 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/fixed.h>
 #include <linux/gpio.h>
-#include <linux/delay.h>
-#include <linux/slab.h>
 
 struct fixed_voltage_data {
 	struct regulator_desc desc;
 	struct regulator_dev *dev;
 	int microvolts;
 	int gpio;
-	unsigned startup_delay;
-	bool enable_high;
-	bool is_enabled;
+	unsigned enable_high:1;
+	unsigned is_enabled:1;
 };
 
 static int fixed_voltage_is_enabled(struct regulator_dev *dev)
@@ -50,7 +47,7 @@ static int fixed_voltage_enable(struct regulator_dev *dev)
 
 	if (gpio_is_valid(data->gpio)) {
 		gpio_set_value_cansleep(data->gpio, data->enable_high);
-		data->is_enabled = true;
+		data->is_enabled = 1;
 	}
 
 	return 0;
@@ -62,17 +59,10 @@ static int fixed_voltage_disable(struct regulator_dev *dev)
 
 	if (gpio_is_valid(data->gpio)) {
 		gpio_set_value_cansleep(data->gpio, !data->enable_high);
-		data->is_enabled = false;
+		data->is_enabled = 0;
 	}
 
 	return 0;
-}
-
-static int fixed_voltage_enable_time(struct regulator_dev *dev)
-{
-	struct fixed_voltage_data *data = rdev_get_drvdata(dev);
-
-	return data->startup_delay;
 }
 
 static int fixed_voltage_get_voltage(struct regulator_dev *dev)
@@ -97,12 +87,11 @@ static struct regulator_ops fixed_voltage_ops = {
 	.is_enabled = fixed_voltage_is_enabled,
 	.enable = fixed_voltage_enable,
 	.disable = fixed_voltage_disable,
-	.enable_time = fixed_voltage_enable_time,
 	.get_voltage = fixed_voltage_get_voltage,
 	.list_voltage = fixed_voltage_list_voltage,
 };
 
-static int __devinit reg_fixed_voltage_probe(struct platform_device *pdev)
+static int regulator_fixed_voltage_probe(struct platform_device *pdev)
 {
 	struct fixed_voltage_config *config = pdev->dev.platform_data;
 	struct fixed_voltage_data *drvdata;
@@ -128,7 +117,6 @@ static int __devinit reg_fixed_voltage_probe(struct platform_device *pdev)
 
 	drvdata->microvolts = config->microvolts;
 	drvdata->gpio = config->gpio;
-	drvdata->startup_delay = config->startup_delay;
 
 	if (gpio_is_valid(config->gpio)) {
 		drvdata->enable_high = config->enable_high;
@@ -175,7 +163,7 @@ static int __devinit reg_fixed_voltage_probe(struct platform_device *pdev)
 		/* Regulator without GPIO control is considered
 		 * always enabled
 		 */
-		drvdata->is_enabled = true;
+		drvdata->is_enabled = 1;
 	}
 
 	drvdata->dev = regulator_register(&drvdata->desc, &pdev->dev,
@@ -203,7 +191,7 @@ err:
 	return ret;
 }
 
-static int __devexit reg_fixed_voltage_remove(struct platform_device *pdev)
+static int regulator_fixed_voltage_remove(struct platform_device *pdev)
 {
 	struct fixed_voltage_data *drvdata = platform_get_drvdata(pdev);
 
@@ -217,11 +205,10 @@ static int __devexit reg_fixed_voltage_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver regulator_fixed_voltage_driver = {
-	.probe		= reg_fixed_voltage_probe,
-	.remove		= __devexit_p(reg_fixed_voltage_remove),
+	.probe		= regulator_fixed_voltage_probe,
+	.remove		= regulator_fixed_voltage_remove,
 	.driver		= {
 		.name		= "reg-fixed-voltage",
-		.owner		= THIS_MODULE,
 	},
 };
 

@@ -17,7 +17,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
 
@@ -62,15 +61,16 @@ int p54_parse_firmware(struct ieee80211_hw *dev, const struct firmware *fw)
 			case FW_LM20:
 			case FW_LM87: {
 				char *iftype = (char *)bootrec->data;
-				wiphy_info(priv->hw->wiphy,
-					   "p54 detected a LM%c%c firmware\n",
-					   iftype[2], iftype[3]);
+				printk(KERN_INFO "%s: p54 detected a LM%c%c "
+						 "firmware\n",
+					wiphy_name(priv->hw->wiphy),
+					iftype[2], iftype[3]);
 				break;
 				}
 			case FW_FMAC:
 			default:
-				wiphy_err(priv->hw->wiphy,
-					  "unsupported firmware\n");
+				printk(KERN_ERR "%s: unsupported firmware\n",
+					wiphy_name(priv->hw->wiphy));
 				return -ENODEV;
 			}
 			break;
@@ -123,20 +123,16 @@ int p54_parse_firmware(struct ieee80211_hw *dev, const struct firmware *fw)
 		bootrec = (struct bootrec *)&bootrec->data[len];
 	}
 
-	if (fw_version) {
-		wiphy_info(priv->hw->wiphy,
-			   "FW rev %s - Softmac protocol %x.%x\n",
-			   fw_version, priv->fw_var >> 8, priv->fw_var & 0xff);
-		snprintf(dev->wiphy->fw_version, sizeof(dev->wiphy->fw_version),
-				"%s - %x.%x", fw_version,
-				priv->fw_var >> 8, priv->fw_var & 0xff);
-	}
+	if (fw_version)
+		printk(KERN_INFO "%s: FW rev %s - Softmac protocol %x.%x\n",
+			wiphy_name(priv->hw->wiphy), fw_version,
+			priv->fw_var >> 8, priv->fw_var & 0xff);
 
 	if (priv->fw_var < 0x500)
-		wiphy_info(priv->hw->wiphy,
-			   "you are using an obsolete firmware. "
-			   "visit http://wireless.kernel.org/en/users/Drivers/p54 "
-			   "and grab one for \"kernel >= 2.6.28\"!\n");
+		printk(KERN_INFO "%s: you are using an obsolete firmware. "
+		       "visit http://wireless.kernel.org/en/users/Drivers/p54 "
+		       "and grab one for \"kernel >= 2.6.28\"!\n",
+			wiphy_name(priv->hw->wiphy));
 
 	if (priv->fw_var >= 0x300) {
 		/* Firmware supports QoS, use it! */
@@ -155,14 +151,13 @@ int p54_parse_firmware(struct ieee80211_hw *dev, const struct firmware *fw)
 		priv->hw->queues = P54_QUEUE_AC_NUM;
 	}
 
-	wiphy_info(priv->hw->wiphy,
-		   "cryptographic accelerator WEP:%s, TKIP:%s, CCMP:%s\n",
-		   (priv->privacy_caps & BR_DESC_PRIV_CAP_WEP) ? "YES" : "no",
-		   (priv->privacy_caps &
-		    (BR_DESC_PRIV_CAP_TKIP | BR_DESC_PRIV_CAP_MICHAEL))
-		   ? "YES" : "no",
-		   (priv->privacy_caps & BR_DESC_PRIV_CAP_AESCCMP)
-		   ? "YES" : "no");
+	printk(KERN_INFO "%s: cryptographic accelerator "
+	       "WEP:%s, TKIP:%s, CCMP:%s\n", wiphy_name(priv->hw->wiphy),
+		(priv->privacy_caps & BR_DESC_PRIV_CAP_WEP) ? "YES" :
+		"no", (priv->privacy_caps & (BR_DESC_PRIV_CAP_TKIP |
+		BR_DESC_PRIV_CAP_MICHAEL)) ? "YES" : "no",
+		(priv->privacy_caps & BR_DESC_PRIV_CAP_AESCCMP) ?
+		"YES" : "no");
 
 	if (priv->rx_keycache_size) {
 		/*
@@ -251,7 +246,8 @@ int p54_download_eeprom(struct p54_common *priv, void *buf,
 
 	if (!wait_for_completion_interruptible_timeout(
 	     &priv->eeprom_comp, HZ)) {
-		wiphy_err(priv->hw->wiphy, "device does not respond!\n");
+		printk(KERN_ERR "%s: device does not respond!\n",
+		       wiphy_name(priv->hw->wiphy));
 		ret = -EBUSY;
 	}
 	priv->eeprom = NULL;
@@ -526,9 +522,9 @@ int p54_scan(struct p54_common *priv, u16 mode, u16 dwell)
 	return 0;
 
 err:
-	wiphy_err(priv->hw->wiphy, "frequency change to channel %d failed.\n",
-		  ieee80211_frequency_to_channel(
-			  priv->hw->conf.channel->center_freq));
+	printk(KERN_ERR "%s: frequency change to channel %d failed.\n",
+	       wiphy_name(priv->hw->wiphy), ieee80211_frequency_to_channel(
+	       priv->hw->conf.channel->center_freq));
 
 	dev_kfree_skb_any(skb);
 	return -EINVAL;
@@ -679,8 +675,8 @@ int p54_upload_key(struct p54_common *priv, u8 algo, int slot, u8 idx, u8 len,
 		break;
 
 	default:
-		wiphy_err(priv->hw->wiphy,
-			  "invalid cryptographic algorithm: %d\n", algo);
+		printk(KERN_ERR "%s: invalid cryptographic algorithm: %d\n",
+		       wiphy_name(priv->hw->wiphy), algo);
 		dev_kfree_skb(skb);
 		return -EINVAL;
 	}

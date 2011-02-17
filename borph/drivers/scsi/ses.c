@@ -21,7 +21,6 @@
 **-----------------------------------------------------------------------------
 */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/enclosure.h>
@@ -449,17 +448,13 @@ static void ses_match_to_enclosure(struct enclosure_device *edev,
 		.addr = 0,
 	};
 
-	buf = kmalloc(INIT_ALLOC_SIZE, GFP_KERNEL);
-	if (!buf || scsi_get_vpd_page(sdev, 0x83, buf, INIT_ALLOC_SIZE))
-		goto free;
+	buf = scsi_get_vpd_page(sdev, 0x83);
+	if (!buf)
+		return;
 
 	ses_enclosure_data_process(edev, to_scsi_device(edev->edev.parent), 0);
 
 	vpd_len = ((buf[2] << 8) | buf[3]) + 4;
-	kfree(buf);
-	buf = kmalloc(vpd_len, GFP_KERNEL);
-	if (!buf ||scsi_get_vpd_page(sdev, 0x83, buf, vpd_len))
-		goto free;
 
 	desc = buf + 4;
 	while (desc < buf + vpd_len) {
@@ -596,6 +591,8 @@ static int ses_intf_add(struct device *cdev,
 		ses_dev->page10_len = len;
 		buf = NULL;
 	}
+	kfree(hdr_buf);
+
 	scomp = kzalloc(sizeof(struct ses_component) * components, GFP_KERNEL);
 	if (!scomp)
 		goto err_free;
@@ -606,8 +603,6 @@ static int ses_intf_add(struct device *cdev,
 		err = PTR_ERR(edev);
 		goto err_free;
 	}
-
-	kfree(hdr_buf);
 
 	edev->scratch = ses_dev;
 	for (i = 0; i < components; i++)

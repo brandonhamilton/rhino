@@ -438,6 +438,7 @@ no_more:
  */
 int afs_writepage(struct page *page, struct writeback_control *wbc)
 {
+	struct backing_dev_info *bdi = page->mapping->backing_dev_info;
 	struct afs_writeback *wb;
 	int ret;
 
@@ -454,6 +455,8 @@ int afs_writepage(struct page *page, struct writeback_control *wbc)
 	}
 
 	wbc->nr_to_write -= ret;
+	if (wbc->nonblocking && bdi_write_congested(bdi))
+		wbc->encountered_congestion = 1;
 
 	_leave(" = 0");
 	return 0;
@@ -466,6 +469,7 @@ static int afs_writepages_region(struct address_space *mapping,
 				 struct writeback_control *wbc,
 				 pgoff_t index, pgoff_t end, pgoff_t *_next)
 {
+	struct backing_dev_info *bdi = mapping->backing_dev_info;
 	struct afs_writeback *wb;
 	struct page *page;
 	int ret, n;
@@ -525,6 +529,11 @@ static int afs_writepages_region(struct address_space *mapping,
 
 		wbc->nr_to_write -= ret;
 
+		if (wbc->nonblocking && bdi_write_congested(bdi)) {
+			wbc->encountered_congestion = 1;
+			break;
+		}
+
 		cond_resched();
 	} while (index < end && wbc->nr_to_write > 0);
 
@@ -539,16 +548,24 @@ static int afs_writepages_region(struct address_space *mapping,
 int afs_writepages(struct address_space *mapping,
 		   struct writeback_control *wbc)
 {
+	struct backing_dev_info *bdi = mapping->backing_dev_info;
 	pgoff_t start, end, next;
 	int ret;
 
 	_enter("");
 
+	if (wbc->nonblocking && bdi_write_congested(bdi)) {
+		wbc->encountered_congestion = 1;
+		_leave(" = 0 [congest]");
+		return 0;
+	}
+
 	if (wbc->range_cyclic) {
 		start = mapping->writeback_index;
 		end = -1;
 		ret = afs_writepages_region(mapping, wbc, start, end, &next);
-		if (start > 0 && wbc->nr_to_write > 0 && ret == 0)
+		if (start > 0 && wbc->nr_to_write > 0 && ret == 0 &&
+		    !(wbc->nonblocking && wbc->encountered_congestion))
 			ret = afs_writepages_region(mapping, wbc, 0, start,
 						    &next);
 		mapping->writeback_index = next;
@@ -561,6 +578,27 @@ int afs_writepages(struct address_space *mapping,
 		start = wbc->range_start >> PAGE_CACHE_SHIFT;
 		end = wbc->range_end >> PAGE_CACHE_SHIFT;
 		ret = afs_writepages_region(mapping, wbc, start, end, &next);
+	}
+
+	_leave(" = %d", ret);
+	return ret;
+}
+
+/*
+ * write an inode back
+ */
+int afs_write_inode(struct inode *inode, int sync)
+{
+	struct afs_vnode *vnode = AFS_FS_I(inode);
+	int ret;
+
+	_enter("{%x:%u},", vnode->fid.vid, vnode->fid.vnode);
+
+	ret = 0;
+	if (sync) {
+		ret = filemap_fdatawait(inode->i_mapping);
+		if (ret < 0)
+			__mark_inode_dirty(inode, I_DIRTY_DATASYNC);
 	}
 
 	_leave(" = %d", ret);
@@ -663,6 +701,7 @@ int afs_writeback_all(struct afs_vnode *vnode)
 {
 	struct address_space *mapping = vnode->vfs_inode.i_mapping;
 	struct writeback_control wbc = {
+		.bdi		= mapping->backing_dev_info,
 		.sync_mode	= WB_SYNC_ALL,
 		.nr_to_write	= LONG_MAX,
 		.range_cyclic	= 1,
@@ -683,9 +722,8 @@ int afs_writeback_all(struct afs_vnode *vnode)
  * - the return status from this call provides a reliable indication of
  *   whether any write errors occurred for this process.
  */
-int afs_fsync(struct file *file, int datasync)
+int afs_fsync(struct file *file, struct dentry *dentry, int datasync)
 {
-	struct dentry *dentry = file->f_path.dentry;
 	struct afs_writeback *wb, *xwb;
 	struct afs_vnode *vnode = AFS_FS_I(dentry->d_inode);
 	int ret;

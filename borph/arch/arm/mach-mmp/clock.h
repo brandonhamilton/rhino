@@ -68,3 +68,5 @@ struct clk clk_##_name = {					\
 
 extern struct clk clk_pxa168_gpio;
 extern struct clk clk_pxa168_timers;
+
+extern void clks_register(struct clk_lookup *, size_t);

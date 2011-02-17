@@ -4,7 +4,7 @@
 #include "../perf.h"
 #include <linux/list.h>
 #include <linux/rbtree.h>
-#include "event.h"
+#include "util.h"
 #include "symbol.h"
 
 enum chain_mode {
@@ -26,39 +26,28 @@ struct callchain_node {
 	u64			children_hit;
 };
 
-struct callchain_root {
-	u64			max_depth;
-	struct callchain_node	node;
-};
-
 struct callchain_param;
 
-typedef void (*sort_chain_func_t)(struct rb_root *, struct callchain_root *,
+typedef void (*sort_chain_func_t)(struct rb_root *, struct callchain_node *,
 				 u64, struct callchain_param *);
 
 struct callchain_param {
 	enum chain_mode 	mode;
-	u32			print_limit;
 	double			min_percent;
 	sort_chain_func_t	sort;
 };
 
 struct callchain_list {
 	u64			ip;
-	struct map_symbol	ms;
+	struct symbol		*sym;
 	struct list_head	list;
 };
 
-static inline void callchain_init(struct callchain_root *root)
+static inline void callchain_init(struct callchain_node *node)
 {
-	INIT_LIST_HEAD(&root->node.brothers);
-	INIT_LIST_HEAD(&root->node.children);
-	INIT_LIST_HEAD(&root->node.val);
-
-	root->node.parent = NULL;
-	root->node.hit = 0;
-	root->node.children_hit = 0;
-	root->max_depth = 0;
+	INIT_LIST_HEAD(&node->brothers);
+	INIT_LIST_HEAD(&node->children);
+	INIT_LIST_HEAD(&node->val);
 }
 
 static inline u64 cumul_hits(struct callchain_node *node)
@@ -67,9 +56,6 @@ static inline u64 cumul_hits(struct callchain_node *node)
 }
 
 int register_callchain_param(struct callchain_param *param);
-int callchain_append(struct callchain_root *root, struct ip_callchain *chain,
-		     struct map_symbol *syms, u64 period);
-int callchain_merge(struct callchain_root *dst, struct callchain_root *src);
-
-bool ip_callchain__valid(struct ip_callchain *chain, const event_t *event);
+void append_chain(struct callchain_node *root, struct ip_callchain *chain,
+		  struct symbol **syms);
 #endif	/* __PERF_CALLCHAIN_H */

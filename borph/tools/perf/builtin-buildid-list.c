@@ -8,47 +8,65 @@
  */
 #include "builtin.h"
 #include "perf.h"
-#include "util/build-id.h"
 #include "util/cache.h"
+#include "util/data_map.h"
 #include "util/debug.h"
 #include "util/parse-options.h"
 #include "util/session.h"
 #include "util/symbol.h"
 
 static char const *input_name = "perf.data";
-static bool force;
-static bool with_hits;
+static int force;
 
-static const char * const buildid_list_usage[] = {
+static const char *const buildid_list_usage[] = {
 	"perf buildid-list [<options>]",
 	NULL
 };
 
 static const struct option options[] = {
-	OPT_BOOLEAN('H', "with-hits", &with_hits, "Show only DSOs with hits"),
 	OPT_STRING('i', "input", &input_name, "file",
 		    "input file name"),
 	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
-	OPT_INCR('v', "verbose", &verbose,
+	OPT_BOOLEAN('v', "verbose", &verbose,
 		    "be more verbose"),
 	OPT_END()
 };
 
+static int perf_file_section__process_buildids(struct perf_file_section *self,
+					       int feat, int fd)
+{
+	if (feat != HEADER_BUILD_ID)
+		return 0;
+
+	if (lseek(fd, self->offset, SEEK_SET) < 0) {
+		pr_warning("Failed to lseek to %Ld offset for buildids!\n",
+			   self->offset);
+		return -1;
+	}
+
+	if (perf_header__read_build_ids(fd, self->offset, self->size)) {
+		pr_warning("Failed to read buildids!\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 static int __cmd_buildid_list(void)
 {
-	struct perf_session *session;
+	int err = -1;
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY, force);
 
-	session = perf_session__new(input_name, O_RDONLY, force, false);
 	if (session == NULL)
 		return -1;
 
-	if (with_hits)
-		perf_session__process_events(session, &build_id__mark_dso_hit_ops);
-
-	perf_session__fprintf_dsos_buildid(session, stdout, with_hits);
+	err = perf_header__process_sections(&session->header, session->fd,
+				         perf_file_section__process_buildids);
+	if (err >= 0)
+		dsos__fprintf_buildid(stdout);
 
 	perf_session__delete(session);
-	return 0;
+	return err;
 }
 
 int cmd_buildid_list(int argc, const char **argv, const char *prefix __used)

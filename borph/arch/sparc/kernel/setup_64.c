@@ -12,6 +12,7 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <asm/smp.h>
 #include <linux/user.h>
 #include <linux/screen_info.h>
@@ -315,7 +316,7 @@ void __init setup_arch(char **cmdline_p)
 
 #ifdef CONFIG_IP_PNP
 	if (!ic_set_manually) {
-		phandle chosen = prom_finddevice("/chosen");
+		int chosen = prom_finddevice ("/chosen");
 		u32 cl, sv, gw;
 		
 		cl = prom_getintdefault (chosen, "client-ip", 0);

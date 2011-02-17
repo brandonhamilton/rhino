@@ -75,8 +75,6 @@ struct autofs_info {
 	struct completion expire_complete;
 
 	struct list_head active;
-	int active_count;
-
 	struct list_head expiring;
 
 	struct autofs_sb_info *sbi;
@@ -97,7 +95,6 @@ struct autofs_info {
 
 #define AUTOFS_INF_EXPIRING	(1<<0) /* dentry is in the process of expiring */
 #define AUTOFS_INF_MOUNTPOINT	(1<<1) /* mountpoint status for direct expire */
-#define AUTOFS_INF_PENDING	(1<<2) /* dentry pending mount */
 
 struct autofs_wait_queue {
 	wait_queue_head_t queue;
@@ -164,7 +161,7 @@ static inline int autofs4_ispending(struct dentry *dentry)
 {
 	struct autofs_info *inf = autofs4_dentry_ino(dentry);
 
-	if (inf->flags & AUTOFS_INF_PENDING)
+	if (dentry->d_flags & DCACHE_AUTOFS_PENDING)
 		return 1;
 
 	if (inf->flags & AUTOFS_INF_EXPIRING)
@@ -265,32 +262,6 @@ static inline int __simple_empty(struct dentry *dentry)
 	ret = 1;
 out:
 	return ret;
-}
-
-static inline void autofs4_add_expiring(struct dentry *dentry)
-{
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct autofs_info *ino = autofs4_dentry_ino(dentry);
-	if (ino) {
-		spin_lock(&sbi->lookup_lock);
-		if (list_empty(&ino->expiring))
-			list_add(&ino->expiring, &sbi->expiring_list);
-		spin_unlock(&sbi->lookup_lock);
-	}
-	return;
-}
-
-static inline void autofs4_del_expiring(struct dentry *dentry)
-{
-	struct autofs_sb_info *sbi = autofs4_sbi(dentry->d_sb);
-	struct autofs_info *ino = autofs4_dentry_ino(dentry);
-	if (ino) {
-		spin_lock(&sbi->lookup_lock);
-		if (!list_empty(&ino->expiring))
-			list_del_init(&ino->expiring);
-		spin_unlock(&sbi->lookup_lock);
-	}
-	return;
 }
 
 void autofs4_dentry_release(struct dentry *);

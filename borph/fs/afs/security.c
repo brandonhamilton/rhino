@@ -189,9 +189,8 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key, long acl_order)
 	if (!permits)
 		goto out_unlock;
 
-	if (xpermits)
-		memcpy(permits->permits, xpermits->permits,
-			count * sizeof(struct afs_permit));
+	memcpy(permits->permits, xpermits->permits,
+	       count * sizeof(struct afs_permit));
 
 	_debug("key %x access %x",
 	       key_serial(key), vnode->status.caller_access);

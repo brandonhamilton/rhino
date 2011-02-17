@@ -30,9 +30,10 @@
 				} while (0)
 
 /**
- * cvm_oct_get_buffer_ptr - convert packet data address to pointer
- * @packet_ptr: Packet data hardware address
+ * Given a packet data address, return a pointer to the
+ * beginning of the packet buffer.
  *
+ * @packet_ptr: Packet data hardware address
  * Returns Packet buffer pointer
  */
 static inline void *cvm_oct_get_buffer_ptr(union cvmx_buf_ptr packet_ptr)
@@ -42,7 +43,9 @@ static inline void *cvm_oct_get_buffer_ptr(union cvmx_buf_ptr packet_ptr)
 }
 
 /**
- * INTERFACE - convert IPD port to locgical interface
+ * Given an IPD/PKO port number, return the logical interface it is
+ * on.
+ *
  * @ipd_port: Port to check
  *
  * Returns Logical interface
@@ -62,7 +65,9 @@ static inline int INTERFACE(int ipd_port)
 }
 
 /**
- * INDEX - convert IPD/PKO port number to the port's interface index
+ * Given an IPD/PKO port number, return the port's index on a
+ * logical interface.
+ *
  * @ipd_port: Port to check
  *
  * Returns Index into interface port list

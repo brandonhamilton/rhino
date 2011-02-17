@@ -25,7 +25,6 @@
 #include <linux/jiffies.h>
 #include <linux/mutex.h>
 #include <linux/dmi.h>
-#include <linux/slab.h>
 #include <linux/kdev_t.h>
 #include <linux/sched.h>
 #include <linux/time.h>
@@ -35,7 +34,7 @@
 #define ACPI_POWER_METER_NAME		"power_meter"
 ACPI_MODULE_NAME(ACPI_POWER_METER_NAME);
 #define ACPI_POWER_METER_DEVICE_NAME	"Power Meter"
-#define ACPI_POWER_METER_CLASS		"pwr_meter_resource"
+#define ACPI_POWER_METER_CLASS		"power_meter_resource"
 
 #define NUM_SENSORS			17
 
@@ -65,24 +64,24 @@ static int can_cap_in_hardware(void)
 	return force_cap_on || cap_in_hardware;
 }
 
-static const struct acpi_device_id power_meter_ids[] = {
+static struct acpi_device_id power_meter_ids[] = {
 	{"ACPI000D", 0},
 	{"", 0},
 };
 MODULE_DEVICE_TABLE(acpi, power_meter_ids);
 
 struct acpi_power_meter_capabilities {
-	u64		flags;
-	u64		units;
-	u64		type;
-	u64		accuracy;
-	u64		sampling_time;
-	u64		min_avg_interval;
-	u64		max_avg_interval;
-	u64		hysteresis;
-	u64		configurable_cap;
-	u64		min_cap;
-	u64		max_cap;
+	acpi_integer		flags;
+	acpi_integer		units;
+	acpi_integer		type;
+	acpi_integer		accuracy;
+	acpi_integer		sampling_time;
+	acpi_integer		min_avg_interval;
+	acpi_integer		max_avg_interval;
+	acpi_integer		hysteresis;
+	acpi_integer		configurable_cap;
+	acpi_integer		min_cap;
+	acpi_integer		max_cap;
 };
 
 struct acpi_power_meter_resource {
@@ -94,9 +93,9 @@ struct acpi_power_meter_resource {
 	acpi_string		model_number;
 	acpi_string		serial_number;
 	acpi_string		oem_info;
-	u64		power;
-	u64		cap;
-	u64		avg_interval;
+	acpi_integer		power;
+	acpi_integer		cap;
+	acpi_integer		avg_interval;
 	int			sensors_valid;
 	unsigned long		sensors_last_updated;
 	struct sensor_device_attribute	sensors[NUM_SENSORS];
@@ -403,7 +402,7 @@ static ssize_t show_val(struct device *dev,
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(devattr);
 	struct acpi_device *acpi_dev = to_acpi_device(dev);
 	struct acpi_power_meter_resource *resource = acpi_dev->driver_data;
-	u64 val = 0;
+	acpi_integer val = 0;
 
 	switch (attr->index) {
 	case 0:
@@ -535,7 +534,6 @@ static void remove_domain_devices(struct acpi_power_meter_resource *resource)
 
 	kfree(resource->domain_devices);
 	kobject_put(resource->holders_dir);
-	resource->num_domain_devices = 0;
 }
 
 static int read_domain_devices(struct acpi_power_meter_resource *resource)
@@ -742,6 +740,7 @@ skip_unsafe_cap:
 
 	return res;
 error:
+	remove_domain_devices(resource);
 	remove_attrs(resource);
 	return res;
 }

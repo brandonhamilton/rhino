@@ -22,9 +22,7 @@
 #include <linux/profile.h>
 #include <linux/bootmem.h>
 #include <linux/vmalloc.h>
-#include <linux/ftrace.h>
 #include <linux/cpu.h>
-#include <linux/slab.h>
 
 #include <asm/head.h>
 #include <asm/ptrace.h>
@@ -372,7 +370,7 @@ static int __cpuinit smp_boot_one_cpu(unsigned int cpu)
 	} else {
 		struct device_node *dp = of_find_node_by_cpuid(cpu);
 
-		prom_startcpu(dp->phandle, entry, cookie);
+		prom_startcpu(dp->node, entry, cookie);
 	}
 
 	for (timeout = 0; timeout < 50000; timeout++) {
@@ -824,13 +822,13 @@ void arch_send_call_function_single_ipi(int cpu)
 		      &cpumask_of_cpu(cpu));
 }
 
-void __irq_entry smp_call_function_client(int irq, struct pt_regs *regs)
+void smp_call_function_client(int irq, struct pt_regs *regs)
 {
 	clear_softint(1 << irq);
 	generic_smp_call_function_interrupt();
 }
 
-void __irq_entry smp_call_function_single_client(int irq, struct pt_regs *regs)
+void smp_call_function_single_client(int irq, struct pt_regs *regs)
 {
 	clear_softint(1 << irq);
 	generic_smp_call_function_single_interrupt();
@@ -966,7 +964,7 @@ void flush_dcache_page_all(struct mm_struct *mm, struct page *page)
 	put_cpu();
 }
 
-void __irq_entry smp_new_mmu_context_version_client(int irq, struct pt_regs *regs)
+void smp_new_mmu_context_version_client(int irq, struct pt_regs *regs)
 {
 	struct mm_struct *mm;
 	unsigned long flags;
@@ -1150,7 +1148,7 @@ void smp_release(void)
  */
 extern void prom_world(int);
 
-void __irq_entry smp_penguin_jailcell(int irq, struct pt_regs *regs)
+void smp_penguin_jailcell(int irq, struct pt_regs *regs)
 {
 	clear_softint(1 << irq);
 
@@ -1366,7 +1364,7 @@ void smp_send_reschedule(int cpu)
 		      &cpumask_of_cpu(cpu));
 }
 
-void __irq_entry smp_receive_signal_client(int irq, struct pt_regs *regs)
+void smp_receive_signal_client(int irq, struct pt_regs *regs)
 {
 	clear_softint(1 << irq);
 }

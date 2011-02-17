@@ -30,7 +30,6 @@
 #include <linux/platform_device.h>
 #include <linux/mtd/partitions.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <mach/nand.h>
 #include <mach/fsmc.h>
 
@@ -105,21 +104,21 @@ static int nomadik_nand_probe(struct platform_device *pdev)
 		ret = -EIO;
 		goto err_unmap;
 	}
-	host->addr_va = ioremap(res->start, resource_size(res));
+	host->addr_va = ioremap(res->start, res->end - res->start + 1);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "nand_data");
 	if (!res) {
 		ret = -EIO;
 		goto err_unmap;
 	}
-	host->data_va = ioremap(res->start, resource_size(res));
+	host->data_va = ioremap(res->start, res->end - res->start + 1);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "nand_cmd");
 	if (!res) {
 		ret = -EIO;
 		goto err_unmap;
 	}
-	host->cmd_va = ioremap(res->start, resource_size(res));
+	host->cmd_va = ioremap(res->start, res->end - res->start + 1);
 
 	if (!host->addr_va || !host->data_va || !host->cmd_va) {
 		ret = -ENOMEM;

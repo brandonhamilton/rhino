@@ -44,8 +44,7 @@ extern int			datagram_send_ctl(struct net *net,
 						  struct msghdr *msg,
 						  struct flowi *fl,
 						  struct ipv6_txoptions *opt,
-						  int *hlimit, int *tclass,
-						  int *dontfrag);
+						  int *hlimit, int *tclass);
 
 #define		LOOPBACK4_IPV6		cpu_to_be32(0x7f000006)
 

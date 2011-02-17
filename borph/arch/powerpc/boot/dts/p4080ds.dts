@@ -236,19 +236,22 @@
 		};
 
 		spi@110000 {
+			cell-index = <0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
-			compatible = "fsl,p4080-espi", "fsl,mpc8536-espi";
+			compatible = "fsl,espi";
 			reg = <0x110000 0x1000>;
 			interrupts = <53 0x2>;
 			interrupt-parent = <&mpic>;
-			fsl,espi-num-chipselects = <4>;
+			espi,num-ss-bits = <4>;
+			mode = "cpu";
 
-			flash@0 {
+			fsl_m25p80@0 {
 				#address-cells = <1>;
 				#size-cells = <1>;
-				compatible = "spansion,s25sl12801";
+				compatible = "fsl,espi-flash";
 				reg = <0>;
+				linux,modalias = "fsl_m25p80";
 				spi-max-frequency = <40000000>; /* input clock */
 				partition@u-boot {
 					label = "u-boot";
@@ -277,8 +280,6 @@
 			reg = <0x114000 0x1000>;
 			interrupts = <48 2>;
 			interrupt-parent = <&mpic>;
-			voltage-ranges = <3300 3300>;
-			sdhci,auto-cmd12;
 		};
 
 		i2c@118000 {

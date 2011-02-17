@@ -29,7 +29,6 @@
 
 #include <linux/module.h>
 #include <linux/tty.h>
-#include <linux/gfp.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/serial.h>

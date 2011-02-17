@@ -93,7 +93,7 @@ out:
 	return ret;
 }
 
-static const struct backlight_ops jornada_bl_ops = {
+static struct backlight_ops jornada_bl_ops = {
 	.get_brightness = jornada_bl_get_brightness,
 	.update_status = jornada_bl_update_status,
 	.options = BL_CORE_SUSPENDRESUME,
@@ -101,14 +101,10 @@ static const struct backlight_ops jornada_bl_ops = {
 
 static int jornada_bl_probe(struct platform_device *pdev)
 {
-	struct backlight_properties props;
 	int ret;
 	struct backlight_device *bd;
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.max_brightness = BL_MAX_BRIGHT;
-	bd = backlight_device_register(S1D_DEVICENAME, &pdev->dev, NULL,
-				       &jornada_bl_ops, &props);
+	bd = backlight_device_register(S1D_DEVICENAME, &pdev->dev, NULL, &jornada_bl_ops);
 
 	if (IS_ERR(bd)) {
 		ret = PTR_ERR(bd);
@@ -121,6 +117,7 @@ static int jornada_bl_probe(struct platform_device *pdev)
 	/* note. make sure max brightness is set otherwise
 	   you will get seemingly non-related errors when
 	   trying to change brightness */
+	bd->props.max_brightness = BL_MAX_BRIGHT;
 	jornada_bl_update_status(bd);
 
 	platform_set_drvdata(pdev, bd);

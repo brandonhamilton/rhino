@@ -3,6 +3,12 @@
 #include <linux/module.h>
 #include <linux/bootmem.h>
 
+#ifdef CONFIG_DEBUG_PER_CPU_MAPS
+# define DBG(x...) printk(KERN_DEBUG x)
+#else
+# define DBG(x...)
+#endif
+
 /*
  * Which logical CPUs are on which nodes
  */

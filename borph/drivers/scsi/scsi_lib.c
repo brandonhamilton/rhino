@@ -85,7 +85,7 @@ static void scsi_unprep_request(struct request *req)
 {
 	struct scsi_cmnd *cmd = req->special;
 
-	blk_unprep_request(req);
+	req->cmd_flags &= ~REQ_DONTPREP;
 	req->special = NULL;
 
 	scsi_put_command(cmd);
@@ -722,7 +722,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			sense_deferred = scsi_sense_is_deferred(&sshdr);
 	}
 
-	if (req->cmd_type == REQ_TYPE_BLOCK_PC) { /* SG_IO ioctl from block level */
+	if (blk_pc_request(req)) { /* SG_IO ioctl from block level */
 		req->errors = result;
 		if (result) {
 			if (sense_valid && req->sense) {
@@ -749,16 +749,15 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 			 */
 			req->next_rq->resid_len = scsi_in(cmd)->resid;
 
-			scsi_release_buffers(cmd);
 			blk_end_request_all(req, 0);
 
+			scsi_release_buffers(cmd);
 			scsi_next_command(cmd);
 			return;
 		}
 	}
 
-	/* no bidi support for !REQ_TYPE_BLOCK_PC yet */
-	BUG_ON(blk_bidi_rq(req));
+	BUG_ON(blk_bidi_rq(req)); /* bidi not support for !blk_pc_request yet */
 
 	/*
 	 * Next deal with any sectors which we were able to correctly
@@ -774,14 +773,8 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 	 * we already took a copy of the original into rq->errors which
 	 * is what gets returned to the user
 	 */
-	if (sense_valid && (sshdr.sense_key == RECOVERED_ERROR)) {
-		/* if ATA PASS-THROUGH INFORMATION AVAILABLE skip
-		 * print since caller wants ATA registers. Only occurs on
-		 * SCSI ATA PASS_THROUGH commands when CK_COND=1
-		 */
-		if ((sshdr.asc == 0x0) && (sshdr.ascq == 0x1d))
-			;
-		else if (!(req->cmd_flags & REQ_QUIET))
+	if (sense_valid && sshdr.sense_key == RECOVERED_ERROR) {
+		if (!(req->cmd_flags & REQ_QUIET))
 			scsi_print_sense("", cmd);
 		result = 0;
 		/* BLOCK_PC may have set error */
@@ -866,7 +859,6 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 				case 0x07: /* operation in progress */
 				case 0x08: /* Long write in progress */
 				case 0x09: /* self test in progress */
-				case 0x14: /* space allocation in progress */
 					action = ACTION_DELAYED_RETRY;
 					break;
 				default:
@@ -968,13 +960,11 @@ static int scsi_init_sgtable(struct request *req, struct scsi_data_buffer *sdb,
  */
 int scsi_init_io(struct scsi_cmnd *cmd, gfp_t gfp_mask)
 {
-	struct request *rq = cmd->request;
-
-	int error = scsi_init_sgtable(rq, &cmd->sdb, gfp_mask);
+	int error = scsi_init_sgtable(cmd->request, &cmd->sdb, gfp_mask);
 	if (error)
 		goto err_exit;
 
-	if (blk_bidi_rq(rq)) {
+	if (blk_bidi_rq(cmd->request)) {
 		struct scsi_data_buffer *bidi_sdb = kmem_cache_zalloc(
 			scsi_sdb_cache, GFP_ATOMIC);
 		if (!bidi_sdb) {
@@ -982,28 +972,28 @@ int scsi_init_io(struct scsi_cmnd *cmd, gfp_t gfp_mask)
 			goto err_exit;
 		}
 
-		rq->next_rq->special = bidi_sdb;
-		error = scsi_init_sgtable(rq->next_rq, bidi_sdb, GFP_ATOMIC);
+		cmd->request->next_rq->special = bidi_sdb;
+		error = scsi_init_sgtable(cmd->request->next_rq, bidi_sdb,
+								    GFP_ATOMIC);
 		if (error)
 			goto err_exit;
 	}
 
-	if (blk_integrity_rq(rq)) {
+	if (blk_integrity_rq(cmd->request)) {
 		struct scsi_data_buffer *prot_sdb = cmd->prot_sdb;
 		int ivecs, count;
 
 		BUG_ON(prot_sdb == NULL);
-		ivecs = blk_rq_count_integrity_sg(rq->q, rq->bio);
+		ivecs = blk_rq_count_integrity_sg(cmd->request);
 
 		if (scsi_alloc_sgtable(prot_sdb, ivecs, gfp_mask)) {
 			error = BLKPREP_DEFER;
 			goto err_exit;
 		}
 
-		count = blk_rq_map_integrity_sg(rq->q, rq->bio,
+		count = blk_rq_map_integrity_sg(cmd->request,
 						prot_sdb->table.sgl);
 		BUG_ON(unlikely(count > ivecs));
-		BUG_ON(unlikely(count > queue_max_integrity_segments(rq->q)));
 
 		cmd->prot_sdb = prot_sdb;
 		cmd->prot_sdb->table.nents = count;
@@ -1013,8 +1003,11 @@ int scsi_init_io(struct scsi_cmnd *cmd, gfp_t gfp_mask)
 
 err_exit:
 	scsi_release_buffers(cmd);
-	cmd->request->special = NULL;
-	scsi_put_command(cmd);
+	if (error == BLKPREP_KILL)
+		scsi_put_command(cmd);
+	else /* BLKPREP_DEFER */
+		scsi_unprep_request(cmd->request);
+
 	return error;
 }
 EXPORT_SYMBOL(scsi_init_io);
@@ -1372,6 +1365,12 @@ static void scsi_kill_request(struct request *req, struct request_queue *q)
 
 	blk_start_request(req);
 
+	if (unlikely(cmd == NULL)) {
+		printk(KERN_CRIT "impossible request in %s.\n",
+				 __func__);
+		BUG();
+	}
+
 	sdev = cmd->device;
 	starget = scsi_target(sdev);
 	shost = sdev->host;
@@ -1402,6 +1401,11 @@ static void scsi_softirq_done(struct request *rq)
 	int disposition;
 
 	INIT_LIST_HEAD(&cmd->eh_entry);
+
+	/*
+	 * Set the serial numbers back to zero
+	 */
+	cmd->serial_number = 0;
 
 	atomic_inc(&cmd->device->iodone_cnt);
 	if (cmd->result)
@@ -1619,26 +1623,19 @@ struct request_queue *__scsi_alloc_queue(struct Scsi_Host *shost,
 	/*
 	 * this limit is imposed by hardware restrictions
 	 */
-	blk_queue_max_segments(q, min_t(unsigned short, shost->sg_tablesize,
-					SCSI_MAX_SG_CHAIN_SEGMENTS));
+	blk_queue_max_hw_segments(q, shost->sg_tablesize);
+	blk_queue_max_phys_segments(q, SCSI_MAX_SG_CHAIN_SEGMENTS);
 
-	if (scsi_host_prot_dma(shost)) {
-		shost->sg_prot_tablesize =
-			min_not_zero(shost->sg_prot_tablesize,
-				     (unsigned short)SCSI_MAX_PROT_SG_SEGMENTS);
-		BUG_ON(shost->sg_prot_tablesize < shost->sg_tablesize);
-		blk_queue_max_integrity_segments(q, shost->sg_prot_tablesize);
-	}
-
-	blk_queue_max_hw_sectors(q, shost->max_sectors);
+	blk_queue_max_sectors(q, shost->max_sectors);
 	blk_queue_bounce_limit(q, scsi_calculate_bounce_limit(shost));
 	blk_queue_segment_boundary(q, shost->dma_boundary);
 	dma_set_seg_boundary(dev, shost->dma_boundary);
 
 	blk_queue_max_segment_size(q, dma_get_max_seg_size(dev));
 
+	/* New queue, no concurrency on queue_flags */
 	if (!shost->use_clustering)
-		q->limits.cluster = 0;
+		queue_flag_clear_unlocked(QUEUE_FLAG_CLUSTER, q);
 
 	/*
 	 * set a reasonable default alignment on word boundaries: the
@@ -2432,8 +2429,7 @@ scsi_internal_device_unblock(struct scsi_device *sdev)
 		sdev->sdev_state = SDEV_RUNNING;
 	else if (sdev->sdev_state == SDEV_CREATED_BLOCK)
 		sdev->sdev_state = SDEV_CREATED;
-	else if (sdev->sdev_state != SDEV_CANCEL &&
-		 sdev->sdev_state != SDEV_OFFLINE)
+	else
 		return -EINVAL;
 
 	spin_lock_irqsave(q->queue_lock, flags);

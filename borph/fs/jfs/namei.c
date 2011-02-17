@@ -85,8 +85,6 @@ static int jfs_create(struct inode *dip, struct dentry *dentry, int mode,
 
 	jfs_info("jfs_create: dip:0x%p name:%s", dip, dentry->d_name.name);
 
-	dquot_initialize(dip);
-
 	/*
 	 * search parent directory for entry/freespace
 	 * (dtSearch() returns parent directory page pinned)
@@ -216,8 +214,6 @@ static int jfs_mkdir(struct inode *dip, struct dentry *dentry, int mode)
 	struct tblock *tblk;
 
 	jfs_info("jfs_mkdir: dip:0x%p name:%s", dip, dentry->d_name.name);
-
-	dquot_initialize(dip);
 
 	/* link count overflow on parent directory ? */
 	if (dip->i_nlink == JFS_LINK_MAX) {
@@ -360,8 +356,7 @@ static int jfs_rmdir(struct inode *dip, struct dentry *dentry)
 	jfs_info("jfs_rmdir: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	/* Init inode for quota operations. */
-	dquot_initialize(dip);
-	dquot_initialize(ip);
+	vfs_dq_init(ip);
 
 	/* directory must be empty to be removed */
 	if (!dtEmpty(ip)) {
@@ -488,8 +483,7 @@ static int jfs_unlink(struct inode *dip, struct dentry *dentry)
 	jfs_info("jfs_unlink: dip:0x%p name:%s", dip, dentry->d_name.name);
 
 	/* Init inode for quota operations. */
-	dquot_initialize(dip);
-	dquot_initialize(ip);
+	vfs_dq_init(ip);
 
 	if ((rc = get_UCSname(&dname, dentry)))
 		goto out;
@@ -811,8 +805,6 @@ static int jfs_link(struct dentry *old_dentry,
 	if (ip->i_nlink == 0)
 		return -ENOENT;
 
-	dquot_initialize(dir);
-
 	tid = txBegin(ip->i_sb, 0);
 
 	mutex_lock_nested(&JFS_IP(dir)->commit_mutex, COMMIT_MUTEX_PARENT);
@@ -839,7 +831,7 @@ static int jfs_link(struct dentry *old_dentry,
 	ip->i_ctime = CURRENT_TIME;
 	dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	mark_inode_dirty(dir);
-	ihold(ip);
+	atomic_inc(&ip->i_count);
 
 	iplist[0] = ip;
 	iplist[1] = dir;
@@ -904,8 +896,6 @@ static int jfs_symlink(struct inode *dip, struct dentry *dentry,
 
 	jfs_info("jfs_symlink: dip:0x%p name:%s", dip, name);
 
-	dquot_initialize(dip);
-
 	ssize = strlen(name) + 1;
 
 	/*
@@ -956,7 +946,7 @@ static int jfs_symlink(struct inode *dip, struct dentry *dentry,
 	 */
 
 	if (ssize <= IDATASIZE) {
-		ip->i_op = &jfs_fast_symlink_inode_operations;
+		ip->i_op = &jfs_symlink_inode_operations;
 
 		i_fastsymlink = JFS_IP(ip)->i_inline;
 		memcpy(i_fastsymlink, name, ssize);
@@ -978,7 +968,7 @@ static int jfs_symlink(struct inode *dip, struct dentry *dentry,
 	else {
 		jfs_info("jfs_symlink: allocate extent ip:0x%p", ip);
 
-		ip->i_op = &jfs_symlink_inode_operations;
+		ip->i_op = &page_symlink_inode_operations;
 		ip->i_mapping->a_ops = &jfs_aops;
 
 		/*
@@ -1097,9 +1087,6 @@ static int jfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	jfs_info("jfs_rename: %s %s", old_dentry->d_name.name,
 		 new_dentry->d_name.name);
 
-	dquot_initialize(old_dir);
-	dquot_initialize(new_dir);
-
 	old_ip = old_dentry->d_inode;
 	new_ip = new_dentry->d_inode;
 
@@ -1149,7 +1136,7 @@ static int jfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	} else if (new_ip) {
 		IWRITE_LOCK(new_ip, RDWRLOCK_NORMAL);
 		/* Init inode for quota operations. */
-		dquot_initialize(new_ip);
+		vfs_dq_init(new_ip);
 	}
 
 	/*
@@ -1373,8 +1360,6 @@ static int jfs_mknod(struct inode *dir, struct dentry *dentry,
 
 	jfs_info("jfs_mknod: %s", dentry->d_name.name);
 
-	dquot_initialize(dir);
-
 	if ((rc = get_UCSname(&dname, dentry)))
 		goto out;
 
@@ -1556,8 +1541,8 @@ const struct inode_operations jfs_dir_inode_operations = {
 	.getxattr	= jfs_getxattr,
 	.listxattr	= jfs_listxattr,
 	.removexattr	= jfs_removexattr,
-	.setattr	= jfs_setattr,
 #ifdef CONFIG_JFS_POSIX_ACL
+	.setattr	= jfs_setattr,
 	.check_acl	= jfs_check_acl,
 #endif
 };

@@ -34,7 +34,6 @@
  * SOFTWARE.
  */
 
-#include <linux/gfp.h>
 #include <linux/hardirq.h>
 #include <linux/sched.h>
 

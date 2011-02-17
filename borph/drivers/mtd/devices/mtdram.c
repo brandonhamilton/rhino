@@ -14,6 +14,7 @@
 #include <linux/ioport.h>
 #include <linux/vmalloc.h>
 #include <linux/init.h>
+#include <linux/mtd/compatmac.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/mtdram.h>
 

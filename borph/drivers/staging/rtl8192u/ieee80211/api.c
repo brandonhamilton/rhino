@@ -131,9 +131,11 @@ struct crypto_tfm *crypto_alloc_tfm(const char *name, u32 flags)
 	if (alg == NULL)
 		goto out;
 
-	tfm = kzalloc(sizeof(*tfm) + alg->cra_ctxsize, GFP_KERNEL);
+	tfm = kmalloc(sizeof(*tfm) + alg->cra_ctxsize, GFP_KERNEL);
 	if (tfm == NULL)
 		goto out_put;
+
+	memset(tfm, 0, sizeof(*tfm) + alg->cra_ctxsize);
 
 	tfm->__crt_alg = alg;
 

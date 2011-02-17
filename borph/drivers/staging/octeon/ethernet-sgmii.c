@@ -26,6 +26,7 @@
 **********************************************************************/
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#include <linux/mii.h>
 #include <net/dst.h>
 
 #include <asm/octeon/octeon.h>
@@ -112,7 +113,7 @@ int cvm_oct_sgmii_init(struct net_device *dev)
 	struct octeon_ethernet *priv = netdev_priv(dev);
 	cvm_oct_common_init(dev);
 	dev->netdev_ops->ndo_stop(dev);
-	if (!octeon_is_simulation() && priv->phydev == NULL)
+	if (!octeon_is_simulation())
 		priv->poll = cvm_oct_sgmii_poll;
 
 	/* FIXME: Need autoneg logic */

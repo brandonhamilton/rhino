@@ -33,7 +33,6 @@
 #include <linux/mmu_notifier.h>
 #include <linux/swap.h>
 #include <linux/ksm.h>
-#include <linux/hash.h>
 
 #include <asm/tlbflush.h>
 #include "internal.h"
@@ -154,9 +153,8 @@ struct rmap_item {
 static struct rb_root root_stable_tree = RB_ROOT;
 static struct rb_root root_unstable_tree = RB_ROOT;
 
-#define MM_SLOTS_HASH_SHIFT 10
-#define MM_SLOTS_HASH_HEADS (1 << MM_SLOTS_HASH_SHIFT)
-static struct hlist_head mm_slots_hash[MM_SLOTS_HASH_HEADS];
+#define MM_SLOTS_HASH_HEADS 1024
+static struct hlist_head *mm_slots_hash;
 
 static struct mm_slot ksm_mm_head = {
 	.mm_list = LIST_HEAD_INIT(ksm_mm_head.mm_list),
@@ -271,13 +269,28 @@ static inline void free_mm_slot(struct mm_slot *mm_slot)
 	kmem_cache_free(mm_slot_cache, mm_slot);
 }
 
+static int __init mm_slots_hash_init(void)
+{
+	mm_slots_hash = kzalloc(MM_SLOTS_HASH_HEADS * sizeof(struct hlist_head),
+				GFP_KERNEL);
+	if (!mm_slots_hash)
+		return -ENOMEM;
+	return 0;
+}
+
+static void __init mm_slots_hash_free(void)
+{
+	kfree(mm_slots_hash);
+}
+
 static struct mm_slot *get_mm_slot(struct mm_struct *mm)
 {
 	struct mm_slot *mm_slot;
 	struct hlist_head *bucket;
 	struct hlist_node *node;
 
-	bucket = &mm_slots_hash[hash_ptr(mm, MM_SLOTS_HASH_SHIFT)];
+	bucket = &mm_slots_hash[((unsigned long)mm / sizeof(struct mm_struct))
+				% MM_SLOTS_HASH_HEADS];
 	hlist_for_each_entry(mm_slot, node, bucket, link) {
 		if (mm == mm_slot->mm)
 			return mm_slot;
@@ -290,7 +303,8 @@ static void insert_to_mm_slots_hash(struct mm_struct *mm,
 {
 	struct hlist_head *bucket;
 
-	bucket = &mm_slots_hash[hash_ptr(mm, MM_SLOTS_HASH_SHIFT)];
+	bucket = &mm_slots_hash[((unsigned long)mm / sizeof(struct mm_struct))
+				% MM_SLOTS_HASH_HEADS];
 	mm_slot->mm = mm;
 	hlist_add_head(&mm_slot->link, bucket);
 }
@@ -304,14 +318,19 @@ static void hold_anon_vma(struct rmap_item *rmap_item,
 			  struct anon_vma *anon_vma)
 {
 	rmap_item->anon_vma = anon_vma;
-	get_anon_vma(anon_vma);
+	atomic_inc(&anon_vma->ksm_refcount);
 }
 
-static void ksm_drop_anon_vma(struct rmap_item *rmap_item)
+static void drop_anon_vma(struct rmap_item *rmap_item)
 {
 	struct anon_vma *anon_vma = rmap_item->anon_vma;
 
-	drop_anon_vma(anon_vma);
+	if (atomic_dec_and_lock(&anon_vma->ksm_refcount, &anon_vma->lock)) {
+		int empty = list_empty(&anon_vma->head);
+		spin_unlock(&anon_vma->lock);
+		if (empty)
+			anon_vma_free(anon_vma);
+	}
 }
 
 /*
@@ -346,7 +365,7 @@ static int break_ksm(struct vm_area_struct *vma, unsigned long addr)
 	do {
 		cond_resched();
 		page = follow_page(vma, addr, FOLL_GET);
-		if (IS_ERR_OR_NULL(page))
+		if (!page)
 			break;
 		if (PageKsm(page))
 			ret = handle_mm_fault(vma->vm_mm, vma, addr,
@@ -396,7 +415,7 @@ static void break_cow(struct rmap_item *rmap_item)
 	 * It is not an accident that whenever we want to break COW
 	 * to undo, we also need to drop a reference to the anon_vma.
 	 */
-	ksm_drop_anon_vma(rmap_item);
+	drop_anon_vma(rmap_item);
 
 	down_read(&mm->mmap_sem);
 	if (ksm_test_exit(mm))
@@ -428,7 +447,7 @@ static struct page *get_mergeable_page(struct rmap_item *rmap_item)
 		goto out;
 
 	page = follow_page(vma, addr, FOLL_GET);
-	if (IS_ERR_OR_NULL(page))
+	if (!page)
 		goto out;
 	if (PageAnon(page)) {
 		flush_anon_page(vma, page, addr);
@@ -451,7 +470,7 @@ static void remove_node_from_stable_tree(struct stable_node *stable_node)
 			ksm_pages_sharing--;
 		else
 			ksm_pages_shared--;
-		ksm_drop_anon_vma(rmap_item);
+		drop_anon_vma(rmap_item);
 		rmap_item->address &= PAGE_MASK;
 		cond_resched();
 	}
@@ -539,7 +558,7 @@ static void remove_rmap_item_from_tree(struct rmap_item *rmap_item)
 		else
 			ksm_pages_shared--;
 
-		ksm_drop_anon_vma(rmap_item);
+		drop_anon_vma(rmap_item);
 		rmap_item->address &= PAGE_MASK;
 
 	} else if (rmap_item->address & UNSTABLE_FLAG) {
@@ -712,7 +731,7 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 	if (!ptep)
 		goto out;
 
-	if (pte_write(*ptep) || pte_dirty(*ptep)) {
+	if (pte_write(*ptep)) {
 		pte_t entry;
 
 		swapped = PageSwapCache(page);
@@ -732,12 +751,10 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 		 * page
 		 */
 		if (page_mapcount(page) + 1 + swapped != page_count(page)) {
-			set_pte_at(mm, addr, ptep, entry);
+			set_pte_at_notify(mm, addr, ptep, entry);
 			goto out_unlock;
 		}
-		if (pte_dirty(entry))
-			set_page_dirty(page);
-		entry = pte_mkclean(pte_wrprotect(entry));
+		entry = pte_wrprotect(entry);
 		set_pte_at_notify(mm, addr, ptep, entry);
 	}
 	*orig_pte = *ptep;
@@ -1069,7 +1086,7 @@ struct rmap_item *unstable_tree_search_insert(struct rmap_item *rmap_item,
 		cond_resched();
 		tree_rmap_item = rb_entry(*new, struct rmap_item, node);
 		tree_page = get_mergeable_page(tree_rmap_item);
-		if (IS_ERR_OR_NULL(tree_page))
+		if (!tree_page)
 			return NULL;
 
 		/*
@@ -1277,7 +1294,7 @@ next_mm:
 			if (ksm_test_exit(mm))
 				break;
 			*page = follow_page(vma, ksm_scan.address, FOLL_GET);
-			if (!IS_ERR_OR_NULL(*page) && PageAnon(*page)) {
+			if (*page && PageAnon(*page)) {
 				flush_anon_page(vma, *page, ksm_scan.address);
 				flush_dcache_page(*page);
 				rmap_item = get_next_rmap_item(slot,
@@ -1291,7 +1308,7 @@ next_mm:
 				up_read(&mm->mmap_sem);
 				return rmap_item;
 			}
-			if (!IS_ERR_OR_NULL(*page))
+			if (*page)
 				put_page(*page);
 			ksm_scan.address += PAGE_SIZE;
 			cond_resched();
@@ -1350,7 +1367,7 @@ next_mm:
 static void ksm_do_scan(unsigned int scan_npages)
 {
 	struct rmap_item *rmap_item;
-	struct page *uninitialized_var(page);
+	struct page *page;
 
 	while (scan_npages--) {
 		cond_resched();
@@ -1506,6 +1523,8 @@ struct page *ksm_does_need_to_copy(struct page *page,
 {
 	struct page *new_page;
 
+	unlock_page(page);	/* any racers will COW it, not modify it */
+
 	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
 	if (new_page) {
 		copy_user_highpage(new_page, page, address, vma);
@@ -1521,6 +1540,7 @@ struct page *ksm_does_need_to_copy(struct page *page,
 			add_page_to_unevictable_list(new_page);
 	}
 
+	page_cache_release(page);
 	return new_page;
 }
 
@@ -1543,12 +1563,10 @@ int page_referenced_ksm(struct page *page, struct mem_cgroup *memcg,
 again:
 	hlist_for_each_entry(rmap_item, hlist, &stable_node->hlist, hlist) {
 		struct anon_vma *anon_vma = rmap_item->anon_vma;
-		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
-		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
-			vma = vmac->vma;
+		spin_lock(&anon_vma->lock);
+		list_for_each_entry(vma, &anon_vma->head, anon_vma_node) {
 			if (rmap_item->address < vma->vm_start ||
 			    rmap_item->address >= vma->vm_end)
 				continue;
@@ -1569,7 +1587,7 @@ again:
 			if (!search_new_forks || !mapcount)
 				break;
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 		if (!mapcount)
 			goto out;
 	}
@@ -1596,12 +1614,10 @@ int try_to_unmap_ksm(struct page *page, enum ttu_flags flags)
 again:
 	hlist_for_each_entry(rmap_item, hlist, &stable_node->hlist, hlist) {
 		struct anon_vma *anon_vma = rmap_item->anon_vma;
-		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
-		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
-			vma = vmac->vma;
+		spin_lock(&anon_vma->lock);
+		list_for_each_entry(vma, &anon_vma->head, anon_vma_node) {
 			if (rmap_item->address < vma->vm_start ||
 			    rmap_item->address >= vma->vm_end)
 				continue;
@@ -1617,11 +1633,11 @@ again:
 			ret = try_to_unmap_one(page, vma,
 					rmap_item->address, flags);
 			if (ret != SWAP_AGAIN || !page_mapped(page)) {
-				anon_vma_unlock(anon_vma);
+				spin_unlock(&anon_vma->lock);
 				goto out;
 			}
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 	}
 	if (!search_new_forks++)
 		goto again;
@@ -1648,12 +1664,10 @@ int rmap_walk_ksm(struct page *page, int (*rmap_one)(struct page *,
 again:
 	hlist_for_each_entry(rmap_item, hlist, &stable_node->hlist, hlist) {
 		struct anon_vma *anon_vma = rmap_item->anon_vma;
-		struct anon_vma_chain *vmac;
 		struct vm_area_struct *vma;
 
-		anon_vma_lock(anon_vma);
-		list_for_each_entry(vmac, &anon_vma->head, same_anon_vma) {
-			vma = vmac->vma;
+		spin_lock(&anon_vma->lock);
+		list_for_each_entry(vma, &anon_vma->head, anon_vma_node) {
 			if (rmap_item->address < vma->vm_start ||
 			    rmap_item->address >= vma->vm_end)
 				continue;
@@ -1668,11 +1682,11 @@ again:
 
 			ret = rmap_one(page, vma, rmap_item->address, arg);
 			if (ret != SWAP_AGAIN) {
-				anon_vma_unlock(anon_vma);
+				spin_unlock(&anon_vma->lock);
 				goto out;
 			}
 		}
-		anon_vma_unlock(anon_vma);
+		spin_unlock(&anon_vma->lock);
 	}
 	if (!search_new_forks++)
 		goto again;
@@ -1724,13 +1738,8 @@ static int ksm_memory_callback(struct notifier_block *self,
 		/*
 		 * Keep it very simple for now: just lock out ksmd and
 		 * MADV_UNMERGEABLE while any memory is going offline.
-		 * mutex_lock_nested() is necessary because lockdep was alarmed
-		 * that here we take ksm_thread_mutex inside notifier chain
-		 * mutex, and later take notifier chain mutex inside
-		 * ksm_thread_mutex to unlock it.   But that's safe because both
-		 * are inside mem_hotplug_mutex.
 		 */
-		mutex_lock_nested(&ksm_thread_mutex, SINGLE_DEPTH_NESTING);
+		mutex_lock(&ksm_thread_mutex);
 		break;
 
 	case MEM_OFFLINE:
@@ -1928,11 +1937,15 @@ static int __init ksm_init(void)
 	if (err)
 		goto out;
 
+	err = mm_slots_hash_init();
+	if (err)
+		goto out_free1;
+
 	ksm_thread = kthread_run(ksm_scan_thread, NULL, "ksmd");
 	if (IS_ERR(ksm_thread)) {
 		printk(KERN_ERR "ksm: creating kthread failed\n");
 		err = PTR_ERR(ksm_thread);
-		goto out_free;
+		goto out_free2;
 	}
 
 #ifdef CONFIG_SYSFS
@@ -1940,7 +1953,7 @@ static int __init ksm_init(void)
 	if (err) {
 		printk(KERN_ERR "ksm: register sysfs failed\n");
 		kthread_stop(ksm_thread);
-		goto out_free;
+		goto out_free2;
 	}
 #else
 	ksm_run = KSM_RUN_MERGE;	/* no way for user to start it */
@@ -1956,7 +1969,9 @@ static int __init ksm_init(void)
 #endif
 	return 0;
 
-out_free:
+out_free2:
+	mm_slots_hash_free();
+out_free1:
 	ksm_slab_free();
 out:
 	return err;

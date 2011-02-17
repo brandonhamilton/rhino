@@ -20,8 +20,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -203,7 +201,8 @@ static int tlb_initialize(struct bonding *bond)
 
 	new_hashtbl = kzalloc(size, GFP_KERNEL);
 	if (!new_hashtbl) {
-		pr_err("%s: Error: Failed to allocate TLB hash table\n",
+		pr_err(DRV_NAME
+		       ": %s: Error: Failed to allocate TLB hash table\n",
 		       bond->dev->name);
 		return -1;
 	}
@@ -233,27 +232,34 @@ static void tlb_deinitialize(struct bonding *bond)
 	_unlock_tx_hashtbl(bond);
 }
 
-static long long compute_gap(struct slave *slave)
-{
-	return (s64) (slave->speed << 20) - /* Convert to Megabit per sec */
-	       (s64) (SLAVE_TLB_INFO(slave).load << 3); /* Bytes to bits */
-}
-
 /* Caller must hold bond lock for read */
 static struct slave *tlb_get_least_loaded_slave(struct bonding *bond)
 {
 	struct slave *slave, *least_loaded;
-	long long max_gap;
-	int i;
+	s64 max_gap;
+	int i, found = 0;
 
-	least_loaded = NULL;
-	max_gap = LLONG_MIN;
-
-	/* Find the slave with the largest gap */
+	/* Find the first enabled slave */
 	bond_for_each_slave(bond, slave, i) {
 		if (SLAVE_IS_OK(slave)) {
-			long long gap = compute_gap(slave);
+			found = 1;
+			break;
+		}
+	}
 
+	if (!found) {
+		return NULL;
+	}
+
+	least_loaded = slave;
+	max_gap = (s64)(slave->speed << 20) - /* Convert to Megabit per sec */
+			(s64)(SLAVE_TLB_INFO(slave).load << 3); /* Bytes to bits */
+
+	/* Find the slave with the largest gap */
+	bond_for_each_slave_from(bond, slave, i, least_loaded) {
+		if (SLAVE_IS_OK(slave)) {
+			s64 gap = (s64)(slave->speed << 20) -
+					(s64)(SLAVE_TLB_INFO(slave).load << 3);
 			if (max_gap < gap) {
 				least_loaded = slave;
 				max_gap = gap;
@@ -333,8 +339,7 @@ static void rlb_update_entry_from_arp(struct bonding *bond, struct arp_pkt *arp)
 
 	if ((client_info->assigned) &&
 	    (client_info->ip_src == arp->ip_dst) &&
-	    (client_info->ip_dst == arp->ip_src) &&
-	    (compare_ether_addr_64bits(client_info->mac_dst, arp->mac_src))) {
+	    (client_info->ip_dst == arp->ip_src)) {
 		/* update the clients MAC address */
 		memcpy(client_info->mac_dst, arp->mac_src, ETH_ALEN);
 		client_info->ntt = 1;
@@ -361,9 +366,6 @@ static int rlb_arp_recv(struct sk_buff *skb, struct net_device *bond_dev, struct
 		pr_debug("Packet has no ARP data\n");
 		goto out;
 	}
-
-	if (!pskb_may_pull(skb, arp_hdr_len(bond_dev)))
-		goto out;
 
 	if (skb->len < sizeof(struct arp_pkt)) {
 		pr_debug("Packet is too small to be an ARP\n");
@@ -512,7 +514,8 @@ static void rlb_update_client(struct rlb_client_info *client_info)
 				 client_info->slave->dev->dev_addr,
 				 client_info->mac_dst);
 		if (!skb) {
-			pr_err("%s: Error: failed to create an ARP packet\n",
+			pr_err(DRV_NAME
+			       ": %s: Error: failed to create an ARP packet\n",
 			       client_info->slave->dev->master->name);
 			continue;
 		}
@@ -522,7 +525,8 @@ static void rlb_update_client(struct rlb_client_info *client_info)
 		if (client_info->tag) {
 			skb = vlan_put_tag(skb, client_info->vlan_id);
 			if (!skb) {
-				pr_err("%s: Error: failed to insert VLAN tag\n",
+				pr_err(DRV_NAME
+				       ": %s: Error: failed to insert VLAN tag\n",
 				       client_info->slave->dev->master->name);
 				continue;
 			}
@@ -605,7 +609,9 @@ static void rlb_req_update_subnet_clients(struct bonding *bond, __be32 src_ip)
 		client_info = &(bond_info->rx_hashtbl[hash_index]);
 
 		if (!client_info->slave) {
-			pr_err("%s: Error: found a client with no channel in the client's hash table\n",
+			pr_err(DRV_NAME
+			       ": %s: Error: found a client with no channel in "
+			       "the client's hash table\n",
 			       bond->dev->name);
 			continue;
 		}
@@ -685,7 +691,7 @@ static struct slave *rlb_choose_channel(struct sk_buff *skb, struct bonding *bon
 			client_info->ntt = 0;
 		}
 
-		if (bond->vlgrp) {
+		if (!list_empty(&bond->vlan_list)) {
 			if (!vlan_get_tag(skb, &client_info->vlan_id))
 				client_info->tag = 1;
 		}
@@ -800,7 +806,8 @@ static int rlb_initialize(struct bonding *bond)
 
 	new_hashtbl = kmalloc(size, GFP_KERNEL);
 	if (!new_hashtbl) {
-		pr_err("%s: Error: Failed to allocate RLB hash table\n",
+		pr_err(DRV_NAME
+		       ": %s: Error: Failed to allocate RLB hash table\n",
 		       bond->dev->name);
 		return -1;
 	}
@@ -818,7 +825,7 @@ static int rlb_initialize(struct bonding *bond)
 
 	/*initialize packet type*/
 	pk_type->type = cpu_to_be16(ETH_P_ARP);
-	pk_type->dev = bond->dev;
+	pk_type->dev = NULL;
 	pk_type->func = rlb_arp_recv;
 
 	/* register to receive ARPs */
@@ -907,7 +914,7 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[])
 		skb->priority = TC_PRIO_CONTROL;
 		skb->dev = slave->dev;
 
-		if (bond->vlgrp) {
+		if (!list_empty(&bond->vlan_list)) {
 			struct vlan_entry *vlan;
 
 			vlan = bond_next_vlan(bond,
@@ -921,7 +928,8 @@ static void alb_send_learning_packets(struct slave *slave, u8 mac_addr[])
 
 			skb = vlan_put_tag(skb, vlan->vlan_id);
 			if (!skb) {
-				pr_err("%s: Error: failed to insert VLAN tag\n",
+				pr_err(DRV_NAME
+				       ": %s: Error: failed to insert VLAN tag\n",
 				       bond->dev->name);
 				continue;
 			}
@@ -950,8 +958,11 @@ static int alb_set_slave_mac_addr(struct slave *slave, u8 addr[], int hw)
 	memcpy(s_addr.sa_data, addr, dev->addr_len);
 	s_addr.sa_family = dev->type;
 	if (dev_set_mac_address(dev, &s_addr)) {
-		pr_err("%s: Error: dev_set_mac_address of dev %s failed!\n"
-		       "ALB mode requires that the base driver support setting the hw address also when the network device's interface is open\n",
+		pr_err(DRV_NAME
+		       ": %s: Error: dev_set_mac_address of dev %s failed! ALB "
+		       "mode requires that the base driver support setting "
+		       "the hw address also when the network device's "
+		       "interface is open\n",
 		       dev->master->name, dev->name);
 		return -EOPNOTSUPP;
 	}
@@ -1158,12 +1169,18 @@ static int alb_handle_addr_collision_on_attach(struct bonding *bond, struct slav
 		alb_set_slave_mac_addr(slave, free_mac_slave->perm_hwaddr,
 				       bond->alb_info.rlb_enabled);
 
-		pr_warning("%s: Warning: the hw address of slave %s is in use by the bond; giving it the hw address of %s\n",
+		pr_warning(DRV_NAME
+			   ": %s: Warning: the hw address of slave %s is "
+			   "in use by the bond; giving it the hw address "
+			   "of %s\n",
 			   bond->dev->name, slave->dev->name,
 			   free_mac_slave->dev->name);
 
 	} else if (has_bond_addr) {
-		pr_err("%s: Error: the hw address of slave %s is in use by the bond; couldn't find a slave with a free hw address to give it (this should not have happened)\n",
+		pr_err(DRV_NAME
+		       ": %s: Error: the hw address of slave %s is in use by the "
+		       "bond; couldn't find a slave with a free hw address to "
+		       "give it (this should not have happened)\n",
 		       bond->dev->name, slave->dev->name);
 		return -EFAULT;
 	}

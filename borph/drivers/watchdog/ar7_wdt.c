@@ -34,7 +34,6 @@
 #include <linux/ioport.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
-#include <linux/clk.h>
 
 #include <asm/addrspace.h>
 #include <asm/mach-ar7/ar7.h>
@@ -80,8 +79,6 @@ static unsigned expect_close;
 static struct resource *ar7_regs_wdt;
 /* Pointer to the remapped WDT IO space */
 static struct ar7_wdt *ar7_wdt;
-
-static struct clk *vbus_clk;
 
 static void ar7_wdt_kick(u32 value)
 {
@@ -141,19 +138,17 @@ static void ar7_wdt_disable(u32 value)
 static void ar7_wdt_update_margin(int new_margin)
 {
 	u32 change;
-	u32 vbus_rate;
 
-	vbus_rate = clk_get_rate(vbus_clk);
-	change = new_margin * (vbus_rate / prescale_value);
+	change = new_margin * (ar7_vbus_freq() / prescale_value);
 	if (change < 1)
 		change = 1;
 	if (change > 0xffff)
 		change = 0xffff;
 	ar7_wdt_change(change);
-	margin = change * prescale_value / vbus_rate;
+	margin = change * prescale_value / ar7_vbus_freq();
 	printk(KERN_INFO DRVNAME
 	       ": timer margin %d seconds (prescale %d, change %d, freq %d)\n",
-	       margin, prescale_value, change, vbus_rate);
+	       margin, prescale_value, change, ar7_vbus_freq());
 }
 
 static void ar7_wdt_enable_wdt(void)
@@ -219,7 +214,7 @@ static ssize_t ar7_wdt_write(struct file *file, const char *data,
 static long ar7_wdt_ioctl(struct file *file,
 					unsigned int cmd, unsigned long arg)
 {
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.identity = LONGNAME,
 		.firmware_version = 1,
 		.options = (WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING |
@@ -267,7 +262,6 @@ static const struct file_operations ar7_wdt_fops = {
 	.unlocked_ioctl	= ar7_wdt_ioctl,
 	.open		= ar7_wdt_open,
 	.release	= ar7_wdt_release,
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice ar7_wdt_miscdev = {
@@ -301,13 +295,6 @@ static int __devinit ar7_wdt_probe(struct platform_device *pdev)
 	if (!ar7_wdt) {
 		printk(KERN_ERR DRVNAME ": could not ioremap registers\n");
 		rc = -ENXIO;
-		goto out_mem_region;
-	}
-
-	vbus_clk = clk_get(NULL, "vbus");
-	if (IS_ERR(vbus_clk)) {
-		printk(KERN_ERR DRVNAME ": could not get vbus clock\n");
-		rc = PTR_ERR(vbus_clk);
 		goto out_mem_region;
 	}
 

@@ -115,6 +115,17 @@ int avail_to_resrv_perfctr_nmi_bit(unsigned int counter)
 
 	return !test_bit(counter, perfctr_nmi_owner);
 }
+
+/* checks the an msr for availability */
+int avail_to_resrv_perfctr_nmi(unsigned int msr)
+{
+	unsigned int counter;
+
+	counter = nmi_perfctr_msr_to_bit(msr);
+	BUG_ON(counter > NMI_MAX_COUNTER_BITS);
+
+	return !test_bit(counter, perfctr_nmi_owner);
+}
 EXPORT_SYMBOL(avail_to_resrv_perfctr_nmi_bit);
 
 int reserve_perfctr_nmi(unsigned int msr)
@@ -680,7 +691,7 @@ static int setup_intel_arch_watchdog(unsigned nmi_hz)
 	cpu_nmi_set_wd_enabled();
 
 	apic_write(APIC_LVTPC, APIC_DM_NMI);
-	evntsel |= ARCH_PERFMON_EVENTSEL_ENABLE;
+	evntsel |= ARCH_PERFMON_EVENTSEL0_ENABLE;
 	wrmsr(evntsel_msr, evntsel, 0);
 	intel_arch_wd_ops.checkbit = 1ULL << (eax.split.bit_width - 1);
 	return 1;
@@ -700,10 +711,11 @@ static void probe_nmi_watchdog(void)
 {
 	switch (boot_cpu_data.x86_vendor) {
 	case X86_VENDOR_AMD:
-		if (boot_cpu_data.x86 == 6 ||
-		    (boot_cpu_data.x86 >= 0xf && boot_cpu_data.x86 <= 0x15))
-			wd_ops = &k7_wd_ops;
-		return;
+		if (boot_cpu_data.x86 != 6 && boot_cpu_data.x86 != 15 &&
+		    boot_cpu_data.x86 != 16 && boot_cpu_data.x86 != 17)
+			return;
+		wd_ops = &k7_wd_ops;
+		break;
 	case X86_VENDOR_INTEL:
 		/* Work around where perfctr1 doesn't have a working enable
 		 * bit as described in the following errata:

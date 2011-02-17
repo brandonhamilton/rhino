@@ -53,13 +53,13 @@ urb_print(struct urb * urb, char * str, int small, int status)
 		int i, len;
 
 		if (usb_pipecontrol (pipe)) {
-			printk (KERN_DEBUG "%s: setup(8):", __FILE__);
+			printk (KERN_DEBUG __FILE__ ": setup(8):");
 			for (i = 0; i < 8 ; i++)
 				printk (" %02x", ((__u8 *) urb->setup_packet) [i]);
 			printk ("\n");
 		}
 		if (urb->transfer_buffer_length > 0 && urb->transfer_buffer) {
-			printk (KERN_DEBUG "%s: data(%d/%d):", __FILE__,
+			printk (KERN_DEBUG __FILE__ ": data(%d/%d):",
 				urb->actual_length,
 				urb->transfer_buffer_length);
 			len = usb_pipeout (pipe)?
@@ -413,21 +413,18 @@ static const struct file_operations debug_async_fops = {
 	.open		= debug_async_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_periodic_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_periodic_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_registers_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_registers_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 
 static struct dentry *ohci_debug_root;
@@ -648,7 +645,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 		hcd->product_desc,
 		hcd_name);
 
-	if (!HCD_HW_ACCESSIBLE(hcd)) {
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
 		size -= scnprintf (next, size,
 			"SUSPENDED (no register access)\n");
 		goto done;
@@ -690,7 +687,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 	next += temp;
 
 	temp = scnprintf (next, size, "hub poll timer %s\n",
-			HCD_POLL_RH(ohci_to_hcd(ohci)) ? "ON" : "off");
+			ohci_to_hcd(ohci)->poll_rh ? "ON" : "off");
 	size -= temp;
 	next += temp;
 

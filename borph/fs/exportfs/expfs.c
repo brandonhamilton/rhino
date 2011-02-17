@@ -6,7 +6,7 @@
  * and for mapping back from file handles to dentries.
  *
  * For details on why we do all the strange and hairy things in here
- * take a look at Documentation/filesystems/nfs/Exporting.
+ * take a look at Documentation/filesystems/Exporting.
  */
 #include <linux/exportfs.h>
 #include <linux/fs.h>
@@ -74,19 +74,20 @@ static struct dentry *
 find_disconnected_root(struct dentry *dentry)
 {
 	dget(dentry);
-	while (!IS_ROOT(dentry)) {
-		struct dentry *parent = dget_parent(dentry);
-
-		if (!(parent->d_flags & DCACHE_DISCONNECTED)) {
-			dput(parent);
-			break;
-		}
-
+	spin_lock(&dentry->d_lock);
+	while (!IS_ROOT(dentry) &&
+	       (dentry->d_parent->d_flags & DCACHE_DISCONNECTED)) {
+		struct dentry *parent = dentry->d_parent;
+		dget(parent);
+		spin_unlock(&dentry->d_lock);
 		dput(dentry);
 		dentry = parent;
+		spin_lock(&dentry->d_lock);
 	}
+	spin_unlock(&dentry->d_lock);
 	return dentry;
 }
+
 
 /*
  * Make sure target_dir is fully connected to the dentry tree.

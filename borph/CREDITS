@@ -3554,12 +3554,12 @@ E: cvance@nai.com
 D: portions of the Linux Security Module (LSM) framework and security modules
 
 N: Petr Vandrovec
-E: petr@vandrovec.name
+E: vandrove@vc.cvut.cz
 D: Small contributions to ncpfs
 D: Matrox framebuffer driver
-S: 21513 Conradia Ct
-S: Cupertino, CA 95014
-S: USA
+S: Chudenicka 8
+S: 10200 Prague 10, Hostivar
+S: Czech Republic
 
 N: Thibaut Varene
 E: T-Bone@parisc-linux.org

@@ -22,7 +22,6 @@
 #include <linux/kprobes.h>
 #include <linux/socket.h>
 #include <linux/tcp.h>
-#include <linux/slab.h>
 #include <linux/proc_fs.h>
 #include <linux/module.h>
 #include <linux/ktime.h>
@@ -40,9 +39,9 @@ static int port __read_mostly = 0;
 MODULE_PARM_DESC(port, "Port to match (0=all)");
 module_param(port, int, 0);
 
-static unsigned int bufsize __read_mostly = 4096;
+static int bufsize __read_mostly = 4096;
 MODULE_PARM_DESC(bufsize, "Log buffer size in packets (4096)");
-module_param(bufsize, uint, 0);
+module_param(bufsize, int, 0);
 
 static int full __read_mostly;
 MODULE_PARM_DESC(full, "Full log (1=every ack packet received,  0=only cwnd changes)");
@@ -76,12 +75,12 @@ static struct {
 
 static inline int tcp_probe_used(void)
 {
-	return (tcp_probe.head - tcp_probe.tail) & (bufsize - 1);
+	return (tcp_probe.head - tcp_probe.tail) % bufsize;
 }
 
 static inline int tcp_probe_avail(void)
 {
-	return bufsize - tcp_probe_used() - 1;
+	return bufsize - tcp_probe_used();
 }
 
 /*
@@ -117,7 +116,7 @@ static int jtcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 			p->ssthresh = tcp_current_ssthresh(sk);
 			p->srtt = tp->srtt >> 3;
 
-			tcp_probe.head = (tcp_probe.head + 1) & (bufsize - 1);
+			tcp_probe.head = (tcp_probe.head + 1) % bufsize;
 		}
 		tcp_probe.lastcwnd = tp->snd_cwnd;
 		spin_unlock(&tcp_probe.lock);
@@ -150,7 +149,7 @@ static int tcpprobe_open(struct inode * inode, struct file * file)
 static int tcpprobe_sprint(char *tbuf, int n)
 {
 	const struct tcp_log *p
-		= tcp_probe.log + tcp_probe.tail;
+		= tcp_probe.log + tcp_probe.tail % bufsize;
 	struct timespec tv
 		= ktime_to_timespec(ktime_sub(p->tstamp, tcp_probe.start));
 
@@ -193,7 +192,7 @@ static ssize_t tcpprobe_read(struct file *file, char __user *buf,
 		width = tcpprobe_sprint(tbuf, sizeof(tbuf));
 
 		if (cnt + width < len)
-			tcp_probe.tail = (tcp_probe.tail + 1) & (bufsize - 1);
+			tcp_probe.tail = (tcp_probe.tail + 1) % bufsize;
 
 		spin_unlock_bh(&tcp_probe.lock);
 
@@ -214,7 +213,6 @@ static const struct file_operations tcpprobe_fops = {
 	.owner	 = THIS_MODULE,
 	.open	 = tcpprobe_open,
 	.read    = tcpprobe_read,
-	.llseek  = noop_llseek,
 };
 
 static __init int tcpprobe_init(void)
@@ -224,10 +222,9 @@ static __init int tcpprobe_init(void)
 	init_waitqueue_head(&tcp_probe.wait);
 	spin_lock_init(&tcp_probe.lock);
 
-	if (bufsize == 0)
+	if (bufsize < 0)
 		return -EINVAL;
 
-	bufsize = roundup_pow_of_two(bufsize);
 	tcp_probe.log = kcalloc(bufsize, sizeof(struct tcp_log), GFP_KERNEL);
 	if (!tcp_probe.log)
 		goto err0;
@@ -239,7 +236,7 @@ static __init int tcpprobe_init(void)
 	if (ret)
 		goto err1;
 
-	pr_info("TCP probe registered (port=%d) bufsize=%u\n", port, bufsize);
+	pr_info("TCP probe registered (port=%d)\n", port);
 	return 0;
  err1:
 	proc_net_remove(&init_net, procname);

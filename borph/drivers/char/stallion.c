@@ -40,6 +40,7 @@
 #include <linux/stallion.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/ctype.h>
@@ -607,7 +608,6 @@ static unsigned int	sc26198_baudtable[] = {
 static const struct file_operations	stl_fsiomem = {
 	.owner		= THIS_MODULE,
 	.unlocked_ioctl	= stl_memioctl,
-	.llseek		= noop_llseek,
 };
 
 static struct class *stallion_class;
@@ -724,6 +724,7 @@ static int stl_open(struct tty_struct *tty, struct file *filp)
 {
 	struct stlport	*portp;
 	struct stlbrd	*brdp;
+	struct tty_port *port;
 	unsigned int	minordev, brdnr, panelnr;
 	int		portnr;
 
@@ -753,8 +754,7 @@ static int stl_open(struct tty_struct *tty, struct file *filp)
 	portp = brdp->panels[panelnr]->ports[portnr];
 	if (portp == NULL)
 		return -ENODEV;
-
-	tty->driver_data = portp;
+	port = &portp->port;
 	return tty_port_open(&portp->port, tty, filp);
 
 }
@@ -807,6 +807,7 @@ static void stl_waituntilsent(struct tty_struct *tty, int timeout)
 		timeout = HZ;
 	tend = jiffies + timeout;
 
+	lock_kernel();
 	while (stl_datastate(portp)) {
 		if (signal_pending(current))
 			break;
@@ -814,6 +815,7 @@ static void stl_waituntilsent(struct tty_struct *tty, int timeout)
 		if (time_after_eq(jiffies, tend))
 			break;
 	}
+	unlock_kernel();
 }
 
 /*****************************************************************************/
@@ -839,8 +841,7 @@ static void stl_close(struct tty_struct *tty, struct file *filp)
 	pr_debug("stl_close(tty=%p,filp=%p)\n", tty, filp);
 
 	portp = tty->driver_data;
-	if(portp == NULL)
-		return;
+	BUG_ON(portp == NULL);
 	tty_port_close(&portp->port, tty, filp);
 }
 
@@ -1027,8 +1028,6 @@ static int stl_getserial(struct stlport *portp, struct serial_struct __user *sp)
 	pr_debug("stl_getserial(portp=%p,sp=%p)\n", portp, sp);
 
 	memset(&sio, 0, sizeof(struct serial_struct));
-
-	mutex_lock(&portp->port.mutex);
 	sio.line = portp->portnr;
 	sio.port = portp->ioaddr;
 	sio.flags = portp->port.flags;
@@ -1048,7 +1047,6 @@ static int stl_getserial(struct stlport *portp, struct serial_struct __user *sp)
 	brdp = stl_brds[portp->brdnr];
 	if (brdp != NULL)
 		sio.irq = brdp->irq;
-	mutex_unlock(&portp->port.mutex);
 
 	return copy_to_user(sp, &sio, sizeof(struct serial_struct)) ? -EFAULT : 0;
 }
@@ -1070,15 +1068,12 @@ static int stl_setserial(struct tty_struct *tty, struct serial_struct __user *sp
 
 	if (copy_from_user(&sio, sp, sizeof(struct serial_struct)))
 		return -EFAULT;
-	mutex_lock(&portp->port.mutex);
 	if (!capable(CAP_SYS_ADMIN)) {
 		if ((sio.baud_base != portp->baud_base) ||
 		    (sio.close_delay != portp->close_delay) ||
 		    ((sio.flags & ~ASYNC_USR_MASK) !=
-		    (portp->port.flags & ~ASYNC_USR_MASK))) {
-			mutex_unlock(&portp->port.mutex);
+		    (portp->port.flags & ~ASYNC_USR_MASK)))
 			return -EPERM;
-		}
 	} 
 
 	portp->port.flags = (portp->port.flags & ~ASYNC_USR_MASK) |
@@ -1087,7 +1082,6 @@ static int stl_setserial(struct tty_struct *tty, struct serial_struct __user *sp
 	portp->close_delay = sio.close_delay;
 	portp->closing_wait = sio.closing_wait;
 	portp->custom_divisor = sio.custom_divisor;
-	mutex_unlock(&portp->port.mutex);
 	stl_setport(portp, tty->termios);
 	return 0;
 }
@@ -1152,6 +1146,8 @@ static int stl_ioctl(struct tty_struct *tty, struct file *file, unsigned int cmd
 
 	rc = 0;
 
+	lock_kernel();
+
 	switch (cmd) {
 	case TIOCGSERIAL:
 		rc = stl_getserial(portp, argp);
@@ -1176,6 +1172,7 @@ static int stl_ioctl(struct tty_struct *tty, struct file *file, unsigned int cmd
 		rc = -ENOIOCTLCMD;
 		break;
 	}
+	unlock_kernel();
 	return rc;
 }
 
@@ -2329,7 +2326,6 @@ static int stl_getportstats(struct tty_struct *tty, struct stlport *portp, comst
 			return -ENODEV;
 	}
 
-	mutex_lock(&portp->port.mutex);
 	portp->stats.state = portp->istate;
 	portp->stats.flags = portp->port.flags;
 	portp->stats.hwid = portp->hwid;
@@ -2361,7 +2357,6 @@ static int stl_getportstats(struct tty_struct *tty, struct stlport *portp, comst
 		(STL_TXBUFSIZE - (tail - head));
 
 	portp->stats.signals = (unsigned long) stl_getsignals(portp);
-	mutex_unlock(&portp->port.mutex);
 
 	return copy_to_user(cp, &portp->stats,
 			    sizeof(comstats_t)) ? -EFAULT : 0;
@@ -2386,12 +2381,10 @@ static int stl_clrportstats(struct stlport *portp, comstats_t __user *cp)
 			return -ENODEV;
 	}
 
-	mutex_lock(&portp->port.mutex);
 	memset(&portp->stats, 0, sizeof(comstats_t));
 	portp->stats.brd = portp->brdnr;
 	portp->stats.panel = portp->panelnr;
 	portp->stats.port = portp->portnr;
-	mutex_unlock(&portp->port.mutex);
 	return copy_to_user(cp, &portp->stats,
 			    sizeof(comstats_t)) ? -EFAULT : 0;
 }
@@ -2457,6 +2450,7 @@ static long stl_memioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 		return -ENODEV;
 	rc = 0;
 
+	lock_kernel();
 	switch (cmd) {
 	case COM_GETPORTSTATS:
 		rc = stl_getportstats(NULL, NULL, argp);
@@ -2477,6 +2471,7 @@ static long stl_memioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 		rc = -ENOIOCTLCMD;
 		break;
 	}
+	unlock_kernel();
 	return rc;
 }
 
@@ -3180,7 +3175,7 @@ static void stl_cd1400flush(struct stlport *portp)
 
 /*
  *	Return the current state of data flow on this port. This is only
- *	really interesting when determining if data has fully completed
+ *	really interresting when determining if data has fully completed
  *	transmission or not... This is easy for the cd1400, it accurately
  *	maintains the busy port flag.
  */
@@ -4130,7 +4125,7 @@ static void stl_sc26198flush(struct stlport *portp)
 
 /*
  *	Return the current state of data flow on this port. This is only
- *	really interesting when determining if data has fully completed
+ *	really interresting when determining if data has fully completed
  *	transmission or not... The sc26198 interrupt scheme cannot
  *	determine when all data has actually drained, so we need to
  *	check the port statusy register to be sure.

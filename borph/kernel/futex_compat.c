@@ -19,7 +19,7 @@
  */
 static inline int
 fetch_robust_entry(compat_uptr_t *uentry, struct robust_list __user **entry,
-		   compat_uptr_t __user *head, unsigned int *pi)
+		   compat_uptr_t __user *head, int *pi)
 {
 	if (get_user(*uentry, head))
 		return -EFAULT;
@@ -49,8 +49,7 @@ void compat_exit_robust_list(struct task_struct *curr)
 {
 	struct compat_robust_list_head __user *head = curr->compat_robust_list;
 	struct robust_list __user *entry, *next_entry, *pending;
-	unsigned int limit = ROBUST_LIST_LIMIT, pi, pip;
-	unsigned int uninitialized_var(next_pi);
+	unsigned int limit = ROBUST_LIST_LIMIT, pi, next_pi, pip;
 	compat_uptr_t uentry, next_uentry, upending;
 	compat_long_t futex_offset;
 	int rc;
@@ -147,7 +146,7 @@ compat_sys_get_robust_list(int pid, compat_uptr_t __user *head_ptr,
 		struct task_struct *p;
 
 		ret = -ESRCH;
-		rcu_read_lock();
+		read_lock(&tasklist_lock);
 		p = find_task_by_vpid(pid);
 		if (!p)
 			goto err_unlock;
@@ -158,7 +157,7 @@ compat_sys_get_robust_list(int pid, compat_uptr_t __user *head_ptr,
 		    !capable(CAP_SYS_PTRACE))
 			goto err_unlock;
 		head = p->compat_robust_list;
-		rcu_read_unlock();
+		read_unlock(&tasklist_lock);
 	}
 
 	if (put_user(sizeof(*head), len_ptr))
@@ -166,7 +165,7 @@ compat_sys_get_robust_list(int pid, compat_uptr_t __user *head_ptr,
 	return put_user(ptr_to_compat(head), head_ptr);
 
 err_unlock:
-	rcu_read_unlock();
+	read_unlock(&tasklist_lock);
 
 	return ret;
 }

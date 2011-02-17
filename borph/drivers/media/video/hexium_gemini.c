@@ -352,7 +352,6 @@ static struct saa7146_ext_vv vv_data;
 static int hexium_attach(struct saa7146_dev *dev, struct saa7146_pci_extension_data *info)
 {
 	struct hexium *hexium = (struct hexium *) dev->ext_priv;
-	int ret;
 
 	DEB_EE((".\n"));
 
@@ -367,6 +366,7 @@ static int hexium_attach(struct saa7146_dev *dev, struct saa7146_pci_extension_d
 	saa7146_write(dev, MC1, (MASK_08 | MASK_24 | MASK_10 | MASK_26));
 
 	hexium->i2c_adapter = (struct i2c_adapter) {
+		.class = I2C_CLASS_TV_ANALOG,
 		.name = "hexium gemini",
 	};
 	saa7146_i2c_adapter_prepare(dev, &hexium->i2c_adapter, SAA7146_I2C_BUS_BIT_RATE_480);
@@ -400,10 +400,9 @@ static int hexium_attach(struct saa7146_dev *dev, struct saa7146_pci_extension_d
 	vv_data.ops.vidioc_enum_input = vidioc_enum_input;
 	vv_data.ops.vidioc_g_input = vidioc_g_input;
 	vv_data.ops.vidioc_s_input = vidioc_s_input;
-	ret = saa7146_register_device(&hexium->video_dev, dev, "hexium gemini", VFL_TYPE_GRABBER);
-	if (ret < 0) {
+	if (0 != saa7146_register_device(&hexium->video_dev, dev, "hexium gemini", VFL_TYPE_GRABBER)) {
 		printk("hexium_gemini: cannot register capture v4l2 device. skipping.\n");
-		return ret;
+		return -1;
 	}
 
 	printk("hexium_gemini: found 'hexium gemini' frame grabber-%d.\n", hexium_num);

@@ -1,7 +1,7 @@
 /*
  * Kernel-based Virtual Machine - device assignment support
  *
- * Copyright (C) 2010 Red Hat, Inc. and/or its affiliates.
+ * Copyright (C) 2006-9 Red Hat, Inc
  *
  * This work is licensed under the terms of the GNU GPL, version 2.  See
  * the COPYING file in the top-level directory.
@@ -16,7 +16,6 @@
 #include <linux/spinlock.h>
 #include <linux/pci.h>
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include "irq.h"
 
 static struct kvm_assigned_dev_kernel *kvm_find_assigned_dev(struct list_head *head,
@@ -58,10 +57,12 @@ static int find_index_from_host_irq(struct kvm_assigned_dev_kernel
 static void kvm_assigned_dev_interrupt_work_handler(struct work_struct *work)
 {
 	struct kvm_assigned_dev_kernel *assigned_dev;
+	struct kvm *kvm;
 	int i;
 
 	assigned_dev = container_of(work, struct kvm_assigned_dev_kernel,
 				    interrupt_work);
+	kvm = assigned_dev->kvm;
 
 	spin_lock_irq(&assigned_dev->assigned_dev_lock);
 	if (assigned_dev->irq_requested_type & KVM_DEV_IRQ_HOST_MSIX) {
@@ -314,16 +315,12 @@ static int assigned_device_enable_host_msix(struct kvm *kvm,
 				kvm_assigned_dev_intr, 0,
 				"kvm_assigned_msix_device",
 				(void *)dev);
+		/* FIXME: free requested_irq's on failure */
 		if (r)
-			goto err;
+			return r;
 	}
 
 	return 0;
-err:
-	for (i -= 1; i >= 0; i--)
-		free_irq(dev->host_msix_entries[i].vector, (void *)dev);
-	pci_disable_msix(dev->dev);
-	return r;
 }
 
 #endif
@@ -446,6 +443,9 @@ static int kvm_vm_ioctl_assign_irq(struct kvm *kvm,
 	struct kvm_assigned_dev_kernel *match;
 	unsigned long host_irq_type, guest_irq_type;
 
+	if (!capable(CAP_SYS_RAWIO))
+		return -EPERM;
+
 	if (!irqchip_in_kernel(kvm))
 		return r;
 
@@ -504,12 +504,12 @@ out:
 static int kvm_vm_ioctl_assign_device(struct kvm *kvm,
 				      struct kvm_assigned_pci_dev *assigned_dev)
 {
-	int r = 0, idx;
+	int r = 0;
 	struct kvm_assigned_dev_kernel *match;
 	struct pci_dev *dev;
 
+	down_read(&kvm->slots_lock);
 	mutex_lock(&kvm->lock);
-	idx = srcu_read_lock(&kvm->srcu);
 
 	match = kvm_find_assigned_dev(&kvm->arch.assigned_dev_head,
 				      assigned_dev->assigned_dev_id);
@@ -526,8 +526,7 @@ static int kvm_vm_ioctl_assign_device(struct kvm *kvm,
 		r = -ENOMEM;
 		goto out;
 	}
-	dev = pci_get_domain_bus_and_slot(assigned_dev->segnr,
-				   assigned_dev->busnr,
+	dev = pci_get_bus_and_slot(assigned_dev->busnr,
 				   assigned_dev->devfn);
 	if (!dev) {
 		printk(KERN_INFO "%s: host device not found\n", __func__);
@@ -549,7 +548,6 @@ static int kvm_vm_ioctl_assign_device(struct kvm *kvm,
 	pci_reset_function(dev);
 
 	match->assigned_dev_id = assigned_dev->assigned_dev_id;
-	match->host_segnr = assigned_dev->segnr;
 	match->host_busnr = assigned_dev->busnr;
 	match->host_devfn = assigned_dev->devfn;
 	match->flags = assigned_dev->flags;
@@ -575,8 +573,8 @@ static int kvm_vm_ioctl_assign_device(struct kvm *kvm,
 	}
 
 out:
-	srcu_read_unlock(&kvm->srcu, idx);
 	mutex_unlock(&kvm->lock);
+	up_read(&kvm->slots_lock);
 	return r;
 out_list_del:
 	list_del(&match->list);
@@ -587,8 +585,8 @@ out_put:
 	pci_dev_put(dev);
 out_free:
 	kfree(match);
-	srcu_read_unlock(&kvm->srcu, idx);
 	mutex_unlock(&kvm->lock);
+	up_read(&kvm->slots_lock);
 	return r;
 }
 

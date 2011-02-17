@@ -110,9 +110,7 @@ spufs_setattr(struct dentry *dentry, struct iattr *attr)
 	if ((attr->ia_valid & ATTR_SIZE) &&
 	    (attr->ia_size != inode->i_size))
 		return -EINVAL;
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
-	return 0;
+	return inode_setattr(inode, attr);
 }
 
 
@@ -143,14 +141,15 @@ out:
 }
 
 static void
-spufs_evict_inode(struct inode *inode)
+spufs_delete_inode(struct inode *inode)
 {
 	struct spufs_inode_info *ei = SPUFS_I(inode);
-	end_writeback(inode);
+
 	if (ei->i_ctx)
 		put_spu_context(ei->i_ctx);
 	if (ei->i_gang)
 		put_spu_gang(ei->i_gang);
+	clear_inode(inode);
 }
 
 static void spufs_prune_dir(struct dentry *dir)
@@ -252,7 +251,7 @@ const struct file_operations spufs_context_fops = {
 	.llseek		= dcache_dir_lseek,
 	.read		= generic_read_dir,
 	.readdir	= dcache_readdir,
-	.fsync		= noop_fsync,
+	.fsync		= simple_sync_file,
 };
 EXPORT_SYMBOL_GPL(spufs_context_fops);
 
@@ -778,7 +777,8 @@ spufs_fill_super(struct super_block *sb, void *data, int silent)
 		.alloc_inode = spufs_alloc_inode,
 		.destroy_inode = spufs_destroy_inode,
 		.statfs = simple_statfs,
-		.evict_inode = spufs_evict_inode,
+		.delete_inode = spufs_delete_inode,
+		.drop_inode = generic_delete_inode,
 		.show_options = generic_show_options,
 	};
 
@@ -798,17 +798,17 @@ spufs_fill_super(struct super_block *sb, void *data, int silent)
 	return spufs_create_root(sb, data);
 }
 
-static struct dentry *
-spufs_mount(struct file_system_type *fstype, int flags,
-		const char *name, void *data)
+static int
+spufs_get_sb(struct file_system_type *fstype, int flags,
+		const char *name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fstype, flags, data, spufs_fill_super);
+	return get_sb_single(fstype, flags, data, spufs_fill_super, mnt);
 }
 
 static struct file_system_type spufs_type = {
 	.owner = THIS_MODULE,
 	.name = "spufs",
-	.mount = spufs_mount,
+	.get_sb = spufs_get_sb,
 	.kill_sb = kill_litter_super,
 };
 

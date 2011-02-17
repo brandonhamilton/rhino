@@ -9,7 +9,7 @@
  *	it under the terms of the GNU General Public License version 2 as
  *	published by the Free Software Foundation.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <net/ipv6.h>
@@ -113,7 +113,7 @@ ct_proto_port_check(const struct xt_conntrack_mtinfo2 *info,
 }
 
 static bool
-conntrack_mt(const struct sk_buff *skb, struct xt_action_param *par,
+conntrack_mt(const struct sk_buff *skb, const struct xt_match_param *par,
              u16 state_mask, u16 status_mask)
 {
 	const struct xt_conntrack_mtinfo2 *info = par->matchinfo;
@@ -123,12 +123,11 @@ conntrack_mt(const struct sk_buff *skb, struct xt_action_param *par,
 
 	ct = nf_ct_get(skb, &ctinfo);
 
-	if (ct) {
-		if (nf_ct_is_untracked(ct))
-			statebit = XT_CONNTRACK_STATE_UNTRACKED;
-		else
-			statebit = XT_CONNTRACK_STATE_BIT(ctinfo);
-	} else
+	if (ct == &nf_conntrack_untracked)
+		statebit = XT_CONNTRACK_STATE_UNTRACKED;
+	else if (ct != NULL)
+		statebit = XT_CONNTRACK_STATE_BIT(ctinfo);
+	else
 		statebit = XT_CONNTRACK_STATE_INVALID;
 
 	if (info->match_flags & XT_CONNTRACK_STATE) {
@@ -192,7 +191,7 @@ conntrack_mt(const struct sk_buff *skb, struct xt_action_param *par,
 }
 
 static bool
-conntrack_mt_v1(const struct sk_buff *skb, struct xt_action_param *par)
+conntrack_mt_v1(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_conntrack_mtinfo1 *info = par->matchinfo;
 
@@ -200,22 +199,21 @@ conntrack_mt_v1(const struct sk_buff *skb, struct xt_action_param *par)
 }
 
 static bool
-conntrack_mt_v2(const struct sk_buff *skb, struct xt_action_param *par)
+conntrack_mt_v2(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_conntrack_mtinfo2 *info = par->matchinfo;
 
 	return conntrack_mt(skb, par, info->state_mask, info->status_mask);
 }
 
-static int conntrack_mt_check(const struct xt_mtchk_param *par)
+static bool conntrack_mt_check(const struct xt_mtchk_param *par)
 {
-	int ret;
-
-	ret = nf_ct_l3proto_try_module_get(par->family);
-	if (ret < 0)
-		pr_info("cannot load conntrack support for proto=%u\n",
-			par->family);
-	return ret;
+	if (nf_ct_l3proto_try_module_get(par->family) < 0) {
+		printk(KERN_WARNING "can't load conntrack support for "
+				    "proto=%u\n", par->family);
+		return false;
+	}
+	return true;
 }
 
 static void conntrack_mt_destroy(const struct xt_mtdtor_param *par)

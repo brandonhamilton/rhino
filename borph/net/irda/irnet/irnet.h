@@ -458,8 +458,6 @@ typedef struct irnet_socket
   int			disco_index;	/* Last read in the discovery log */
   int			disco_number;	/* Size of the discovery log */
 
-  struct mutex		lock;
-
 } irnet_socket;
 
 /*

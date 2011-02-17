@@ -63,7 +63,7 @@ static void shutdown_oaks32r_irq(unsigned int irq)
 
 static struct irq_chip oaks32r_irq_type =
 {
-	.name = "OAKS32R-IRQ",
+	.typename = "OAKS32R-IRQ",
 	.startup = startup_oaks32r_irq,
 	.shutdown = shutdown_oaks32r_irq,
 	.enable = enable_oaks32r_irq,

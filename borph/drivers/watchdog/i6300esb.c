@@ -34,6 +34,7 @@
 #include <linux/mm.h>
 #include <linux/miscdevice.h>
 #include <linux/watchdog.h>
+#include <linux/platform_device.h>
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/ioport.h>
@@ -41,7 +42,7 @@
 #include <linux/io.h>
 
 /* Module and version information */
-#define ESB_VERSION "0.05"
+#define ESB_VERSION "0.04"
 #define ESB_MODULE_NAME "i6300ESB timer"
 #define ESB_DRIVER_NAME ESB_MODULE_NAME ", v" ESB_VERSION
 #define PFX ESB_MODULE_NAME ": "
@@ -64,7 +65,7 @@
 /* Config register bits */
 #define ESB_WDT_REBOOT  (0x01 << 5)   /* Enable reboot on timeout          */
 #define ESB_WDT_FREQ    (0x01 << 2)   /* Decrement frequency               */
-#define ESB_WDT_INTTYPE (0x03 << 0)   /* Interrupt type on timer1 timeout  */
+#define ESB_WDT_INTTYPE (0x11 << 0)   /* Interrupt type on timer1 timeout  */
 
 /* Reload register bits */
 #define ESB_WDT_TIMEOUT (0x01 << 9)    /* Watchdog timed out                */
@@ -81,9 +82,7 @@ static unsigned long timer_alive;
 static struct pci_dev *esb_pci;
 static unsigned short triggered; /* The status of the watchdog upon boot */
 static char esb_expect_close;
-
-/* We can only use 1 card due to the /dev/watchdog restriction */
-static int cards_found;
+static struct platform_device *esb_platform_device;
 
 /* module parameters */
 /* 30 sec default heartbeat (1 < heartbeat < 2*1023) */
@@ -112,8 +111,8 @@ MODULE_PARM_DESC(nowayout,
  */
 static inline void esb_unlock_registers(void)
 {
-	writew(ESB_UNLOCK1, ESB_RELOAD_REG);
-	writew(ESB_UNLOCK2, ESB_RELOAD_REG);
+	writeb(ESB_UNLOCK1, ESB_RELOAD_REG);
+	writeb(ESB_UNLOCK2, ESB_RELOAD_REG);
 }
 
 static int esb_timer_start(void)
@@ -257,7 +256,7 @@ static long esb_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int new_heartbeat;
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options =		WDIOF_SETTIMEOUT |
 					WDIOF_KEEPALIVEPING |
 					WDIOF_MAGICCLOSE,
@@ -333,6 +332,11 @@ static struct miscdevice esb_miscdev = {
 
 /*
  * Data for PCI driver interface
+ *
+ * This data only exists for exporting the supported
+ * PCI ids via MODULE_DEVICE_TABLE.  We do not actually
+ * register a pci_driver, because someone else might one day
+ * want to register another driver on the same PCI id.
  */
 static struct pci_device_id esb_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ESB_9), },
@@ -344,19 +348,29 @@ MODULE_DEVICE_TABLE(pci, esb_pci_tbl);
  *      Init & exit routines
  */
 
-static unsigned char __devinit esb_getdevice(struct pci_dev *pdev)
+static unsigned char __devinit esb_getdevice(void)
 {
-	if (pci_enable_device(pdev)) {
+	/*
+	 *      Find the PCI device
+	 */
+
+	esb_pci = pci_get_device(PCI_VENDOR_ID_INTEL,
+					PCI_DEVICE_ID_INTEL_ESB_9, NULL);
+
+	if (!esb_pci)
+		return 0;
+
+	if (pci_enable_device(esb_pci)) {
 		printk(KERN_ERR PFX "failed to enable device\n");
 		goto err_devput;
 	}
 
-	if (pci_request_region(pdev, 0, ESB_MODULE_NAME)) {
+	if (pci_request_region(esb_pci, 0, ESB_MODULE_NAME)) {
 		printk(KERN_ERR PFX "failed to request region\n");
 		goto err_disable;
 	}
 
-	BASEADDR = pci_ioremap_bar(pdev, 0);
+	BASEADDR = pci_ioremap_bar(esb_pci, 0);
 	if (BASEADDR == NULL) {
 		/* Something's wrong here, BASEADDR has to be set */
 		printk(KERN_ERR PFX "failed to get BASEADDR\n");
@@ -364,14 +378,14 @@ static unsigned char __devinit esb_getdevice(struct pci_dev *pdev)
 	}
 
 	/* Done */
-	esb_pci = pdev;
 	return 1;
 
 err_release:
-	pci_release_region(pdev, 0);
+	pci_release_region(esb_pci, 0);
 err_disable:
-	pci_disable_device(pdev);
+	pci_disable_device(esb_pci);
 err_devput:
+	pci_dev_put(esb_pci);
 	return 0;
 }
 
@@ -416,23 +430,12 @@ static void __devinit esb_initdevice(void)
 	esb_timer_set_heartbeat(heartbeat);
 }
 
-static int __devinit esb_probe(struct pci_dev *pdev,
-		const struct pci_device_id *ent)
+static int __devinit esb_probe(struct platform_device *dev)
 {
 	int ret;
 
-	cards_found++;
-	if (cards_found == 1)
-		printk(KERN_INFO PFX "Intel 6300ESB WatchDog Timer Driver v%s\n",
-			ESB_VERSION);
-
-	if (cards_found > 1) {
-		printk(KERN_ERR PFX "This driver only supports 1 device\n");
-		return -ENODEV;
-	}
-
 	/* Check whether or not the hardware watchdog is there */
-	if (!esb_getdevice(pdev) || esb_pci == NULL)
+	if (!esb_getdevice() || esb_pci == NULL)
 		return -ENODEV;
 
 	/* Check that the heartbeat value is within it's range;
@@ -464,11 +467,11 @@ err_unmap:
 	iounmap(BASEADDR);
 	pci_release_region(esb_pci, 0);
 	pci_disable_device(esb_pci);
-	esb_pci = NULL;
+	pci_dev_put(esb_pci);
 	return ret;
 }
 
-static void __devexit esb_remove(struct pci_dev *pdev)
+static int __devexit esb_remove(struct platform_device *dev)
 {
 	/* Stop the timer before we leave */
 	if (!nowayout)
@@ -479,30 +482,54 @@ static void __devexit esb_remove(struct pci_dev *pdev)
 	iounmap(BASEADDR);
 	pci_release_region(esb_pci, 0);
 	pci_disable_device(esb_pci);
-	esb_pci = NULL;
+	pci_dev_put(esb_pci);
+	return 0;
 }
 
-static void esb_shutdown(struct pci_dev *pdev)
+static void esb_shutdown(struct platform_device *dev)
 {
 	esb_timer_stop();
 }
 
-static struct pci_driver esb_driver = {
-	.name		= ESB_MODULE_NAME,
-	.id_table	= esb_pci_tbl,
+static struct platform_driver esb_platform_driver = {
 	.probe          = esb_probe,
 	.remove         = __devexit_p(esb_remove),
 	.shutdown       = esb_shutdown,
+	.driver         = {
+		.owner  = THIS_MODULE,
+		.name   = ESB_MODULE_NAME,
+	},
 };
 
 static int __init watchdog_init(void)
 {
-	return pci_register_driver(&esb_driver);
+	int err;
+
+	printk(KERN_INFO PFX "Intel 6300ESB WatchDog Timer Driver v%s\n",
+		ESB_VERSION);
+
+	err = platform_driver_register(&esb_platform_driver);
+	if (err)
+		return err;
+
+	esb_platform_device = platform_device_register_simple(ESB_MODULE_NAME,
+								-1, NULL, 0);
+	if (IS_ERR(esb_platform_device)) {
+		err = PTR_ERR(esb_platform_device);
+		goto unreg_platform_driver;
+	}
+
+	return 0;
+
+unreg_platform_driver:
+	platform_driver_unregister(&esb_platform_driver);
+	return err;
 }
 
 static void __exit watchdog_cleanup(void)
 {
-	pci_unregister_driver(&esb_driver);
+	platform_device_unregister(esb_platform_device);
+	platform_driver_unregister(&esb_platform_driver);
 	printk(KERN_INFO PFX "Watchdog Module Unloaded.\n");
 }
 

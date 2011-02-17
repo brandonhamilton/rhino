@@ -70,20 +70,20 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     SNodeList           sNodeList;
     PSBSSIDList         pList;
     PSNodeList          pNodeList;
-    unsigned int cbListCount;
+    UINT                cbListCount;
     PKnownBSS           pBSS;
     PKnownNodeDB        pNode;
-    unsigned int ii, jj;
+    UINT                ii, jj;
     SCmdLinkStatus      sLinkStatus;
-    unsigned char abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
-    unsigned char abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    unsigned long dwKeyIndex= 0;
-    unsigned char abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    long                ldBm;
+    BYTE                abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
+    BYTE                abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    DWORD               dwKeyIndex= 0;
+    BYTE                abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
+    LONG                ldBm;
 
     pReq->wResult = 0;
 
-    switch (pReq->wCmdCode) {
+    switch(pReq->wCmdCode) {
 
     case WLAN_CMD_BSS_SCAN:
 
@@ -99,24 +99,24 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             memcpy(abyScanSSID, pItemSSID, pItemSSID->len + WLAN_IEHDR_LEN);
         }
 
-        if (pDevice->bMACSuspend == true) {
-            if (pDevice->bRadioOff == true)
+        if (pDevice->bMACSuspend == TRUE) {
+            if (pDevice->bRadioOff == TRUE)
                 CARDbRadioPowerOn(pDevice);
             vMgrTimerInit(pDevice);
             MACvIntEnable(pDevice->PortOffset, IMR_MASK_VALUE);
             add_timer(&pMgmt->sTimerSecondCallback);
-            pDevice->bMACSuspend = false;
+            pDevice->bMACSuspend = FALSE;
         }
         spin_lock_irq(&pDevice->lock);
         if (memcmp(pMgmt->abyCurrBSSID, &abyNullAddr[0], 6) == 0)
-            BSSvClearBSSList((void *)pDevice, false);
+            BSSvClearBSSList((HANDLE)pDevice, FALSE);
         else
-            BSSvClearBSSList((void *)pDevice, pDevice->bLinkPass);
+            BSSvClearBSSList((HANDLE)pDevice, pDevice->bLinkPass);
 
         if (pItemSSID->len != 0)
-            bScheduleCommand((void *) pDevice, WLAN_CMD_BSSID_SCAN, abyScanSSID);
+            bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, abyScanSSID);
         else
-            bScheduleCommand((void *) pDevice, WLAN_CMD_BSSID_SCAN, NULL);
+            bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, NULL);
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -130,7 +130,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 			break;
 		};
 
-          if(sZoneTypeCmd.bWrite==true) {
+          if(sZoneTypeCmd.bWrite==TRUE) {
 	  //////write zonetype
                 if(sZoneTypeCmd.ZoneType == ZoneType_USA) {
                   //set to USA
@@ -147,7 +147,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             }
 	else {
           ///////read zonetype
-	  unsigned char zonetype=0;
+	  BYTE                       zonetype=0;
 
 
            if(zonetype == 0x00)  { //USA
@@ -174,13 +174,13 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 
     case WLAN_CMD_BSS_JOIN:
 
-        if (pDevice->bMACSuspend == true) {
-            if (pDevice->bRadioOff == true)
+        if (pDevice->bMACSuspend == TRUE) {
+            if (pDevice->bRadioOff == TRUE)
                 CARDbRadioPowerOn(pDevice);
             vMgrTimerInit(pDevice);
             MACvIntEnable(pDevice->PortOffset, IMR_MASK_VALUE);
             add_timer(&pMgmt->sTimerSecondCallback);
-            pDevice->bMACSuspend = false;
+            pDevice->bMACSuspend = FALSE;
         }
 
         if (copy_from_user(&sJoinCmd, pReq->data, sizeof(SCmdBSSJoin))) {
@@ -199,7 +199,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 	        pMgmt->eConfigMode = WMAC_CONFIG_ESS_STA;
 	        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "ioct set to STA mode\n");
 	    }
-	    if (sJoinCmd.bPSEnable == true) {
+	    if (sJoinCmd.bPSEnable == TRUE) {
             pDevice->ePSMode = WMAC_POWER_FAST;
 //            pDevice->ePSMode = WMAC_POWER_MAX;
             pMgmt->wListenInterval = 2;
@@ -211,20 +211,20 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Power Saving Off \n");
         }
 
-        if (sJoinCmd.bShareKeyAuth == true){
-            pMgmt->bShareKeyAlgorithm = true;
+        if (sJoinCmd.bShareKeyAuth == TRUE){
+            pMgmt->bShareKeyAlgorithm = TRUE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Share Key \n");
         }
         else {
-            pMgmt->bShareKeyAlgorithm = false;
+            pMgmt->bShareKeyAlgorithm = FALSE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Open System \n");
         }
 	    pDevice->uChannel = sJoinCmd.uChannel;
         netif_stop_queue(pDevice->dev);
         spin_lock_irq(&pDevice->lock);
         pMgmt->eCurrState = WMAC_STATE_IDLE;
-        bScheduleCommand((void *) pDevice, WLAN_CMD_BSSID_SCAN, pMgmt->abyDesireSSID);
-        bScheduleCommand((void *) pDevice, WLAN_CMD_SSID, NULL);
+        bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, pMgmt->abyDesireSSID);
+        bScheduleCommand((HANDLE) pDevice, WLAN_CMD_SSID, NULL);
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -235,8 +235,8 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 			result = -EFAULT;
 			break;
 		};
-	    if (sWEPCmd.bEnableWep != true) {
-            pDevice->bEncryptionEnable = false;
+	    if (sWEPCmd.bEnableWep != TRUE) {
+            pDevice->bEncryptionEnable = FALSE;
             pDevice->eEncryptionStatus = Ndis802_11EncryptionDisabled;
             MACvDisableDefaultKey(pDevice->PortOffset);
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WEP function disable. \n");
@@ -257,15 +257,15 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
                                     dwKeyIndex,
                                     sWEPCmd.auWepKeyLength[ii],
                                     NULL,
-                                    (unsigned char *)&sWEPCmd.abyWepKey[ii][0],
+                                    (PBYTE)&sWEPCmd.abyWepKey[ii][0],
                                     KEY_CTL_WEP,
                                     pDevice->PortOffset,
                                     pDevice->byLocalID);
             }
         }
         pDevice->byKeyIndex = sWEPCmd.byKeyIndex;
-        pDevice->bTransmitKey = true;
-        pDevice->bEncryptionEnable = true;
+        pDevice->bTransmitKey = TRUE;
+        pDevice->bEncryptionEnable = TRUE;
         pDevice->eEncryptionStatus = Ndis802_11Encryption1Enabled;
 
         break;
@@ -286,8 +286,8 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             sLinkStatus.byState = ADHOC_STARTED;
 
         sLinkStatus.uChannel = pMgmt->uCurrChannel;
-        if (pDevice->bLinkPass == true) {
-            sLinkStatus.bLink = true;
+        if (pDevice->bLinkPass == TRUE) {
+            sLinkStatus.bLink = TRUE;
  		    pItemSSID = (PWLAN_IE_SSID)pMgmt->abyCurrSSID;
 		    memcpy(sLinkStatus.abySSID, pItemSSID->abySSID, pItemSSID->len);
 		    memcpy(sLinkStatus.abyBSSID, pMgmt->abyCurrBSSID, WLAN_BSSID_LEN);
@@ -295,7 +295,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO" Link Success ! \n");
         }
         else {
-            sLinkStatus.bLink = false;
+            sLinkStatus.bLink = FALSE;
         }
         if (copy_to_user(pReq->data, &sLinkStatus, sizeof(SCmdLinkStatus))) {
 			result = -EFAULT;
@@ -340,8 +340,8 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pList->sBSSIDList[ii].wBeaconInterval = pBSS->wBeaconInterval;
     		    pList->sBSSIDList[ii].wCapInfo = pBSS->wCapInfo;
 //    		    pList->sBSSIDList[ii].uRSSI = pBSS->uRSSI;
-    		    RFvRSSITodBm(pDevice, (unsigned char)(pBSS->uRSSI), &ldBm);
-    		    pList->sBSSIDList[ii].uRSSI = (unsigned int)ldBm;
+    		    RFvRSSITodBm(pDevice, (BYTE)(pBSS->uRSSI), &ldBm);
+    		    pList->sBSSIDList[ii].uRSSI = (UINT)ldBm;
     		    memcpy(pList->sBSSIDList[ii].abyBSSID, pBSS->abyBSSID, WLAN_BSSID_LEN);
     		    pItemSSID = (PWLAN_IE_SSID)pBSS->abySSID;
     		    memset(pList->sBSSIDList[ii].abySSID, 0, WLAN_SSID_MAXLEN + 1);
@@ -353,10 +353,10 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		        pList->sBSSIDList[ii].byNetType = ADHOC;
     		    }
     		    if (WLAN_GET_CAP_INFO_PRIVACY(pBSS->wCapInfo)) {
-    		        pList->sBSSIDList[ii].bWEPOn = true;
+    		        pList->sBSSIDList[ii].bWEPOn = TRUE;
                 }
                 else {
-    		        pList->sBSSIDList[ii].bWEPOn = false;
+    		        pList->sBSSIDList[ii].bWEPOn = FALSE;
     		    }
     		    ii ++;
     		    if (ii >= pList->uItem)
@@ -391,16 +391,16 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         netif_stop_queue(pDevice->dev);
 
         spin_lock_irq(&pDevice->lock);
-        if (pDevice->bRadioOff == false) {
+        if (pDevice->bRadioOff == FALSE) {
             CARDbRadioPowerOff(pDevice);
         }
-        pDevice->bLinkPass = false;
+        pDevice->bLinkPass = FALSE;
         memset(pMgmt->abyCurrBSSID, 0, 6);
         pMgmt->eCurrState = WMAC_STATE_IDLE;
         del_timer(&pDevice->sTimerCommand);
         del_timer(&pMgmt->sTimerSecondCallback);
-        pDevice->bCmdRunning = false;
-        pDevice->bMACSuspend = true;
+        pDevice->bCmdRunning = FALSE;
+        pDevice->bMACSuspend = TRUE;
         MACvIntDisable(pDevice->PortOffset);
         spin_unlock_irq(&pDevice->lock);
 
@@ -410,13 +410,13 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WLAN_CMD_START_MAC\n");
 
-        if (pDevice->bMACSuspend == true) {
-            if (pDevice->bRadioOff == true)
+        if (pDevice->bMACSuspend == TRUE) {
+            if (pDevice->bRadioOff == TRUE)
                 CARDbRadioPowerOn(pDevice);
             vMgrTimerInit(pDevice);
             MACvIntEnable(pDevice->PortOffset, IMR_MASK_VALUE);
             add_timer(&pMgmt->sTimerSecondCallback);
-            pDevice->bMACSuspend = false;
+            pDevice->bMACSuspend = FALSE;
         }
         break;
 
@@ -429,7 +429,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 			break;
 		};
 		if (sValue.dwValue == 1) {
-            if (vt6655_hostap_set_hostapd(pDevice, 1, 1) == 0){
+            if (hostap_set_hostapd(pDevice, 1, 1) == 0){
                 DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Enable HOSTAP\n");
             }
             else {
@@ -438,7 +438,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 			}
         }
         else {
-            vt6655_hostap_set_hostapd(pDevice, 0, 1);
+            hostap_set_hostapd(pDevice, 0, 1);
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Disable HOSTAP\n");
         }
 
@@ -458,11 +458,11 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 		};
 
 		if (sValue.dwValue == 1) {
-            pDevice->bEnable8021x = true;
+            pDevice->bEnable8021x = TRUE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Enable 802.1x\n");
         }
         else {
-            pDevice->bEnable8021x = false;
+            pDevice->bEnable8021x = FALSE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Disable 802.1x\n");
         }
 
@@ -478,11 +478,11 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 		};
 
 		if (sValue.dwValue == 1) {
-            pDevice->bEnableHostWEP = true;
+            pDevice->bEnableHostWEP = TRUE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Enable HostWEP\n");
         }
         else {
-            pDevice->bEnableHostWEP = false;
+            pDevice->bEnableHostWEP = FALSE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Disable HostWEP\n");
         }
 
@@ -497,12 +497,12 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 		};
 		if (sValue.dwValue == 1) {
                      DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "up wpadev\n");
-		   memcpy(pDevice->wpadev->dev_addr, pDevice->dev->dev_addr, ETH_ALEN);
-		   pDevice->bWPADEVUp = true;
+		   memcpy(pDevice->wpadev->dev_addr, pDevice->dev->dev_addr, U_ETHER_ADDR_LEN);
+		   pDevice->bWPADEVUp = TRUE;
         }
         else {
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "close wpadev\n");
-	   pDevice->bWPADEVUp = false;
+	   pDevice->bWPADEVUp = FALSE;
         }
 
         break;
@@ -510,7 +510,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     case WLAN_CMD_AP_START:
 
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WLAN_CMD_AP_START\n");
-        if (pDevice->bRadioOff == true) {
+        if (pDevice->bRadioOff == TRUE) {
             CARDbRadioPowerOn(pDevice);
             vMgrTimerInit(pDevice);
             MACvIntEnable(pDevice->PortOffset, IMR_MASK_VALUE);
@@ -554,12 +554,12 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         else
             pMgmt->wIBSSBeaconPeriod = 100;
 
-        if (sStartAPCmd.bShareKeyAuth == true){
-            pMgmt->bShareKeyAlgorithm = true;
+        if (sStartAPCmd.bShareKeyAuth == TRUE){
+            pMgmt->bShareKeyAlgorithm = TRUE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Share Key \n");
         }
         else {
-            pMgmt->bShareKeyAlgorithm = false;
+            pMgmt->bShareKeyAlgorithm = FALSE;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Open System \n");
         }
         memcpy(pMgmt->abyIBSSSuppRates, abySuppRates, 6);
@@ -593,7 +593,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 
         netif_stop_queue(pDevice->dev);
         spin_lock_irq(&pDevice->lock);
-        bScheduleCommand((void *)pDevice, WLAN_CMD_RUN_AP, NULL);
+        bScheduleCommand((HANDLE)pDevice, WLAN_CMD_RUN_AP, NULL);
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -635,9 +635,9 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pNodeList->sNodeList[jj].wAID = pNode->wAID;
     		    memcpy(pNodeList->sNodeList[jj].abyMACAddr, pNode->abyMACAddr, WLAN_ADDR_LEN);
     		    pNodeList->sNodeList[jj].wTxDataRate = pNode->wTxDataRate;
-    		    pNodeList->sNodeList[jj].wInActiveCount = (unsigned short)pNode->uInActiveCount;
-    		    pNodeList->sNodeList[jj].wEnQueueCnt = (unsigned short)pNode->wEnQueueCnt;
-    		    pNodeList->sNodeList[jj].wFlags = (unsigned short)pNode->dwFlags;
+    		    pNodeList->sNodeList[jj].wInActiveCount = (WORD)pNode->uInActiveCount;
+    		    pNodeList->sNodeList[jj].wEnQueueCnt = (WORD)pNode->wEnQueueCnt;
+    		    pNodeList->sNodeList[jj].wFlags = (WORD)pNode->dwFlags;
     		    pNodeList->sNodeList[jj].bPWBitOn = pNode->bPSEnable;
     		    pNodeList->sNodeList[jj].byKeyIndex = pNode->byKeyIndex;
     		    pNodeList->sNodeList[jj].wWepKeyLength = pNode->uWepKeyLength;
@@ -652,7 +652,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pNodeList->sNodeList[jj].bIsInFallback = pNode->bIsInFallback;
     		    pNodeList->sNodeList[jj].uTxFailures = pNode->uTxFailures;
     		    pNodeList->sNodeList[jj].uTxAttempts = pNode->uTxAttempts;
-    		    pNodeList->sNodeList[jj].wFailureRatio = (unsigned short)pNode->uFailureRatio;
+    		    pNodeList->sNodeList[jj].wFailureRatio = (WORD)pNode->uFailureRatio;
     		    jj ++;
     		    if (jj >= pNodeList->uItem)
     		        break;
@@ -672,14 +672,14 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 	    wpa_Result.proto = 0;
 	    wpa_Result.key_mgmt = 0;
 	    wpa_Result.eap_type = 0;
-	    wpa_Result.authenticated = false;
-	      pDevice->fWPA_Authened = false;
+	    wpa_Result.authenticated = FALSE;
+	      pDevice->fWPA_Authened = FALSE;
         if (copy_from_user(&wpa_Result, pReq->data, sizeof(wpa_Result))) {
             result = -EFAULT;
 			break;
 		}
 
-if(wpa_Result.authenticated==true) {
+if(wpa_Result.authenticated==TRUE) {
    #ifdef SndEvt_ToAPI
    {
      union iwreq_data      wrqu;
@@ -692,7 +692,7 @@ if(wpa_Result.authenticated==true) {
      wireless_send_event(pDevice->dev, IWEVCUSTOM, &wrqu, pItemSSID->abySSID);
    }
    #endif
-         pDevice->fWPA_Authened = true;           //is successful peer to wpa_Result.authenticated?
+         pDevice->fWPA_Authened = TRUE;           //is successful peer to wpa_Result.authenticated?
 }
 
         //printk("get private wpa_supplicant announce WPA SM\n");
@@ -700,7 +700,7 @@ if(wpa_Result.authenticated==true) {
 	//printk("wpa-->proto=%d\n",wpa_Result.proto);
 	//printk("wpa-->key-mgmt=%d\n",wpa_Result.key_mgmt);
 	//printk("wpa-->eap_type=%d\n",wpa_Result.eap_type);
-	//printk("wpa-->authenticated is %s\n",(wpa_Result.authenticated==true)?"true":"false");
+	//printk("wpa-->authenticated is %s\n",(wpa_Result.authenticated==TRUE)?"TRUE":"FALSE");
 
 	pReq->wResult = 0;
         break;
@@ -714,12 +714,12 @@ if(wpa_Result.authenticated==true) {
 }
 
 /*
-void
+VOID
 vConfigWEPKey (
-    PSDevice pDevice,
-    unsigned long dwKeyIndex,
-    unsigned char *pbyKey,
-    unsigned long uKeyLength
+    IN PSDevice pDevice,
+    IN DWORD    dwKeyIndex,
+    IN PBYTE    pbyKey,
+    IN ULONG    uKeyLength
     )
 {
     int ii;
@@ -728,15 +728,15 @@ vConfigWEPKey (
     memset(&pDevice->abyWepKey[dwKeyIndex][0], 0, WLAN_WEPMAX_KEYLEN);
     memcpy(&pDevice->abyWepKey[dwKeyIndex][0], pbyKey, uKeyLength);
 
-    pDevice->bWepKeyAvailable[dwKeyIndex] = true;
+    pDevice->bWepKeyAvailable[dwKeyIndex] = TRUE;
     pDevice->auWepKeyLength[dwKeyIndex] = uKeyLength;
 
     MACvSetDefaultKeyEntry(pDevice->PortOffset, uKeyLength, dwKeyIndex,
-                           (unsigned long *) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
+                           (PDWORD) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
 
     if (pDevice->eEncryptionStatus < Ndis802_11EncryptionNotSupported) {
         for(ii=0; ii<MAX_GROUP_KEY; ii++) {
-            if ((pDevice->bWepKeyAvailable[ii] == true) &&
+            if ((pDevice->bWepKeyAvailable[ii] == TRUE) &&
                 (pDevice->auWepKeyLength[ii] == WLAN_WEP232_KEYLEN)) {
                 pDevice->uCurrentWEPMode = TX_WEP_SW232;
                 MACvDisableDefaultKey(pDevice->PortOffset);

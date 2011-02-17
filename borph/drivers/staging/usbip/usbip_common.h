@@ -33,12 +33,12 @@
  */
 
 /**
- * usbip_udbg - print debug messages if CONFIG_USB_IP_DEBUG_ENABLE is defined
+ * usbip_udbg - print debug messages if CONFIG_USB_DEBUG is defined
  * @fmt:
  * @args:
  */
 
-#ifdef CONFIG_USB_IP_DEBUG_ENABLE
+#ifdef CONFIG_USB_DEBUG
 
 #define usbip_udbg(fmt, args...)					\
 	do {								\
@@ -47,11 +47,11 @@
 			__FILE__, __LINE__, __func__, ##args);		\
 	} while (0)
 
-#else  /* CONFIG_USB_IP_DEBUG_ENABLE */
+#else  /* CONFIG_USB_DEBUG */
 
 #define usbip_udbg(fmt, args...)		do { } while (0)
 
-#endif /* CONFIG_USB_IP_DEBUG_ENABLE */
+#endif /* CONFIG_USB_DEBUG */
 
 
 enum {
@@ -172,7 +172,7 @@ struct usbip_header_basic {
 #define USBIP_RET_UNLINK	0x0004
 	__u32 command;
 
-	 /* sequential number which identifies requests.
+	 /* sequencial number which identifies requests.
 	  * incremented per connections */
 	__u32 seqnum;
 
@@ -182,7 +182,7 @@ struct usbip_header_basic {
 	__u32 devid;
 
 #define USBIP_DIR_OUT	0
-#define USBIP_DIR_IN	1
+#define USBIP_DIR_IN 	1
 	__u32 direction;
 	__u32 ep;     /* endpoint number */
 } __attribute__ ((packed));

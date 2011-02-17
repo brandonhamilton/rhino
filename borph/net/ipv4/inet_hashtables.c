@@ -99,45 +99,24 @@ void inet_put_port(struct sock *sk)
 	__inet_put_port(sk);
 	local_bh_enable();
 }
+
 EXPORT_SYMBOL(inet_put_port);
 
-int __inet_inherit_port(struct sock *sk, struct sock *child)
+void __inet_inherit_port(struct sock *sk, struct sock *child)
 {
 	struct inet_hashinfo *table = sk->sk_prot->h.hashinfo;
-	unsigned short port = inet_sk(child)->inet_num;
-	const int bhash = inet_bhashfn(sock_net(sk), port,
+	const int bhash = inet_bhashfn(sock_net(sk), inet_sk(child)->inet_num,
 			table->bhash_size);
 	struct inet_bind_hashbucket *head = &table->bhash[bhash];
 	struct inet_bind_bucket *tb;
 
 	spin_lock(&head->lock);
 	tb = inet_csk(sk)->icsk_bind_hash;
-	if (tb->port != port) {
-		/* NOTE: using tproxy and redirecting skbs to a proxy
-		 * on a different listener port breaks the assumption
-		 * that the listener socket's icsk_bind_hash is the same
-		 * as that of the child socket. We have to look up or
-		 * create a new bind bucket for the child here. */
-		struct hlist_node *node;
-		inet_bind_bucket_for_each(tb, node, &head->chain) {
-			if (net_eq(ib_net(tb), sock_net(sk)) &&
-			    tb->port == port)
-				break;
-		}
-		if (!node) {
-			tb = inet_bind_bucket_create(table->bind_bucket_cachep,
-						     sock_net(sk), head, port);
-			if (!tb) {
-				spin_unlock(&head->lock);
-				return -ENOMEM;
-			}
-		}
-	}
-	inet_bind_hash(child, tb, port);
+	sk_add_bind_node(child, &tb->owners);
+	inet_csk(child)->icsk_bind_hash = tb;
 	spin_unlock(&head->lock);
-
-	return 0;
 }
+
 EXPORT_SYMBOL_GPL(__inet_inherit_port);
 
 static inline int compute_score(struct sock *sk, struct net *net,
@@ -477,8 +456,6 @@ int __inet_hash_connect(struct inet_timewait_death_row *death_row,
 		local_bh_disable();
 		for (i = 1; i <= remaining; i++) {
 			port = low + (i + offset) % remaining;
-			if (inet_is_reserved_local_port(port))
-				continue;
 			head = &hinfo->bhash[inet_bhashfn(net, port,
 					hinfo->bhash_size)];
 			spin_lock(&head->lock);
@@ -567,6 +544,7 @@ int inet_hash_connect(struct inet_timewait_death_row *death_row,
 	return __inet_hash_connect(death_row, sk, inet_sk_port_offset(sk),
 			__inet_check_established, __inet_hash_nolisten);
 }
+
 EXPORT_SYMBOL_GPL(inet_hash_connect);
 
 void inet_hashinfo_init(struct inet_hashinfo *h)
@@ -580,4 +558,5 @@ void inet_hashinfo_init(struct inet_hashinfo *h)
 				      i + LISTENING_NULLS_BASE);
 		}
 }
+
 EXPORT_SYMBOL_GPL(inet_hashinfo_init);

@@ -46,7 +46,6 @@ struct au1xmmc_platform_data {
 	int(*card_readonly)(void *mmc_host);
 	void(*set_power)(void *mmc_host, int state);
 	struct led_classdev *led;
-	unsigned long mask_host_caps;
 };
 
 #define SD0_BASE	0xB0600000
@@ -206,3 +205,4 @@ struct au1xmmc_platform_data {
 
 
 #endif /* __ASM_AU1100_MMC_H */
+

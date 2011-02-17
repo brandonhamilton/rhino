@@ -10,7 +10,6 @@
  */
 
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/sysctl.h>
 
 #include <net/af_unix.h>
@@ -32,7 +31,7 @@ static struct ctl_path unix_path[] = {
 	{ },
 };
 
-int __net_init unix_sysctl_register(struct net *net)
+int unix_sysctl_register(struct net *net)
 {
 	struct ctl_table *table;
 

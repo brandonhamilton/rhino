@@ -1,6 +1,5 @@
 #include <linux/init.h>
 #include <linux/debugfs.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 
 #include "debugfs.h"
@@ -106,7 +105,6 @@ static const struct file_operations u32_array_fops = {
 	.open	= u32_array_open,
 	.release= xen_array_release,
 	.read	= u32_array_read,
-	.llseek = no_llseek,
 };
 
 struct dentry *xen_debugfs_create_u32_array(const char *name, mode_t mode,

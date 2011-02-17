@@ -37,7 +37,6 @@
 /* kernel includes */
 #include <linux/usb.h>
 #include <linux/hid.h>
-#include <linux/slab.h>
 
 #include "radio-si470x.h"
 
@@ -510,14 +509,94 @@ resubmit:
  **************************************************************************/
 
 /*
+ * si470x_fops_read - read RDS data
+ */
+static ssize_t si470x_fops_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	struct si470x_device *radio = video_drvdata(file);
+	int retval = 0;
+	unsigned int block_count = 0;
+
+	/* switch on rds reception */
+	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
+		si470x_rds_on(radio);
+
+	/* block if no new data available */
+	while (radio->wr_index == radio->rd_index) {
+		if (file->f_flags & O_NONBLOCK) {
+			retval = -EWOULDBLOCK;
+			goto done;
+		}
+		if (wait_event_interruptible(radio->read_queue,
+			radio->wr_index != radio->rd_index) < 0) {
+			retval = -EINTR;
+			goto done;
+		}
+	}
+
+	/* calculate block count from byte count */
+	count /= 3;
+
+	/* copy RDS block out of internal buffer and to user buffer */
+	mutex_lock(&radio->lock);
+	while (block_count < count) {
+		if (radio->rd_index == radio->wr_index)
+			break;
+
+		/* always transfer rds complete blocks */
+		if (copy_to_user(buf, &radio->buffer[radio->rd_index], 3))
+			/* retval = -EFAULT; */
+			break;
+
+		/* increment and wrap read pointer */
+		radio->rd_index += 3;
+		if (radio->rd_index >= radio->buf_size)
+			radio->rd_index = 0;
+
+		/* increment counters */
+		block_count++;
+		buf += 3;
+		retval += 3;
+	}
+	mutex_unlock(&radio->lock);
+
+done:
+	return retval;
+}
+
+
+/*
+ * si470x_fops_poll - poll RDS data
+ */
+static unsigned int si470x_fops_poll(struct file *file,
+		struct poll_table_struct *pts)
+{
+	struct si470x_device *radio = video_drvdata(file);
+	int retval = 0;
+
+	/* switch on rds reception */
+	if ((radio->registers[SYSCONFIG1] & SYSCONFIG1_RDS) == 0)
+		si470x_rds_on(radio);
+
+	poll_wait(file, &radio->read_queue, pts);
+
+	if (radio->rd_index != radio->wr_index)
+		retval = POLLIN | POLLRDNORM;
+
+	return retval;
+}
+
+
+/*
  * si470x_fops_open - file open
  */
-int si470x_fops_open(struct file *file)
+static int si470x_fops_open(struct file *file)
 {
 	struct si470x_device *radio = video_drvdata(file);
 	int retval;
 
-	mutex_lock(&radio->lock);
+	lock_kernel();
 	radio->users++;
 
 	retval = usb_autopm_get_interface(radio->intf);
@@ -558,7 +637,7 @@ int si470x_fops_open(struct file *file)
 	}
 
 done:
-	mutex_unlock(&radio->lock);
+	unlock_kernel();
 	return retval;
 }
 
@@ -566,7 +645,7 @@ done:
 /*
  * si470x_fops_release - file release
  */
-int si470x_fops_release(struct file *file)
+static int si470x_fops_release(struct file *file)
 {
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = 0;
@@ -577,7 +656,7 @@ int si470x_fops_release(struct file *file)
 		goto done;
 	}
 
-	mutex_lock(&radio->lock);
+	mutex_lock(&radio->disconnect_lock);
 	radio->users--;
 	if (radio->users == 0) {
 		/* shutdown interrupt handler */
@@ -591,9 +670,8 @@ int si470x_fops_release(struct file *file)
 			video_unregister_device(radio->videodev);
 			kfree(radio->int_in_buffer);
 			kfree(radio->buffer);
-			mutex_unlock(&radio->lock);
 			kfree(radio);
-			goto done;
+			goto unlock;
 		}
 
 		/* cancel read processes */
@@ -603,10 +681,24 @@ int si470x_fops_release(struct file *file)
 		retval = si470x_stop(radio);
 		usb_autopm_put_interface(radio->intf);
 	}
-	mutex_unlock(&radio->lock);
+unlock:
+	mutex_unlock(&radio->disconnect_lock);
 done:
 	return retval;
 }
+
+
+/*
+ * si470x_fops - file operations interface
+ */
+const struct v4l2_file_operations si470x_fops = {
+	.owner		= THIS_MODULE,
+	.read		= si470x_fops_read,
+	.poll		= si470x_fops_poll,
+	.ioctl		= video_ioctl2,
+	.open		= si470x_fops_open,
+	.release	= si470x_fops_release,
+};
 
 
 
@@ -661,6 +753,7 @@ static int si470x_usb_driver_probe(struct usb_interface *intf,
 	radio->disconnected = 0;
 	radio->usbdev = interface_to_usbdev(intf);
 	radio->intf = intf;
+	mutex_init(&radio->disconnect_lock);
 	mutex_init(&radio->lock);
 
 	iface_desc = intf->cur_altsetting;
@@ -829,7 +922,7 @@ static void si470x_usb_driver_disconnect(struct usb_interface *intf)
 {
 	struct si470x_device *radio = usb_get_intfdata(intf);
 
-	mutex_lock(&radio->lock);
+	mutex_lock(&radio->disconnect_lock);
 	radio->disconnected = 1;
 	usb_set_intfdata(intf, NULL);
 	if (radio->users == 0) {
@@ -842,11 +935,9 @@ static void si470x_usb_driver_disconnect(struct usb_interface *intf)
 		kfree(radio->int_in_buffer);
 		video_unregister_device(radio->videodev);
 		kfree(radio->buffer);
-		mutex_unlock(&radio->lock);
 		kfree(radio);
-	} else {
-		mutex_unlock(&radio->lock);
 	}
+	mutex_unlock(&radio->disconnect_lock);
 }
 
 

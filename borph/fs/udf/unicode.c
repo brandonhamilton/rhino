@@ -24,7 +24,6 @@
 #include <linux/string.h>	/* for memset */
 #include <linux/nls.h>
 #include <linux/crc-itu-t.h>
-#include <linux/slab.h>
 
 #include "udf_sb.h"
 

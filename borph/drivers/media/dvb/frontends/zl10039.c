@@ -287,6 +287,7 @@ struct dvb_frontend *zl10039_attach(struct dvb_frontend *fe,
 		break;
 	default:
 		dprintk("Chip ID=%x does not match a known type\n", state->id);
+		break;
 		goto error;
 	}
 

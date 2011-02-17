@@ -85,22 +85,21 @@ out:
 	return ret;
 }
 
-static int do_setxattr(struct btrfs_trans_handle *trans,
-		       struct inode *inode, const char *name,
-		       const void *value, size_t size, int flags)
+int __btrfs_setxattr(struct inode *inode, const char *name,
+			    const void *value, size_t size, int flags)
 {
 	struct btrfs_dir_item *di;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
+	struct btrfs_trans_handle *trans;
 	struct btrfs_path *path;
-	size_t name_len = strlen(name);
-	int ret = 0;
-
-	if (name_len + size > BTRFS_MAX_XATTR_SIZE(root))
-		return -ENOSPC;
+	int ret = 0, mod = 0;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
+
+	trans = btrfs_join_transaction(root, 1);
+	btrfs_set_trans_block_group(trans, inode);
 
 	/* first lets see if we already have this xattr */
 	di = btrfs_lookup_xattr(trans, root, path, inode->i_ino, name,
@@ -119,12 +118,15 @@ static int do_setxattr(struct btrfs_trans_handle *trans,
 		}
 
 		ret = btrfs_delete_one_dir_name(trans, root, path, di);
-		BUG_ON(ret);
+		if (ret)
+			goto out;
 		btrfs_release_path(root, path);
 
 		/* if we don't have a value then we are removing the xattr */
-		if (!value)
+		if (!value) {
+			mod = 1;
 			goto out;
+		}
 	} else {
 		btrfs_release_path(root, path);
 
@@ -136,39 +138,20 @@ static int do_setxattr(struct btrfs_trans_handle *trans,
 	}
 
 	/* ok we have to create a completely new xattr */
-	ret = btrfs_insert_xattr_item(trans, root, path, inode->i_ino,
-				      name, name_len, value, size);
-	BUG_ON(ret);
-out:
-	btrfs_free_path(path);
-	return ret;
-}
-
-int __btrfs_setxattr(struct btrfs_trans_handle *trans,
-		     struct inode *inode, const char *name,
-		     const void *value, size_t size, int flags)
-{
-	struct btrfs_root *root = BTRFS_I(inode)->root;
-	int ret;
-
-	if (trans)
-		return do_setxattr(trans, inode, name, value, size, flags);
-
-	trans = btrfs_start_transaction(root, 2);
-	if (IS_ERR(trans))
-		return PTR_ERR(trans);
-
-	btrfs_set_trans_block_group(trans, inode);
-
-	ret = do_setxattr(trans, inode, name, value, size, flags);
+	ret = btrfs_insert_xattr_item(trans, root, name, strlen(name),
+				      value, size, inode->i_ino);
 	if (ret)
 		goto out;
+	mod = 1;
 
-	inode->i_ctime = CURRENT_TIME;
-	ret = btrfs_update_inode(trans, root, inode);
-	BUG_ON(ret);
 out:
-	btrfs_end_transaction_throttle(trans, root);
+	if (mod) {
+		inode->i_ctime = CURRENT_TIME;
+		ret = btrfs_update_inode(trans, root, inode);
+	}
+
+	btrfs_end_transaction(trans, root);
+	btrfs_free_path(path);
 	return ret;
 }
 
@@ -178,6 +161,7 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	struct inode *inode = dentry->d_inode;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_path *path;
+	struct btrfs_item *item;
 	struct extent_buffer *leaf;
 	struct btrfs_dir_item *di;
 	int ret = 0, slot, advance;
@@ -233,6 +217,7 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		}
 		advance = 1;
 
+		item = btrfs_item_nr(leaf, slot);
 		btrfs_item_key_to_cpu(leaf, &found_key, slot);
 
 		/* check to make sure this item is what we want */
@@ -274,7 +259,7 @@ err:
  * List of handlers for synthetic system.* attributes.  All real ondisk
  * attributes are handled directly.
  */
-const struct xattr_handler *btrfs_xattr_handlers[] = {
+struct xattr_handler *btrfs_xattr_handlers[] = {
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
 	&btrfs_xattr_acl_access_handler,
 	&btrfs_xattr_acl_default_handler,
@@ -329,9 +314,7 @@ int btrfs_setxattr(struct dentry *dentry, const char *name, const void *value,
 
 	if (size == 0)
 		value = "";  /* empty EA, do not remove */
-
-	return __btrfs_setxattr(NULL, dentry->d_inode, name, value, size,
-				flags);
+	return __btrfs_setxattr(dentry->d_inode, name, value, size, flags);
 }
 
 int btrfs_removexattr(struct dentry *dentry, const char *name)
@@ -346,13 +329,10 @@ int btrfs_removexattr(struct dentry *dentry, const char *name)
 
 	if (!btrfs_is_valid_xattr(name))
 		return -EOPNOTSUPP;
-
-	return __btrfs_setxattr(NULL, dentry->d_inode, name, NULL, 0,
-				XATTR_REPLACE);
+	return __btrfs_setxattr(dentry->d_inode, name, NULL, 0, XATTR_REPLACE);
 }
 
-int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
-			      struct inode *inode, struct inode *dir)
+int btrfs_xattr_security_init(struct inode *inode, struct inode *dir)
 {
 	int err;
 	size_t len;
@@ -374,7 +354,7 @@ int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
 	} else {
 		strcpy(name, XATTR_SECURITY_PREFIX);
 		strcpy(name + XATTR_SECURITY_PREFIX_LEN, suffix);
-		err = __btrfs_setxattr(trans, inode, name, value, len, 0);
+		err = __btrfs_setxattr(inode, name, value, len, 0);
 		kfree(name);
 	}
 

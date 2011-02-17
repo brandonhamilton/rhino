@@ -167,8 +167,6 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct rtrack2 *rt = video_drvdata(file);
 
-	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
-		return -EINVAL;
 	rt_setfreq(rt, f->frequency);
 	return 0;
 }
@@ -178,8 +176,6 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct rtrack2 *rt = video_drvdata(file);
 
-	if (f->tuner != 0)
-		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = rt->curfreq;
 	return 0;
@@ -266,7 +262,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations rtrack2_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= video_ioctl2,
+	.ioctl		= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops rtrack2_ioctl_ops = {
@@ -315,10 +311,6 @@ static int __init rtrack2_init(void)
 	dev->vdev.release = video_device_release_empty;
 	video_set_drvdata(&dev->vdev, dev);
 
-	/* mute card - prevents noisy bootups */
-	outb(1, dev->io);
-	dev->muted = 1;
-
 	mutex_init(&dev->lock);
 	if (video_register_device(&dev->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
 		v4l2_device_unregister(v4l2_dev);
@@ -327,6 +319,10 @@ static int __init rtrack2_init(void)
 	}
 
 	v4l2_info(v4l2_dev, "AIMSlab Radiotrack II card driver.\n");
+
+	/* mute card - prevents noisy bootups */
+	outb(1, dev->io);
+	dev->muted = 1;
 
 	return 0;
 }

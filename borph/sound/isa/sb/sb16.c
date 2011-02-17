@@ -21,6 +21,7 @@
 
 #include <asm/dma.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/pnp.h>
 #include <linux/err.h>
 #include <linux/isa.h>

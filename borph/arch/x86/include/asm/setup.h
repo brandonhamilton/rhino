@@ -37,8 +37,10 @@ void setup_bios_corruption_check(void);
 
 #ifdef CONFIG_X86_VISWS
 extern void visws_early_detect(void);
+extern int is_visws_box(void);
 #else
 static inline void visws_early_detect(void) { }
+static inline int is_visws_box(void) { return 0; }
 #endif
 
 extern unsigned long saved_video_mode;
@@ -82,7 +84,7 @@ void *extend_brk(size_t size, size_t align);
  * executable.)
  */
 #define RESERVE_BRK(name,sz)						\
-	static void __section(.discard.text) __used			\
+	static void __section(.discard) __used				\
 	__brk_reservation_fn_##name##__(void) {				\
 		asm volatile (						\
 			".pushsection .brk_reservation,\"aw\",@nobits;" \
@@ -92,11 +94,6 @@ void *extend_brk(size_t size, size_t align);
 			" .popsection"					\
 			: : "i" (sz));					\
 	}
-
-/* Helper for reserving space for arrays of things */
-#define RESERVE_BRK_ARRAY(type, name, entries)		\
-	type *name;					\
-	RESERVE_BRK(name, sizeof(type) * entries)
 
 #ifdef __i386__
 

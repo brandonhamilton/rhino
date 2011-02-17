@@ -16,8 +16,6 @@
 #include <linux/plist.h>
 #include <linux/spinlock_types.h>
 
-extern int max_lock_depth; /* for sysctl */
-
 /**
  * The rt_mutex structure
  *

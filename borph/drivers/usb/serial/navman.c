@@ -12,7 +12,6 @@
  *	flags as the navman is rx only so cannot echo.
  */
 
-#include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/tty.h>
@@ -23,9 +22,8 @@
 
 static int debug;
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(0x0a99, 0x0001) },	/* Talon Technology device */
-	{ USB_DEVICE(0x0df7, 0x0900) },	/* Mobile Action i-gotU */
 	{ },
 };
 MODULE_DEVICE_TABLE(usb, id_table);
@@ -68,6 +66,7 @@ static void navman_read_int_callback(struct urb *urb)
 
 	tty = tty_port_tty_get(&port->port);
 	if (tty && urb->actual_length) {
+		tty_buffer_request_room(tty, urb->actual_length);
 		tty_insert_flip_string(tty, data, urb->actual_length);
 		tty_flip_buffer_push(tty);
 	}

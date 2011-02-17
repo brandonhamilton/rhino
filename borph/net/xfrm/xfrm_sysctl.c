@@ -1,9 +1,8 @@
 #include <linux/sysctl.h>
-#include <linux/slab.h>
 #include <net/net_namespace.h>
 #include <net/xfrm.h>
 
-static void __net_init __xfrm_sysctl_init(struct net *net)
+static void __xfrm_sysctl_init(struct net *net)
 {
 	net->xfrm.sysctl_aevent_etime = XFRM_AE_ETIME;
 	net->xfrm.sysctl_aevent_rseqth = XFRM_AE_SEQT_SIZE;
@@ -65,7 +64,7 @@ out_kmemdup:
 	return -ENOMEM;
 }
 
-void __net_exit xfrm_sysctl_fini(struct net *net)
+void xfrm_sysctl_fini(struct net *net)
 {
 	struct ctl_table *table;
 

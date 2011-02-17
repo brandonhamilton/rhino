@@ -1,4 +1,6 @@
 /*
+ *  fs/nfsd/nfs4proc.c
+ *
  *  Server-side procedures for NFSv4.
  *
  *  Copyright (c) 2002 The Regents of the University of Michigan.
@@ -32,12 +34,20 @@
  *  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include <linux/file.h>
-#include <linux/slab.h>
 
-#include "cache.h"
-#include "xdr4.h"
-#include "vfs.h"
+#include <linux/param.h>
+#include <linux/major.h>
+#include <linux/slab.h>
+#include <linux/file.h>
+
+#include <linux/sunrpc/svc.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfsd/cache.h>
+#include <linux/nfs4.h>
+#include <linux/nfsd/state.h>
+#include <linux/nfsd/xdr4.h>
+#include <linux/nfs4_acl.h>
+#include <linux/sunrpc/gss_api.h>
 
 #define NFSDDBG_FACILITY		NFSDDBG_PROC
 
@@ -160,7 +170,7 @@ do_open_permission(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfs
 		accmode |= NFSD_MAY_READ;
 	if (open->op_share_access & NFS4_SHARE_ACCESS_WRITE)
 		accmode |= (NFSD_MAY_WRITE | NFSD_MAY_TRUNC);
-	if (open->op_share_deny & NFS4_SHARE_DENY_READ)
+	if (open->op_share_deny & NFS4_SHARE_DENY_WRITE)
 		accmode |= NFSD_MAY_WRITE;
 
 	status = fh_verify(rqstp, current_fh, S_IFREG, accmode);
@@ -969,36 +979,20 @@ static struct nfsd4_operation nfsd4_ops[];
 static const char *nfsd4_op_name(unsigned opnum);
 
 /*
- * Enforce NFSv4.1 COMPOUND ordering rules:
+ * Enforce NFSv4.1 COMPOUND ordering rules.
  *
- * Also note, enforced elsewhere:
- *	- SEQUENCE other than as first op results in
- *	  NFS4ERR_SEQUENCE_POS. (Enforced in nfsd4_sequence().)
- *	- BIND_CONN_TO_SESSION must be the only op in its compound
- *	  (Will be enforced in nfsd4_bind_conn_to_session().)
- *	- DESTROY_SESSION must be the final operation in a compound, if
- *	  sessionid's in SEQUENCE and DESTROY_SESSION are the same.
- *	  (Enforced in nfsd4_destroy_session().)
+ * TODO:
+ * - enforce NFS4ERR_NOT_ONLY_OP,
+ * - DESTROY_SESSION MUST be the final operation in the COMPOUND request.
  */
-static __be32 nfs41_check_op_ordering(struct nfsd4_compoundargs *args)
+static bool nfs41_op_ordering_ok(struct nfsd4_compoundargs *args)
 {
-	struct nfsd4_op *op = &args->ops[0];
-
-	/* These ordering requirements don't apply to NFSv4.0: */
-	if (args->minorversion == 0)
-		return nfs_ok;
-	/* This is weird, but OK, not our problem: */
-	if (args->opcnt == 0)
-		return nfs_ok;
-	if (op->status == nfserr_op_illegal)
-		return nfs_ok;
-	if (!(nfsd4_ops[op->opnum].op_flags & ALLOWED_AS_FIRST_OP))
-		return nfserr_op_not_in_session;
-	if (op->opnum == OP_SEQUENCE)
-		return nfs_ok;
-	if (args->opcnt != 1)
-		return nfserr_not_only_op;
-	return nfs_ok;
+	if (args->minorversion && args->opcnt > 0) {
+		struct nfsd4_op *op = &args->ops[0];
+		return (op->status == nfserr_op_illegal) ||
+		       (nfsd4_ops[op->opnum].op_flags & ALLOWED_AS_FIRST_OP);
+	}
+	return true;
 }
 
 /*
@@ -1028,14 +1022,10 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
 	resp->rqstp = rqstp;
 	resp->cstate.minorversion = args->minorversion;
 	resp->cstate.replay_owner = NULL;
-	resp->cstate.session = NULL;
 	fh_init(&resp->cstate.current_fh, NFS4_FHSIZE);
 	fh_init(&resp->cstate.save_fh, NFS4_FHSIZE);
-	/*
-	 * Don't use the deferral mechanism for NFSv4; compounds make it
-	 * too hard to avoid non-idempotency problems.
-	 */
-	rqstp->rq_usedeferral = 0;
+	/* Use the deferral mechanism only for NFSv4.0 compounds */
+	rqstp->rq_usedeferral = (args->minorversion == 0);
 
 	/*
 	 * According to RFC3010, this takes precedence over all other errors.
@@ -1044,13 +1034,13 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
 	if (args->minorversion > nfsd_supported_minorversion)
 		goto out;
 
-	status = nfs41_check_op_ordering(args);
-	if (status) {
+	if (!nfs41_op_ordering_ok(args)) {
 		op = &args->ops[0];
-		op->status = status;
+		op->status = nfserr_sequence_pos;
 		goto encode_op;
 	}
 
+	status = nfs_ok;
 	while (!status && resp->opcnt < args->opcnt) {
 		op = &args->ops[resp->opcnt++];
 
@@ -1314,11 +1304,6 @@ static struct nfsd4_operation nfsd4_ops[] = {
 		.op_func = (nfsd4op_func)nfsd4_sequence,
 		.op_flags = ALLOWED_WITHOUT_FH | ALLOWED_AS_FIRST_OP,
 		.op_name = "OP_SEQUENCE",
-	},
-	[OP_RECLAIM_COMPLETE] = {
-		.op_func = (nfsd4op_func)nfsd4_reclaim_complete,
-		.op_flags = ALLOWED_WITHOUT_FH,
-		.op_name = "OP_RECLAIM_COMPLETE",
 	},
 };
 

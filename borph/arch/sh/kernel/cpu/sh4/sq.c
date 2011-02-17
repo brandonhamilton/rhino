@@ -43,9 +43,9 @@ static unsigned long *sq_bitmap;
 
 #define store_queue_barrier()			\
 do {						\
-	(void)__raw_readl(P4SEG_STORE_QUE);	\
-	__raw_writel(0, P4SEG_STORE_QUE + 0);	\
-	__raw_writel(0, P4SEG_STORE_QUE + 8);	\
+	(void)ctrl_inl(P4SEG_STORE_QUE);	\
+	ctrl_outl(0, P4SEG_STORE_QUE + 0);	\
+	ctrl_outl(0, P4SEG_STORE_QUE + 8);	\
 } while (0);
 
 /**
@@ -100,7 +100,7 @@ static inline void sq_mapping_list_del(struct sq_mapping *map)
 	spin_unlock_irq(&sq_mapping_lock);
 }
 
-static int __sq_remap(struct sq_mapping *map, pgprot_t prot)
+static int __sq_remap(struct sq_mapping *map, unsigned long flags)
 {
 #if defined(CONFIG_MMU)
 	struct vm_struct *vma;
@@ -113,7 +113,7 @@ static int __sq_remap(struct sq_mapping *map, pgprot_t prot)
 
 	if (ioremap_page_range((unsigned long)vma->addr,
 			       (unsigned long)vma->addr + map->size,
-			       vma->phys_addr, prot)) {
+			       vma->phys_addr, __pgprot(flags))) {
 		vunmap(vma->addr);
 		return -EAGAIN;
 	}
@@ -123,8 +123,8 @@ static int __sq_remap(struct sq_mapping *map, pgprot_t prot)
 	 * straightforward, as we can just load up each queue's QACR with
 	 * the physical address appropriately masked.
 	 */
-	__raw_writel(((map->addr >> 26) << 2) & 0x1c, SQ_QACR0);
-	__raw_writel(((map->addr >> 26) << 2) & 0x1c, SQ_QACR1);
+	ctrl_outl(((map->addr >> 26) << 2) & 0x1c, SQ_QACR0);
+	ctrl_outl(((map->addr >> 26) << 2) & 0x1c, SQ_QACR1);
 #endif
 
 	return 0;
@@ -135,14 +135,14 @@ static int __sq_remap(struct sq_mapping *map, pgprot_t prot)
  * @phys: Physical address of mapping.
  * @size: Length of mapping.
  * @name: User invoking mapping.
- * @prot: Protection bits.
+ * @flags: Protection flags.
  *
  * Remaps the physical address @phys through the next available store queue
  * address of @size length. @name is logged at boot time as well as through
  * the sysfs interface.
  */
 unsigned long sq_remap(unsigned long phys, unsigned int size,
-		       const char *name, pgprot_t prot)
+		       const char *name, unsigned long flags)
 {
 	struct sq_mapping *map;
 	unsigned long end;
@@ -177,7 +177,7 @@ unsigned long sq_remap(unsigned long phys, unsigned int size,
 
 	map->sq_addr = P4SEG_STORE_QUE + (page << PAGE_SHIFT);
 
-	ret = __sq_remap(map, prot);
+	ret = __sq_remap(map, pgprot_val(PAGE_KERNEL_NOCACHE) | flags);
 	if (unlikely(ret != 0))
 		goto out;
 
@@ -309,7 +309,8 @@ static ssize_t mapping_store(const char *buf, size_t count)
 		return -EIO;
 
 	if (likely(len)) {
-		int ret = sq_remap(base, len, "Userspace", PAGE_SHARED);
+		int ret = sq_remap(base, len, "Userspace",
+				   pgprot_val(PAGE_SHARED));
 		if (ret < 0)
 			return ret;
 	} else
@@ -326,7 +327,7 @@ static struct attribute *sq_sysfs_attrs[] = {
 	NULL,
 };
 
-static const struct sysfs_ops sq_sysfs_ops = {
+static struct sysfs_ops sq_sysfs_ops = {
 	.show	= sq_sysfs_show,
 	.store	= sq_sysfs_store,
 };

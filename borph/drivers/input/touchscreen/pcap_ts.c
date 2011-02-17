@@ -14,7 +14,6 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/pm.h>
 #include <linux/timer.h>
 #include <linux/interrupt.h>

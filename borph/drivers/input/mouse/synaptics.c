@@ -28,7 +28,6 @@
 #include <linux/input.h>
 #include <linux/serio.h>
 #include <linux/libps2.h>
-#include <linux/slab.h>
 #include "psmouse.h"
 #include "synaptics.h"
 
@@ -36,8 +35,6 @@
  * The x/y limits are taken from the Synaptics TouchPad interfacing Guide,
  * section 2.3.2, which says that they should be valid regardless of the
  * actual size of the sensor.
- * Note that newer firmware allows querying device for maximum useable
- * coordinates.
  */
 #define XMIN_NOMINAL 1472
 #define XMAX_NOMINAL 5472
@@ -139,15 +136,9 @@ static int synaptics_capability(struct psmouse *psmouse)
 	if (synaptics_send_cmd(psmouse, SYN_QUE_CAPABILITIES, cap))
 		return -1;
 	priv->capabilities = (cap[0] << 16) | (cap[1] << 8) | cap[2];
-	priv->ext_cap = priv->ext_cap_0c = 0;
-
-	/*
-	 * Older firmwares had submodel ID fixed to 0x47
-	 */
-	if (SYN_ID_FULL(priv->identity) < 0x705 &&
-	    SYN_CAP_SUBMODEL_ID(priv->capabilities) != 0x47) {
+	priv->ext_cap = 0;
+	if (!SYN_CAP_VALID(priv->capabilities))
 		return -1;
-	}
 
 	/*
 	 * Unless capExtended is set the rest of the flags should be ignored
@@ -158,7 +149,7 @@ static int synaptics_capability(struct psmouse *psmouse)
 	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 1) {
 		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_CAPAB, cap)) {
 			printk(KERN_ERR "Synaptics claims to have extended capabilities,"
-			       " but I'm not able to read them.\n");
+			       " but I'm not able to read them.");
 		} else {
 			priv->ext_cap = (cap[0] << 16) | (cap[1] << 8) | cap[2];
 
@@ -170,16 +161,6 @@ static int synaptics_capability(struct psmouse *psmouse)
 				priv->ext_cap &= 0xff0fff;
 		}
 	}
-
-	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 4) {
-		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_CAPAB_0C, cap)) {
-			printk(KERN_ERR "Synaptics claims to have extended capability 0x0c,"
-			       " but I'm not able to read it.\n");
-		} else {
-			priv->ext_cap_0c = (cap[0] << 16) | (cap[1] << 8) | cap[2];
-		}
-	}
-
 	return 0;
 }
 
@@ -201,34 +182,23 @@ static int synaptics_identify(struct psmouse *psmouse)
 }
 
 /*
- * Read touchpad resolution and maximum reported coordinates
+ * Read touchpad resolution
  * Resolution is left zero if touchpad does not support the query
  */
 static int synaptics_resolution(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
 	unsigned char res[3];
-	unsigned char max[3];
 
 	if (SYN_ID_MAJOR(priv->identity) < 4)
 		return 0;
 
-	if (synaptics_send_cmd(psmouse, SYN_QUE_RESOLUTION, res) == 0) {
-		if (res[0] != 0 && (res[1] & 0x80) && res[2] != 0) {
-			priv->x_res = res[0]; /* x resolution in units/mm */
-			priv->y_res = res[2]; /* y resolution in units/mm */
-		}
-	}
+	if (synaptics_send_cmd(psmouse, SYN_QUE_RESOLUTION, res))
+		return 0;
 
-	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 5 &&
-	    SYN_CAP_MAX_DIMENSIONS(priv->ext_cap_0c)) {
-		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_DIMENSIONS, max)) {
-			printk(KERN_ERR "Synaptics claims to have dimensions query,"
-			       " but I'm not able to read it.\n");
-		} else {
-			priv->x_max = (max[0] << 5) | ((max[1] & 0x0f) << 1);
-			priv->y_max = (max[2] << 5) | ((max[1] & 0xf0) >> 3);
-		}
+	if ((res[0] != 0) && (res[1] & 0x80) && (res[2] != 0)) {
+		priv->x_res = res[0]; /* x resolution in units/mm */
+		priv->y_res = res[2]; /* y resolution in units/mm */
 	}
 
 	return 0;
@@ -294,29 +264,7 @@ static int synaptics_pt_write(struct serio *serio, unsigned char c)
 	return 0;
 }
 
-static int synaptics_pt_start(struct serio *serio)
-{
-	struct psmouse *parent = serio_get_drvdata(serio->parent);
-	struct synaptics_data *priv = parent->private;
-
-	serio_pause_rx(parent->ps2dev.serio);
-	priv->pt_port = serio;
-	serio_continue_rx(parent->ps2dev.serio);
-
-	return 0;
-}
-
-static void synaptics_pt_stop(struct serio *serio)
-{
-	struct psmouse *parent = serio_get_drvdata(serio->parent);
-	struct synaptics_data *priv = parent->private;
-
-	serio_pause_rx(parent->ps2dev.serio);
-	priv->pt_port = NULL;
-	serio_continue_rx(parent->ps2dev.serio);
-}
-
-static int synaptics_is_pt_packet(unsigned char *buf)
+static inline int synaptics_is_pt_packet(unsigned char *buf)
 {
 	return (buf[0] & 0xFC) == 0x84 && (buf[3] & 0xCC) == 0xC4;
 }
@@ -337,8 +285,9 @@ static void synaptics_pass_pt_packet(struct serio *ptport, unsigned char *packet
 
 static void synaptics_pt_activate(struct psmouse *psmouse)
 {
+	struct serio *ptport = psmouse->ps2dev.serio->child;
+	struct psmouse *child = serio_get_drvdata(ptport);
 	struct synaptics_data *priv = psmouse->private;
-	struct psmouse *child = serio_get_drvdata(priv->pt_port);
 
 	/* adjust the touchpad to child's choice of protocol */
 	if (child) {
@@ -366,8 +315,6 @@ static void synaptics_pt_create(struct psmouse *psmouse)
 	strlcpy(serio->name, "Synaptics pass-through", sizeof(serio->name));
 	strlcpy(serio->phys, "synaptics-pt/serio0", sizeof(serio->name));
 	serio->write = synaptics_pt_write;
-	serio->start = synaptics_pt_start;
-	serio->stop = synaptics_pt_stop;
 	serio->parent = psmouse->ps2dev.serio;
 
 	psmouse->pt_activate = synaptics_pt_activate;
@@ -400,15 +347,7 @@ static void synaptics_parse_hw_state(unsigned char buf[], struct synaptics_data 
 		hw->left  = (buf[0] & 0x01) ? 1 : 0;
 		hw->right = (buf[0] & 0x02) ? 1 : 0;
 
-		if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
-			/*
-			 * Clickpad's button is transmitted as middle button,
-			 * however, since it is primary button, we will report
-			 * it as BTN_LEFT.
-			 */
-			hw->left = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
-
-		} else if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
+		if (SYN_CAP_MIDDLE_BUTTON(priv->capabilities)) {
 			hw->middle = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 			if (hw->w == 2)
 				hw->scroll = (signed char)(buf[1]);
@@ -525,9 +464,7 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 	}
 	input_report_abs(dev, ABS_PRESSURE, hw.z);
 
-	if (SYN_CAP_PALMDETECT(priv->capabilities))
-		input_report_abs(dev, ABS_TOOL_WIDTH, finger_width);
-
+	input_report_abs(dev, ABS_TOOL_WIDTH, finger_width);
 	input_report_key(dev, BTN_TOOL_FINGER, num_fingers == 1);
 	input_report_key(dev, BTN_LEFT, hw.left);
 	input_report_key(dev, BTN_RIGHT, hw.right);
@@ -563,20 +500,19 @@ static int synaptics_validate_byte(unsigned char packet[], int idx, unsigned cha
 		return 0;
 
 	switch (pkt_type) {
+		case SYN_NEWABS:
+		case SYN_NEWABS_RELAXED:
+			return (packet[idx] & newabs_rel_mask[idx]) == newabs_rslt[idx];
 
-	case SYN_NEWABS:
-	case SYN_NEWABS_RELAXED:
-		return (packet[idx] & newabs_rel_mask[idx]) == newabs_rslt[idx];
+		case SYN_NEWABS_STRICT:
+			return (packet[idx] & newabs_mask[idx]) == newabs_rslt[idx];
 
-	case SYN_NEWABS_STRICT:
-		return (packet[idx] & newabs_mask[idx]) == newabs_rslt[idx];
+		case SYN_OLDABS:
+			return (packet[idx] & oldabs_mask[idx]) == oldabs_rslt[idx];
 
-	case SYN_OLDABS:
-		return (packet[idx] & oldabs_mask[idx]) == oldabs_rslt[idx];
-
-	default:
-		printk(KERN_ERR "synaptics: unknown packet type %d\n", pkt_type);
-		return 0;
+		default:
+			printk(KERN_ERR "synaptics: unknown packet type %d\n", pkt_type);
+			return 0;
 	}
 }
 
@@ -601,10 +537,9 @@ static psmouse_ret_t synaptics_process_byte(struct psmouse *psmouse)
 		if (unlikely(priv->pkt_type == SYN_NEWABS))
 			priv->pkt_type = synaptics_detect_pkt_type(psmouse);
 
-		if (SYN_CAP_PASS_THROUGH(priv->capabilities) &&
-		    synaptics_is_pt_packet(psmouse->packet)) {
-			if (priv->pt_port)
-				synaptics_pass_pt_packet(priv->pt_port, psmouse->packet);
+		if (SYN_CAP_PASS_THROUGH(priv->capabilities) && synaptics_is_pt_packet(psmouse->packet)) {
+			if (psmouse->ps2dev.serio->child)
+				synaptics_pass_pt_packet(psmouse->ps2dev.serio->child, psmouse->packet);
 		} else
 			synaptics_process_packet(psmouse);
 
@@ -623,14 +558,10 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	int i;
 
 	__set_bit(EV_ABS, dev->evbit);
-	input_set_abs_params(dev, ABS_X,
-			     XMIN_NOMINAL, priv->x_max ?: XMAX_NOMINAL, 0, 0);
-	input_set_abs_params(dev, ABS_Y,
-			     YMIN_NOMINAL, priv->y_max ?: YMAX_NOMINAL, 0, 0);
+	input_set_abs_params(dev, ABS_X, XMIN_NOMINAL, XMAX_NOMINAL, 0, 0);
+	input_set_abs_params(dev, ABS_Y, YMIN_NOMINAL, YMAX_NOMINAL, 0, 0);
 	input_set_abs_params(dev, ABS_PRESSURE, 0, 255, 0, 0);
-
-	if (SYN_CAP_PALMDETECT(priv->capabilities))
-		input_set_abs_params(dev, ABS_TOOL_WIDTH, 0, 15, 0, 0);
+	__set_bit(ABS_TOOL_WIDTH, dev->absbit);
 
 	__set_bit(EV_KEY, dev->evbit);
 	__set_bit(BTN_TOUCH, dev->keybit);
@@ -659,14 +590,8 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	__clear_bit(REL_X, dev->relbit);
 	__clear_bit(REL_Y, dev->relbit);
 
-	input_abs_set_res(dev, ABS_X, priv->x_res);
-	input_abs_set_res(dev, ABS_Y, priv->y_res);
-
-	if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
-		/* Clickpads report only left button */
-		__clear_bit(BTN_RIGHT, dev->keybit);
-		__clear_bit(BTN_MIDDLE, dev->keybit);
-	}
+	dev->absres[ABS_X] = priv->x_res;
+	dev->absres[ABS_Y] = priv->y_res;
 }
 
 static void synaptics_disconnect(struct psmouse *psmouse)
@@ -755,7 +680,7 @@ int synaptics_init(struct psmouse *psmouse)
 
 	psmouse->private = priv = kzalloc(sizeof(struct synaptics_data), GFP_KERNEL);
 	if (!priv)
-		return -ENOMEM;
+		return -1;
 
 	psmouse_reset(psmouse);
 
@@ -771,10 +696,10 @@ int synaptics_init(struct psmouse *psmouse)
 
 	priv->pkt_type = SYN_MODEL_NEWABS(priv->model_id) ? SYN_NEWABS : SYN_OLDABS;
 
-	printk(KERN_INFO "Synaptics Touchpad, model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx/%#lx\n",
+	printk(KERN_INFO "Synaptics Touchpad, model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx\n",
 		SYN_ID_MODEL(priv->identity),
 		SYN_ID_MAJOR(priv->identity), SYN_ID_MINOR(priv->identity),
-		priv->model_id, priv->capabilities, priv->ext_cap, priv->ext_cap_0c);
+		priv->model_id, priv->capabilities, priv->ext_cap);
 
 	set_input_params(psmouse->dev, priv);
 
@@ -818,11 +743,6 @@ int synaptics_init(struct psmouse *psmouse)
 	return -1;
 }
 
-bool synaptics_supported(void)
-{
-	return true;
-}
-
 #else /* CONFIG_MOUSE_PS2_SYNAPTICS */
 
 void __init synaptics_module_init(void)
@@ -832,11 +752,6 @@ void __init synaptics_module_init(void)
 int synaptics_init(struct psmouse *psmouse)
 {
 	return -ENOSYS;
-}
-
-bool synaptics_supported(void)
-{
-	return false;
 }
 
 #endif /* CONFIG_MOUSE_PS2_SYNAPTICS */

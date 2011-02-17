@@ -54,6 +54,7 @@
 #include <sound/initval.h>
 #include <sound/ac97_codec.h>
 
+#include "pxa2xx-pcm.h"
 #include "pxa2xx-ac97.h"
 #include "../codecs/wm9713.h"
 
@@ -127,9 +128,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"Rear Speaker", NULL, "SPKR"},
 };
 
-static int mioa701_wm9713_init(struct snd_soc_pcm_runtime *rtd)
+static int mioa701_wm9713_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
 	unsigned short reg;
 
 	/* Add mioa701 specific widgets */
@@ -139,12 +139,12 @@ static int mioa701_wm9713_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_add_routes(codec, ARRAY_AND_SIZE(audio_map));
 
 	/* Prepare GPIO8 for rear speaker amplifier */
-	reg = codec->driver->read(codec, AC97_GPIO_CFG);
-	codec->driver->write(codec, AC97_GPIO_CFG, reg | 0x0100);
+	reg = codec->read(codec, AC97_GPIO_CFG);
+	codec->write(codec, AC97_GPIO_CFG, reg | 0x0100);
 
 	/* Prepare MIC input */
-	reg = codec->driver->read(codec, AC97_3D_CONTROL);
-	codec->driver->write(codec, AC97_3D_CONTROL, reg | 0xc000);
+	reg = codec->read(codec, AC97_3D_CONTROL);
+	codec->write(codec, AC97_3D_CONTROL, reg | 0xc000);
 
 	snd_soc_dapm_enable_pin(codec, "Front Speaker");
 	snd_soc_dapm_enable_pin(codec, "Rear Speaker");
@@ -162,28 +162,30 @@ static struct snd_soc_dai_link mioa701_dai[] = {
 	{
 		.name = "AC97",
 		.stream_name = "AC97 HiFi",
-		.cpu_dai_name = "pxa-ac97.0",
-		.codec_dai_name = "wm9713-hifi",
-		.codec_name = "wm9713-codec",
+		.cpu_dai = &pxa_ac97_dai[PXA2XX_DAI_AC97_HIFI],
+		.codec_dai = &wm9713_dai[WM9713_DAI_AC97_HIFI],
 		.init = mioa701_wm9713_init,
-		.platform_name = "pxa-pcm-audio",
 		.ops = &mioa701_ops,
 	},
 	{
 		.name = "AC97 Aux",
 		.stream_name = "AC97 Aux",
-		.cpu_dai_name = "pxa-ac97.1",
-		.codec_dai_name ="wm9713-aux",
-		.codec_name = "wm9713-codec",
-		.platform_name = "pxa-pcm-audio",
+		.cpu_dai = &pxa_ac97_dai[PXA2XX_DAI_AC97_AUX],
+		.codec_dai = &wm9713_dai[WM9713_DAI_AC97_AUX],
 		.ops = &mioa701_ops,
 	},
 };
 
 static struct snd_soc_card mioa701 = {
 	.name = "MioA701",
+	.platform = &pxa2xx_soc_platform,
 	.dai_link = mioa701_dai,
 	.num_links = ARRAY_SIZE(mioa701_dai),
+};
+
+static struct snd_soc_device mioa701_snd_devdata = {
+	.card = &mioa701,
+	.codec_dev = &soc_codec_dev_wm9713,
 };
 
 static struct platform_device *mioa701_snd_device;
@@ -203,7 +205,8 @@ static int mioa701_wm9713_probe(struct platform_device *pdev)
 	if (!mioa701_snd_device)
 		return -ENOMEM;
 
-	platform_set_drvdata(mioa701_snd_device, &mioa701);
+	platform_set_drvdata(mioa701_snd_device, &mioa701_snd_devdata);
+	mioa701_snd_devdata.dev = &mioa701_snd_device->dev;
 
 	ret = platform_device_add(mioa701_snd_device);
 	if (!ret)

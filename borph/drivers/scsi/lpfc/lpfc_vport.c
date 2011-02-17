@@ -26,7 +26,6 @@
 #include <linux/interrupt.h>
 #include <linux/kthread.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 
 #include <scsi/scsi.h>
@@ -124,12 +123,7 @@ lpfc_vport_sparm(struct lpfc_hba *phba, struct lpfc_vport *vport)
 	}
 	mb = &pmb->u.mb;
 
-	rc = lpfc_read_sparam(phba, pmb, vport->vpi);
-	if (rc) {
-		mempool_free(pmb, phba->mbox_mem_pool);
-		return -ENOMEM;
-	}
-
+	lpfc_read_sparam(phba, pmb, vport->vpi);
 	/*
 	 * Grab buffer pointer and clear context1 so we can use
 	 * lpfc_sli_issue_box_wait
@@ -395,7 +389,7 @@ lpfc_vport_create(struct fc_vport *fc_vport, bool disable)
 	 * by the port.
 	 */
 	if ((phba->sli_rev == LPFC_SLI_REV4) &&
-		(pport->fc_flag & FC_VFI_REGISTERED)) {
+	    (pport->vpi_state & LPFC_VPI_REGISTERED)) {
 		rc = lpfc_sli4_init_vpi(phba, vpi);
 		if (rc) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_VPORT,
@@ -511,7 +505,6 @@ enable_vport(struct fc_vport *fc_vport)
 	struct lpfc_vport *vport = *(struct lpfc_vport **)fc_vport->dd_data;
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_nodelist *ndlp = NULL;
-	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
 
 	if ((phba->link_state < LPFC_LINK_UP) ||
 	    (phba->fc_topology == TOPOLOGY_LOOP)) {
@@ -519,10 +512,8 @@ enable_vport(struct fc_vport *fc_vport)
 		return VPORT_OK;
 	}
 
-	spin_lock_irq(shost->host_lock);
 	vport->load_flag |= FC_LOADING;
 	vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
-	spin_unlock_irq(shost->host_lock);
 
 	/* Use the Physical nodes Fabric NDLP to determine if the link is
 	 * up and ready to FDISC.
@@ -580,9 +571,7 @@ lpfc_vport_delete(struct fc_vport *fc_vport)
 				 "static vport.\n");
 		return VPORT_ERROR;
 	}
-	spin_lock_irq(&phba->hbalock);
-	vport->load_flag |= FC_UNLOADING;
-	spin_unlock_irq(&phba->hbalock);
+
 	/*
 	 * If we are not unloading the driver then prevent the vport_delete
 	 * from happening until after this vport's discovery is finished.
@@ -620,6 +609,10 @@ lpfc_vport_delete(struct fc_vport *fc_vport)
 		scsi_host_put(shost);
 		return VPORT_INVAL;
 	}
+	spin_lock_irq(&phba->hbalock);
+	vport->load_flag |= FC_UNLOADING;
+	spin_unlock_irq(&phba->hbalock);
+
 	lpfc_free_sysfs_attr(vport);
 
 	lpfc_debugfs_terminate(vport);
@@ -707,7 +700,7 @@ lpfc_vport_delete(struct fc_vport *fc_vport)
 			}
 			spin_unlock_irq(&phba->ndlp_lock);
 		}
-		if (!(vport->vpi_state & LPFC_VPI_REGISTERED))
+		if (vport->vpi_state != LPFC_VPI_REGISTERED)
 			goto skip_logo;
 		vport->unreg_vpi_cmpl = VPORT_INVAL;
 		timeout = msecs_to_jiffies(phba->fc_ratov * 2000);
@@ -761,9 +754,7 @@ lpfc_create_vport_work_array(struct lpfc_hba *phba)
 	spin_lock_irq(&phba->hbalock);
 	list_for_each_entry(port_iterator, &phba->port_list, listentry) {
 		if (!scsi_host_get(lpfc_shost_from_vport(port_iterator))) {
-			if (!(port_iterator->load_flag & FC_UNLOADING))
-				lpfc_printf_vlog(port_iterator, KERN_ERR,
-					 LOG_VPORT,
+			lpfc_printf_vlog(port_iterator, KERN_WARNING, LOG_VPORT,
 					 "1801 Create vport work array FAILED: "
 					 "cannot do scsi_host_get\n");
 			continue;
@@ -780,7 +771,7 @@ lpfc_destroy_vport_work_array(struct lpfc_hba *phba, struct lpfc_vport **vports)
 	int i;
 	if (vports == NULL)
 		return;
-	for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++)
+	for (i = 0; vports[i] != NULL && i <= phba->max_vports; i++)
 		scsi_host_put(lpfc_shost_from_vport(vports[i]));
 	kfree(vports);
 }

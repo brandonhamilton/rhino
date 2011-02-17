@@ -13,7 +13,6 @@
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/errno.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/string.h>
 #include "base.h"
@@ -71,7 +70,7 @@ static ssize_t drv_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-static const struct sysfs_ops driver_sysfs_ops = {
+static struct sysfs_ops driver_sysfs_ops = {
 	.show	= drv_attr_show,
 	.store	= drv_attr_store,
 };
@@ -116,7 +115,7 @@ static ssize_t bus_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-static const struct sysfs_ops bus_sysfs_ops = {
+static struct sysfs_ops bus_sysfs_ops = {
 	.show	= bus_attr_show,
 	.store	= bus_attr_store,
 };
@@ -155,7 +154,7 @@ static int bus_uevent_filter(struct kset *kset, struct kobject *kobj)
 	return 0;
 }
 
-static const struct kset_uevent_ops bus_uevent_ops = {
+static struct kset_uevent_ops bus_uevent_ops = {
 	.filter = bus_uevent_filter,
 };
 
@@ -174,10 +173,10 @@ static ssize_t driver_unbind(struct device_driver *drv,
 	dev = bus_find_device_by_name(bus, NULL, buf);
 	if (dev && dev->driver == drv) {
 		if (dev->parent)	/* Needed for USB */
-			device_lock(dev->parent);
+			down(&dev->parent->sem);
 		device_release_driver(dev);
 		if (dev->parent)
-			device_unlock(dev->parent);
+			up(&dev->parent->sem);
 		err = count;
 	}
 	put_device(dev);
@@ -201,12 +200,12 @@ static ssize_t driver_bind(struct device_driver *drv,
 	dev = bus_find_device_by_name(bus, NULL, buf);
 	if (dev && dev->driver == NULL && driver_match_device(drv, dev)) {
 		if (dev->parent)	/* Needed for USB */
-			device_lock(dev->parent);
-		device_lock(dev);
+			down(&dev->parent->sem);
+		down(&dev->sem);
 		err = driver_probe_device(drv, dev);
-		device_unlock(dev);
+		up(&dev->sem);
 		if (dev->parent)
-			device_unlock(dev->parent);
+			up(&dev->parent->sem);
 
 		if (err > 0) {
 			/* success */
@@ -440,6 +439,22 @@ static void device_remove_attrs(struct bus_type *bus, struct device *dev)
 	}
 }
 
+#ifdef CONFIG_SYSFS_DEPRECATED
+static int make_deprecated_bus_links(struct device *dev)
+{
+	return sysfs_create_link(&dev->kobj,
+				 &dev->bus->p->subsys.kobj, "bus");
+}
+
+static void remove_deprecated_bus_links(struct device *dev)
+{
+	sysfs_remove_link(&dev->kobj, "bus");
+}
+#else
+static inline int make_deprecated_bus_links(struct device *dev) { return 0; }
+static inline void remove_deprecated_bus_links(struct device *dev) { }
+#endif
+
 /**
  * bus_add_device - add device to bus
  * @dev: device being added
@@ -466,10 +481,15 @@ int bus_add_device(struct device *dev)
 				&dev->bus->p->subsys.kobj, "subsystem");
 		if (error)
 			goto out_subsys;
+		error = make_deprecated_bus_links(dev);
+		if (error)
+			goto out_deprecated;
 		klist_add_tail(&dev->p->knode_bus, &bus->p->klist_devices);
 	}
 	return 0;
 
+out_deprecated:
+	sysfs_remove_link(&dev->kobj, "subsystem");
 out_subsys:
 	sysfs_remove_link(&bus->p->devices_kset->kobj, dev_name(dev));
 out_id:
@@ -509,6 +529,7 @@ void bus_remove_device(struct device *dev)
 {
 	if (dev->bus) {
 		sysfs_remove_link(&dev->kobj, "subsystem");
+		remove_deprecated_bus_links(dev);
 		sysfs_remove_link(&dev->bus->p->devices_kset->kobj,
 				  dev_name(dev));
 		device_remove_attrs(dev->bus, dev);
@@ -682,9 +703,9 @@ int bus_add_driver(struct device_driver *drv)
 	return 0;
 
 out_unregister:
-	kobject_put(&priv->kobj);
 	kfree(drv->p);
 	drv->p = NULL;
+	kobject_put(&priv->kobj);
 out_put_bus:
 	bus_put(bus);
 	return error;
@@ -723,10 +744,10 @@ static int __must_check bus_rescan_devices_helper(struct device *dev,
 
 	if (!dev->driver) {
 		if (dev->parent)	/* Needed for USB */
-			device_lock(dev->parent);
+			down(&dev->parent->sem);
 		ret = device_attach(dev);
 		if (dev->parent)
-			device_unlock(dev->parent);
+			up(&dev->parent->sem);
 	}
 	return ret < 0 ? ret : 0;
 }
@@ -758,10 +779,10 @@ int device_reprobe(struct device *dev)
 {
 	if (dev->driver) {
 		if (dev->parent)        /* Needed for USB */
-			device_lock(dev->parent);
+			down(&dev->parent->sem);
 		device_release_driver(dev);
 		if (dev->parent)
-			device_unlock(dev->parent);
+			up(&dev->parent->sem);
 	}
 	return bus_rescan_devices_helper(dev, NULL);
 }
@@ -923,8 +944,8 @@ bus_devices_fail:
 	bus_remove_file(bus, &bus_attr_uevent);
 bus_uevent_fail:
 	kset_unregister(&bus->p->subsys);
-out:
 	kfree(bus->p);
+out:
 	bus->p = NULL;
 	return retval;
 }

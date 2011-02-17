@@ -23,7 +23,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <net/genetlink.h>
 #include <linux/nl802154.h>
 

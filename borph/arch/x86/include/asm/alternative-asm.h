@@ -6,8 +6,8 @@
 	.macro LOCK_PREFIX
 1:	lock
 	.section .smp_locks,"a"
-	.balign 4
-	.long 1b - .
+	_ASM_ALIGN
+	_ASM_PTR 1b
 	.previous
 	.endm
 #else

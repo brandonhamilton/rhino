@@ -2,7 +2,7 @@
  * Backlight control code for Sharp Zaurus SL-5500
  *
  * Copyright 2005 John Lenz <lenz@cs.wisc.edu>
- * Maintainer: Pavel Machek <pavel@ucw.cz> (unless John wants to :-)
+ * Maintainer: Pavel Machek <pavel@suse.cz> (unless John wants to :-)
  * GPL v2
  *
  * This driver assumes single CPU. That's okay, because collie is
@@ -141,7 +141,7 @@ static int locomolcd_get_intensity(struct backlight_device *bd)
 	return current_intensity;
 }
 
-static const struct backlight_ops locomobl_data = {
+static struct backlight_ops locomobl_data = {
 	.get_brightness = locomolcd_get_intensity,
 	.update_status  = locomolcd_set_intensity,
 };
@@ -167,7 +167,6 @@ static int locomolcd_resume(struct locomo_dev *dev)
 
 static int locomolcd_probe(struct locomo_dev *ldev)
 {
-	struct backlight_properties props;
 	unsigned long flags;
 
 	local_irq_save(flags);
@@ -183,16 +182,13 @@ static int locomolcd_probe(struct locomo_dev *ldev)
 
 	local_irq_restore(flags);
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.max_brightness = 4;
-	locomolcd_bl_device = backlight_device_register("locomo-bl",
-							&ldev->dev, NULL,
-							&locomobl_data, &props);
+	locomolcd_bl_device = backlight_device_register("locomo-bl", &ldev->dev, NULL, &locomobl_data);
 
 	if (IS_ERR (locomolcd_bl_device))
 		return PTR_ERR (locomolcd_bl_device);
 
 	/* Set up frontlight so that screen is readable */
+	locomolcd_bl_device->props.max_brightness = 4,
 	locomolcd_bl_device->props.brightness = 2;
 	locomolcd_set_intensity(locomolcd_bl_device);
 
@@ -246,6 +242,6 @@ static void __exit locomolcd_exit(void)
 module_init(locomolcd_init);
 module_exit(locomolcd_exit);
 
-MODULE_AUTHOR("John Lenz <lenz@cs.wisc.edu>, Pavel Machek <pavel@ucw.cz>");
+MODULE_AUTHOR("John Lenz <lenz@cs.wisc.edu>, Pavel Machek <pavel@suse.cz>");
 MODULE_DESCRIPTION("Collie LCD driver");
 MODULE_LICENSE("GPL");

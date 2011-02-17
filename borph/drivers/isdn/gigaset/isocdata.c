@@ -500,18 +500,19 @@ int gigaset_isoc_buildframe(struct bc_state *bcs, unsigned char *in, int len)
  */
 static inline void hdlc_putbyte(unsigned char c, struct bc_state *bcs)
 {
-	bcs->rx_fcs = crc_ccitt_byte(bcs->rx_fcs, c);
-	if (bcs->rx_skb == NULL)
+	bcs->fcs = crc_ccitt_byte(bcs->fcs, c);
+	if (unlikely(bcs->skb == NULL)) {
 		/* skipping */
 		return;
-	if (bcs->rx_skb->len >= bcs->rx_bufsize) {
+	}
+	if (unlikely(bcs->skb->len == SBUFSIZE)) {
 		dev_warn(bcs->cs->dev, "received oversized packet discarded\n");
 		bcs->hw.bas->giants++;
-		dev_kfree_skb_any(bcs->rx_skb);
-		bcs->rx_skb = NULL;
+		dev_kfree_skb_any(bcs->skb);
+		bcs->skb = NULL;
 		return;
 	}
-	*__skb_put(bcs->rx_skb, 1) = c;
+	*__skb_put(bcs->skb, 1) = c;
 }
 
 /* hdlc_flush
@@ -520,13 +521,18 @@ static inline void hdlc_putbyte(unsigned char c, struct bc_state *bcs)
 static inline void hdlc_flush(struct bc_state *bcs)
 {
 	/* clear skb or allocate new if not skipping */
-	if (bcs->rx_skb != NULL)
-		skb_trim(bcs->rx_skb, 0);
-	else
-		gigaset_new_rx_skb(bcs);
+	if (likely(bcs->skb != NULL))
+		skb_trim(bcs->skb, 0);
+	else if (!bcs->ignore) {
+		bcs->skb = dev_alloc_skb(SBUFSIZE + bcs->cs->hw_hdr_len);
+		if (bcs->skb)
+			skb_reserve(bcs->skb, bcs->cs->hw_hdr_len);
+		else
+			dev_err(bcs->cs->dev, "could not allocate skb\n");
+	}
 
 	/* reset packet state */
-	bcs->rx_fcs = PPP_INITFCS;
+	bcs->fcs = PPP_INITFCS;
 }
 
 /* hdlc_done
@@ -543,7 +549,7 @@ static inline void hdlc_done(struct bc_state *bcs)
 		hdlc_flush(bcs);
 		return;
 	}
-	procskb = bcs->rx_skb;
+	procskb = bcs->skb;
 	if (procskb == NULL) {
 		/* previous error */
 		gig_dbg(DEBUG_ISO, "%s: skb=NULL", __func__);
@@ -554,8 +560,8 @@ static inline void hdlc_done(struct bc_state *bcs)
 		bcs->hw.bas->runts++;
 		dev_kfree_skb_any(procskb);
 		gigaset_isdn_rcv_err(bcs);
-	} else if (bcs->rx_fcs != PPP_GOODFCS) {
-		dev_notice(cs->dev, "frame check error\n");
+	} else if (bcs->fcs != PPP_GOODFCS) {
+		dev_notice(cs->dev, "frame check error (0x%04x)\n", bcs->fcs);
 		bcs->hw.bas->fcserrs++;
 		dev_kfree_skb_any(procskb);
 		gigaset_isdn_rcv_err(bcs);
@@ -568,8 +574,13 @@ static inline void hdlc_done(struct bc_state *bcs)
 		bcs->hw.bas->goodbytes += len;
 		gigaset_skb_rcvd(bcs, procskb);
 	}
-	gigaset_new_rx_skb(bcs);
-	bcs->rx_fcs = PPP_INITFCS;
+
+	bcs->skb = dev_alloc_skb(SBUFSIZE + cs->hw_hdr_len);
+	if (bcs->skb)
+		skb_reserve(bcs->skb, cs->hw_hdr_len);
+	else
+		dev_err(cs->dev, "could not allocate skb\n");
+	bcs->fcs = PPP_INITFCS;
 }
 
 /* hdlc_frag
@@ -586,8 +597,8 @@ static inline void hdlc_frag(struct bc_state *bcs, unsigned inbits)
 	dev_notice(bcs->cs->dev, "received partial byte (%d bits)\n", inbits);
 	bcs->hw.bas->alignerrs++;
 	gigaset_isdn_rcv_err(bcs);
-	__skb_trim(bcs->rx_skb, 0);
-	bcs->rx_fcs = PPP_INITFCS;
+	__skb_trim(bcs->skb, 0);
+	bcs->fcs = PPP_INITFCS;
 }
 
 /* bit counts lookup table for HDLC bit unstuffing
@@ -836,21 +847,27 @@ static inline void hdlc_unpack(unsigned char *src, unsigned count,
 static inline void trans_receive(unsigned char *src, unsigned count,
 				 struct bc_state *bcs)
 {
+	struct cardstate *cs = bcs->cs;
 	struct sk_buff *skb;
 	int dobytes;
 	unsigned char *dst;
 
 	if (unlikely(bcs->ignore)) {
 		bcs->ignore--;
+		hdlc_flush(bcs);
 		return;
 	}
-	skb = bcs->rx_skb;
-	if (skb == NULL) {
-		skb = gigaset_new_rx_skb(bcs);
-		if (skb == NULL)
+	skb = bcs->skb;
+	if (unlikely(skb == NULL)) {
+		bcs->skb = skb = dev_alloc_skb(SBUFSIZE + cs->hw_hdr_len);
+		if (!skb) {
+			dev_err(cs->dev, "could not allocate skb\n");
 			return;
+		}
+		skb_reserve(skb, cs->hw_hdr_len);
 	}
-	dobytes = bcs->rx_bufsize - skb->len;
+	bcs->hw.bas->goodbytes += skb->len;
+	dobytes = TRANSBUFSIZE - skb->len;
 	while (count > 0) {
 		dst = skb_put(skb, count < dobytes ? count : dobytes);
 		while (count > 0 && dobytes > 0) {
@@ -861,12 +878,15 @@ static inline void trans_receive(unsigned char *src, unsigned count,
 		if (dobytes == 0) {
 			dump_bytes(DEBUG_STREAM_DUMP,
 				   "rcv data", skb->data, skb->len);
-			bcs->hw.bas->goodbytes += skb->len;
 			gigaset_skb_rcvd(bcs, skb);
-			skb = gigaset_new_rx_skb(bcs);
-			if (skb == NULL)
+			bcs->skb = skb =
+				dev_alloc_skb(SBUFSIZE + cs->hw_hdr_len);
+			if (!skb) {
+				dev_err(cs->dev, "could not allocate skb\n");
 				return;
-			dobytes = bcs->rx_bufsize;
+			}
+			skb_reserve(skb, cs->hw_hdr_len);
+			dobytes = TRANSBUFSIZE;
 		}
 	}
 }
@@ -885,49 +905,29 @@ void gigaset_isoc_receive(unsigned char *src, unsigned count,
 
 /* == data input =========================================================== */
 
-/* process a block of received bytes in command mode (mstate != MS_LOCKED)
- * Append received bytes to the command response buffer and forward them
- * line by line to the response handler.
- * Note: Received lines may be terminated by CR, LF, or CR LF, which will be
- * removed before passing the line to the response handler.
- */
 static void cmd_loop(unsigned char *src, int numbytes, struct inbuf_t *inbuf)
 {
 	struct cardstate *cs = inbuf->cs;
 	unsigned cbytes      = cs->cbytes;
-	unsigned char c;
 
 	while (numbytes--) {
-		c = *src++;
-		switch (c) {
-		case '\n':
-			if (cbytes == 0 && cs->respdata[0] == '\r') {
-				/* collapse LF with preceding CR */
-				cs->respdata[0] = 0;
-				break;
-			}
-			/* --v-- fall through --v-- */
+		/* copy next character, check for end of line */
+		switch (cs->respdata[cbytes] = *src++) {
 		case '\r':
-			/* end of message line, pass to response handler */
-			if (cbytes >= MAX_RESP_SIZE) {
-				dev_warn(cs->dev, "response too large (%d)\n",
-					 cbytes);
-				cbytes = MAX_RESP_SIZE;
-			}
+		case '\n':
+			/* end of line */
+			gig_dbg(DEBUG_TRANSCMD, "%s: End of Command (%d Bytes)",
+				__func__, cbytes);
+			if (cbytes >= MAX_RESP_SIZE - 1)
+				dev_warn(cs->dev, "response too large\n");
 			cs->cbytes = cbytes;
-			gigaset_dbg_buffer(DEBUG_TRANSCMD, "received response",
-					   cbytes, cs->respdata);
 			gigaset_handle_modem_response(cs);
 			cbytes = 0;
-
-			/* store EOL byte for CRLF collapsing */
-			cs->respdata[0] = c;
 			break;
 		default:
-			/* append to line buffer if possible */
-			if (cbytes < MAX_RESP_SIZE)
-				cs->respdata[cbytes] = c;
-			cbytes++;
+			/* advance in line buffer, checking for overflow */
+			if (cbytes < MAX_RESP_SIZE - 1)
+				cbytes++;
 		}
 	}
 
@@ -958,6 +958,8 @@ void gigaset_isoc_input(struct inbuf_t *inbuf)
 					   numbytes, src);
 			gigaset_if_receive(inbuf->cs, src, numbytes);
 		} else {
+			gigaset_dbg_buffer(DEBUG_CMD, "received response",
+					   numbytes, src);
 			cmd_loop(src, numbytes, inbuf);
 		}
 

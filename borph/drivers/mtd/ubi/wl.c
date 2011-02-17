@@ -350,7 +350,7 @@ static void prot_queue_add(struct ubi_device *ubi, struct ubi_wl_entry *e)
  * @max: highest possible erase counter
  *
  * This function looks for a wear leveling entry with erase counter closest to
- * @max and less than @max.
+ * @max and less then @max.
  */
 static struct ubi_wl_entry *find_wl_entry(struct rb_root *root, int max)
 {
@@ -464,7 +464,7 @@ retry:
 				   ubi->peb_size - ubi->vid_hdr_aloffset);
 	if (err) {
 		ubi_err("new PEB %d does not contain all 0xFF bytes", e->pnum);
-		return err;
+		return err > 0 ? -EINVAL : err;
 	}
 
 	return e->pnum;
@@ -513,7 +513,7 @@ static int sync_erase(struct ubi_device *ubi, struct ubi_wl_entry *e,
 	dbg_wl("erase PEB %d, old EC %llu", e->pnum, ec);
 
 	err = paranoid_check_ec(ubi, e->pnum, e->ec);
-	if (err)
+	if (err > 0)
 		return -EINVAL;
 
 	ec_hdr = kzalloc(ubi->ec_hdr_alsize, GFP_NOFS);
@@ -745,7 +745,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 
 	err = ubi_io_read_vid_hdr(ubi, e1->pnum, vid_hdr, 0);
 	if (err && err != UBI_IO_BITFLIPS) {
-		if (err == UBI_IO_FF) {
+		if (err == UBI_IO_PEB_FREE) {
 			/*
 			 * We are trying to move PEB without a VID header. UBI
 			 * always write VID headers shortly after the PEB was
@@ -758,16 +758,6 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 			 */
 			dbg_wl("PEB %d has no VID header", e1->pnum);
 			protect = 1;
-			goto out_not_moved;
-		} else if (err == UBI_IO_FF_BITFLIPS) {
-			/*
-			 * The same situation as %UBI_IO_FF, but bit-flips were
-			 * detected. It is better to schedule this PEB for
-			 * scrubbing.
-			 */
-			dbg_wl("PEB %d has no VID header but has bit-flips",
-			       e1->pnum);
-			scrubbing = 1;
 			goto out_not_moved;
 		}
 
@@ -1222,8 +1212,7 @@ int ubi_wl_scrub_peb(struct ubi_device *ubi, int pnum)
 retry:
 	spin_lock(&ubi->wl_lock);
 	e = ubi->lookuptbl[pnum];
-	if (e == ubi->move_from || in_wl_tree(e, &ubi->scrub) ||
-				   in_wl_tree(e, &ubi->erroneous)) {
+	if (e == ubi->move_from || in_wl_tree(e, &ubi->scrub)) {
 		spin_unlock(&ubi->wl_lock);
 		return 0;
 	}
@@ -1478,6 +1467,22 @@ int ubi_wl_init_scan(struct ubi_device *ubi, struct ubi_scan_info *si)
 		ubi->lookuptbl[e->pnum] = e;
 	}
 
+	list_for_each_entry(seb, &si->corr, u.list) {
+		cond_resched();
+
+		e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
+		if (!e)
+			goto out_free;
+
+		e->pnum = seb->pnum;
+		e->ec = seb->ec;
+		ubi->lookuptbl[e->pnum] = e;
+		if (schedule_erase(ubi, e, 0)) {
+			kmem_cache_free(ubi_wl_entry_slab, e);
+			goto out_free;
+		}
+	}
+
 	ubi_rb_for_each_entry(rb1, sv, &si->volumes, rb) {
 		ubi_rb_for_each_entry(rb2, seb, &sv->root, u.rb) {
 			cond_resched();
@@ -1504,9 +1509,6 @@ int ubi_wl_init_scan(struct ubi_device *ubi, struct ubi_scan_info *si)
 	if (ubi->avail_pebs < WL_RESERVED_PEBS) {
 		ubi_err("no enough physical eraseblocks (%d, need %d)",
 			ubi->avail_pebs, WL_RESERVED_PEBS);
-		if (ubi->corr_peb_count)
-			ubi_err("%d PEBs are corrupted and not used",
-				ubi->corr_peb_count);
 		goto out_free;
 	}
 	ubi->avail_pebs -= WL_RESERVED_PEBS;
@@ -1570,7 +1572,8 @@ void ubi_wl_close(struct ubi_device *ubi)
  * @ec: the erase counter to check
  *
  * This function returns zero if the erase counter of physical eraseblock @pnum
- * is equivalent to @ec, and a negative error code if not or if an error occurred.
+ * is equivalent to @ec, %1 if not, and a negative error code if an error
+ * occurred.
  */
 static int paranoid_check_ec(struct ubi_device *ubi, int pnum, int ec)
 {
@@ -1608,8 +1611,8 @@ out_free:
  * @e: the wear-leveling entry to check
  * @root: the root of the tree
  *
- * This function returns zero if @e is in the @root RB-tree and %-EINVAL if it
- * is not.
+ * This function returns zero if @e is in the @root RB-tree and %1 if it is
+ * not.
  */
 static int paranoid_check_in_wl_tree(struct ubi_wl_entry *e,
 				     struct rb_root *root)
@@ -1620,7 +1623,7 @@ static int paranoid_check_in_wl_tree(struct ubi_wl_entry *e,
 	ubi_err("paranoid check failed for PEB %d, EC %d, RB-tree %p ",
 		e->pnum, e->ec, root);
 	ubi_dbg_dump_stack();
-	return -EINVAL;
+	return 1;
 }
 
 /**
@@ -1629,7 +1632,7 @@ static int paranoid_check_in_wl_tree(struct ubi_wl_entry *e,
  * @ubi: UBI device description object
  * @e: the wear-leveling entry to check
  *
- * This function returns zero if @e is in @ubi->pq and %-EINVAL if it is not.
+ * This function returns zero if @e is in @ubi->pq and %1 if it is not.
  */
 static int paranoid_check_in_pq(struct ubi_device *ubi, struct ubi_wl_entry *e)
 {
@@ -1644,6 +1647,6 @@ static int paranoid_check_in_pq(struct ubi_device *ubi, struct ubi_wl_entry *e)
 	ubi_err("paranoid check failed for PEB %d, EC %d, Protect queue",
 		e->pnum, e->ec);
 	ubi_dbg_dump_stack();
-	return -EINVAL;
+	return 1;
 }
 #endif /* CONFIG_MTD_UBI_DEBUG_PARANOID */

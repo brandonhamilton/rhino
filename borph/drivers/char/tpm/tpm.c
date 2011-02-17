@@ -24,7 +24,6 @@
  */
 
 #include <linux/poll.h>
-#include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 
@@ -46,16 +45,6 @@ enum tpm_duration {
 #define TPM_MAX_ORDINAL 243
 #define TPM_MAX_PROTECTED_ORDINAL 12
 #define TPM_PROTECTED_ORDINAL_MASK 0xFF
-
-/*
- * Bug workaround - some TPM's don't flush the most
- * recently changed pcr on suspend, so force the flush
- * with an extend to the selected _unused_ non-volatile pcr.
- */
-static int tpm_suspend_pcr;
-module_param_named(suspend_pcr, tpm_suspend_pcr, uint, 0644);
-MODULE_PARM_DESC(suspend_pcr,
-		 "PCR to use for dummy writes to faciltate flush on suspend.");
 
 static LIST_HEAD(tpm_chip_list);
 static DEFINE_SPINLOCK(driver_lock);
@@ -1078,15 +1067,6 @@ void tpm_remove_hardware(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(tpm_remove_hardware);
 
-#define TPM_ORD_SAVESTATE cpu_to_be32(152)
-#define SAVESTATE_RESULT_SIZE 10
-
-static struct tpm_input_header savestate_header = {
-	.tag = TPM_TAG_RQU_COMMAND,
-	.length = cpu_to_be32(10),
-	.ordinal = TPM_ORD_SAVESTATE
-};
-
 /*
  * We are about to suspend. Save the TPM state
  * so that it can be restored.
@@ -1094,29 +1074,17 @@ static struct tpm_input_header savestate_header = {
 int tpm_pm_suspend(struct device *dev, pm_message_t pm_state)
 {
 	struct tpm_chip *chip = dev_get_drvdata(dev);
-	struct tpm_cmd_t cmd;
-	int rc;
-
-	u8 dummy_hash[TPM_DIGEST_SIZE] = { 0 };
+	u8 savestate[] = {
+		0, 193,		/* TPM_TAG_RQU_COMMAND */
+		0, 0, 0, 10,	/* blob length (in bytes) */
+		0, 0, 0, 152	/* TPM_ORD_SaveState */
+	};
 
 	if (chip == NULL)
 		return -ENODEV;
 
-	/* for buggy tpm, flush pcrs with extend to selected dummy */
-	if (tpm_suspend_pcr) {
-		cmd.header.in = pcrextend_header;
-		cmd.params.pcrextend_in.pcr_idx = cpu_to_be32(tpm_suspend_pcr);
-		memcpy(cmd.params.pcrextend_in.hash, dummy_hash,
-		       TPM_DIGEST_SIZE);
-		rc = transmit_cmd(chip, &cmd, EXTEND_PCR_RESULT_SIZE,
-				  "extending dummy pcr before suspend");
-	}
-
-	/* now do the actual savestate */
-	cmd.header.in = savestate_header;
-	rc = transmit_cmd(chip, &cmd, SAVESTATE_RESULT_SIZE,
-			  "sending savestate before suspend");
-	return rc;
+	tpm_transmit(chip, savestate, sizeof(savestate));
+	return 0;
 }
 EXPORT_SYMBOL_GPL(tpm_pm_suspend);
 

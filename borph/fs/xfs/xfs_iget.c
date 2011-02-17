@@ -25,10 +25,14 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
+#include "xfs_dir2.h"
+#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_alloc_btree.h"
 #include "xfs_ialloc_btree.h"
+#include "xfs_dir2_sf.h"
+#include "xfs_attr_sf.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
 #include "xfs_btree.h"
@@ -69,6 +73,7 @@ xfs_inode_alloc(
 	ASSERT(atomic_read(&ip->i_pincount) == 0);
 	ASSERT(!spin_is_locked(&ip->i_flags_lock));
 	ASSERT(completion_done(&ip->i_flush));
+	ASSERT(!rwsem_is_locked(&ip->i_iolock.mr_lock));
 
 	mrlock_init(&ip->i_iolock, MRLOCK_BARRIER, "xfsio", ip->i_ino);
 
@@ -86,12 +91,12 @@ xfs_inode_alloc(
 	ip->i_new_size = 0;
 
 	/* prevent anyone from using this yet */
-	VFS_I(ip)->i_state = I_NEW;
+	VFS_I(ip)->i_state = I_NEW|I_LOCK;
 
 	return ip;
 }
 
-void
+STATIC void
 xfs_inode_free(
 	struct xfs_inode	*ip)
 {
@@ -186,12 +191,13 @@ xfs_iget_cache_hit(
 		trace_xfs_iget_reclaim(ip);
 
 		/*
-		 * We need to set XFS_IRECLAIM to prevent xfs_reclaim_inode
-		 * from stomping over us while we recycle the inode.  We can't
-		 * clear the radix tree reclaimable tag yet as it requires
-		 * pag_ici_lock to be held exclusive.
+		 * We need to set XFS_INEW atomically with clearing the
+		 * reclaimable tag so that we do have an indicator of the
+		 * inode still being initialized.
 		 */
-		ip->i_flags |= XFS_IRECLAIM;
+		ip->i_flags |= XFS_INEW;
+		ip->i_flags &= ~XFS_IRECLAIMABLE;
+		__xfs_inode_clear_reclaim_tag(mp, pag, ip);
 
 		spin_unlock(&ip->i_flags_lock);
 		read_unlock(&pag->pag_ici_lock);
@@ -208,22 +214,13 @@ xfs_iget_cache_hit(
 			ip->i_flags &= ~XFS_INEW;
 			ip->i_flags |= XFS_IRECLAIMABLE;
 			__xfs_inode_set_reclaim_tag(pag, ip);
-			trace_xfs_iget_reclaim_fail(ip);
+			trace_xfs_iget_reclaim(ip);
 			goto out_error;
 		}
-
-		write_lock(&pag->pag_ici_lock);
-		spin_lock(&ip->i_flags_lock);
-		ip->i_flags &= ~(XFS_IRECLAIMABLE | XFS_IRECLAIM);
-		ip->i_flags |= XFS_INEW;
-		__xfs_inode_clear_reclaim_tag(mp, pag, ip);
-		inode->i_state = I_NEW;
-		spin_unlock(&ip->i_flags_lock);
-		write_unlock(&pag->pag_ici_lock);
+		inode->i_state = I_LOCK|I_NEW;
 	} else {
 		/* If the VFS inode is being torn down, pause and try again. */
 		if (!igrab(inode)) {
-			trace_xfs_iget_skip(ip);
 			error = EAGAIN;
 			goto out_error;
 		}
@@ -231,7 +228,6 @@ xfs_iget_cache_hit(
 		/* We've got a live one. */
 		spin_unlock(&ip->i_flags_lock);
 		read_unlock(&pag->pag_ici_lock);
-		trace_xfs_iget_hit(ip);
 	}
 
 	if (lock_flags != 0)
@@ -240,6 +236,7 @@ xfs_iget_cache_hit(
 	xfs_iflags_clear(ip, XFS_ISTALE);
 	XFS_STATS_INC(xs_ig_found);
 
+	trace_xfs_iget_found(ip);
 	return 0;
 
 out_error:
@@ -256,22 +253,24 @@ xfs_iget_cache_miss(
 	xfs_trans_t		*tp,
 	xfs_ino_t		ino,
 	struct xfs_inode	**ipp,
+	xfs_daddr_t		bno,
 	int			flags,
 	int			lock_flags)
 {
 	struct xfs_inode	*ip;
 	int			error;
+	unsigned long		first_index, mask;
 	xfs_agino_t		agino = XFS_INO_TO_AGINO(mp, ino);
 
 	ip = xfs_inode_alloc(mp, ino);
 	if (!ip)
 		return ENOMEM;
 
-	error = xfs_iread(mp, tp, ip, flags);
+	error = xfs_iread(mp, tp, ip, bno, flags);
 	if (error)
 		goto out_destroy;
 
-	trace_xfs_iget_miss(ip);
+	xfs_itrace_entry(ip);
 
 	if ((ip->i_d.di_mode == 0) && !(flags & XFS_IGET_CREATE)) {
 		error = ENOENT;
@@ -297,6 +296,8 @@ xfs_iget_cache_miss(
 			BUG();
 	}
 
+	mask = ~(((XFS_INODE_CLUSTER_SIZE(mp) >> mp->m_sb.sb_inodelog)) - 1);
+	first_index = agino & mask;
 	write_lock(&pag->pag_ici_lock);
 
 	/* insert the new inode */
@@ -315,6 +316,7 @@ xfs_iget_cache_miss(
 	write_unlock(&pag->pag_ici_lock);
 	radix_tree_preload_end();
 
+	trace_xfs_iget_alloc(ip);
 	*ipp = ip;
 	return 0;
 
@@ -350,6 +352,8 @@ out_destroy:
  *        within the file system for the inode being requested.
  * lock_flags -- flags indicating how to lock the inode.  See the comment
  *		 for xfs_ilock() for a list of valid values.
+ * bno -- the block number starting the buffer containing the inode,
+ *	  if known (as by bulkstat), else 0.
  */
 int
 xfs_iget(
@@ -358,19 +362,23 @@ xfs_iget(
 	xfs_ino_t	ino,
 	uint		flags,
 	uint		lock_flags,
-	xfs_inode_t	**ipp)
+	xfs_inode_t	**ipp,
+	xfs_daddr_t	bno)
 {
 	xfs_inode_t	*ip;
 	int		error;
 	xfs_perag_t	*pag;
 	xfs_agino_t	agino;
 
-	/* reject inode numbers outside existing AGs */
-	if (XFS_INO_TO_AGNO(mp, ino) >= mp->m_sb.sb_agcount)
+	/* the radix tree exists only in inode capable AGs */
+	if (XFS_INO_TO_AGNO(mp, ino) >= mp->m_maxagi)
 		return EINVAL;
 
 	/* get the perag structure and ensure that it's inode capable */
-	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ino));
+	pag = xfs_get_perag(mp, ino);
+	if (!pag->pagi_inodeok)
+		return EINVAL;
+	ASSERT(pag->pag_ici_init);
 	agino = XFS_INO_TO_AGINO(mp, ino);
 
 again:
@@ -386,12 +394,12 @@ again:
 		read_unlock(&pag->pag_ici_lock);
 		XFS_STATS_INC(xs_ig_missed);
 
-		error = xfs_iget_cache_miss(mp, pag, tp, ino, &ip,
+		error = xfs_iget_cache_miss(mp, pag, tp, ino, &ip, bno,
 							flags, lock_flags);
 		if (error)
 			goto out_error_or_again;
 	}
-	xfs_perag_put(pag);
+	xfs_put_perag(mp, pag);
 
 	*ipp = ip;
 
@@ -410,8 +418,95 @@ out_error_or_again:
 		delay(1);
 		goto again;
 	}
-	xfs_perag_put(pag);
+	xfs_put_perag(mp, pag);
 	return error;
+}
+
+/*
+ * Decrement reference count of an inode structure and unlock it.
+ *
+ * ip -- the inode being released
+ * lock_flags -- this parameter indicates the inode's locks to be
+ *       to be released.  See the comment on xfs_iunlock() for a list
+ *	 of valid values.
+ */
+void
+xfs_iput(xfs_inode_t	*ip,
+	 uint		lock_flags)
+{
+	xfs_itrace_entry(ip);
+	xfs_iunlock(ip, lock_flags);
+	IRELE(ip);
+}
+
+/*
+ * Special iput for brand-new inodes that are still locked
+ */
+void
+xfs_iput_new(
+	xfs_inode_t	*ip,
+	uint		lock_flags)
+{
+	struct inode	*inode = VFS_I(ip);
+
+	xfs_itrace_entry(ip);
+
+	if ((ip->i_d.di_mode == 0)) {
+		ASSERT(!xfs_iflags_test(ip, XFS_IRECLAIMABLE));
+		make_bad_inode(inode);
+	}
+	if (inode->i_state & I_NEW)
+		unlock_new_inode(inode);
+	if (lock_flags)
+		xfs_iunlock(ip, lock_flags);
+	IRELE(ip);
+}
+
+/*
+ * This is called free all the memory associated with an inode.
+ * It must free the inode itself and any buffers allocated for
+ * if_extents/if_data and if_broot.  It must also free the lock
+ * associated with the inode.
+ *
+ * Note: because we don't initialise everything on reallocation out
+ * of the zone, we must ensure we nullify everything correctly before
+ * freeing the structure.
+ */
+void
+xfs_ireclaim(
+	struct xfs_inode	*ip)
+{
+	struct xfs_mount	*mp = ip->i_mount;
+	struct xfs_perag	*pag;
+
+	XFS_STATS_INC(xs_ig_reclaims);
+
+	/*
+	 * Remove the inode from the per-AG radix tree.  It doesn't matter
+	 * if it was never added to it because radix_tree_delete can deal
+	 * with that case just fine.
+	 */
+	pag = xfs_get_perag(mp, ip->i_ino);
+	write_lock(&pag->pag_ici_lock);
+	radix_tree_delete(&pag->pag_ici_root, XFS_INO_TO_AGINO(mp, ip->i_ino));
+	write_unlock(&pag->pag_ici_lock);
+	xfs_put_perag(mp, pag);
+
+	/*
+	 * Here we do an (almost) spurious inode lock in order to coordinate
+	 * with inode cache radix tree lookups.  This is because the lookup
+	 * can reference the inodes in the cache without taking references.
+	 *
+	 * We make that OK here by ensuring that we wait until the inode is
+	 * unlocked after the lookup before we go ahead and free it.  We get
+	 * both the ilock and the iolock because the code may need to drop the
+	 * ilock one but will still hold the iolock.
+	 */
+	xfs_ilock(ip, XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
+	xfs_qm_dqdetach(ip);
+	xfs_iunlock(ip, XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
+
+	xfs_inode_free(ip);
 }
 
 /*
@@ -639,24 +734,30 @@ xfs_ilock_demote(
 }
 
 #ifdef DEBUG
+/*
+ * Debug-only routine, without additional rw_semaphore APIs, we can
+ * now only answer requests regarding whether we hold the lock for write
+ * (reader state is outside our visibility, we only track writer state).
+ *
+ * Note: this means !xfs_isilocked would give false positives, so don't do that.
+ */
 int
 xfs_isilocked(
 	xfs_inode_t		*ip,
 	uint			lock_flags)
 {
-	if (lock_flags & (XFS_ILOCK_EXCL|XFS_ILOCK_SHARED)) {
-		if (!(lock_flags & XFS_ILOCK_SHARED))
-			return !!ip->i_lock.mr_writer;
-		return rwsem_is_locked(&ip->i_lock.mr_lock);
+	if ((lock_flags & (XFS_ILOCK_EXCL|XFS_ILOCK_SHARED)) ==
+			XFS_ILOCK_EXCL) {
+		if (!ip->i_lock.mr_writer)
+			return 0;
 	}
 
-	if (lock_flags & (XFS_IOLOCK_EXCL|XFS_IOLOCK_SHARED)) {
-		if (!(lock_flags & XFS_IOLOCK_SHARED))
-			return !!ip->i_iolock.mr_writer;
-		return rwsem_is_locked(&ip->i_iolock.mr_lock);
+	if ((lock_flags & (XFS_IOLOCK_EXCL|XFS_IOLOCK_SHARED)) ==
+			XFS_IOLOCK_EXCL) {
+		if (!ip->i_iolock.mr_writer)
+			return 0;
 	}
 
-	ASSERT(0);
-	return 0;
+	return 1;
 }
 #endif

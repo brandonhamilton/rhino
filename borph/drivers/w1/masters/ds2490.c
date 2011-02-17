@@ -23,7 +23,6 @@
 #include <linux/kernel.h>
 #include <linux/mod_devicetable.h>
 #include <linux/usb.h>
-#include <linux/slab.h>
 
 #include "../w1_int.h"
 #include "../w1.h"

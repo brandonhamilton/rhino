@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
+#include <linux/slab.h>
 #include <linux/edac.h>
 #include "edac_core.h"
 
@@ -294,7 +295,7 @@ static int __devinit amd76x_init_one(struct pci_dev *pdev,
 {
 	debugf0("%s()\n", __func__);
 
-	/* don't need to call pci_enable_device() */
+	/* don't need to call pci_device_enable() */
 	return amd76x_probe1(pdev, ent->driver_data);
 }
 

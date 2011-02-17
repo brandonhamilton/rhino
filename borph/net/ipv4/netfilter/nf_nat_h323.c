@@ -10,6 +10,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/tcp.h>
 #include <net/tcp.h>
 
@@ -43,7 +44,7 @@ static int set_addr(struct sk_buff *skb,
 					      addroff, sizeof(buf),
 					      (char *) &buf, sizeof(buf))) {
 			if (net_ratelimit())
-				pr_notice("nf_nat_h323: nf_nat_mangle_tcp_packet"
+				printk("nf_nat_h323: nf_nat_mangle_tcp_packet"
 				       " error\n");
 			return -1;
 		}
@@ -59,7 +60,7 @@ static int set_addr(struct sk_buff *skb,
 					      addroff, sizeof(buf),
 					      (char *) &buf, sizeof(buf))) {
 			if (net_ratelimit())
-				pr_notice("nf_nat_h323: nf_nat_mangle_udp_packet"
+				printk("nf_nat_h323: nf_nat_mangle_udp_packet"
 				       " error\n");
 			return -1;
 		}
@@ -215,37 +216,26 @@ static int nat_rtp_rtcp(struct sk_buff *skb, struct nf_conn *ct,
 	/* Run out of expectations */
 	if (i >= H323_RTP_CHANNEL_MAX) {
 		if (net_ratelimit())
-			pr_notice("nf_nat_h323: out of expectations\n");
+			printk("nf_nat_h323: out of expectations\n");
 		return 0;
 	}
 
 	/* Try to get a pair of ports. */
 	for (nated_port = ntohs(rtp_exp->tuple.dst.u.udp.port);
 	     nated_port != 0; nated_port += 2) {
-		int ret;
-
 		rtp_exp->tuple.dst.u.udp.port = htons(nated_port);
-		ret = nf_ct_expect_related(rtp_exp);
-		if (ret == 0) {
+		if (nf_ct_expect_related(rtp_exp) == 0) {
 			rtcp_exp->tuple.dst.u.udp.port =
 			    htons(nated_port + 1);
-			ret = nf_ct_expect_related(rtcp_exp);
-			if (ret == 0)
+			if (nf_ct_expect_related(rtcp_exp) == 0)
 				break;
-			else if (ret != -EBUSY) {
-				nf_ct_unexpect_related(rtp_exp);
-				nated_port = 0;
-				break;
-			}
-		} else if (ret != -EBUSY) {
-			nated_port = 0;
-			break;
+			nf_ct_unexpect_related(rtp_exp);
 		}
 	}
 
 	if (nated_port == 0) {	/* No port available */
 		if (net_ratelimit())
-			pr_notice("nf_nat_h323: out of RTP ports\n");
+			printk("nf_nat_h323: out of RTP ports\n");
 		return 0;
 	}
 
@@ -295,21 +285,14 @@ static int nat_t120(struct sk_buff *skb, struct nf_conn *ct,
 
 	/* Try to get same port: if not, try to change it. */
 	for (; nated_port != 0; nated_port++) {
-		int ret;
-
 		exp->tuple.dst.u.tcp.port = htons(nated_port);
-		ret = nf_ct_expect_related(exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(exp) == 0)
 			break;
-		else if (ret != -EBUSY) {
-			nated_port = 0;
-			break;
-		}
 	}
 
 	if (nated_port == 0) {	/* No port available */
 		if (net_ratelimit())
-			pr_notice("nf_nat_h323: out of TCP ports\n");
+			printk("nf_nat_h323: out of TCP ports\n");
 		return 0;
 	}
 
@@ -352,21 +335,14 @@ static int nat_h245(struct sk_buff *skb, struct nf_conn *ct,
 
 	/* Try to get same port: if not, try to change it. */
 	for (; nated_port != 0; nated_port++) {
-		int ret;
-
 		exp->tuple.dst.u.tcp.port = htons(nated_port);
-		ret = nf_ct_expect_related(exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(exp) == 0)
 			break;
-		else if (ret != -EBUSY) {
-			nated_port = 0;
-			break;
-		}
 	}
 
 	if (nated_port == 0) {	/* No port available */
 		if (net_ratelimit())
-			pr_notice("nf_nat_q931: out of TCP ports\n");
+			printk("nf_nat_q931: out of TCP ports\n");
 		return 0;
 	}
 
@@ -443,21 +419,14 @@ static int nat_q931(struct sk_buff *skb, struct nf_conn *ct,
 
 	/* Try to get same port: if not, try to change it. */
 	for (; nated_port != 0; nated_port++) {
-		int ret;
-
 		exp->tuple.dst.u.tcp.port = htons(nated_port);
-		ret = nf_ct_expect_related(exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(exp) == 0)
 			break;
-		else if (ret != -EBUSY) {
-			nated_port = 0;
-			break;
-		}
 	}
 
 	if (nated_port == 0) {	/* No port available */
 		if (net_ratelimit())
-			pr_notice("nf_nat_ras: out of TCP ports\n");
+			printk("nf_nat_ras: out of TCP ports\n");
 		return 0;
 	}
 
@@ -532,21 +501,14 @@ static int nat_callforwarding(struct sk_buff *skb, struct nf_conn *ct,
 
 	/* Try to get same port: if not, try to change it. */
 	for (nated_port = ntohs(port); nated_port != 0; nated_port++) {
-		int ret;
-
 		exp->tuple.dst.u.tcp.port = htons(nated_port);
-		ret = nf_ct_expect_related(exp);
-		if (ret == 0)
+		if (nf_ct_expect_related(exp) == 0)
 			break;
-		else if (ret != -EBUSY) {
-			nated_port = 0;
-			break;
-		}
 	}
 
 	if (nated_port == 0) {	/* No port available */
 		if (net_ratelimit())
-			pr_notice("nf_nat_q931: out of TCP ports\n");
+			printk("nf_nat_q931: out of TCP ports\n");
 		return 0;
 	}
 

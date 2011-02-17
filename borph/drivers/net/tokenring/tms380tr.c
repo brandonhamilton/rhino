@@ -5,7 +5,7 @@
  *  Originally sktr.c: Written 1997 by Christoph Goos
  *
  *  A fine result of the Linux Systems Network Architecture Project.
- *  http://www.vanheusden.com/sna/ 
+ *  http://www.linux-sna.org
  *
  *  This software may be used and distributed according to the terms
  *  of the GNU General Public License, incorporated herein by reference.
@@ -85,6 +85,7 @@ static const char version[] = "tms380tr.c: v1.10 30/12/2002 by Christoph Goos, A
 #include <linux/ptrace.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/time.h>
 #include <linux/errno.h>
@@ -224,7 +225,7 @@ static int madgemc_sifprobe(struct net_device *dev)
                 chk2 ^= 0x0FE;
 
                 if(chk1 != chk2)
-                        return -1;    /* No adapter */
+                        return (-1);    /* No adapter */
                 chk1 -= 2;
         } while(chk1 != 0);     /* Repeat 128 times (all byte values) */
 
@@ -232,7 +233,7 @@ static int madgemc_sifprobe(struct net_device *dev)
         /* Restore the SIFADR value */
 	SIFWRITEB(old, SIFADR);
 
-        return 0;
+        return (0);
 }
 #endif
 
@@ -271,7 +272,7 @@ int tms380tr_open(struct net_device *dev)
 	{
 		printk(KERN_INFO "%s: Chipset initialization error\n", 
 			dev->name);
-		return -1;
+		return (-1);
 	}
 
 	tp->timer.expires	= jiffies + 30*HZ;
@@ -298,7 +299,7 @@ int tms380tr_open(struct net_device *dev)
 	if(tp->AdapterVirtOpenFlag == 0)
 	{
 		tms380tr_disable_interrupts(dev);
-		return -1;
+		return (-1);
 	}
 
 	tp->StartTime = jiffies;
@@ -309,7 +310,7 @@ int tms380tr_open(struct net_device *dev)
 	tp->timer.data		= (unsigned long)dev;
 	add_timer(&tp->timer);
 
-	return 0;
+	return (0);
 }
 
 /*
@@ -325,6 +326,8 @@ static void tms380tr_timer_end_wait(unsigned long data)
 		tp->Sleeping = 0;
 		wake_up_interruptible(&tp->wait_for_tok_int);
 	}
+
+	return;
 }
 
 /*
@@ -343,23 +346,23 @@ static int tms380tr_chipset_init(struct net_device *dev)
 		printk(KERN_DEBUG "%s: Resetting adapter...\n", dev->name);
 	err = tms380tr_reset_adapter(dev);
 	if(err < 0)
-		return -1;
+		return (-1);
 
 	if(tms380tr_debug > 3)
 		printk(KERN_DEBUG "%s: Bringup diags...\n", dev->name);
 	err = tms380tr_bringup_diags(dev);
 	if(err < 0)
-		return -1;
+		return (-1);
 
 	if(tms380tr_debug > 3)
 		printk(KERN_DEBUG "%s: Init adapter...\n", dev->name);
 	err = tms380tr_init_adapter(dev);
 	if(err < 0)
-		return -1;
+		return (-1);
 
 	if(tms380tr_debug > 3)
 		printk(KERN_DEBUG "%s: Done!\n", dev->name);
-	return 0;
+	return (0);
 }
 
 /*
@@ -458,6 +461,8 @@ static void tms380tr_init_net_local(struct net_device *dev)
 	tp->RplHead = &tp->Rpl[0];
 	tp->RplTail = &tp->Rpl[RPL_NUM-1];
 	tp->RplTail->Status = (RX_START_FRAME | RX_END_FRAME | RX_FRAME_IRQ);
+
+	return;
 }
 
 /*
@@ -477,6 +482,8 @@ static void tms380tr_init_ipb(struct net_local *tp)
 	tp->ipb.DMA_Abort_Thrhld = DMA_RETRIES;
 	tp->ipb.SCB_Addr	= 0;
 	tp->ipb.SSB_Addr	= 0;
+
+	return;
 }
 
 /*
@@ -521,6 +528,8 @@ static void tms380tr_init_opb(struct net_device *dev)
 
 	tp->ocpl.ProdIDAddr[0]	 = LOWORD(Addr);
 	tp->ocpl.ProdIDAddr[1]	 = HIWORD(Addr);
+
+	return;
 }
 
 /*
@@ -535,6 +544,8 @@ static void tms380tr_open_adapter(struct net_device *dev)
 
 	tp->OpenCommandIssued = 1;
 	tms380tr_exec_cmd(dev, OC_OPEN);
+
+	return;
 }
 
 /*
@@ -544,6 +555,8 @@ static void tms380tr_open_adapter(struct net_device *dev)
 static void tms380tr_disable_interrupts(struct net_device *dev)
 {
 	SIFWRITEB(0, SIFACL);
+
+	return;
 }
 
 /*
@@ -553,6 +566,8 @@ static void tms380tr_disable_interrupts(struct net_device *dev)
 static void tms380tr_enable_interrupts(struct net_device *dev)
 {
 	SIFWRITEB(ACL_SINTEN, SIFACL);
+
+	return;
 }
 
 /*
@@ -564,6 +579,8 @@ static void tms380tr_exec_cmd(struct net_device *dev, unsigned short Command)
 
 	tp->CMDqueue |= Command;
 	tms380tr_chk_outstanding_cmds(dev);
+
+	return;
 }
 
 static void tms380tr_timeout(struct net_device *dev)
@@ -576,7 +593,7 @@ static void tms380tr_timeout(struct net_device *dev)
 	 * fake transmission time and go on trying. Our own timeout
 	 * routine is in tms380tr_timer_chk()
 	 */
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue(dev);
 }
 
@@ -676,7 +693,7 @@ static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
  * NOTE: This function should be used whenever the status of any TPL must be
  * modified by the driver, because the compiler may otherwise change the
  * order of instructions such that writing the TPL status may be executed at
- * an undesirable time. When this function is used, the status is always
+ * an undesireable time. When this function is used, the status is always
  * written when the function is called.
  */
 static void tms380tr_write_tpl_status(TPL *tpl, unsigned int Status)
@@ -696,6 +713,8 @@ static void tms380tr_chk_src_addr(unsigned char *frame, unsigned char *hw_addr)
 	SRBit = frame[8] & 0x80;
 	memcpy(&frame[8], hw_addr, 6);
 	frame[8] |= SRBit;
+
+	return;
 }
 
 /*
@@ -725,6 +744,8 @@ static void tms380tr_timer_chk(unsigned long data)
 		return;
 	tp->ReOpenInProgress = 1;
 	tms380tr_open_adapter(dev);
+
+	return;
 }
 
 /*
@@ -843,6 +864,8 @@ static void tms380tr_reset_interrupt(struct net_device *dev)
 	 * and clear STS_SYSTEM_IRQ bit: enable adapter for further interrupts.
 	 */
 	tms380tr_exec_sifcmd(dev, CMD_SSB_CLEAR | CMD_CLEAR_SYSTEM_IRQ);
+
+	return;
 }
 
 /*
@@ -877,7 +900,7 @@ static unsigned char tms380tr_chk_ssb(struct net_local *tp, unsigned short IrqTy
 	   IrqType != STS_IRQ_COMMAND_STATUS &&
 	   IrqType != STS_IRQ_RING_STATUS)
 	{
-		return 1;	/* SSB not involved. */
+		return (1);	/* SSB not involved. */
 	}
 
 	/* Note: All fields of the SSB have been set to all ones (-1) after it
@@ -887,21 +910,21 @@ static unsigned char tms380tr_chk_ssb(struct net_local *tp, unsigned short IrqTy
 	 */
 
 	if(ssb->STS == (unsigned short) -1)
-		return 0;	/* Command field not yet available. */
+		return (0);	/* Command field not yet available. */
 	if(IrqType == STS_IRQ_COMMAND_STATUS)
-		return 1;	/* Status fields not always affected. */
+		return (1);	/* Status fields not always affected. */
 	if(ssb->Parm[0] == (unsigned short) -1)
-		return 0;	/* Status 1 field not yet available. */
+		return (0);	/* Status 1 field not yet available. */
 	if(IrqType == STS_IRQ_RING_STATUS)
-		return 1;	/* Status 2 & 3 fields not affected. */
+		return (1);	/* Status 2 & 3 fields not affected. */
 
 	/* Note: At this point, the interrupt is either TRANSMIT or RECEIVE. */
 	if(ssb->Parm[1] == (unsigned short) -1)
-		return 0;	/* Status 2 field not yet available. */
+		return (0);	/* Status 2 field not yet available. */
 	if(ssb->Parm[2] == (unsigned short) -1)
-		return 0;	/* Status 3 field not yet available. */
+		return (0);	/* Status 3 field not yet available. */
 
-	return 1;	/* All SSB fields have been written by the adapter. */
+	return (1);	/* All SSB fields have been written by the adapter. */
 }
 
 /*
@@ -1097,6 +1120,8 @@ static void tms380tr_cmd_status_irq(struct net_device *dev)
 		tp->MacStat.frequency_errors += tp->errorlogtable.Frequency_Error;
 		tp->MacStat.internal_errors += tp->errorlogtable.Internal_Error;
 	}
+
+	return;
 }
 
 /*
@@ -1143,7 +1168,7 @@ int tms380tr_close(struct net_device *dev)
 #endif
 	tms380tr_cancel_tx_queue(tp);
 
-	return 0;
+	return (0);
 }
 
 /*
@@ -1154,7 +1179,7 @@ static struct net_device_stats *tms380tr_get_stats(struct net_device *dev)
 {
 	struct net_local *tp = netdev_priv(dev);
 
-	return (struct net_device_stats *)&tp->MacStat;
+	return ((struct net_device_stats *)&tp->MacStat);
 }
 
 /*
@@ -1187,17 +1212,19 @@ static void tms380tr_set_multicast_list(struct net_device *dev)
 		}
 		else
 		{
-			struct netdev_hw_addr *ha;
-
-			netdev_for_each_mc_addr(ha, dev) {
+			int i;
+			struct dev_mc_list *mclist = dev->mc_list;
+			for (i=0; i< dev->mc_count; i++)
+			{
 				((char *)(&tp->ocpl.FunctAddr))[0] |=
-					ha->addr[2];
+					mclist->dmi_addr[2];
 				((char *)(&tp->ocpl.FunctAddr))[1] |=
-					ha->addr[3];
+					mclist->dmi_addr[3];
 				((char *)(&tp->ocpl.FunctAddr))[2] |=
-					ha->addr[4];
+					mclist->dmi_addr[4];
 				((char *)(&tp->ocpl.FunctAddr))[3] |=
-					ha->addr[5];
+					mclist->dmi_addr[5];
+				mclist = mclist->next;
 			}
 		}
 		tms380tr_exec_cmd(dev, OC_SET_FUNCT_ADDR);
@@ -1205,6 +1232,7 @@ static void tms380tr_set_multicast_list(struct net_device *dev)
 	
 	tp->ocpl.OPENOptions = OpenOptions;
 	tms380tr_exec_cmd(dev, OC_MODIFY_OPEN_PARMS);
+	return;
 }
 
 /*
@@ -1220,8 +1248,9 @@ void tms380tr_wait(unsigned long time)
 		tmp = schedule_timeout_interruptible(tmp);
 	} while(time_after(tmp, jiffies));
 #else
-	mdelay(time / 1000);
+	udelay(time);
 #endif
+	return;
 }
 
 /*
@@ -1240,6 +1269,8 @@ static void tms380tr_exec_sifcmd(struct net_device *dev, unsigned int WriteValue
 		SifStsValue = SIFREADW(SIFSTS);
 	} while((SifStsValue & CMD_INTERRUPT_ADAPTER) && loop_counter--);
 	SIFWRITEW(cmd, SIFCMD);
+
+	return;
 }
 
 /*
@@ -1256,7 +1287,7 @@ static int tms380tr_reset_adapter(struct net_device *dev)
 	if (request_firmware(&fw_entry, "tms380tr.bin", tp->pdev) != 0) {
 		printk(KERN_ALERT "%s: firmware %s is missing, cannot start.\n",
 			dev->name, "tms380tr.bin");
-		return -1;
+		return (-1);
 	}
 
 	fw_ptr = (unsigned short *)fw_entry->data;
@@ -1321,14 +1352,16 @@ static int tms380tr_reset_adapter(struct net_device *dev)
 
 			/* Clear CPHALT and start BUD */
 			SIFWRITEW(c, SIFACL);
-			release_firmware(fw_entry);
-			return 1;
+			if (fw_entry)
+				release_firmware(fw_entry);
+			return (1);
 		}
 	} while(count == 0);
 
-	release_firmware(fw_entry);
+	if (fw_entry)
+		release_firmware(fw_entry);
 	printk(KERN_INFO "%s: Adapter Download Failed\n", dev->name);
-	return -1;
+	return (-1);
 }
 
 MODULE_FIRMWARE("tms380tr.bin");
@@ -1360,10 +1393,10 @@ static int tms380tr_bringup_diags(struct net_device *dev)
 			Status &= STS_MASK;
 
 			if(tms380tr_debug > 3)
-				printk(KERN_DEBUG " %04X\n", Status);
+				printk(KERN_DEBUG " %04X \n", Status);
 			/* BUD successfully completed */
 			if(Status == STS_INITIALIZE)
-				return 1;
+				return (1);
 		/* Unrecoverable hardware error, BUD not completed? */
 		} while((loop_cnt > 0) && ((Status & (STS_ERROR | STS_TEST))
 			!= (STS_ERROR | STS_TEST)));
@@ -1390,7 +1423,7 @@ static int tms380tr_bringup_diags(struct net_device *dev)
 	else
 		printk(KERN_INFO "%s: Bring Up Diagnostics Error (%04X) occurred\n", dev->name, Status & 0x000f);
 
-	return -1;
+	return (-1);
 }
 
 /*
@@ -1464,7 +1497,7 @@ static int tms380tr_init_adapter(struct net_device *dev)
 				{
 					printk(KERN_INFO "%s: DMA failed\n", dev->name);
 					/* DMA data error: wrong data in SCB */
-					return -1;
+					return (-1);
 				}
 				i++;
 			} while(i < 6);
@@ -1473,11 +1506,11 @@ static int tms380tr_init_adapter(struct net_device *dev)
 			do {	/* Test if contents of SSB is valid */
 				if(SSB_Test[i] != *(sb_ptr + i))
 					/* DMA data error: wrong data in SSB */
-					return -1;
+					return (-1);
 				i++;
 			} while (i < 8);
 
-			return 1;	/* Adapter successfully initialized */
+			return (1);	/* Adapter successfully initialized */
 		}
 		else
 		{
@@ -1488,7 +1521,7 @@ static int tms380tr_init_adapter(struct net_device *dev)
 				Status &= STS_ERROR_MASK;
 				/* ShowInitialisationErrorCode(Status); */
 				printk(KERN_INFO "%s: Status error: %d\n", dev->name, Status);
-				return -1; /* Unrecoverable error */
+				return (-1); /* Unrecoverable error */
 			}
 			else
 			{
@@ -1503,7 +1536,7 @@ static int tms380tr_init_adapter(struct net_device *dev)
 	} while(retry_cnt > 0);
 
 	printk(KERN_INFO "%s: Retry exceeded\n", dev->name);
-	return -1;
+	return (-1);
 }
 
 /*
@@ -1670,6 +1703,8 @@ static void tms380tr_chk_outstanding_cmds(struct net_device *dev)
 
 	/* Execute SCB and generate IRQ when done. */
 	tms380tr_exec_sifcmd(dev, CMD_EXECUTE | CMD_SCB_REQUEST);
+
+	return;
 }
 
 /*
@@ -1742,6 +1777,8 @@ static void tms380tr_ring_status_irq(struct net_device *dev)
 		tp->AdapterOpenFlag = 0;
 		tms380tr_open_adapter(dev);
 	}
+
+	return;
 }
 
 /*
@@ -1812,7 +1849,7 @@ static void tms380tr_chk_irq(struct net_device *dev)
 			break;
 
 		case DMA_WRITE_ABORT:
-			printk(KERN_INFO "%s: DMA write operation aborted:\n",
+			printk(KERN_INFO "%s: DMA write operation aborted: \n",
 				dev->name);
 			switch (AdapterCheckBlock[1])
 			{
@@ -1898,6 +1935,8 @@ static void tms380tr_chk_irq(struct net_device *dev)
 		/* Restart of firmware successful */
 		tp->AdapterOpenFlag = 1;
 	}
+
+	return;
 }
 
 /*
@@ -1952,6 +1991,8 @@ static void tms380tr_read_ram(struct net_device *dev, unsigned char *Data,
 	/* Restore original values */
 	SIFWRITEW(old_sifadx, SIFADX);
 	SIFWRITEW(old_sifadr, SIFADR);
+
+	return;
 }
 
 /*
@@ -1983,6 +2024,8 @@ static void tms380tr_cancel_tx_queue(struct net_local* tp)
 			dma_unmap_single(tp->pdev, tpl->DMABuff, tpl->Skb->len, DMA_TO_DEVICE);
 		dev_kfree_skb_any(tpl->Skb);
 	}
+
+	return;
 }
 
 /*
@@ -2054,6 +2097,7 @@ static void tms380tr_tx_status_irq(struct net_device *dev)
 
 	if(!tp->TplFree->NextTPLPtr->BusyFlag)
 		netif_wake_queue(dev);
+	return;
 }
 
 /*
@@ -2214,18 +2258,22 @@ static void tms380tr_rcv_status_irq(struct net_device *dev)
 		/* Inform adapter about RPL valid. */
 		tms380tr_exec_sifcmd(dev, CMD_RX_VALID);
 	}
+
+	return;
 }
 
 /*
  * This function should be used whenever the status of any RPL must be
  * modified by the driver, because the compiler may otherwise change the
  * order of instructions such that writing the RPL status may be executed
- * at an undesirable time. When this function is used, the status is
+ * at an undesireable time. When this function is used, the status is
  * always written when the function is called.
  */
 static void tms380tr_write_rpl_status(RPL *rpl, unsigned int Status)
 {
 	rpl->Status = Status;
+
+	return;
 }
 
 /*
@@ -2242,6 +2290,8 @@ static void tms380tr_update_rcv_stats(struct net_local *tp, unsigned char DataPt
 	/* Test functional bit */
 	if(DataPtr[2] & GROUP_BIT)
 		tp->MacStat.multicast++;
+
+	return;
 }
 
 static int tms380tr_set_mac_address(struct net_device *dev, void *addr)
@@ -2271,6 +2321,8 @@ static void tms380tr_dump(unsigned char *Data, int length)
 		       Data[j+0],Data[j+1],Data[j+2],Data[j+3],
 		       Data[j+4],Data[j+5],Data[j+6],Data[j+7]);
 	}
+
+	return;
 }
 #endif
 

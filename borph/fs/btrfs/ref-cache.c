@@ -17,7 +17,6 @@
  */
 
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/sort.h>
 #include "ctree.h"
 #include "ref-cache.h"

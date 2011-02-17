@@ -7,6 +7,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/pagemap.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/dmapool.h>
 #include <linux/mempool.h>
 #include <linux/spinlock.h>
@@ -66,8 +67,8 @@ static int ql_update_ring_coalescing(struct ql_adapter *qdev)
 			status = ql_write_cfg(qdev, cqicb, sizeof(*cqicb),
 						CFG_LCQ, rx_ring->cq_id);
 			if (status) {
-				netif_err(qdev, ifup, qdev->ndev,
-					  "Failed to load CQICB.\n");
+				QPRINTK(qdev, IFUP, ERR,
+					"Failed to load CQICB.\n");
 				goto exit;
 			}
 		}
@@ -88,8 +89,8 @@ static int ql_update_ring_coalescing(struct ql_adapter *qdev)
 			status = ql_write_cfg(qdev, cqicb, sizeof(*cqicb),
 						CFG_LCQ, rx_ring->cq_id);
 			if (status) {
-				netif_err(qdev, ifup, qdev->ndev,
-					  "Failed to load CQICB.\n");
+				QPRINTK(qdev, IFUP, ERR,
+					"Failed to load CQICB.\n");
 				goto exit;
 			}
 		}
@@ -106,8 +107,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 
 	spin_lock(&qdev->stats_lock);
 	if (ql_sem_spinlock(qdev, qdev->xg_sem_mask)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Couldn't get xgmac sem.\n");
+			QPRINTK(qdev, DRV, ERR,
+				"Couldn't get xgmac sem.\n");
 		goto quit;
 	}
 	/*
@@ -115,9 +116,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x200; i < 0x280; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Error reading status register 0x%.04x.\n",
-				  i);
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
 			goto end;
 		} else
 			*iter = data;
@@ -129,9 +129,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x300; i < 0x3d0; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Error reading status register 0x%.04x.\n",
-				  i);
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
 			goto end;
 		} else
 			*iter = data;
@@ -143,9 +142,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x500; i < 0x540; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Error reading status register 0x%.04x.\n",
-				  i);
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
 			goto end;
 		} else
 			*iter = data;
@@ -157,9 +155,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x568; i < 0x5a8; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Error reading status register 0x%.04x.\n",
-				  i);
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
 			goto end;
 		} else
 			*iter = data;
@@ -170,8 +167,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 * Get RX NIC FIFO DROP statistics.
 	 */
 	if (ql_read_xgmac_reg64(qdev, 0x5b8, &data)) {
-		netif_err(qdev, drv, qdev->ndev,
-			  "Error reading status register 0x%.04x.\n", i);
+		QPRINTK(qdev, DRV, ERR,
+			"Error reading status register 0x%.04x.\n", i);
 		goto end;
 	} else
 		*iter = data;
@@ -181,6 +178,8 @@ quit:
 	spin_unlock(&qdev->stats_lock);
 
 	QL_DUMP_STAT(qdev);
+
+	return;
 }
 
 static char ql_stats_str_arr[][ETH_GSTRING_LEN] = {
@@ -397,13 +396,14 @@ static int ql_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
 		return -EINVAL;
 	qdev->wol = wol->wolopts;
 
-	netif_info(qdev, drv, qdev->ndev, "Set wol option 0x%x\n", qdev->wol);
+	QPRINTK(qdev, DRV, INFO, "Set wol option 0x%x on %s\n",
+			 qdev->wol, ndev->name);
 	if (!qdev->wol) {
 		u32 wol = 0;
 		status = ql_mb_wol_mode(qdev, wol);
-		netif_err(qdev, drv, qdev->ndev, "WOL %s (wol code 0x%x)\n",
-			  status == 0 ? "cleared successfully" : "clear failed",
-			  wol);
+		QPRINTK(qdev, DRV, ERR, "WOL %s (wol code 0x%x) on %s\n",
+			(status == 0) ? "cleared sucessfully" : "clear failed",
+			wol, qdev->ndev->name);
 	}
 
 	return 0;
@@ -500,8 +500,7 @@ static int ql_run_loopback_test(struct ql_adapter *qdev)
 			return -EPIPE;
 		atomic_inc(&qdev->lb_count);
 	}
-	/* Give queue time to settle before testing results. */
-	msleep(2);
+
 	ql_clean_lb_rx_ring(&qdev->rx_ring[0], 128);
 	return atomic_read(&qdev->lb_count) ? -EIO : 0;
 }
@@ -534,13 +533,9 @@ static void ql_self_test(struct net_device *ndev,
 			data[0] = 0;
 		}
 		clear_bit(QL_SELFTEST, &qdev->flags);
-		/* Give link time to come up after
-		 * port configuration changes.
-		 */
-		msleep_interruptible(4 * 1000);
 	} else {
-		netif_err(qdev, drv, qdev->ndev,
-			  "is down, Loopback test will fail.\n");
+		QPRINTK(qdev, DRV, ERR,
+			"%s: is down, Loopback test will fail.\n", ndev->name);
 		eth_test->flags |= ETH_TEST_FL_FAILED;
 	}
 }

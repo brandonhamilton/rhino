@@ -34,7 +34,6 @@
 #include <linux/if.h>
 #include <linux/if_vlan.h>
 #include <linux/jhash.h>
-#include <linux/slab.h>
 #include <net/neighbour.h>
 #include "common.h"
 #include "t3cdev.h"
@@ -207,6 +206,7 @@ again:
 		 */
 		neigh_event_send(e->neigh, NULL);
 	}
+	return;
 }
 
 EXPORT_SYMBOL(t3_l2t_send_event);

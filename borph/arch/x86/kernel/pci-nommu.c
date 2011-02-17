@@ -4,7 +4,6 @@
 #include <linux/scatterlist.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/mm.h>
 

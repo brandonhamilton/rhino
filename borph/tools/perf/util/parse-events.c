@@ -5,7 +5,6 @@
 #include "parse-events.h"
 #include "exec_cmd.h"
 #include "string.h"
-#include "symbol.h"
 #include "cache.h"
 #include "header.h"
 #include "debugfs.h"
@@ -410,6 +409,7 @@ static enum event_result
 parse_single_tracepoint_event(char *sys_name,
 			      const char *evt_name,
 			      unsigned int evt_length,
+			      char *flags,
 			      struct perf_event_attr *attr,
 			      const char **strp)
 {
@@ -417,6 +417,14 @@ parse_single_tracepoint_event(char *sys_name,
 	char id_buf[4];
 	u64 id;
 	int fd;
+
+	if (flags) {
+		if (!strncmp(flags, "record", strlen(flags))) {
+			attr->sample_type |= PERF_SAMPLE_RAW;
+			attr->sample_type |= PERF_SAMPLE_TIME;
+			attr->sample_type |= PERF_SAMPLE_CPU;
+		}
+	}
 
 	snprintf(evt_path, MAXPATHLEN, "%s/%s/%s/id", debugfs_path,
 		 sys_name, evt_name);
@@ -436,21 +444,13 @@ parse_single_tracepoint_event(char *sys_name,
 	attr->type = PERF_TYPE_TRACEPOINT;
 	*strp = evt_name + evt_length;
 
-	attr->sample_type |= PERF_SAMPLE_RAW;
-	attr->sample_type |= PERF_SAMPLE_TIME;
-	attr->sample_type |= PERF_SAMPLE_CPU;
-
-	attr->sample_period = 1;
-
-
 	return EVT_HANDLED;
 }
 
 /* sys + ':' + event + ':' + flags*/
 #define MAX_EVOPT_LEN	(MAX_EVENT_LENGTH * 2 + 2 + 128)
 static enum event_result
-parse_multiple_tracepoint_event(char *sys_name, const char *evt_exp,
-				char *flags)
+parse_subsystem_tracepoint_event(char *sys_name, char *flags)
 {
 	char evt_path[MAXPATHLEN];
 	struct dirent *evt_ent;
@@ -472,9 +472,6 @@ parse_multiple_tracepoint_event(char *sys_name, const char *evt_exp,
 		    || !strcmp(evt_ent->d_name, "..")
 		    || !strcmp(evt_ent->d_name, "enable")
 		    || !strcmp(evt_ent->d_name, "filter"))
-			continue;
-
-		if (!strglobmatch(evt_ent->d_name, evt_exp))
 			continue;
 
 		len = snprintf(event_opt, MAX_EVOPT_LEN, "%s:%s%s%s", sys_name,
@@ -525,13 +522,13 @@ static enum event_result parse_tracepoint_event(const char **strp,
 	if (evt_length >= MAX_EVENT_LENGTH)
 		return EVT_FAILED;
 
-	if (strpbrk(evt_name, "*?")) {
+	if (!strcmp(evt_name, "*")) {
 		*strp = evt_name + evt_length;
-		return parse_multiple_tracepoint_event(sys_name, evt_name,
-						       flags);
+		return parse_subsystem_tracepoint_event(sys_name, flags);
 	} else
 		return parse_single_tracepoint_event(sys_name, evt_name,
-						     evt_length, attr, strp);
+						     evt_length, flags,
+						     attr, strp);
 }
 
 static enum event_result
@@ -602,15 +599,8 @@ parse_breakpoint_event(const char **strp, struct perf_event_attr *attr)
 			return EVT_FAILED;
 	}
 
-	/*
-	 * We should find a nice way to override the access length
-	 * Provide some defaults for now
-	 */
-	if (attr->bp_type == HW_BREAKPOINT_X)
-		attr->bp_len = sizeof(long);
-	else
-		attr->bp_len = HW_BREAKPOINT_LEN_4;
-
+	/* We should find a nice way to override the access type */
+	attr->bp_len = HW_BREAKPOINT_LEN_4;
 	attr->type = PERF_TYPE_BREAKPOINT;
 
 	return EVT_HANDLED;
@@ -695,29 +685,19 @@ static enum event_result
 parse_event_modifier(const char **strp, struct perf_event_attr *attr)
 {
 	const char *str = *strp;
-	int exclude = 0;
-	int eu = 0, ek = 0, eh = 0, precise = 0;
+	int eu = 1, ek = 1, eh = 1;
 
 	if (*str++ != ':')
 		return 0;
 	while (*str) {
-		if (*str == 'u') {
-			if (!exclude)
-				exclude = eu = ek = eh = 1;
+		if (*str == 'u')
 			eu = 0;
-		} else if (*str == 'k') {
-			if (!exclude)
-				exclude = eu = ek = eh = 1;
+		else if (*str == 'k')
 			ek = 0;
-		} else if (*str == 'h') {
-			if (!exclude)
-				exclude = eu = ek = eh = 1;
+		else if (*str == 'h')
 			eh = 0;
-		} else if (*str == 'p') {
-			precise++;
-		} else
+		else
 			break;
-
 		++str;
 	}
 	if (str >= *strp + 2) {
@@ -725,7 +705,6 @@ parse_event_modifier(const char **strp, struct perf_event_attr *attr)
 		attr->exclude_user   = eu;
 		attr->exclude_kernel = ek;
 		attr->exclude_hv     = eh;
-		attr->precise_ip     = precise;
 		return 1;
 	}
 	return 0;
@@ -774,11 +753,11 @@ modifier:
 	return ret;
 }
 
-static int store_event_type(const char *orgname)
+static void store_event_type(const char *orgname)
 {
 	char filename[PATH_MAX], *c;
 	FILE *file;
-	int id, n;
+	int id;
 
 	sprintf(filename, "%s/", debugfs_path);
 	strncat(filename, orgname, strlen(orgname));
@@ -790,14 +769,11 @@ static int store_event_type(const char *orgname)
 
 	file = fopen(filename, "r");
 	if (!file)
-		return 0;
-	n = fscanf(file, "%i", &id);
+		return;
+	if (fscanf(file, "%i", &id) < 1)
+		die("cannot store event ID");
 	fclose(file);
-	if (n < 1) {
-		pr_err("cannot store event ID\n");
-		return -EINVAL;
-	}
-	return perf_header__push_event(id, orgname);
+	perf_header__push_event(id, orgname);
 }
 
 int parse_events(const struct option *opt __used, const char *str, int unset __used)
@@ -806,8 +782,7 @@ int parse_events(const struct option *opt __used, const char *str, int unset __u
 	enum event_result ret;
 
 	if (strchr(str, ':'))
-		if (store_event_type(str) < 0)
-			return -1;
+		store_event_type(str);
 
 	for (;;) {
 		if (nr_counters == MAX_COUNTERS)
@@ -860,12 +835,11 @@ int parse_filter(const struct option *opt __used, const char *str,
 }
 
 static const char * const event_type_descriptors[] = {
+	"",
 	"Hardware event",
 	"Software event",
 	"Tracepoint event",
 	"Hardware cache event",
-	"Raw hardware event descriptor",
-	"Hardware breakpoint",
 };
 
 /*
@@ -898,7 +872,7 @@ static void print_tracepoint_events(void)
 			snprintf(evt_path, MAXPATHLEN, "%s:%s",
 				 sys_dirent.d_name, evt_dirent.d_name);
 			printf("  %-42s [%s]\n", evt_path,
-				event_type_descriptors[PERF_TYPE_TRACEPOINT]);
+				event_type_descriptors[PERF_TYPE_TRACEPOINT+1]);
 		}
 		closedir(evt_dir);
 	}
@@ -918,7 +892,9 @@ void print_events(void)
 	printf("List of pre-defined events (to be used in -e):\n");
 
 	for (i = 0; i < ARRAY_SIZE(event_symbols); i++, syms++) {
-		type = syms->type;
+		type = syms->type + 1;
+		if (type >= ARRAY_SIZE(event_type_descriptors))
+			type = 0;
 
 		if (type != prev_type)
 			printf("\n");
@@ -943,20 +919,17 @@ void print_events(void)
 			for (i = 0; i < PERF_COUNT_HW_CACHE_RESULT_MAX; i++) {
 				printf("  %-42s [%s]\n",
 					event_cache_name(type, op, i),
-					event_type_descriptors[PERF_TYPE_HW_CACHE]);
+					event_type_descriptors[4]);
 			}
 		}
 	}
 
 	printf("\n");
-	printf("  %-42s [%s]\n",
-		"rNNN (see 'perf list --help' on how to encode it)",
-	       event_type_descriptors[PERF_TYPE_RAW]);
+	printf("  %-42s [raw hardware event descriptor]\n",
+		"rNNN");
 	printf("\n");
 
-	printf("  %-42s [%s]\n",
-			"mem:<addr>[:access]",
-			event_type_descriptors[PERF_TYPE_BREAKPOINT]);
+	printf("  %-42s [hardware breakpoint]\n", "mem:<addr>[:access]");
 	printf("\n");
 
 	print_tracepoint_events();

@@ -16,6 +16,10 @@
  */
 
 #include "gigaset.h"
+
+#include <linux/errno.h>
+#include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -39,8 +43,7 @@ MODULE_PARM_DESC(cidmode, "Call-ID mode");
 #define GIGASET_MODULENAME "usb_gigaset"
 #define GIGASET_DEVNAME    "ttyGU"
 
-/* length limit according to Siemens 3070usb-protokoll.doc ch. 2.1 */
-#define IF_WRITEBUF 264
+#define IF_WRITEBUF 2000	/* arbitrary limit */
 
 /* Values for the Gigaset M105 Data */
 #define USB_M105_VENDOR_ID	0x0681
@@ -494,13 +497,29 @@ static int send_cb(struct cardstate *cs, struct cmdbuf_t *cb)
 }
 
 /* Send command to device. */
-static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
+static int gigaset_write_cmd(struct cardstate *cs, const unsigned char *buf,
+			     int len, struct tasklet_struct *wake_tasklet)
 {
+	struct cmdbuf_t *cb;
 	unsigned long flags;
 
 	gigaset_dbg_buffer(cs->mstate != MS_LOCKED ?
 			     DEBUG_TRANSCMD : DEBUG_LOCKCMD,
-			   "CMD Transmit", cb->len, cb->buf);
+			   "CMD Transmit", len, buf);
+
+	if (len <= 0)
+		return 0;
+	cb = kmalloc(sizeof(struct cmdbuf_t) + len, GFP_ATOMIC);
+	if (!cb) {
+		dev_err(cs->dev, "%s: out of memory\n", __func__);
+		return -ENOMEM;
+	}
+
+	memcpy(cb->buf, buf, len);
+	cb->len = len;
+	cb->offset = 0;
+	cb->next = NULL;
+	cb->wake_tasklet = wake_tasklet;
 
 	spin_lock_irqsave(&cs->cmdlock, flags);
 	cb->prev = cs->lastcmdbuf;
@@ -508,9 +527,9 @@ static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
 		cs->lastcmdbuf->next = cb;
 	else {
 		cs->cmdbuf = cb;
-		cs->curlen = cb->len;
+		cs->curlen = len;
 	}
-	cs->cmdbytes += cb->len;
+	cs->cmdbytes += len;
 	cs->lastcmdbuf = cb;
 	spin_unlock_irqrestore(&cs->cmdlock, flags);
 
@@ -518,7 +537,7 @@ static int gigaset_write_cmd(struct cardstate *cs, struct cmdbuf_t *cb)
 	if (cs->connected)
 		tasklet_schedule(&cs->write_tasklet);
 	spin_unlock_irqrestore(&cs->lock, flags);
-	return cb->len;
+	return len;
 }
 
 static int gigaset_write_room(struct cardstate *cs)
@@ -609,7 +628,7 @@ static int write_modem(struct cardstate *cs)
 	struct usb_cardstate *ucs = cs->hw.usb;
 	unsigned long flags;
 
-	gig_dbg(DEBUG_OUTPUT, "len: %d...", bcs->tx_skb->len);
+	gig_dbg(DEBUG_WRITE, "len: %d...", bcs->tx_skb->len);
 
 	if (!bcs->tx_skb->len) {
 		dev_kfree_skb_any(bcs->tx_skb);

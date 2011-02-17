@@ -82,14 +82,12 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
-	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_MIN,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
-	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_CURRENT_AVG,
 	POWER_SUPPLY_PROP_POWER_NOW,
@@ -115,7 +113,6 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
-	POWER_SUPPLY_PROP_TYPE, /* use power_supply.type instead */
 	/* Properties of type `const char *' */
 	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_MANUFACTURER,
@@ -126,10 +123,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_BATTERY = 0,
 	POWER_SUPPLY_TYPE_UPS,
 	POWER_SUPPLY_TYPE_MAINS,
-	POWER_SUPPLY_TYPE_USB,		/* Standard Downstream Port */
-	POWER_SUPPLY_TYPE_USB_DCP,	/* Dedicated Charging Port */
-	POWER_SUPPLY_TYPE_USB_CDP,	/* Charging Downstream Port */
-	POWER_SUPPLY_TYPE_USB_ACA,	/* Accessory Charger Adapters */
+	POWER_SUPPLY_TYPE_USB,
 };
 
 union power_supply_propval {
@@ -149,11 +143,6 @@ struct power_supply {
 	int (*get_property)(struct power_supply *psy,
 			    enum power_supply_property psp,
 			    union power_supply_propval *val);
-	int (*set_property)(struct power_supply *psy,
-			    enum power_supply_property psp,
-			    const union power_supply_propval *val);
-	int (*property_is_writeable)(struct power_supply *psy,
-				     enum power_supply_property psp);
 	void (*external_power_changed)(struct power_supply *psy);
 	void (*set_charged)(struct power_supply *psy);
 

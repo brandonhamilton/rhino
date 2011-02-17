@@ -65,7 +65,7 @@ struct rxrpc_header {
 	};
 	__be16		serviceId;	/* service ID */
 
-} __packed;
+} __attribute__((packed));
 
 #define __rxrpc_header_off(X) offsetof(struct rxrpc_header,X)
 
@@ -120,7 +120,7 @@ struct rxrpc_ackpacket {
 #define RXRPC_ACK_TYPE_NACK		0
 #define RXRPC_ACK_TYPE_ACK		1
 
-} __packed;
+} __attribute__((packed));
 
 /*
  * ACK packets can have a further piece of information tagged on the end
@@ -141,7 +141,7 @@ struct rxkad_challenge {
 	__be32		nonce;		/* encrypted random number */
 	__be32		min_level;	/* minimum security level */
 	__be32		__padding;	/* padding to 8-byte boundary */
-} __packed;
+} __attribute__((packed));
 
 /*****************************************************************************/
 /*
@@ -164,7 +164,7 @@ struct rxkad_response {
 
 	__be32		kvno;		/* Kerberos key version number */
 	__be32		ticket_len;	/* Kerberos ticket length  */
-} __packed;
+} __attribute__((packed));
 
 /*****************************************************************************/
 /*

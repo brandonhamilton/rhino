@@ -49,10 +49,10 @@ sub usage {
 }
 
 sub collectcfiles {
-    my @file
-	= `cat .tmp_versions/*.mod | grep '.*\.ko\$' | sed s/\.ko$/.mod.c/`;
-    chomp @file;
-    return @file;
+        my @file = `cat .tmp_versions/*.mod | grep '.*\.ko\$'`;
+        @file = grep {s/\.ko/.mod.c/} @file;
+	chomp @file;
+        return @file;
 }
 
 my (%SYMBOL, %MODULE, %opt, @allcfiles);
@@ -71,40 +71,37 @@ if (not defined $opt{'k'}) {
 	$opt{'k'} = "Module.symvers";
 }
 
-open (my $module_symvers, '<', $opt{'k'})
-    or die "Sorry, cannot open $opt{'k'}: $!\n";
-
-if (defined $opt{'o'}) {
-    open (my $out, '>', $opt{'o'})
-	or die "Sorry, cannot open $opt{'o'} $!\n";
-
-    select $out;
+unless (open(MODULE_SYMVERS, $opt{'k'})) {
+	die "Sorry, cannot open $opt{'k'}: $!\n";
 }
 
+if (defined $opt{'o'}) {
+	unless (open(OUTPUT_HANDLE, ">$opt{'o'}")) {
+		die "Sorry, cannot open $opt{'o'} $!\n";
+	}
+	select OUTPUT_HANDLE;
+}
 #
 # collect all the symbols and their attributes from the
 # Module.symvers file
 #
-while ( <$module_symvers> ) {
+while ( <MODULE_SYMVERS> ) {
 	chomp;
 	my (undef, $symbol, $module, $gpl) = split;
 	$SYMBOL { $symbol } =  [ $module , "0" , $symbol, $gpl];
 }
-close($module_symvers);
+close(MODULE_SYMVERS);
 
 #
 # collect the usage count of each symbol.
 #
 foreach my $thismod (@allcfiles) {
-	my $module;
-
-	unless (open ($module, '<', $thismod)) {
-		warn "Sorry, cannot open $thismod: $!\n";
+	unless (open(MODULE_MODULE, $thismod)) {
+		print "Sorry, cannot open $thismod: $!\n";
 		next;
 	}
-
 	my $state=0;
-	while ( <$module> ) {
+	while ( <MODULE_MODULE> ) {
 		chomp;
 		if ($state == 0) {
 			$state = 1 if ($_ =~ /static const struct modversion_info/);
@@ -127,7 +124,7 @@ foreach my $thismod (@allcfiles) {
 	if ($state != 2) {
 		print "WARNING:$thismod is not built with CONFIG_MODVERSION enabled\n";
 	}
-	close($module);
+	close(MODULE_MODULE);
 }
 
 print "\tThis file reports the exported symbols usage patterns by in-tree\n",

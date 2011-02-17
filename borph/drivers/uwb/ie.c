@@ -24,7 +24,6 @@
  * FIXME: docs
  */
 
-#include <linux/slab.h>
 #include "uwb-internal.h"
 
 /**

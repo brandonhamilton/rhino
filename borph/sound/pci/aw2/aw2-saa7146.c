@@ -25,6 +25,7 @@
 
 #include <linux/init.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <asm/system.h>

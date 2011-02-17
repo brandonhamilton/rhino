@@ -17,7 +17,6 @@
 #include <linux/inet.h>
 #include <linux/in.h>
 #include <linux/ip.h>
-#include <linux/slab.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
 #include <linux/skbuff.h>
@@ -30,7 +29,6 @@
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_ecache.h>
 #include <net/netfilter/nf_conntrack_helper.h>
-#include <net/netfilter/nf_conntrack_zones.h>
 #include <linux/netfilter/nf_conntrack_h323.h>
 
 /* Parameters */
@@ -194,7 +192,8 @@ static int get_tpkt_data(struct sk_buff *skb, unsigned int protoff,
 			return 0;
 		}
 
-		pr_debug("nf_ct_h323: incomplete TPKT (fragmented?)\n");
+		if (net_ratelimit())
+			printk("nf_ct_h323: incomplete TPKT (fragmented?)\n");
 		goto clear_out;
 	}
 
@@ -607,7 +606,7 @@ static int h245_help(struct sk_buff *skb, unsigned int protoff,
       drop:
 	spin_unlock_bh(&nf_h323_lock);
 	if (net_ratelimit())
-		pr_info("nf_ct_h245: packet dropped\n");
+		printk("nf_ct_h245: packet dropped\n");
 	return NF_DROP;
 }
 
@@ -734,11 +733,11 @@ static int callforward_do_filter(const union nf_inet_addr *src,
 		if (!afinfo->route((struct dst_entry **)&rt1, &fl1)) {
 			if (!afinfo->route((struct dst_entry **)&rt2, &fl2)) {
 				if (rt1->rt_gateway == rt2->rt_gateway &&
-				    rt1->dst.dev  == rt2->dst.dev)
+				    rt1->u.dst.dev  == rt2->u.dst.dev)
 					ret = 1;
-				dst_release(&rt2->dst);
+				dst_release(&rt2->u.dst);
 			}
-			dst_release(&rt1->dst);
+			dst_release(&rt1->u.dst);
 		}
 		break;
 	}
@@ -753,11 +752,11 @@ static int callforward_do_filter(const union nf_inet_addr *src,
 			if (!afinfo->route((struct dst_entry **)&rt2, &fl2)) {
 				if (!memcmp(&rt1->rt6i_gateway, &rt2->rt6i_gateway,
 					    sizeof(rt1->rt6i_gateway)) &&
-				    rt1->dst.dev == rt2->dst.dev)
+				    rt1->u.dst.dev == rt2->u.dst.dev)
 					ret = 1;
-				dst_release(&rt2->dst);
+				dst_release(&rt2->u.dst);
 			}
-			dst_release(&rt1->dst);
+			dst_release(&rt1->u.dst);
 		}
 		break;
 	}
@@ -1152,7 +1151,7 @@ static int q931_help(struct sk_buff *skb, unsigned int protoff,
       drop:
 	spin_unlock_bh(&nf_h323_lock);
 	if (net_ratelimit())
-		pr_info("nf_ct_q931: packet dropped\n");
+		printk("nf_ct_q931: packet dropped\n");
 	return NF_DROP;
 }
 
@@ -1217,7 +1216,7 @@ static struct nf_conntrack_expect *find_expect(struct nf_conn *ct,
 	tuple.dst.u.tcp.port = port;
 	tuple.dst.protonum = IPPROTO_TCP;
 
-	exp = __nf_ct_expect_find(net, nf_ct_zone(ct), &tuple);
+	exp = __nf_ct_expect_find(net, &tuple);
 	if (exp && exp->master == ct)
 		return exp;
 	return NULL;
@@ -1727,7 +1726,7 @@ static int ras_help(struct sk_buff *skb, unsigned int protoff,
       drop:
 	spin_unlock_bh(&nf_h323_lock);
 	if (net_ratelimit())
-		pr_info("nf_ct_ras: packet dropped\n");
+		printk("nf_ct_ras: packet dropped\n");
 	return NF_DROP;
 }
 

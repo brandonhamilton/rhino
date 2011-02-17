@@ -23,7 +23,6 @@
  *						restriction on response.
  */
 
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/skbuff.h>

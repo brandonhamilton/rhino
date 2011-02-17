@@ -1,19 +1,17 @@
 /*
  *  linux/drivers/mtd/onenand/onenand_base.c
  *
- *  Copyright © 2005-2009 Samsung Electronics
- *  Copyright © 2007 Nokia Corporation
- *
+ *  Copyright (C) 2005-2007 Samsung Electronics
  *  Kyungmin Park <kyungmin.park@samsung.com>
  *
  *  Credits:
  *	Adrian Hunter <ext-adrian.hunter@nokia.com>:
  *	auto-placement support, read-while load support, various fixes
+ *	Copyright (C) Nokia Corporation, 2007
  *
  *	Vishak G <vishak.g at samsung.com>, Rohit Hagargundgi <h.rohit at samsung.com>
  *	Flex-OneNAND support
- *	Amul Kumar Saha <amul.saha at samsung.com>
- *	OTP support
+ *	Copyright (C) Samsung Electronics, 2008
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -23,7 +21,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/delay.h>
@@ -35,13 +32,6 @@
 
 #include <asm/io.h>
 
-/*
- * Multiblock erase if number of blocks to erase is 2 or more.
- * Maximum number of blocks for simultaneous erase is 64.
- */
-#define MB_ERASE_MIN_BLK_COUNT 2
-#define MB_ERASE_MAX_BLK_COUNT 64
-
 /* Default Flex-OneNAND boundary and lock respectively */
 static int flex_bdry[MAX_DIES * 2] = { -1, 0, -1, 0 };
 
@@ -52,18 +42,6 @@ MODULE_PARM_DESC(flex_bdry,	"SLC Boundary information for Flex-OneNAND"
 				"LOCK: Locking information for SLC boundary"
 				"    : 0->Set boundary in unlocked status"
 				"    : 1->Set boundary in locked status");
-
-/* Default OneNAND/Flex-OneNAND OTP options*/
-static int otp;
-
-module_param(otp, int, 0400);
-MODULE_PARM_DESC(otp,	"Corresponding behaviour of OneNAND in OTP"
-			"Syntax : otp=LOCK_TYPE"
-			"LOCK_TYPE : Keys issued, for specific OTP Lock type"
-			"	   : 0 -> Default (No Blocks Locked)"
-			"	   : 1 -> OTP Block lock"
-			"	   : 2 -> 1st Block lock"
-			"	   : 3 -> BOTH OTP Block and 1st Block lock");
 
 /**
  *  onenand_oob_128 - oob info for Flex-Onenand with 4KB page
@@ -361,8 +339,6 @@ static int onenand_command(struct mtd_info *mtd, int cmd, loff_t addr, size_t le
 		break;
 
 	case ONENAND_CMD_ERASE:
-	case ONENAND_CMD_MULTIBLOCK_ERASE:
-	case ONENAND_CMD_ERASE_VERIFY:
 	case ONENAND_CMD_BUFFERRAM:
 	case ONENAND_CMD_OTP_ACCESS:
 		block = onenand_block(this, addr);
@@ -377,11 +353,8 @@ static int onenand_command(struct mtd_info *mtd, int cmd, loff_t addr, size_t le
 
 	default:
 		block = onenand_block(this, addr);
-		if (FLEXONENAND(this))
-			page = (int) (addr - onenand_addr(this, block))>>\
-				this->page_shift;
-		else
-			page = (int) (addr >> this->page_shift);
+		page = (int) (addr - onenand_addr(this, block)) >> this->page_shift;
+
 		if (ONENAND_IS_2PLANE(this)) {
 			/* Make the even block number */
 			block &= ~1;
@@ -400,8 +373,7 @@ static int onenand_command(struct mtd_info *mtd, int cmd, loff_t addr, size_t le
 		value = onenand_bufferram_address(this, block);
 		this->write_word(value, this->base + ONENAND_REG_START_ADDRESS2);
 
-		if (ONENAND_IS_MLC(this) || ONENAND_IS_2PLANE(this) ||
-		    ONENAND_IS_4KB_PAGE(this))
+		if (ONENAND_IS_MLC(this) || ONENAND_IS_2PLANE(this))
 			/* It is always BufferRAM0 */
 			ONENAND_SET_BUFFERRAM0(this);
 		else
@@ -430,7 +402,7 @@ static int onenand_command(struct mtd_info *mtd, int cmd, loff_t addr, size_t le
 		case FLEXONENAND_CMD_RECOVER_LSB:
 		case ONENAND_CMD_READ:
 		case ONENAND_CMD_READOOB:
-			if (ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this))
+			if (ONENAND_IS_MLC(this))
 				/* It is always BufferRAM0 */
 				dataram = ONENAND_SET_BUFFERRAM0(this);
 			else
@@ -470,11 +442,11 @@ static inline int onenand_read_ecc(struct onenand_chip *this)
 {
 	int ecc, i, result = 0;
 
-	if (!FLEXONENAND(this) && !ONENAND_IS_4KB_PAGE(this))
+	if (!FLEXONENAND(this))
 		return this->read_word(this->base + ONENAND_REG_ECC_STATUS);
 
 	for (i = 0; i < 4; i++) {
-		ecc = this->read_word(this->base + ONENAND_REG_ECC_STATUS + i*2);
+		ecc = this->read_word(this->base + ONENAND_REG_ECC_STATUS + i);
 		if (likely(!ecc))
 			continue;
 		if (ecc & FLEXONENAND_UNCORRECTABLE_ERROR)
@@ -511,7 +483,7 @@ static int onenand_wait(struct mtd_info *mtd, int state)
 		if (interrupt & flags)
 			break;
 
-		if (state != FL_READING && state != FL_PREPARING_ERASE)
+		if (state != FL_READING)
 			cond_resched();
 	}
 	/* To get correct interrupt status in timeout case */
@@ -528,40 +500,25 @@ static int onenand_wait(struct mtd_info *mtd, int state)
 		int ecc = onenand_read_ecc(this);
 		if (ecc) {
 			if (ecc & ONENAND_ECC_2BIT_ALL) {
-				printk(KERN_ERR "%s: ECC error = 0x%04x\n",
-					__func__, ecc);
+				printk(KERN_ERR "onenand_wait: ECC error = 0x%04x\n", ecc);
 				mtd->ecc_stats.failed++;
 				return -EBADMSG;
 			} else if (ecc & ONENAND_ECC_1BIT_ALL) {
-				printk(KERN_DEBUG "%s: correctable ECC error = 0x%04x\n",
-					__func__, ecc);
+				printk(KERN_DEBUG "onenand_wait: correctable ECC error = 0x%04x\n", ecc);
 				mtd->ecc_stats.corrected++;
 			}
 		}
 	} else if (state == FL_READING) {
-		printk(KERN_ERR "%s: read timeout! ctrl=0x%04x intr=0x%04x\n",
-			__func__, ctrl, interrupt);
-		return -EIO;
-	}
-
-	if (state == FL_PREPARING_ERASE && !(interrupt & ONENAND_INT_ERASE)) {
-		printk(KERN_ERR "%s: mb erase timeout! ctrl=0x%04x intr=0x%04x\n",
-		       __func__, ctrl, interrupt);
-		return -EIO;
-	}
-
-	if (!(interrupt & ONENAND_INT_MASTER)) {
-		printk(KERN_ERR "%s: timeout! ctrl=0x%04x intr=0x%04x\n",
-		       __func__, ctrl, interrupt);
+		printk(KERN_ERR "onenand_wait: read timeout! ctrl=0x%04x intr=0x%04x\n", ctrl, interrupt);
 		return -EIO;
 	}
 
 	/* If there's controller error, it's a real error */
 	if (ctrl & ONENAND_CTRL_ERROR) {
-		printk(KERN_ERR "%s: controller error = 0x%04x\n",
-			__func__, ctrl);
+		printk(KERN_ERR "onenand_wait: controller error = 0x%04x\n",
+			ctrl);
 		if (ctrl & ONENAND_CTRL_LOCK)
-			printk(KERN_ERR "%s: it's locked error.\n", __func__);
+			printk(KERN_ERR "onenand_wait: it's locked error.\n");
 		return -EIO;
 	}
 
@@ -1058,8 +1015,7 @@ static int onenand_recover_lsb(struct mtd_info *mtd, loff_t addr, int status)
 	/* We are attempting to reread, so decrement stats.failed
 	 * which was incremented by onenand_wait due to read failure
 	 */
-	printk(KERN_INFO "%s: Attempting to recover from uncorrectable read\n",
-		__func__);
+	printk(KERN_INFO "onenand_recover_lsb: Attempting to recover from uncorrectable read\n");
 	mtd->ecc_stats.failed--;
 
 	/* Issue the LSB page recovery command */
@@ -1090,8 +1046,7 @@ static int onenand_mlc_read_ops_nolock(struct mtd_info *mtd, loff_t from,
 	int ret = 0;
 	int writesize = this->writesize;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: from = 0x%08x, len = %i\n",
-	      __func__, (unsigned int) from, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_mlc_read_ops_nolock: from = 0x%08x, len = %i\n", (unsigned int) from, (int) len);
 
 	if (ops->mode == MTD_OOB_AUTO)
 		oobsize = this->ecclayout->oobavail;
@@ -1102,8 +1057,7 @@ static int onenand_mlc_read_ops_nolock(struct mtd_info *mtd, loff_t from,
 
 	/* Do not allow reads past end of device */
 	if (from + len > mtd->size) {
-		printk(KERN_ERR "%s: Attempt read beyond end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_mlc_read_ops_nolock: Attempt read beyond end of device\n");
 		ops->retlen = 0;
 		ops->oobretlen = 0;
 		return -EINVAL;
@@ -1192,8 +1146,7 @@ static int onenand_read_ops_nolock(struct mtd_info *mtd, loff_t from,
 	int ret = 0, boundary = 0;
 	int writesize = this->writesize;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: from = 0x%08x, len = %i\n",
-			__func__, (unsigned int) from, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_read_ops_nolock: from = 0x%08x, len = %i\n", (unsigned int) from, (int) len);
 
 	if (ops->mode == MTD_OOB_AUTO)
 		oobsize = this->ecclayout->oobavail;
@@ -1204,8 +1157,7 @@ static int onenand_read_ops_nolock(struct mtd_info *mtd, loff_t from,
 
 	/* Do not allow reads past end of device */
 	if ((from + len) > mtd->size) {
-		printk(KERN_ERR "%s: Attempt read beyond end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_read_ops_nolock: Attempt read beyond end of device\n");
 		ops->retlen = 0;
 		ops->oobretlen = 0;
 		return -EINVAL;
@@ -1323,8 +1275,7 @@ static int onenand_read_oob_nolock(struct mtd_info *mtd, loff_t from,
 
 	from += ops->ooboffs;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: from = 0x%08x, len = %i\n",
-		__func__, (unsigned int) from, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_read_oob_nolock: from = 0x%08x, len = %i\n", (unsigned int) from, (int) len);
 
 	/* Initialize return length value */
 	ops->oobretlen = 0;
@@ -1337,8 +1288,7 @@ static int onenand_read_oob_nolock(struct mtd_info *mtd, loff_t from,
 	column = from & (mtd->oobsize - 1);
 
 	if (unlikely(column >= oobsize)) {
-		printk(KERN_ERR "%s: Attempted to start read outside oob\n",
-			__func__);
+		printk(KERN_ERR "onenand_read_oob_nolock: Attempted to start read outside oob\n");
 		return -EINVAL;
 	}
 
@@ -1346,8 +1296,7 @@ static int onenand_read_oob_nolock(struct mtd_info *mtd, loff_t from,
 	if (unlikely(from >= mtd->size ||
 		     column + len > ((mtd->size >> this->page_shift) -
 				     (from >> this->page_shift)) * oobsize)) {
-		printk(KERN_ERR "%s: Attempted to read beyond end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_read_oob_nolock: Attempted to read beyond end of device\n");
 		return -EINVAL;
 	}
 
@@ -1370,8 +1319,7 @@ static int onenand_read_oob_nolock(struct mtd_info *mtd, loff_t from,
 			ret = onenand_recover_lsb(mtd, from, ret);
 
 		if (ret && ret != -EBADMSG) {
-			printk(KERN_ERR "%s: read failed = 0x%x\n",
-				__func__, ret);
+			printk(KERN_ERR "onenand_read_oob_nolock: read failed = 0x%x\n", ret);
 			break;
 		}
 
@@ -1429,7 +1377,7 @@ static int onenand_read(struct mtd_info *mtd, loff_t from, size_t len,
 	int ret;
 
 	onenand_get_device(mtd, FL_READING);
-	ret = ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this) ?
+	ret = ONENAND_IS_MLC(this) ?
 		onenand_mlc_read_ops_nolock(mtd, from, &ops) :
 		onenand_read_ops_nolock(mtd, from, &ops);
 	onenand_release_device(mtd);
@@ -1464,7 +1412,7 @@ static int onenand_read_oob(struct mtd_info *mtd, loff_t from,
 
 	onenand_get_device(mtd, FL_READING);
 	if (ops->datbuf)
-		ret = ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this) ?
+		ret = ONENAND_IS_MLC(this) ?
 			onenand_mlc_read_ops_nolock(mtd, from, ops) :
 			onenand_read_ops_nolock(mtd, from, ops);
 	else
@@ -1502,21 +1450,20 @@ static int onenand_bbt_wait(struct mtd_info *mtd, int state)
 	if (interrupt & ONENAND_INT_READ) {
 		int ecc = onenand_read_ecc(this);
 		if (ecc & ONENAND_ECC_2BIT_ALL) {
-			printk(KERN_WARNING "%s: ecc error = 0x%04x, "
-				"controller error 0x%04x\n",
-				__func__, ecc, ctrl);
+			printk(KERN_INFO "onenand_bbt_wait: ecc error = 0x%04x"
+				", controller error 0x%04x\n", ecc, ctrl);
 			return ONENAND_BBT_READ_ECC_ERROR;
 		}
 	} else {
-		printk(KERN_ERR "%s: read timeout! ctrl=0x%04x intr=0x%04x\n",
-			__func__, ctrl, interrupt);
+		printk(KERN_ERR "onenand_bbt_wait: read timeout!"
+			"ctrl=0x%04x intr=0x%04x\n", ctrl, interrupt);
 		return ONENAND_BBT_READ_FATAL_ERROR;
 	}
 
 	/* Initial bad block case: 0x2400 or 0x0400 */
 	if (ctrl & ONENAND_CTRL_ERROR) {
-		printk(KERN_DEBUG "%s: controller error = 0x%04x\n",
-			__func__, ctrl);
+		printk(KERN_DEBUG "onenand_bbt_wait: "
+			"controller error = 0x%04x\n", ctrl);
 		return ONENAND_BBT_READ_ERROR;
 	}
 
@@ -1540,16 +1487,14 @@ int onenand_bbt_read_oob(struct mtd_info *mtd, loff_t from,
 	size_t len = ops->ooblen;
 	u_char *buf = ops->oobbuf;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: from = 0x%08x, len = %zi\n",
-		__func__, (unsigned int) from, len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_bbt_read_oob: from = 0x%08x, len = %zi\n", (unsigned int) from, len);
 
 	/* Initialize return value */
 	ops->oobretlen = 0;
 
 	/* Do not allow reads past end of device */
 	if (unlikely((from + len) > mtd->size)) {
-		printk(KERN_ERR "%s: Attempt read beyond end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_bbt_read_oob: Attempt read beyond end of device\n");
 		return ONENAND_BBT_READ_FATAL_ERROR;
 	}
 
@@ -1638,6 +1583,7 @@ static int onenand_verify_oob(struct mtd_info *mtd, const u_char *buf, loff_t to
 static int onenand_verify(struct mtd_info *mtd, const u_char *buf, loff_t addr, size_t len)
 {
 	struct onenand_chip *this = mtd->priv;
+	void __iomem *dataram;
 	int ret = 0;
 	int thislen, column;
 
@@ -1657,9 +1603,10 @@ static int onenand_verify(struct mtd_info *mtd, const u_char *buf, loff_t addr, 
 
 		onenand_update_bufferram(mtd, addr, 1);
 
-		this->read_bufferram(mtd, ONENAND_DATARAM, this->verify_buf, 0, mtd->writesize);
+		dataram = this->base + ONENAND_DATARAM;
+		dataram += onenand_bufferram_offset(mtd, ONENAND_DATARAM);
 
-		if (memcmp(buf, this->verify_buf, thislen))
+		if (memcmp(buf, dataram + column, thislen))
 			return -EBADMSG;
 
 		len -= thislen;
@@ -1714,23 +1661,21 @@ static int onenand_panic_write(struct mtd_info *mtd, loff_t to, size_t len,
 	/* Wait for any existing operation to clear */
 	onenand_panic_wait(mtd);
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: to = 0x%08x, len = %i\n",
-		__func__, (unsigned int) to, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_panic_write: to = 0x%08x, len = %i\n",
+	      (unsigned int) to, (int) len);
 
 	/* Initialize retlen, in case of early exit */
 	*retlen = 0;
 
 	/* Do not allow writes past end of device */
 	if (unlikely((to + len) > mtd->size)) {
-		printk(KERN_ERR "%s: Attempt write to past end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_panic_write: Attempt write to past end of device\n");
 		return -EINVAL;
 	}
 
 	/* Reject writes, which are not page aligned */
         if (unlikely(NOTALIGNED(to) || NOTALIGNED(len))) {
-		printk(KERN_ERR "%s: Attempt to write not page aligned data\n",
-			__func__);
+                printk(KERN_ERR "onenand_panic_write: Attempt to write not page aligned data\n");
                 return -EINVAL;
         }
 
@@ -1766,7 +1711,7 @@ static int onenand_panic_write(struct mtd_info *mtd, loff_t to, size_t len,
 		}
 
 		if (ret) {
-			printk(KERN_ERR "%s: write failed %d\n", __func__, ret);
+			printk(KERN_ERR "onenand_panic_write: write failed %d\n", ret);
 			break;
 		}
 
@@ -1847,8 +1792,7 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 	u_char *oobbuf;
 	int ret = 0;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: to = 0x%08x, len = %i\n",
-		__func__, (unsigned int) to, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_write_ops_nolock: to = 0x%08x, len = %i\n", (unsigned int) to, (int) len);
 
 	/* Initialize retlen, in case of early exit */
 	ops->retlen = 0;
@@ -1856,15 +1800,13 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 
 	/* Do not allow writes past end of device */
 	if (unlikely((to + len) > mtd->size)) {
-		printk(KERN_ERR "%s: Attempt write to past end of device\n",
-			__func__);
+		printk(KERN_ERR "onenand_write_ops_nolock: Attempt write to past end of device\n");
 		return -EINVAL;
 	}
 
 	/* Reject writes, which are not page aligned */
         if (unlikely(NOTALIGNED(to) || NOTALIGNED(len))) {
-		printk(KERN_ERR "%s: Attempt to write not page aligned data\n",
-			__func__);
+                printk(KERN_ERR "onenand_write_ops_nolock: Attempt to write not page aligned data\n");
                 return -EINVAL;
         }
 
@@ -1928,7 +1870,7 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 		 * 2 PLANE, MLC, and Flex-OneNAND do not support
 		 * write-while-program feature.
 		 */
-		if (!ONENAND_IS_2PLANE(this) && !ONENAND_IS_4KB_PAGE(this) && !first) {
+		if (!ONENAND_IS_2PLANE(this) && !first) {
 			ONENAND_SET_PREV_BUFFERRAM(this);
 
 			ret = this->wait(mtd, FL_WRITING);
@@ -1937,8 +1879,7 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 			onenand_update_bufferram(mtd, prev, !ret && !prev_subpage);
 			if (ret) {
 				written -= prevlen;
-				printk(KERN_ERR "%s: write failed %d\n",
-					__func__, ret);
+				printk(KERN_ERR "onenand_write_ops_nolock: write failed %d\n", ret);
 				break;
 			}
 
@@ -1946,8 +1887,7 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 				/* Only check verify write turn on */
 				ret = onenand_verify(mtd, buf - len, to - len, len);
 				if (ret)
-					printk(KERN_ERR "%s: verify failed %d\n",
-						__func__, ret);
+					printk(KERN_ERR "onenand_write_ops_nolock: verify failed %d\n", ret);
 				break;
 			}
 
@@ -1959,22 +1899,20 @@ static int onenand_write_ops_nolock(struct mtd_info *mtd, loff_t to,
 		/*
 		 * 2 PLANE, MLC, and Flex-OneNAND wait here
 		 */
-		if (ONENAND_IS_2PLANE(this) || ONENAND_IS_4KB_PAGE(this)) {
+		if (ONENAND_IS_2PLANE(this)) {
 			ret = this->wait(mtd, FL_WRITING);
 
 			/* In partial page write we don't update bufferram */
 			onenand_update_bufferram(mtd, to, !ret && !subpage);
 			if (ret) {
-				printk(KERN_ERR "%s: write failed %d\n",
-					__func__, ret);
+				printk(KERN_ERR "onenand_write_ops_nolock: write failed %d\n", ret);
 				break;
 			}
 
 			/* Only check verify write turn on */
 			ret = onenand_verify(mtd, buf, to, thislen);
 			if (ret) {
-				printk(KERN_ERR "%s: verify failed %d\n",
-					__func__, ret);
+				printk(KERN_ERR "onenand_write_ops_nolock: verify failed %d\n", ret);
 				break;
 			}
 
@@ -2030,8 +1968,7 @@ static int onenand_write_oob_nolock(struct mtd_info *mtd, loff_t to,
 
 	to += ops->ooboffs;
 
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: to = 0x%08x, len = %i\n",
-		__func__, (unsigned int) to, (int) len);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_write_oob_nolock: to = 0x%08x, len = %i\n", (unsigned int) to, (int) len);
 
 	/* Initialize retlen, in case of early exit */
 	ops->oobretlen = 0;
@@ -2044,15 +1981,14 @@ static int onenand_write_oob_nolock(struct mtd_info *mtd, loff_t to,
 	column = to & (mtd->oobsize - 1);
 
 	if (unlikely(column >= oobsize)) {
-		printk(KERN_ERR "%s: Attempted to start write outside oob\n",
-			__func__);
+		printk(KERN_ERR "onenand_write_oob_nolock: Attempted to start write outside oob\n");
 		return -EINVAL;
 	}
 
 	/* For compatibility with NAND: Do not allow write past end of page */
 	if (unlikely(column + len > oobsize)) {
-		printk(KERN_ERR "%s: Attempt to write past end of page\n",
-			__func__);
+		printk(KERN_ERR "onenand_write_oob_nolock: "
+		      "Attempt to write past end of page\n");
 		return -EINVAL;
 	}
 
@@ -2060,8 +1996,7 @@ static int onenand_write_oob_nolock(struct mtd_info *mtd, loff_t to,
 	if (unlikely(to >= mtd->size ||
 		     column + len > ((mtd->size >> this->page_shift) -
 				     (to >> this->page_shift)) * oobsize)) {
-		printk(KERN_ERR "%s: Attempted to write past end of device\n",
-		       __func__);
+		printk(KERN_ERR "onenand_write_oob_nolock: Attempted to write past end of device\n");
 		return -EINVAL;
 	}
 
@@ -2086,7 +2021,7 @@ static int onenand_write_oob_nolock(struct mtd_info *mtd, loff_t to,
 			memcpy(oobbuf + column, buf, thislen);
 		this->write_bufferram(mtd, ONENAND_SPARERAM, oobbuf, 0, mtd->oobsize);
 
-		if (ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this)) {
+		if (ONENAND_IS_MLC(this)) {
 			/* Set main area of DataRAM to 0xff*/
 			memset(this->page_buf, 0xff, mtd->writesize);
 			this->write_bufferram(mtd, ONENAND_DATARAM,
@@ -2103,14 +2038,13 @@ static int onenand_write_oob_nolock(struct mtd_info *mtd, loff_t to,
 
 		ret = this->wait(mtd, FL_WRITING);
 		if (ret) {
-			printk(KERN_ERR "%s: write failed %d\n", __func__, ret);
+			printk(KERN_ERR "onenand_write_oob_nolock: write failed %d\n", ret);
 			break;
 		}
 
 		ret = onenand_verify_oob(mtd, oobbuf, to);
 		if (ret) {
-			printk(KERN_ERR "%s: verify failed %d\n",
-				__func__, ret);
+			printk(KERN_ERR "onenand_write_oob_nolock: verify failed %d\n", ret);
 			break;
 		}
 
@@ -2206,186 +2140,78 @@ static int onenand_block_isbad_nolock(struct mtd_info *mtd, loff_t ofs, int allo
 	return bbm->isbad_bbt(mtd, ofs, allowbbt);
 }
 
-
-static int onenand_multiblock_erase_verify(struct mtd_info *mtd,
-					   struct erase_info *instr)
-{
-	struct onenand_chip *this = mtd->priv;
-	loff_t addr = instr->addr;
-	int len = instr->len;
-	unsigned int block_size = (1 << this->erase_shift);
-	int ret = 0;
-
-	while (len) {
-		this->command(mtd, ONENAND_CMD_ERASE_VERIFY, addr, block_size);
-		ret = this->wait(mtd, FL_VERIFYING_ERASE);
-		if (ret) {
-			printk(KERN_ERR "%s: Failed verify, block %d\n",
-			       __func__, onenand_block(this, addr));
-			instr->state = MTD_ERASE_FAILED;
-			instr->fail_addr = addr;
-			return -1;
-		}
-		len -= block_size;
-		addr += block_size;
-	}
-	return 0;
-}
-
 /**
- * onenand_multiblock_erase - [Internal] erase block(s) using multiblock erase
+ * onenand_erase - [MTD Interface] erase block(s)
  * @param mtd		MTD device structure
  * @param instr		erase instruction
- * @param region	erase region
  *
- * Erase one or more blocks up to 64 block at a time
+ * Erase one ore more blocks
  */
-static int onenand_multiblock_erase(struct mtd_info *mtd,
-				    struct erase_info *instr,
-				    unsigned int block_size)
+static int onenand_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	struct onenand_chip *this = mtd->priv;
+	unsigned int block_size;
 	loff_t addr = instr->addr;
-	int len = instr->len;
-	int eb_count = 0;
-	int ret = 0;
-	int bdry_block = 0;
-
-	instr->state = MTD_ERASING;
-
-	if (ONENAND_IS_DDP(this)) {
-		loff_t bdry_addr = this->chipsize >> 1;
-		if (addr < bdry_addr && (addr + len) > bdry_addr)
-			bdry_block = bdry_addr >> this->erase_shift;
-	}
-
-	/* Pre-check bbs */
-	while (len) {
-		/* Check if we have a bad block, we do not erase bad blocks */
-		if (onenand_block_isbad_nolock(mtd, addr, 0)) {
-			printk(KERN_WARNING "%s: attempt to erase a bad block "
-			       "at addr 0x%012llx\n",
-			       __func__, (unsigned long long) addr);
-			instr->state = MTD_ERASE_FAILED;
-			return -EIO;
-		}
-		len -= block_size;
-		addr += block_size;
-	}
-
-	len = instr->len;
-	addr = instr->addr;
-
-	/* loop over 64 eb batches */
-	while (len) {
-		struct erase_info verify_instr = *instr;
-		int max_eb_count = MB_ERASE_MAX_BLK_COUNT;
-
-		verify_instr.addr = addr;
-		verify_instr.len = 0;
-
-		/* do not cross chip boundary */
-		if (bdry_block) {
-			int this_block = (addr >> this->erase_shift);
-
-			if (this_block < bdry_block) {
-				max_eb_count = min(max_eb_count,
-						   (bdry_block - this_block));
-			}
-		}
-
-		eb_count = 0;
-
-		while (len > block_size && eb_count < (max_eb_count - 1)) {
-			this->command(mtd, ONENAND_CMD_MULTIBLOCK_ERASE,
-				      addr, block_size);
-			onenand_invalidate_bufferram(mtd, addr, block_size);
-
-			ret = this->wait(mtd, FL_PREPARING_ERASE);
-			if (ret) {
-				printk(KERN_ERR "%s: Failed multiblock erase, "
-				       "block %d\n", __func__,
-				       onenand_block(this, addr));
-				instr->state = MTD_ERASE_FAILED;
-				instr->fail_addr = MTD_FAIL_ADDR_UNKNOWN;
-				return -EIO;
-			}
-
-			len -= block_size;
-			addr += block_size;
-			eb_count++;
-		}
-
-		/* last block of 64-eb series */
-		cond_resched();
-		this->command(mtd, ONENAND_CMD_ERASE, addr, block_size);
-		onenand_invalidate_bufferram(mtd, addr, block_size);
-
-		ret = this->wait(mtd, FL_ERASING);
-		/* Check if it is write protected */
-		if (ret) {
-			printk(KERN_ERR "%s: Failed erase, block %d\n",
-			       __func__, onenand_block(this, addr));
-			instr->state = MTD_ERASE_FAILED;
-			instr->fail_addr = MTD_FAIL_ADDR_UNKNOWN;
-			return -EIO;
-		}
-
-		len -= block_size;
-		addr += block_size;
-		eb_count++;
-
-		/* verify */
-		verify_instr.len = eb_count * block_size;
-		if (onenand_multiblock_erase_verify(mtd, &verify_instr)) {
-			instr->state = verify_instr.state;
-			instr->fail_addr = verify_instr.fail_addr;
-			return -EIO;
-		}
-
-	}
-	return 0;
-}
-
-
-/**
- * onenand_block_by_block_erase - [Internal] erase block(s) using regular erase
- * @param mtd		MTD device structure
- * @param instr		erase instruction
- * @param region	erase region
- * @param block_size	erase block size
- *
- * Erase one or more blocks one block at a time
- */
-static int onenand_block_by_block_erase(struct mtd_info *mtd,
-					struct erase_info *instr,
-					struct mtd_erase_region_info *region,
-					unsigned int block_size)
-{
-	struct onenand_chip *this = mtd->priv;
-	loff_t addr = instr->addr;
-	int len = instr->len;
+	loff_t len = instr->len;
+	int ret = 0, i;
+	struct mtd_erase_region_info *region = NULL;
 	loff_t region_end = 0;
-	int ret = 0;
 
-	if (region) {
-		/* region is set for Flex-OneNAND */
-		region_end = region->offset + region->erasesize * region->numblocks;
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_erase: start = 0x%012llx, len = %llu\n", (unsigned long long) instr->addr, (unsigned long long) instr->len);
+
+	/* Do not allow erase past end of device */
+	if (unlikely((len + addr) > mtd->size)) {
+		printk(KERN_ERR "onenand_erase: Erase past end of device\n");
+		return -EINVAL;
 	}
 
-	instr->state = MTD_ERASING;
+	if (FLEXONENAND(this)) {
+		/* Find the eraseregion of this address */
+		i = flexonenand_region(mtd, addr);
+		region = &mtd->eraseregions[i];
+
+		block_size = region->erasesize;
+		region_end = region->offset + region->erasesize * region->numblocks;
+
+		/* Start address within region must align on block boundary.
+		 * Erase region's start offset is always block start address.
+		 */
+		if (unlikely((addr - region->offset) & (block_size - 1))) {
+			printk(KERN_ERR "onenand_erase: Unaligned address\n");
+			return -EINVAL;
+		}
+	} else {
+		block_size = 1 << this->erase_shift;
+
+		/* Start address must align on block boundary */
+		if (unlikely(addr & (block_size - 1))) {
+			printk(KERN_ERR "onenand_erase: Unaligned address\n");
+			return -EINVAL;
+		}
+	}
+
+	/* Length must align on block boundary */
+	if (unlikely(len & (block_size - 1))) {
+		printk(KERN_ERR "onenand_erase: Length not block aligned\n");
+		return -EINVAL;
+	}
+
+	instr->fail_addr = MTD_FAIL_ADDR_UNKNOWN;
+
+	/* Grab the lock and see if the device is available */
+	onenand_get_device(mtd, FL_ERASING);
 
 	/* Loop through the blocks */
+	instr->state = MTD_ERASING;
+
 	while (len) {
 		cond_resched();
 
 		/* Check if we have a bad block, we do not erase bad blocks */
 		if (onenand_block_isbad_nolock(mtd, addr, 0)) {
-			printk(KERN_WARNING "%s: attempt to erase a bad block "
-					"at addr 0x%012llx\n",
-					__func__, (unsigned long long) addr);
+			printk (KERN_WARNING "onenand_erase: attempt to erase a bad block at addr 0x%012llx\n", (unsigned long long) addr);
 			instr->state = MTD_ERASE_FAILED;
-			return -EIO;
+			goto erase_exit;
 		}
 
 		this->command(mtd, ONENAND_CMD_ERASE, addr, block_size);
@@ -2395,11 +2221,11 @@ static int onenand_block_by_block_erase(struct mtd_info *mtd,
 		ret = this->wait(mtd, FL_ERASING);
 		/* Check, if it is write protected */
 		if (ret) {
-			printk(KERN_ERR "%s: Failed erase, block %d\n",
-				__func__, onenand_block(this, addr));
+			printk(KERN_ERR "onenand_erase: Failed erase, block %d\n",
+						 onenand_block(this, addr));
 			instr->state = MTD_ERASE_FAILED;
 			instr->fail_addr = addr;
-			return -EIO;
+			goto erase_exit;
 		}
 
 		len -= block_size;
@@ -2415,88 +2241,25 @@ static int onenand_block_by_block_erase(struct mtd_info *mtd,
 
 			if (len & (block_size - 1)) {
 				/* FIXME: This should be handled at MTD partitioning level. */
-				printk(KERN_ERR "%s: Unaligned address\n",
-					__func__);
-				return -EIO;
+				printk(KERN_ERR "onenand_erase: Unaligned address\n");
+				goto erase_exit;
 			}
 		}
-	}
-	return 0;
-}
 
-/**
- * onenand_erase - [MTD Interface] erase block(s)
- * @param mtd		MTD device structure
- * @param instr		erase instruction
- *
- * Erase one or more blocks
- */
-static int onenand_erase(struct mtd_info *mtd, struct erase_info *instr)
-{
-	struct onenand_chip *this = mtd->priv;
-	unsigned int block_size;
-	loff_t addr = instr->addr;
-	loff_t len = instr->len;
-	int ret = 0;
-	struct mtd_erase_region_info *region = NULL;
-	loff_t region_offset = 0;
-
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: start=0x%012llx, len=%llu\n", __func__,
-	      (unsigned long long) instr->addr, (unsigned long long) instr->len);
-
-	/* Do not allow erase past end of device */
-	if (unlikely((len + addr) > mtd->size)) {
-		printk(KERN_ERR "%s: Erase past end of device\n", __func__);
-		return -EINVAL;
 	}
 
-	if (FLEXONENAND(this)) {
-		/* Find the eraseregion of this address */
-		int i = flexonenand_region(mtd, addr);
+	instr->state = MTD_ERASE_DONE;
 
-		region = &mtd->eraseregions[i];
-		block_size = region->erasesize;
+erase_exit:
 
-		/* Start address within region must align on block boundary.
-		 * Erase region's start offset is always block start address.
-		 */
-		region_offset = region->offset;
-	} else
-		block_size = 1 << this->erase_shift;
-
-	/* Start address must align on block boundary */
-	if (unlikely((addr - region_offset) & (block_size - 1))) {
-		printk(KERN_ERR "%s: Unaligned address\n", __func__);
-		return -EINVAL;
-	}
-
-	/* Length must align on block boundary */
-	if (unlikely(len & (block_size - 1))) {
-		printk(KERN_ERR "%s: Length not block aligned\n", __func__);
-		return -EINVAL;
-	}
-
-	instr->fail_addr = MTD_FAIL_ADDR_UNKNOWN;
-
-	/* Grab the lock and see if the device is available */
-	onenand_get_device(mtd, FL_ERASING);
-
-	if (region || instr->len < MB_ERASE_MIN_BLK_COUNT * block_size) {
-		/* region is set for Flex-OneNAND (no mb erase) */
-		ret = onenand_block_by_block_erase(mtd, instr,
-						   region, block_size);
-	} else {
-		ret = onenand_multiblock_erase(mtd, instr, block_size);
-	}
+	ret = instr->state == MTD_ERASE_DONE ? 0 : -EIO;
 
 	/* Deselect and wake up anyone waiting on the device */
 	onenand_release_device(mtd);
 
 	/* Do call back function */
-	if (!ret) {
-		instr->state = MTD_ERASE_DONE;
+	if (!ret)
 		mtd_erase_callback(instr);
-	}
 
 	return ret;
 }
@@ -2509,7 +2272,7 @@ static int onenand_erase(struct mtd_info *mtd, struct erase_info *instr)
  */
 static void onenand_sync(struct mtd_info *mtd)
 {
-	DEBUG(MTD_DEBUG_LEVEL3, "%s: called\n", __func__);
+	DEBUG(MTD_DEBUG_LEVEL3, "onenand_sync: called\n");
 
 	/* Grab the lock and see if the device is available */
 	onenand_get_device(mtd, FL_SYNCING);
@@ -2643,8 +2406,7 @@ static int onenand_do_lock_cmd(struct mtd_info *mtd, loff_t ofs, size_t len, int
 		/* Check lock status */
 		status = this->read_word(this->base + ONENAND_REG_WP_STATUS);
 		if (!(status & wp_status_mask))
-			printk(KERN_ERR "%s: wp status = 0x%x\n",
-				__func__, status);
+			printk(KERN_ERR "wp status = 0x%x\n", status);
 
 		return 0;
 	}
@@ -2673,8 +2435,7 @@ static int onenand_do_lock_cmd(struct mtd_info *mtd, loff_t ofs, size_t len, int
 		/* Check lock status */
 		status = this->read_word(this->base + ONENAND_REG_WP_STATUS);
 		if (!(status & wp_status_mask))
-			printk(KERN_ERR "%s: block = %d, wp status = 0x%x\n",
-				__func__, block, status);
+			printk(KERN_ERR "block = %d, wp status = 0x%x\n", block, status);
 	}
 
 	return 0;
@@ -2741,8 +2502,7 @@ static int onenand_check_lock_status(struct onenand_chip *this)
 		/* Check lock status */
 		status = this->read_word(this->base + ONENAND_REG_WP_STATUS);
 		if (!(status & ONENAND_WP_US)) {
-			printk(KERN_ERR "%s: block = %d, wp status = 0x%x\n",
-				__func__, block, status);
+			printk(KERN_ERR "block = %d, wp status = 0x%x\n", block, status);
 			return 0;
 		}
 	}
@@ -2797,208 +2557,6 @@ static void onenand_unlock_all(struct mtd_info *mtd)
 
 #ifdef CONFIG_MTD_ONENAND_OTP
 
-/**
- * onenand_otp_command - Send OTP specific command to OneNAND device
- * @param mtd	 MTD device structure
- * @param cmd	 the command to be sent
- * @param addr	 offset to read from or write to
- * @param len	 number of bytes to read or write
- */
-static int onenand_otp_command(struct mtd_info *mtd, int cmd, loff_t addr,
-				size_t len)
-{
-	struct onenand_chip *this = mtd->priv;
-	int value, block, page;
-
-	/* Address translation */
-	switch (cmd) {
-	case ONENAND_CMD_OTP_ACCESS:
-		block = (int) (addr >> this->erase_shift);
-		page = -1;
-		break;
-
-	default:
-		block = (int) (addr >> this->erase_shift);
-		page = (int) (addr >> this->page_shift);
-
-		if (ONENAND_IS_2PLANE(this)) {
-			/* Make the even block number */
-			block &= ~1;
-			/* Is it the odd plane? */
-			if (addr & this->writesize)
-				block++;
-			page >>= 1;
-		}
-		page &= this->page_mask;
-		break;
-	}
-
-	if (block != -1) {
-		/* Write 'DFS, FBA' of Flash */
-		value = onenand_block_address(this, block);
-		this->write_word(value, this->base +
-				ONENAND_REG_START_ADDRESS1);
-	}
-
-	if (page != -1) {
-		/* Now we use page size operation */
-		int sectors = 4, count = 4;
-		int dataram;
-
-		switch (cmd) {
-		default:
-			if (ONENAND_IS_2PLANE(this) && cmd == ONENAND_CMD_PROG)
-				cmd = ONENAND_CMD_2X_PROG;
-			dataram = ONENAND_CURRENT_BUFFERRAM(this);
-			break;
-		}
-
-		/* Write 'FPA, FSA' of Flash */
-		value = onenand_page_address(page, sectors);
-		this->write_word(value, this->base +
-				ONENAND_REG_START_ADDRESS8);
-
-		/* Write 'BSA, BSC' of DataRAM */
-		value = onenand_buffer_address(dataram, sectors, count);
-		this->write_word(value, this->base + ONENAND_REG_START_BUFFER);
-	}
-
-	/* Interrupt clear */
-	this->write_word(ONENAND_INT_CLEAR, this->base + ONENAND_REG_INTERRUPT);
-
-	/* Write command */
-	this->write_word(cmd, this->base + ONENAND_REG_COMMAND);
-
-	return 0;
-}
-
-/**
- * onenand_otp_write_oob_nolock - [Internal] OneNAND write out-of-band, specific to OTP
- * @param mtd		MTD device structure
- * @param to		offset to write to
- * @param len		number of bytes to write
- * @param retlen	pointer to variable to store the number of written bytes
- * @param buf		the data to write
- *
- * OneNAND write out-of-band only for OTP
- */
-static int onenand_otp_write_oob_nolock(struct mtd_info *mtd, loff_t to,
-				    struct mtd_oob_ops *ops)
-{
-	struct onenand_chip *this = mtd->priv;
-	int column, ret = 0, oobsize;
-	int written = 0;
-	u_char *oobbuf;
-	size_t len = ops->ooblen;
-	const u_char *buf = ops->oobbuf;
-	int block, value, status;
-
-	to += ops->ooboffs;
-
-	/* Initialize retlen, in case of early exit */
-	ops->oobretlen = 0;
-
-	oobsize = mtd->oobsize;
-
-	column = to & (mtd->oobsize - 1);
-
-	oobbuf = this->oob_buf;
-
-	/* Loop until all data write */
-	while (written < len) {
-		int thislen = min_t(int, oobsize, len - written);
-
-		cond_resched();
-
-		block = (int) (to >> this->erase_shift);
-		/*
-		 * Write 'DFS, FBA' of Flash
-		 * Add: F100h DQ=DFS, FBA
-		 */
-
-		value = onenand_block_address(this, block);
-		this->write_word(value, this->base +
-				ONENAND_REG_START_ADDRESS1);
-
-		/*
-		 * Select DataRAM for DDP
-		 * Add: F101h DQ=DBS
-		 */
-
-		value = onenand_bufferram_address(this, block);
-		this->write_word(value, this->base +
-				ONENAND_REG_START_ADDRESS2);
-		ONENAND_SET_NEXT_BUFFERRAM(this);
-
-		/*
-		 * Enter OTP access mode
-		 */
-		this->command(mtd, ONENAND_CMD_OTP_ACCESS, 0, 0);
-		this->wait(mtd, FL_OTPING);
-
-		/* We send data to spare ram with oobsize
-		 * to prevent byte access */
-		memcpy(oobbuf + column, buf, thislen);
-
-		/*
-		 * Write Data into DataRAM
-		 * Add: 8th Word
-		 * in sector0/spare/page0
-		 * DQ=XXFCh
-		 */
-		this->write_bufferram(mtd, ONENAND_SPARERAM,
-					oobbuf, 0, mtd->oobsize);
-
-		onenand_otp_command(mtd, ONENAND_CMD_PROGOOB, to, mtd->oobsize);
-		onenand_update_bufferram(mtd, to, 0);
-		if (ONENAND_IS_2PLANE(this)) {
-			ONENAND_SET_BUFFERRAM1(this);
-			onenand_update_bufferram(mtd, to + this->writesize, 0);
-		}
-
-		ret = this->wait(mtd, FL_WRITING);
-		if (ret) {
-			printk(KERN_ERR "%s: write failed %d\n", __func__, ret);
-			break;
-		}
-
-		/* Exit OTP access mode */
-		this->command(mtd, ONENAND_CMD_RESET, 0, 0);
-		this->wait(mtd, FL_RESETING);
-
-		status = this->read_word(this->base + ONENAND_REG_CTRL_STATUS);
-		status &= 0x60;
-
-		if (status == 0x60) {
-			printk(KERN_DEBUG "\nBLOCK\tSTATUS\n");
-			printk(KERN_DEBUG "1st Block\tLOCKED\n");
-			printk(KERN_DEBUG "OTP Block\tLOCKED\n");
-		} else if (status == 0x20) {
-			printk(KERN_DEBUG "\nBLOCK\tSTATUS\n");
-			printk(KERN_DEBUG "1st Block\tLOCKED\n");
-			printk(KERN_DEBUG "OTP Block\tUN-LOCKED\n");
-		} else if (status == 0x40) {
-			printk(KERN_DEBUG "\nBLOCK\tSTATUS\n");
-			printk(KERN_DEBUG "1st Block\tUN-LOCKED\n");
-			printk(KERN_DEBUG "OTP Block\tLOCKED\n");
-		} else {
-			printk(KERN_DEBUG "Reboot to check\n");
-		}
-
-		written += thislen;
-		if (written == len)
-			break;
-
-		to += mtd->writesize;
-		buf += thislen;
-		column = 0;
-	}
-
-	ops->oobretlen = written;
-
-	return ret;
-}
-
 /* Internal OTP operation */
 typedef int (*otp_op_t)(struct mtd_info *mtd, loff_t form, size_t len,
 		size_t *retlen, u_char *buf);
@@ -3029,7 +2587,7 @@ static int do_otp_read(struct mtd_info *mtd, loff_t from, size_t len,
 	this->command(mtd, ONENAND_CMD_OTP_ACCESS, 0, 0);
 	this->wait(mtd, FL_OTPING);
 
-	ret = ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this) ?
+	ret = ONENAND_IS_MLC(this) ?
 		onenand_mlc_read_ops_nolock(mtd, from, &ops) :
 		onenand_read_ops_nolock(mtd, from, &ops);
 
@@ -3101,11 +2659,11 @@ static int do_otp_lock(struct mtd_info *mtd, loff_t from, size_t len,
 	struct mtd_oob_ops ops;
 	int ret;
 
-	if (FLEXONENAND(this)) {
+	/* Enter OTP access mode */
+	this->command(mtd, ONENAND_CMD_OTP_ACCESS, 0, 0);
+	this->wait(mtd, FL_OTPING);
 
-		/* Enter OTP access mode */
-		this->command(mtd, ONENAND_CMD_OTP_ACCESS, 0, 0);
-		this->wait(mtd, FL_OTPING);
+	if (FLEXONENAND(this)) {
 		/*
 		 * For Flex-OneNAND, we write lock mark to 1st word of sector 4 of
 		 * main area of page 49.
@@ -3116,18 +2674,18 @@ static int do_otp_lock(struct mtd_info *mtd, loff_t from, size_t len,
 		ops.oobbuf = NULL;
 		ret = onenand_write_ops_nolock(mtd, mtd->writesize * 49, &ops);
 		*retlen = ops.retlen;
-
-		/* Exit OTP access mode */
-		this->command(mtd, ONENAND_CMD_RESET, 0, 0);
-		this->wait(mtd, FL_RESETING);
 	} else {
 		ops.mode = MTD_OOB_PLACE;
 		ops.ooblen = len;
 		ops.oobbuf = buf;
 		ops.ooboffs = 0;
-		ret = onenand_otp_write_oob_nolock(mtd, from, &ops);
+		ret = onenand_write_oob_nolock(mtd, from, &ops);
 		*retlen = ops.oobretlen;
 	}
+
+	/* Exit OTP access mode */
+	this->command(mtd, ONENAND_CMD_RESET, 0, 0);
+	this->wait(mtd, FL_RESETING);
 
 	return ret;
 }
@@ -3159,21 +2717,16 @@ static int onenand_otp_walk(struct mtd_info *mtd, loff_t from, size_t len,
 	if (density < ONENAND_DEVICE_DENSITY_512Mb)
 		otp_pages = 20;
 	else
-		otp_pages = 50;
+		otp_pages = 10;
 
 	if (mode == MTD_OTP_FACTORY) {
 		from += mtd->writesize * otp_pages;
-		otp_pages = ONENAND_PAGES_PER_BLOCK - otp_pages;
+		otp_pages = 64 - otp_pages;
 	}
 
 	/* Check User/Factory boundary */
-	if (mode == MTD_OTP_USER) {
-		if (mtd->writesize * otp_pages < from + len)
-			return 0;
-	} else {
-		if (mtd->writesize * otp_pages <  len)
-			return 0;
-	}
+	if (((mtd->writesize * otp_pages) - (from + len)) < 0)
+		return 0;
 
 	onenand_get_device(mtd, FL_OTPING);
 	while (len > 0 && otp_pages > 0) {
@@ -3196,12 +2749,13 @@ static int onenand_otp_walk(struct mtd_info *mtd, loff_t from, size_t len,
 			*retlen += sizeof(struct otp_info);
 		} else {
 			size_t tmp_retlen;
+			int size = len;
 
 			ret = action(mtd, from, len, &tmp_retlen, buf);
 
-			buf += tmp_retlen;
-			len -= tmp_retlen;
-			*retlen += tmp_retlen;
+			buf += size;
+			len -= size;
+			*retlen += size;
 
 			if (ret)
 				break;
@@ -3314,10 +2868,20 @@ static int onenand_lock_user_prot_reg(struct mtd_info *mtd, loff_t from,
 	u_char *buf = FLEXONENAND(this) ? this->page_buf : this->oob_buf;
 	size_t retlen;
 	int ret;
-	unsigned int otp_lock_offset = ONENAND_OTP_LOCK_OFFSET;
 
 	memset(buf, 0xff, FLEXONENAND(this) ? this->writesize
 						 : mtd->oobsize);
+	/*
+	 * Note: OTP lock operation
+	 *       OTP block : 0xXXFC
+	 *       1st block : 0xXXF3 (If chip support)
+	 *       Both      : 0xXXF0 (If chip support)
+	 */
+	if (FLEXONENAND(this))
+		buf[FLEXONENAND_OTP_LOCK_OFFSET] = 0xFC;
+	else
+		buf[ONENAND_OTP_LOCK_OFFSET] = 0xFC;
+
 	/*
 	 * Write lock mark to 8th word of sector0 of page0 of the spare0.
 	 * We write 16 bytes spare area instead of 2 bytes.
@@ -3328,30 +2892,10 @@ static int onenand_lock_user_prot_reg(struct mtd_info *mtd, loff_t from,
 	from = 0;
 	len = FLEXONENAND(this) ? mtd->writesize : 16;
 
-	/*
-	 * Note: OTP lock operation
-	 *       OTP block : 0xXXFC			XX 1111 1100
-	 *       1st block : 0xXXF3 (If chip support)	XX 1111 0011
-	 *       Both      : 0xXXF0 (If chip support)	XX 1111 0000
-	 */
-	if (FLEXONENAND(this))
-		otp_lock_offset = FLEXONENAND_OTP_LOCK_OFFSET;
-
-	/* ONENAND_OTP_AREA | ONENAND_OTP_BLOCK0 | ONENAND_OTP_AREA_BLOCK0 */
-	if (otp == 1)
-		buf[otp_lock_offset] = 0xFC;
-	else if (otp == 2)
-		buf[otp_lock_offset] = 0xF3;
-	else if (otp == 3)
-		buf[otp_lock_offset] = 0xF0;
-	else if (otp != 0)
-		printk(KERN_DEBUG "[OneNAND] Invalid option selected for OTP\n");
-
 	ret = onenand_otp_walk(mtd, from, len, &retlen, buf, do_otp_lock, MTD_OTP_USER);
 
 	return ret ? : retlen;
 }
-
 #endif	/* CONFIG_MTD_ONENAND_OTP */
 
 /**
@@ -3365,20 +2909,16 @@ static int onenand_lock_user_prot_reg(struct mtd_info *mtd, loff_t from,
 static void onenand_check_features(struct mtd_info *mtd)
 {
 	struct onenand_chip *this = mtd->priv;
-	unsigned int density, process, numbufs;
+	unsigned int density, process;
 
 	/* Lock scheme depends on density and process */
 	density = onenand_get_density(this->device_id);
 	process = this->version_id >> ONENAND_VERSION_PROCESS_SHIFT;
-	numbufs = this->read_word(this->base + ONENAND_REG_NUM_BUFFERS) >> 8;
 
 	/* Lock scheme */
 	switch (density) {
 	case ONENAND_DEVICE_DENSITY_4Gb:
-		if (ONENAND_IS_DDP(this))
-			this->options |= ONENAND_HAS_2PLANE;
-		else if (numbufs == 1)
-			this->options |= ONENAND_HAS_4KB_PAGE;
+		this->options |= ONENAND_HAS_2PLANE;
 
 	case ONENAND_DEVICE_DENSITY_2Gb:
 		/* 2Gb DDP does not have 2 plane */
@@ -3399,7 +2939,7 @@ static void onenand_check_features(struct mtd_info *mtd)
 		break;
 	}
 
-	if (ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this))
+	if (ONENAND_IS_MLC(this))
 		this->options &= ~ONENAND_HAS_2PLANE;
 
 	if (FLEXONENAND(this)) {
@@ -3413,8 +2953,6 @@ static void onenand_check_features(struct mtd_info *mtd)
 		printk(KERN_DEBUG "Chip support all block unlock\n");
 	if (this->options & ONENAND_HAS_2PLANE)
 		printk(KERN_DEBUG "Chip has 2 plane\n");
-	if (this->options & ONENAND_HAS_4KB_PAGE)
-		printk(KERN_DEBUG "Chip has 4KiB pagesize\n");
 }
 
 /**
@@ -3634,8 +3172,7 @@ static int flexonenand_check_blocks_erased(struct mtd_info *mtd, int start, int 
 				break;
 
 		if (i != mtd->oobsize) {
-			printk(KERN_WARNING "%s: Block %d not erased.\n",
-				__func__, block);
+			printk(KERN_WARNING "Block %d not erased.\n", block);
 			return 1;
 		}
 	}
@@ -3667,8 +3204,8 @@ int flexonenand_set_boundary(struct mtd_info *mtd, int die,
 	blksperdie >>= ONENAND_IS_DDP(this) ? 1 : 0;
 
 	if (boundary >= blksperdie) {
-		printk(KERN_ERR "%s: Invalid boundary value. "
-				"Boundary not changed.\n", __func__);
+		printk(KERN_ERR "flexonenand_set_boundary: Invalid boundary value. "
+				"Boundary not changed.\n");
 		return -EINVAL;
 	}
 
@@ -3677,8 +3214,7 @@ int flexonenand_set_boundary(struct mtd_info *mtd, int die,
 	new = boundary + (die * this->density_mask);
 	ret = flexonenand_check_blocks_erased(mtd, min(old, new) + 1, max(old, new));
 	if (ret) {
-		printk(KERN_ERR "%s: Please erase blocks "
-				"before boundary change\n", __func__);
+		printk(KERN_ERR "flexonenand_set_boundary: Please erase blocks before boundary change\n");
 		return ret;
 	}
 
@@ -3691,12 +3227,12 @@ int flexonenand_set_boundary(struct mtd_info *mtd, int die,
 
 	thisboundary = this->read_word(this->base + ONENAND_DATARAM);
 	if ((thisboundary >> FLEXONENAND_PI_UNLOCK_SHIFT) != 3) {
-		printk(KERN_ERR "%s: boundary locked\n", __func__);
+		printk(KERN_ERR "flexonenand_set_boundary: boundary locked\n");
 		ret = 1;
 		goto out;
 	}
 
-	printk(KERN_INFO "Changing die %d boundary: %d%s\n",
+	printk(KERN_INFO "flexonenand_set_boundary: Changing die %d boundary: %d%s\n",
 			die, boundary, lock ? "(Locked)" : "(Unlocked)");
 
 	addr = die ? this->diesize[0] : 0;
@@ -3707,8 +3243,7 @@ int flexonenand_set_boundary(struct mtd_info *mtd, int die,
 	this->command(mtd, ONENAND_CMD_ERASE, addr, 0);
 	ret = this->wait(mtd, FL_ERASING);
 	if (ret) {
-		printk(KERN_ERR "%s: Failed PI erase for Die %d\n",
-		       __func__, die);
+		printk(KERN_ERR "flexonenand_set_boundary: Failed PI erase for Die %d\n", die);
 		goto out;
 	}
 
@@ -3716,8 +3251,7 @@ int flexonenand_set_boundary(struct mtd_info *mtd, int die,
 	this->command(mtd, ONENAND_CMD_PROG, addr, 0);
 	ret = this->wait(mtd, FL_WRITING);
 	if (ret) {
-		printk(KERN_ERR "%s: Failed PI write for Die %d\n",
-			__func__, die);
+		printk(KERN_ERR "flexonenand_set_boundary: Failed PI write for Die %d\n", die);
 		goto out;
 	}
 
@@ -3734,16 +3268,17 @@ out:
 }
 
 /**
- * onenand_chip_probe - [OneNAND Interface] The generic chip probe
+ * onenand_probe - [OneNAND Interface] Probe the OneNAND device
  * @param mtd		MTD device structure
  *
  * OneNAND detection method:
  *   Compare the values from command with ones from register
  */
-static int onenand_chip_probe(struct mtd_info *mtd)
+static int onenand_probe(struct mtd_info *mtd)
 {
 	struct onenand_chip *this = mtd->priv;
-	int bram_maf_id, bram_dev_id, maf_id, dev_id;
+	int bram_maf_id, bram_dev_id, maf_id, dev_id, ver_id;
+	int density;
 	int syscfg;
 
 	/* Save system configuration 1 */
@@ -3773,42 +3308,17 @@ static int onenand_chip_probe(struct mtd_info *mtd)
 	/* Read manufacturer and device IDs from Register */
 	maf_id = this->read_word(this->base + ONENAND_REG_MANUFACTURER_ID);
 	dev_id = this->read_word(this->base + ONENAND_REG_DEVICE_ID);
+	ver_id = this->read_word(this->base + ONENAND_REG_VERSION_ID);
+	this->technology = this->read_word(this->base + ONENAND_REG_TECHNOLOGY);
 
 	/* Check OneNAND device */
 	if (maf_id != bram_maf_id || dev_id != bram_dev_id)
 		return -ENXIO;
 
-	return 0;
-}
-
-/**
- * onenand_probe - [OneNAND Interface] Probe the OneNAND device
- * @param mtd		MTD device structure
- */
-static int onenand_probe(struct mtd_info *mtd)
-{
-	struct onenand_chip *this = mtd->priv;
-	int maf_id, dev_id, ver_id;
-	int density;
-	int ret;
-
-	ret = this->chip_probe(mtd);
-	if (ret)
-		return ret;
-
-	/* Read manufacturer and device IDs from Register */
-	maf_id = this->read_word(this->base + ONENAND_REG_MANUFACTURER_ID);
-	dev_id = this->read_word(this->base + ONENAND_REG_DEVICE_ID);
-	ver_id = this->read_word(this->base + ONENAND_REG_VERSION_ID);
-	this->technology = this->read_word(this->base + ONENAND_REG_TECHNOLOGY);
-
 	/* Flash device information */
 	onenand_print_device_info(dev_id, ver_id);
 	this->device_id = dev_id;
 	this->version_id = ver_id;
-
-	/* Check OneNAND features */
-	onenand_check_features(mtd);
 
 	density = onenand_get_density(dev_id);
 	if (FLEXONENAND(this)) {
@@ -3831,7 +3341,7 @@ static int onenand_probe(struct mtd_info *mtd)
 	/* The data buffer size is equal to page size */
 	mtd->writesize = this->read_word(this->base + ONENAND_REG_DATA_BUFFER_SIZE);
 	/* We use the full BufferRAM */
-	if (ONENAND_IS_MLC(this) || ONENAND_IS_4KB_PAGE(this))
+	if (ONENAND_IS_MLC(this))
 		mtd->writesize <<= 1;
 
 	mtd->oobsize = mtd->writesize >> 5;
@@ -3860,6 +3370,9 @@ static int onenand_probe(struct mtd_info *mtd)
 		flexonenand_get_size(mtd);
 	else
 		mtd->size = this->chipsize;
+
+	/* Check OneNAND features */
+	onenand_check_features(mtd);
 
 	/*
 	 * We emulate the 4KiB page and 256KiB erase block size
@@ -3895,8 +3408,8 @@ static void onenand_resume(struct mtd_info *mtd)
 	if (this->state == FL_PM_SUSPENDED)
 		onenand_release_device(mtd);
 	else
-		printk(KERN_ERR "%s: resume() called for the chip which is not "
-				"in suspended state\n", __func__);
+		printk(KERN_ERR "resume() called for the chip which is not"
+				"in suspended state\n");
 }
 
 /**
@@ -3928,9 +3441,6 @@ int onenand_scan(struct mtd_info *mtd, int maxchips)
 	if (!this->unlock_all)
 		this->unlock_all = onenand_unlock_all;
 
-	if (!this->chip_probe)
-		this->chip_probe = onenand_chip_probe;
-
 	if (!this->read_bufferram)
 		this->read_bufferram = onenand_read_bufferram;
 	if (!this->write_bufferram)
@@ -3954,24 +3464,15 @@ int onenand_scan(struct mtd_info *mtd, int maxchips)
 	if (!this->page_buf) {
 		this->page_buf = kzalloc(mtd->writesize, GFP_KERNEL);
 		if (!this->page_buf) {
-			printk(KERN_ERR "%s: Can't allocate page_buf\n",
-				__func__);
+			printk(KERN_ERR "onenand_scan(): Can't allocate page_buf\n");
 			return -ENOMEM;
 		}
-#ifdef CONFIG_MTD_ONENAND_VERIFY_WRITE
-		this->verify_buf = kzalloc(mtd->writesize, GFP_KERNEL);
-		if (!this->verify_buf) {
-			kfree(this->page_buf);
-			return -ENOMEM;
-		}
-#endif
 		this->options |= ONENAND_PAGEBUF_ALLOC;
 	}
 	if (!this->oob_buf) {
 		this->oob_buf = kzalloc(mtd->oobsize, GFP_KERNEL);
 		if (!this->oob_buf) {
-			printk(KERN_ERR "%s: Can't allocate oob_buf\n",
-				__func__);
+			printk(KERN_ERR "onenand_scan(): Can't allocate oob_buf\n");
 			if (this->options & ONENAND_PAGEBUF_ALLOC) {
 				this->options &= ~ONENAND_PAGEBUF_ALLOC;
 				kfree(this->page_buf);
@@ -4004,8 +3505,8 @@ int onenand_scan(struct mtd_info *mtd, int maxchips)
 		break;
 
 	default:
-		printk(KERN_WARNING "%s: No OOB scheme defined for oobsize %d\n",
-			__func__, mtd->oobsize);
+		printk(KERN_WARNING "No OOB scheme defined for oobsize %d\n",
+			mtd->oobsize);
 		mtd->subpage_sft = 0;
 		/* To prevent kernel oops */
 		this->ecclayout = &onenand_oob_32;
@@ -4028,7 +3529,7 @@ int onenand_scan(struct mtd_info *mtd, int maxchips)
 	mtd->ecclayout = this->ecclayout;
 
 	/* Fill in remaining MTD driver data */
-	mtd->type = ONENAND_IS_MLC(this) ? MTD_MLCNANDFLASH : MTD_NANDFLASH;
+	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
 	mtd->erase = onenand_erase;
 	mtd->point = NULL;
@@ -4092,12 +3593,8 @@ void onenand_release(struct mtd_info *mtd)
 		kfree(this->bbm);
 	}
 	/* Buffers allocated by onenand_scan */
-	if (this->options & ONENAND_PAGEBUF_ALLOC) {
+	if (this->options & ONENAND_PAGEBUF_ALLOC)
 		kfree(this->page_buf);
-#ifdef CONFIG_MTD_ONENAND_VERIFY_WRITE
-		kfree(this->verify_buf);
-#endif
-	}
 	if (this->options & ONENAND_OOBBUF_ALLOC)
 		kfree(this->oob_buf);
 	kfree(mtd->eraseregions);

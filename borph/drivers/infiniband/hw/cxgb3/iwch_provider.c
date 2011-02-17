@@ -42,7 +42,6 @@
 #include <linux/ethtool.h>
 #include <linux/rtnetlink.h>
 #include <linux/inetdevice.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -154,8 +153,6 @@ static struct ib_cq *iwch_create_cq(struct ib_device *ibdev, int entries, int ve
 	struct iwch_create_cq_resp uresp;
 	struct iwch_create_cq_req ureq;
 	struct iwch_ucontext *ucontext = NULL;
-	static int warned;
-	size_t resplen;
 
 	PDBG("%s ib_dev %p entries %d\n", __func__, ibdev, entries);
 	rhp = to_iwch_dev(ibdev);
@@ -190,7 +187,7 @@ static struct ib_cq *iwch_create_cq(struct ib_device *ibdev, int entries, int ve
 	entries = roundup_pow_of_two(entries);
 	chp->cq.size_log2 = ilog2(entries);
 
-	if (cxio_create_cq(&rhp->rdev, &chp->cq, !ucontext)) {
+	if (cxio_create_cq(&rhp->rdev, &chp->cq)) {
 		kfree(chp);
 		return ERR_PTR(-ENOMEM);
 	}
@@ -219,26 +216,15 @@ static struct ib_cq *iwch_create_cq(struct ib_device *ibdev, int entries, int ve
 		uresp.key = ucontext->key;
 		ucontext->key += PAGE_SIZE;
 		spin_unlock(&ucontext->mmap_lock);
-		mm->key = uresp.key;
-		mm->addr = virt_to_phys(chp->cq.queue);
-		if (udata->outlen < sizeof uresp) {
-			if (!warned++)
-				printk(KERN_WARNING MOD "Warning - "
-				       "downlevel libcxgb3 (non-fatal).\n");
-			mm->len = PAGE_ALIGN((1UL << uresp.size_log2) *
-					     sizeof(struct t3_cqe));
-			resplen = sizeof(struct iwch_create_cq_resp_v0);
-		} else {
-			mm->len = PAGE_ALIGN(((1UL << uresp.size_log2) + 1) *
-					     sizeof(struct t3_cqe));
-			uresp.memsize = mm->len;
-			resplen = sizeof uresp;
-		}
-		if (ib_copy_to_udata(udata, &uresp, resplen)) {
+		if (ib_copy_to_udata(udata, &uresp, sizeof (uresp))) {
 			kfree(mm);
 			iwch_destroy_cq(&chp->ibcq);
 			return ERR_PTR(-EFAULT);
 		}
+		mm->key = uresp.key;
+		mm->addr = virt_to_phys(chp->cq.queue);
+		mm->len = PAGE_ALIGN((1UL << uresp.size_log2) *
+					     sizeof (struct t3_cqe));
 		insert_mmap(ucontext, mm);
 	}
 	PDBG("created cqid 0x%0x chp %p size 0x%0x, dma_addr 0x%0llx\n",
@@ -1427,7 +1413,6 @@ int iwch_register_device(struct iwch_dev *dev)
 	dev->ibdev.post_send = iwch_post_send;
 	dev->ibdev.post_recv = iwch_post_receive;
 	dev->ibdev.get_protocol_stats = iwch_get_mib;
-	dev->ibdev.uverbs_abi_ver = IWCH_UVERBS_ABI_VERSION;
 
 	dev->ibdev.iwcm = kmalloc(sizeof(struct iw_cm_verbs), GFP_KERNEL);
 	if (!dev->ibdev.iwcm)
@@ -1442,7 +1427,7 @@ int iwch_register_device(struct iwch_dev *dev)
 	dev->ibdev.iwcm->rem_ref = iwch_qp_rem_ref;
 	dev->ibdev.iwcm->get_qp = iwch_get_qp;
 
-	ret = ib_register_device(&dev->ibdev, NULL);
+	ret = ib_register_device(&dev->ibdev);
 	if (ret)
 		goto bail1;
 

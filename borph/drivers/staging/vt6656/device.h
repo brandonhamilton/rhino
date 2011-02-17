@@ -71,6 +71,9 @@
 #define WPA_SUPPLICANT_DRIVER_WEXT_SUPPORT
 #endif
 
+//2007-0920-01<Add>by MikeLiu
+#ifndef SndEvt_ToAPI
+#define SndEvt_ToAPI
 //please copy below macro to driver_event.c for API
 #define RT_INSMOD_EVENT_FLAG                             0x0101
 #define RT_UPDEV_EVENT_FLAG                               0x0102
@@ -78,6 +81,7 @@
 #define RT_WPACONNECTED_EVENT_FLAG             0x0104
 #define RT_DOWNDEV_EVENT_FLAG                        0x0105
 #define RT_RMMOD_EVENT_FLAG                              0x0106
+#endif
 
 //
 // device specific
@@ -103,7 +107,8 @@
 #define MAC_MAX_CONTEXT_REG     (256+128)
 
 #define MAX_MULTICAST_ADDRESS_NUM       32
-#define MULTICAST_ADDRESS_LIST_SIZE     (MAX_MULTICAST_ADDRESS_NUM * ETH_ALEN)
+#define MULTICAST_ADDRESS_LIST_SIZE     (MAX_MULTICAST_ADDRESS_NUM * U_ETHER_ADDR_LEN)
+
 
 //#define OP_MODE_INFRASTRUCTURE  0
 //#define OP_MODE_ADHOC           1
@@ -124,6 +129,8 @@
 #define KEYSEL_WEP104                   1
 #define KEYSEL_TKIP                     2
 #define KEYSEL_CCMP                     3
+
+
 
 #define AUTO_FB_NONE            0
 #define AUTO_FB_0               1
@@ -155,6 +162,8 @@
 #define BB_VGA_LEVEL            4
 #define BB_VGA_CHANGE_THRESHOLD 3
 
+
+
 #ifndef RUN_AT
 #define RUN_AT(x)                       (jiffies+(x))
 #endif
@@ -166,22 +175,23 @@
 
 /*---------------------  Export Types  ------------------------------*/
 
-#define DBG_PRT(l, p, args...) { if (l <= msglevel) printk(p, ##args); }
-#define PRINT_K(p, args...) { if (PRIVATE_Message) printk(p, ##args); }
+#define DBG_PRT(l, p, args...) {if (l<=msglevel) printk( p ,##args);}
+#define PRINT_K(p, args...) {if (PRIVATE_Message) printk( p ,##args);}
 
 typedef enum __device_msg_level {
-	MSG_LEVEL_ERR = 0,            /* Errors causing abnormal operation */
-	MSG_LEVEL_NOTICE = 1,         /* Errors needing user notification */
-	MSG_LEVEL_INFO = 2,           /* Normal message. */
-	MSG_LEVEL_VERBOSE = 3,        /* Will report all trival errors. */
-	MSG_LEVEL_DEBUG = 4           /* Only for debug purpose. */
+    MSG_LEVEL_ERR=0,            //Errors that will cause abnormal operation.
+    MSG_LEVEL_NOTICE=1,         //Some errors need users to be notified.
+    MSG_LEVEL_INFO=2,           //Normal message.
+    MSG_LEVEL_VERBOSE=3,        //Will report all trival errors.
+    MSG_LEVEL_DEBUG=4           //Only for debug purpose.
 } DEVICE_MSG_LEVEL, *PDEVICE_MSG_LEVEL;
 
 typedef enum __device_init_type {
-	DEVICE_INIT_COLD = 0,       /* cold init */
-	DEVICE_INIT_RESET,          /* reset init or Dx to D0 power remain */
-	DEVICE_INIT_DXPL            /* Dx to D0 power lost init */
+    DEVICE_INIT_COLD=0,         // cold init
+    DEVICE_INIT_RESET,          // reset init or Dx to D0 power remain init
+    DEVICE_INIT_DXPL            // Dx to D0 power lost init
 } DEVICE_INIT_TYPE, *PDEVICE_INIT_TYPE;
+
 
 //USB
 
@@ -193,12 +203,15 @@ typedef enum _CONTEXT_TYPE {
     CONTEXT_MGMT_PACKET
 } CONTEXT_TYPE;
 
+
+
+
 // RCB (Receive Control Block)
 typedef struct _RCB
 {
-    void *Next;
-    signed long                    Ref;
-    void *pDevice;
+    PVOID                   Next;
+    LONG                    Ref;
+    PVOID                   pDevice;
     struct urb              *pUrb;
     SRxMgmtPacket           sMngPacket;
     struct sk_buff*         skb;
@@ -206,43 +219,48 @@ typedef struct _RCB
 
 } RCB, *PRCB;
 
+
 // used to track bulk out irps
 typedef struct _USB_SEND_CONTEXT {
-    void *pDevice;
+    PVOID           pDevice;
     struct sk_buff *pPacket;
     struct urb      *pUrb;
-    unsigned int            uBufLen;
+    UINT            uBufLen;
     CONTEXT_TYPE    Type;
     SEthernetHeader sEthHeader;
-    void *Next;
+    PVOID           Next;
     BOOL            bBoolInUse;
-    unsigned char           Data[MAX_TOTAL_SIZE_WITH_ALL_HEADERS];
+    UCHAR           Data[MAX_TOTAL_SIZE_WITH_ALL_HEADERS];
 } USB_SEND_CONTEXT, *PUSB_SEND_CONTEXT;
 
-/* structure got from configuration file as user-desired default settings */
-typedef struct _DEFAULT_CONFIG {
-	signed int    ZoneType;
-	signed int    eConfigMode;
-	signed int    eAuthenMode;        /* open/wep/wpa */
-	signed int    bShareKeyAlgorithm; /* open-open/{open,wep}-sharekey */
-	signed int    keyidx;             /* wepkey index */
-	signed int    eEncryptionStatus;
-} DEFAULT_CONFIG, *PDEFAULT_CONFIG;
+
+//structure got from configuration file as user desired default setting.
+typedef struct _DEFAULT_CONFIG{
+    INT    ZoneType;
+    INT    eConfigMode;
+    INT    eAuthenMode;    //open/wep/wpa
+    INT    bShareKeyAlgorithm;  //open-open/open-sharekey/wep-sharekey
+    INT    keyidx;               //wepkey index
+    INT    eEncryptionStatus;
+
+}DEFAULT_CONFIG,*PDEFAULT_CONFIG;
 
 //
 // Structure to keep track of usb interrupt packets
 //
 typedef struct {
-    unsigned int            uDataLen;
+    UINT            uDataLen;
     PBYTE           pDataBuf;
 //    struct urb      *pUrb;
     BOOL            bInUse;
 } INT_BUFFER, *PINT_BUFFER;
 
+
+
 //0:11A 1:11B 2:11G
 typedef enum _VIA_BB_TYPE
 {
-    BB_TYPE_11A = 0,
+    BB_TYPE_11A=0,
     BB_TYPE_11B,
     BB_TYPE_11G
 } VIA_BB_TYPE, *PVIA_BB_TYPE;
@@ -250,20 +268,27 @@ typedef enum _VIA_BB_TYPE
 //0:11a,1:11b,2:11gb(only CCK in BasicRate),3:11ga(OFDM in Basic Rate)
 typedef enum _VIA_PKT_TYPE
 {
-    PK_TYPE_11A = 0,
+    PK_TYPE_11A=0,
     PK_TYPE_11B,
     PK_TYPE_11GB,
     PK_TYPE_11GA
 } VIA_PKT_TYPE, *PVIA_PKT_TYPE;
 
+
+
+
 //++ NDIS related
 
+#define NDIS_STATUS     int
+#define NTSTATUS        int
+
 typedef enum __DEVICE_NDIS_STATUS {
-    STATUS_SUCCESS = 0,
+    STATUS_SUCCESS=0,
     STATUS_FAILURE,
     STATUS_RESOURCES,
     STATUS_PENDING,
 } DEVICE_NDIS_STATUS, *PDEVICE_NDIS_STATUS;
+
 
 #define MAX_BSSIDINFO_4_PMKID   16
 #define MAX_PMKIDLIST           5
@@ -271,7 +296,7 @@ typedef enum __DEVICE_NDIS_STATUS {
 #define NDIS_802_11_PMKID_CANDIDATE_PREAUTH_ENABLED	0x01
 
 // PMKID Structures
-typedef unsigned char   NDIS_802_11_PMKID_VALUE[16];
+typedef UCHAR   NDIS_802_11_PMKID_VALUE[16];
 
 
 typedef enum _NDIS_802_11_WEP_STATUS
@@ -303,7 +328,7 @@ typedef enum _NDIS_802_11_STATUS_TYPE
 //Added new types for PMKID Candidate lists.
 typedef struct _PMKID_CANDIDATE {
     NDIS_802_11_MAC_ADDRESS BSSID;
-    unsigned long Flags;
+    ULONG Flags;
 } PMKID_CANDIDATE, *PPMKID_CANDIDATE;
 
 
@@ -314,15 +339,15 @@ typedef struct _BSSID_INFO
 } BSSID_INFO, *PBSSID_INFO;
 
 typedef struct tagSPMKID {
-    unsigned long Length;
-    unsigned long BSSIDInfoCount;
+    ULONG Length;
+    ULONG BSSIDInfoCount;
     BSSID_INFO BSSIDInfo[MAX_BSSIDINFO_4_PMKID];
 } SPMKID, *PSPMKID;
 
 typedef struct tagSPMKIDCandidateEvent {
     NDIS_802_11_STATUS_TYPE     StatusType;
-	unsigned long Version;       /* Version of the structure */
-	unsigned long NumCandidates; /* No. of pmkid candidates */
+    ULONG Version;       // Version of the structure
+    ULONG NumCandidates; // No. of pmkid candidates
     PMKID_CANDIDATE CandidateList[MAX_PMKIDLIST];
 } SPMKIDCandidateEvent, *PSPMKIDCandidateEvent;
 
@@ -344,7 +369,7 @@ typedef struct tagSQuietControl {
 // The receive duplicate detection cache entry
 typedef struct tagSCacheEntry{
     WORD        wFmSequence;
-    BYTE        abyAddr2[ETH_ALEN];
+    BYTE        abyAddr2[U_ETHER_ADDR_LEN];
     WORD        wFrameCtl;
 } SCacheEntry, *PSCacheEntry;
 
@@ -352,7 +377,7 @@ typedef struct tagSCache{
 /* The receive cache is updated circularly.  The next entry to be written is
  * indexed by the "InPtr".
 */
-	unsigned int uInPtr; /* Place to use next */
+    UINT            uInPtr;         // Place to use next
     SCacheEntry     asCacheEntry[DUPLICATE_RX_CACHE_LENGTH];
 } SCache, *PSCache;
 
@@ -362,11 +387,11 @@ typedef struct tagSDeFragControlBlock
 {
     WORD            wSequence;
     WORD            wFragNum;
-    BYTE            abyAddr2[ETH_ALEN];
-	unsigned int            uLifetime;
+    BYTE            abyAddr2[U_ETHER_ADDR_LEN];
+	UINT            uLifetime;
     struct sk_buff* skb;
     PBYTE           pbyRxBuffer;
-    unsigned int            cbFrameLength;
+    UINT            cbFrameLength;
     BOOL            bInUse;
 } SDeFragControlBlock, *PSDeFragControlBlock;
 
@@ -410,7 +435,7 @@ typedef struct __device_opt {
     int         short_retry;
     int         long_retry;
     int         bbp_type;
-    u32         flags;
+    U32         flags;
 } OPTIONS, *POPTIONS;
 
 
@@ -428,25 +453,25 @@ typedef struct __device_info {
 	struct tasklet_struct       ReadWorkItem;
 	struct tasklet_struct       RxMngWorkItem;
 
-    u32                         rx_buf_sz;
+    U32                         rx_buf_sz;
     int                         multicast_limit;
     BYTE                        byRxMode;
 
     spinlock_t                  lock;
 
-    u32                         rx_bytes;
+    U32                         rx_bytes;
 
     BYTE                        byRevId;
 
-    u32                         flags;
-    unsigned long                       Flags;
+    U32                         flags;
+    ULONG                       Flags;
 
     SCache                      sDupRxCache;
 
     SDeFragControlBlock         sRxDFCB[CB_MAX_RX_FRAG];
-    unsigned int                        cbDFCB;
-    unsigned int                        cbFreeDFCB;
-    unsigned int                        uCurrentDFCBIdx;
+    UINT                        cbDFCB;
+    UINT                        cbFreeDFCB;
+    UINT                        uCurrentDFCBIdx;
 
     // +++USB
 
@@ -454,29 +479,29 @@ typedef struct __device_info {
     struct urb                  *pInterruptURB;
 	struct usb_ctrlrequest      sUsbCtlRequest;
 
-    unsigned int                        int_interval;
+    UINT                        int_interval;
     //
     // Variables to track resources for the BULK In Pipe
     //
     PRCB                        pRCBMem;
     PRCB                        apRCB[CB_MAX_RX_DESC];
-    unsigned int                        cbRD;
+    UINT                        cbRD;
     PRCB                        FirstRecvFreeList;
     PRCB                        LastRecvFreeList;
-    unsigned int                        NumRecvFreeList;
+    UINT                        NumRecvFreeList;
     PRCB                        FirstRecvMngList;
     PRCB                        LastRecvMngList;
-    unsigned int                        NumRecvMngList;
+    UINT                        NumRecvMngList;
     BOOL                        bIsRxWorkItemQueued;
     BOOL                        bIsRxMngWorkItemQueued;
-	unsigned long ulRcvRefCount; /* packets that have not returned back */
+    ULONG                       ulRcvRefCount;      // number of packets that have not been returned back
 
     //
     //  Variables to track resources for the BULK Out Pipe
     //
 
     PUSB_SEND_CONTEXT           apTD[CB_MAX_TX_DESC];
-    unsigned int                        cbTD;
+    UINT                        cbTD;
 
     //
     //  Variables to track resources for the Interript In Pipe
@@ -493,20 +518,20 @@ typedef struct __device_info {
     //
     // Statistic for USB
     // protect with spinlock
-    unsigned long                       ulBulkInPosted;
-    unsigned long                       ulBulkInError;
-    unsigned long                       ulBulkInContCRCError;
-    unsigned long                       ulBulkInBytesRead;
+    ULONG                       ulBulkInPosted;
+    ULONG                       ulBulkInError;
+    ULONG                       ulBulkInContCRCError;
+    ULONG                       ulBulkInBytesRead;
 
-    unsigned long                       ulBulkOutPosted;
-    unsigned long                       ulBulkOutError;
-    unsigned long                       ulBulkOutContCRCError;
-    unsigned long                       ulBulkOutBytesWrite;
+    ULONG                       ulBulkOutPosted;
+    ULONG                       ulBulkOutError;
+    ULONG                       ulBulkOutContCRCError;
+    ULONG                       ulBulkOutBytesWrite;
 
-    unsigned long                       ulIntInPosted;
-    unsigned long                       ulIntInError;
-    unsigned long                       ulIntInContCRCError;
-    unsigned long                       ulIntInBytesRead;
+    ULONG                       ulIntInPosted;
+    ULONG                       ulIntInError;
+    ULONG                       ulIntInContCRCError;
+    ULONG                       ulIntInBytesRead;
 
 
     // Version control
@@ -522,10 +547,10 @@ typedef struct __device_info {
     BYTE                        byOriginalZonetype;
 
     BOOL                        bLinkPass;          // link status: OK or fail
-    BYTE                        abyCurrentNetAddr[ETH_ALEN];
-    BYTE                        abyPermanentNetAddr[ETH_ALEN];
+    BYTE                        abyCurrentNetAddr[U_ETHER_ADDR_LEN];
+    BYTE                        abyPermanentNetAddr[U_ETHER_ADDR_LEN];
     // SW network address
-	/* u8 abySoftwareNetAddr[ETH_ALEN]; */
+//    BYTE                        abySoftwareNetAddr[U_ETHER_ADDR_LEN];
     BOOL                        bExistSWNetAddr;
 
     // Adapter statistics
@@ -536,24 +561,24 @@ typedef struct __device_info {
     //
     // Maintain statistical debug info.
     //
-    unsigned long                       packetsReceived;
-    unsigned long                       packetsReceivedDropped;
-    unsigned long                       packetsReceivedOverflow;
-    unsigned long                       packetsSent;
-    unsigned long                       packetsSentDropped;
-    unsigned long                       SendContextsInUse;
-    unsigned long                       RcvBuffersInUse;
+    ULONG                       packetsReceived;
+    ULONG                       packetsReceivedDropped;
+    ULONG                       packetsReceivedOverflow;
+    ULONG                       packetsSent;
+    ULONG                       packetsSentDropped;
+    ULONG                       SendContextsInUse;
+    ULONG                       RcvBuffersInUse;
 
 
     // 802.11 management
     SMgmtObject                 sMgmtObj;
 
     QWORD                       qwCurrTSF;
-    unsigned int                        cbBulkInMax;
+    UINT                        cbBulkInMax;
     BOOL                        bPSRxBeacon;
 
     // 802.11 MAC specific
-    unsigned int                        uCurrRSSI;
+    UINT                        uCurrRSSI;
     BYTE                        byCurrSQ;
 
 
@@ -574,31 +599,30 @@ typedef struct __device_info {
 
     BOOL                        bDiversityRegCtlON;
     BOOL                        bDiversityEnable;
-    unsigned long                       ulDiversityNValue;
-    unsigned long                       ulDiversityMValue;
+    ULONG                       ulDiversityNValue;
+    ULONG                       ulDiversityMValue;
     BYTE                        byTMax;
     BYTE                        byTMax2;
     BYTE                        byTMax3;
-    unsigned long                       ulSQ3TH;
+    ULONG                       ulSQ3TH;
 
-    unsigned long                       uDiversityCnt;
+    ULONG                       uDiversityCnt;
     BYTE                        byAntennaState;
-    unsigned long                       ulRatio_State0;
-    unsigned long                       ulRatio_State1;
-    unsigned long                       ulSQ3_State0;
-    unsigned long                       ulSQ3_State1;
+    ULONG                       ulRatio_State0;
+    ULONG                       ulRatio_State1;
+    ULONG                       ulSQ3_State0;
+    ULONG                       ulSQ3_State1;
 
-    unsigned long                       aulSQ3Val[MAX_RATE];
-    unsigned long                       aulPktNum[MAX_RATE];
+    ULONG                       aulSQ3Val[MAX_RATE];
+    ULONG                       aulPktNum[MAX_RATE];
 
-	/* IFS & Cw */
-	unsigned int uSIFS;  /* Current SIFS */
-	unsigned int uDIFS;  /* Current DIFS */
-	unsigned int uEIFS;  /* Current EIFS */
-	unsigned int uSlot;  /* Current SlotTime */
-	unsigned int uCwMin; /* Current CwMin */
-	unsigned int uCwMax; /* CwMax is fixed on 1023 */
-
+    // IFS & Cw
+    UINT                        uSIFS;    //Current SIFS
+    UINT                        uDIFS;    //Current DIFS
+    UINT                        uEIFS;    //Current EIFS
+    UINT                        uSlot;    //Current SlotTime
+    UINT                        uCwMin;   //Current CwMin
+    UINT                        uCwMax;   //CwMax is fixed on 1023.
     // PHY parameter
     BYTE                        bySIFS;
     BYTE                        byDIFS;
@@ -623,7 +647,7 @@ typedef struct __device_info {
 
     BYTE                        byMinChannel;
     BYTE                        byMaxChannel;
-    unsigned int                        uConnectionRate;
+    UINT                        uConnectionRate;
 
     BYTE                        byPreambleType;
     BYTE                        byShortPreamble;
@@ -647,8 +671,8 @@ typedef struct __device_info {
     CARD_OP_MODE                eOPMode;
     BOOL                        bBSSIDFilter;
     WORD                        wMaxTransmitMSDULifetime;
-    BYTE                        abyBSSID[ETH_ALEN];
-    BYTE                        abyDesireBSSID[ETH_ALEN];
+    BYTE                        abyBSSID[U_ETHER_ADDR_LEN];
+    BYTE                        abyDesireBSSID[U_ETHER_ADDR_LEN];
     WORD                        wCTSDuration;       // update while speed change
     WORD                        wACKDuration;       // update while speed change
     WORD                        wRTSTransmitLen;    // update while speed change
@@ -677,7 +701,7 @@ typedef struct __device_info {
     WORD                        wListenInterval;
     BOOL                        bPWBitOn;
     WMAC_POWER_MODE             ePSMode;
-    unsigned long                       ulPSModeWaitTx;
+    ULONG                       ulPSModeWaitTx;
     BOOL                        bPSModeTxBurst;
 
     // Beacon releated
@@ -686,7 +710,7 @@ typedef struct __device_info {
     BOOL                    bBeaconSent;
     BOOL                    bFixRate;
     BYTE                    byCurrentCh;
-    unsigned int                    uScanTime;
+    UINT                    uScanTime;
 
     CMD_STATE               eCommandState;
 
@@ -697,32 +721,33 @@ typedef struct __device_info {
     BOOL                    bStopBeacon;
     BOOL                    bStopDataPkt;
     BOOL                    bStopTx0Pkt;
-    unsigned int                    uAutoReConnectTime;
-    unsigned int                    uIsroamingTime;
+    UINT                    uAutoReConnectTime;
+    UINT                    uIsroamingTime;
 
     // 802.11 counter
 
     CMD_ITEM                eCmdQueue[CMD_Q_SIZE];
-    unsigned int                    uCmdDequeueIdx;
-    unsigned int                    uCmdEnqueueIdx;
-    unsigned int                    cbFreeCmdQueue;
+    UINT                    uCmdDequeueIdx;
+    UINT                    uCmdEnqueueIdx;
+    UINT                    cbFreeCmdQueue;
     BOOL                    bCmdRunning;
     BOOL                    bCmdClear;
     BOOL                    bNeedRadioOFF;
 
-    BOOL                    bEnableRoaming;
-    BOOL                    bIsRoaming;
-    BOOL                    bFastRoaming;
-    BYTE                    bSameBSSMaxNum;
-    BYTE                    bSameBSSCurNum;
+    BOOL                    bEnableRoaming;  //DavidWang
+    BOOL                    bIsRoaming;  //DavidWang
+    BOOL                    bFastRoaming;  //DavidWang
+    BYTE                    bSameBSSMaxNum;  //Davidwang
+    BYTE                    bSameBSSCurNum;  //DavidWang
     BOOL                    bRoaming;
     BOOL                    b11hEable;
-    unsigned long                   ulTxPower;
+    ULONG                   ulTxPower;
 
     // Encryption
     NDIS_802_11_WEP_STATUS  eEncryptionStatus;
     BOOL                    bTransmitKey;
 
+//2007-0925-01<Add>by MikeLiu
 //mike add :save old Encryption
     NDIS_802_11_WEP_STATUS  eOldEncryptionStatus;
 
@@ -737,11 +762,11 @@ typedef struct __device_info {
     BOOL                    bAES;
     BYTE                    byCntMeasure;
 
-    unsigned int                    uKeyLength;
+    UINT                    uKeyLength;
     BYTE                    abyKey[WLAN_WEP232_KEYLEN];
 
     // for AP mode
-    unsigned int                    uAssocCount;
+    UINT                    uAssocCount;
     BOOL                    bMoreData;
 
     // QoS
@@ -756,11 +781,11 @@ typedef struct __device_info {
 
     // For Update BaseBand VGA Gain Offset
     BOOL                    bUpdateBBVGA;
-    unsigned int                    uBBVGADiffCount;
+    UINT                    uBBVGADiffCount;
     BYTE                    byBBVGANew;
     BYTE                    byBBVGACurrent;
     BYTE                    abyBBVGA[BB_VGA_LEVEL];
-    signed long                    ldBmThreshold[BB_VGA_LEVEL];
+    LONG                    ldBmThreshold[BB_VGA_LEVEL];
 
     BYTE                    byBBPreEDRSSI;
     BYTE                    byBBPreEDIndex;
@@ -785,20 +810,25 @@ typedef struct __device_info {
     // command timer
     struct timer_list       sTimerCommand;
 
+//2007-0115-01<Add>by MikeLiu
+#ifdef TxInSleep
      struct timer_list       sTimerTxData;
-     unsigned long                       nTxDataTimeCout;
+     ULONG                       nTxDataTimeCout;
      BOOL  fTxDataInSleep;
      BOOL  IsTxDataTrigger;
+#endif
 
+#ifdef WPA_SM_Transtatus
     BOOL  fWPA_Authened;           //is WPA/WPA-PSK or WPA2/WPA2-PSK authen??
+#endif
     BYTE            byReAssocCount;   //mike add:re-association retry times!
     BYTE            byLinkWaitCount;
 
     SEthernetHeader         sTxEthHeader;
     SEthernetHeader         sRxEthHeader;
-    BYTE                    abyBroadcastAddr[ETH_ALEN];
-    BYTE                    abySNAP_RFC1042[ETH_ALEN];
-    BYTE                    abySNAP_Bridgetunnel[ETH_ALEN];
+    BYTE                    abyBroadcastAddr[U_ETHER_ADDR_LEN];
+    BYTE                    abySNAP_RFC1042[U_ETHER_ADDR_LEN];
+    BYTE                    abySNAP_Bridgetunnel[U_ETHER_ADDR_LEN];
 
     // Pre-Authentication & PMK cache
     SPMKID                  gsPMKID;
@@ -834,7 +864,7 @@ typedef struct __device_info {
 	struct net_device       *apdev;
 	int (*tx_80211)(struct sk_buff *skb, struct net_device *dev);
 #endif
-    unsigned int                    uChannel;
+    UINT                    uChannel;
 
 	struct iw_statistics	wstats;		// wireless stats
     BOOL                    bCommit;
@@ -887,8 +917,11 @@ typedef struct __device_info {
 #define fMP_CONTROL_READS                   0x00000400
 #define fMP_CONTROL_WRITES                  0x00000800
 
+
+
 #define MP_SET_FLAG(_M, _F)             ((_M)->Flags |= (_F))
 #define MP_CLEAR_FLAG(_M, _F)            ((_M)->Flags &= ~(_F))
+#define MP_TEST_FLAG(_M, _F)            (((_M)->Flags & (_F)) != 0)
 #define MP_TEST_FLAGS(_M, _F)            (((_M)->Flags & (_F)) == (_F))
 
 #define MP_IS_READY(_M)        (((_M)->Flags & \
@@ -896,9 +929,9 @@ typedef struct __device_info {
 
 /*---------------------  Export Functions  --------------------------*/
 
-/* BOOL device_dma0_xmit(PSDevice pDevice, struct sk_buff *skb,
- *                       unsigned int uNodeIndex);
- */
+//BOOL device_dma0_xmit(PSDevice pDevice, struct sk_buff *skb, UINT uNodeIndex);
 BOOL device_alloc_frag_buf(PSDevice pDevice, PSDeFragControlBlock pDeF);
 
 #endif
+
+

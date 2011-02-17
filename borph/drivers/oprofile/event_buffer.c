@@ -135,7 +135,7 @@ static int event_buffer_open(struct inode *inode, struct file *file)
 	 * echo 1 >/dev/oprofile/enable
 	 */
 
-	return nonseekable_open(inode, file);
+	return 0;
 
 fail:
 	dcookie_unregister(file->private_data);
@@ -205,5 +205,4 @@ const struct file_operations event_buffer_fops = {
 	.open		= event_buffer_open,
 	.release	= event_buffer_release,
 	.read		= event_buffer_read,
-	.llseek		= no_llseek,
 };

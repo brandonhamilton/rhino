@@ -27,17 +27,28 @@ extern __u32 syncookie_secret[2][16-4+SHA_DIGEST_WORDS];
 #define COOKIEBITS 24	/* Upper bits store count */
 #define COOKIEMASK (((__u32)1 << COOKIEBITS) - 1)
 
-/* Table must be sorted. */
+/*
+ * This table has to be sorted and terminated with (__u16)-1.
+ * XXX generate a better table.
+ * Unresolved Issues: HIPPI with a 64k MSS is not well supported.
+ *
+ * Taken directly from ipv4 implementation.
+ * Should this list be modified for ipv6 use or is it close enough?
+ * rfc 2460 8.3 suggests mss values 20 bytes less than ipv4 counterpart
+ */
 static __u16 const msstab[] = {
-	64,
-	512,
-	536,
-	1280 - 60,
-	1480 - 60,
-	1500 - 60,
-	4460 - 60,
-	9000 - 60,
+	64 - 1,
+	256 - 1,
+	512 - 1,
+	536 - 1,
+	1024 - 1,
+	1440 - 1,
+	1460 - 1,
+	4312 - 1,
+	(__u16)-1
 };
+/* The number doesn't include the -1 terminator */
+#define NUM_MSS (ARRAY_SIZE(msstab) - 1)
 
 /*
  * This (misnamed) value is the age of syncookie which is permitted.
@@ -123,11 +134,9 @@ __u32 cookie_v6_init_sequence(struct sock *sk, struct sk_buff *skb, __u16 *mssp)
 
 	tcp_synq_overflow(sk);
 
-	for (mssind = ARRAY_SIZE(msstab) - 1; mssind ; mssind--)
-		if (mss >= msstab[mssind])
-			break;
-
-	*mssp = msstab[mssind];
+	for (mssind = 0; mss > msstab[mssind + 1]; mssind++)
+		;
+	*mssp = msstab[mssind] + 1;
 
 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESSENT);
 
@@ -145,7 +154,7 @@ static inline int cookie_check(struct sk_buff *skb, __u32 cookie)
 					    th->source, th->dest, seq,
 					    jiffies / (HZ * 60), COUNTER_TRIES);
 
-	return mssind < ARRAY_SIZE(msstab) ? msstab[mssind] : 0;
+	return mssind < NUM_MSS ? msstab[mssind] + 1 : 0;
 }
 
 struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
@@ -164,9 +173,8 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
 	int mss;
 	struct dst_entry *dst;
 	__u8 rcv_wscale;
-	bool ecn_ok;
 
-	if (!sysctl_tcp_syncookies || !th->ack || th->rst)
+	if (!sysctl_tcp_syncookies || !th->ack)
 		goto out;
 
 	if (tcp_synq_no_recent_overflow(sk) ||
@@ -176,13 +184,6 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
 	}
 
 	NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_SYNCOOKIESRECV);
-
-	/* check for timestamp cookie support */
-	memset(&tcp_opt, 0, sizeof(tcp_opt));
-	tcp_parse_options(skb, &tcp_opt, &hash_location, 0);
-
-	if (!cookie_check_timestamp(&tcp_opt, &ecn_ok))
-		goto out;
 
 	ret = NULL;
 	req = inet6_reqsk_alloc(&tcp6_request_sock_ops);
@@ -216,12 +217,7 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
 
 	req->expires = 0UL;
 	req->retrans = 0;
-	ireq->ecn_ok		= ecn_ok;
-	ireq->snd_wscale	= tcp_opt.snd_wscale;
-	ireq->sack_ok		= tcp_opt.sack_ok;
-	ireq->wscale_ok		= tcp_opt.wscale_ok;
-	ireq->tstamp_ok		= tcp_opt.saw_tstamp;
-	req->ts_recent		= tcp_opt.saw_tstamp ? tcp_opt.rcv_tsval : 0;
+	ireq->ecn_ok		= 0;
 	treq->rcv_isn = ntohl(th->seq) - 1;
 	treq->snt_isn = cookie;
 
@@ -231,12 +227,17 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
 	 * me if there is a preferred way.
 	 */
 	{
-		struct in6_addr *final_p, final;
+		struct in6_addr *final_p = NULL, final;
 		struct flowi fl;
 		memset(&fl, 0, sizeof(fl));
 		fl.proto = IPPROTO_TCP;
 		ipv6_addr_copy(&fl.fl6_dst, &ireq6->rmt_addr);
-		final_p = fl6_update_dst(&fl, np->opt, &final);
+		if (np->opt && np->opt->srcrt) {
+			struct rt0_hdr *rt0 = (struct rt0_hdr *) np->opt->srcrt;
+			ipv6_addr_copy(&final, &fl.fl6_dst);
+			ipv6_addr_copy(&fl.fl6_dst, rt0->addr);
+			final_p = &final;
+		}
 		ipv6_addr_copy(&fl.fl6_src, &ireq6->loc_addr);
 		fl.oif = sk->sk_bound_dev_if;
 		fl.mark = sk->sk_mark;
@@ -252,11 +253,25 @@ struct sock *cookie_v6_check(struct sock *sk, struct sk_buff *skb)
 			goto out_free;
 	}
 
+	/* check for timestamp cookie support */
+	memset(&tcp_opt, 0, sizeof(tcp_opt));
+	tcp_parse_options(skb, &tcp_opt, &hash_location, 0, dst);
+
+	if (tcp_opt.saw_tstamp)
+		cookie_check_timestamp(&tcp_opt);
+
+	req->ts_recent          = tcp_opt.saw_tstamp ? tcp_opt.rcv_tsval : 0;
+
+	ireq->snd_wscale        = tcp_opt.snd_wscale;
+	ireq->rcv_wscale        = tcp_opt.rcv_wscale;
+	ireq->sack_ok           = tcp_opt.sack_ok;
+	ireq->wscale_ok         = tcp_opt.wscale_ok;
+	ireq->tstamp_ok         = tcp_opt.saw_tstamp;
+
 	req->window_clamp = tp->window_clamp ? :dst_metric(dst, RTAX_WINDOW);
 	tcp_select_initial_window(tcp_full_space(sk), req->mss,
 				  &req->rcv_wnd, &req->window_clamp,
-				  ireq->wscale_ok, &rcv_wscale,
-				  dst_metric(dst, RTAX_INITRWND));
+				  ireq->wscale_ok, &rcv_wscale);
 
 	ireq->rcv_wscale = rcv_wscale;
 

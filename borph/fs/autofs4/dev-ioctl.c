@@ -22,7 +22,6 @@
 #include <linux/magic.h>
 #include <linux/dcache.h>
 #include <linux/uaccess.h>
-#include <linux/slab.h>
 
 #include "autofs_i.h"
 
@@ -95,7 +94,7 @@ static int check_dev_ioctl_version(int cmd, struct autofs_dev_ioctl *param)
  */
 static struct autofs_dev_ioctl *copy_dev_ioctl(struct autofs_dev_ioctl __user *in)
 {
-	struct autofs_dev_ioctl tmp;
+	struct autofs_dev_ioctl tmp, *ads;
 
 	if (copy_from_user(&tmp, in, sizeof(tmp)))
 		return ERR_PTR(-EFAULT);
@@ -103,7 +102,16 @@ static struct autofs_dev_ioctl *copy_dev_ioctl(struct autofs_dev_ioctl __user *i
 	if (tmp.size < sizeof(tmp))
 		return ERR_PTR(-EINVAL);
 
-	return memdup_user(in, tmp.size);
+	ads = kmalloc(tmp.size, GFP_KERNEL);
+	if (!ads)
+		return ERR_PTR(-ENOMEM);
+
+	if (copy_from_user(ads, in, tmp.size)) {
+		kfree(ads);
+		return ERR_PTR(-EFAULT);
+	}
+
+	return ads;
 }
 
 static inline void free_dev_ioctl(struct autofs_dev_ioctl *param)
@@ -536,9 +544,10 @@ static int autofs_dev_ioctl_ismountpoint(struct file *fp,
 			goto out;
 		devid = new_encode_dev(path.mnt->mnt_sb->s_dev);
 		err = 0;
-		if (path.mnt->mnt_root == path.dentry) {
+		if (path.dentry->d_inode &&
+		    path.mnt->mnt_root == path.dentry) {
 			err = 1;
-			magic = path.mnt->mnt_sb->s_magic;
+			magic = path.dentry->d_inode->i_sb->s_magic;
 		}
 	} else {
 		dev_t dev = sbi->sb->s_dev;
@@ -551,8 +560,10 @@ static int autofs_dev_ioctl_ismountpoint(struct file *fp,
 
 		err = have_submounts(path.dentry);
 
-		if (follow_down(&path))
-			magic = path.mnt->mnt_sb->s_magic;
+		if (path.mnt->mnt_mountpoint != path.mnt->mnt_root) {
+			if (follow_down(&path))
+				magic = path.mnt->mnt_sb->s_magic;
+		}
 	}
 
 	param->ismountpoint.out.devid = devid;
@@ -724,17 +735,13 @@ static const struct file_operations _dev_ioctl_fops = {
 	.unlocked_ioctl	 = autofs_dev_ioctl,
 	.compat_ioctl = autofs_dev_ioctl_compat,
 	.owner	 = THIS_MODULE,
-	.llseek = noop_llseek,
 };
 
 static struct miscdevice _autofs_dev_ioctl_misc = {
-	.minor		= AUTOFS_MINOR,
+	.minor 		= MISC_DYNAMIC_MINOR,
 	.name  		= AUTOFS_DEVICE_NAME,
 	.fops  		= &_dev_ioctl_fops
 };
-
-MODULE_ALIAS_MISCDEV(AUTOFS_MINOR);
-MODULE_ALIAS("devname:autofs");
 
 /* Register/deregister misc character device */
 int autofs_dev_ioctl_init(void)

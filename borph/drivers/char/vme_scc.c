@@ -27,6 +27,7 @@
 #include <linux/fcntl.h>
 #include <linux/major.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/miscdevice.h>
 #include <linux/console.h>
 #include <linux/init.h>
@@ -135,7 +136,7 @@ static const struct tty_port_operations scc_port_ops = {
  * vme_scc_init() and support functions
  *---------------------------------------------------------------------------*/
 
-static int __init scc_init_drivers(void)
+static int scc_init_drivers(void)
 {
 	int error;
 
@@ -171,7 +172,7 @@ static int __init scc_init_drivers(void)
 /* ports[] array is indexed by line no (i.e. [0] for ttyS0, [1] for ttyS1).
  */
 
-static void __init scc_init_portstructs(void)
+static void scc_init_portstructs(void)
 {
 	struct scc_port *port;
 	int i;
@@ -194,7 +195,7 @@ static void __init scc_init_portstructs(void)
 
 
 #ifdef CONFIG_MVME147_SCC
-static int __init mvme147_scc_init(void)
+static int mvme147_scc_init(void)
 {
 	struct scc_port *port;
 	int error;
@@ -297,7 +298,7 @@ fail:
 
 
 #ifdef CONFIG_MVME162_SCC
-static int __init mvme162_scc_init(void)
+static int mvme162_scc_init(void)
 {
 	struct scc_port *port;
 	int error;
@@ -403,7 +404,7 @@ fail:
 
 
 #ifdef CONFIG_BVME6000_SCC
-static int __init bvme6000_scc_init(void)
+static int bvme6000_scc_init(void)
 {
 	struct scc_port *port;
 	int error;
@@ -502,7 +503,7 @@ fail_free_b_rx:
 #endif
 
 
-static int __init vme_scc_init(void)
+static int vme_scc_init(void)
 {
 	int res = -ENODEV;
 

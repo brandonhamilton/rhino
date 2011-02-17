@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 #include <asm/uaccess.h>
 #include "oss/sound_firmware.h"

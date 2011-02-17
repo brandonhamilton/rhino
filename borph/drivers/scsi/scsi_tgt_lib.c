@@ -23,7 +23,6 @@
 #include <linux/hash.h>
 #include <linux/module.h>
 #include <linux/pagemap.h>
-#include <linux/slab.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
@@ -185,7 +184,6 @@ static void scsi_tgt_cmd_destroy(struct work_struct *work)
 	dprintk("cmd %p %d %u\n", cmd, cmd->sc_data_direction,
 		rq_data_dir(cmd->request));
 	scsi_unmap_user_pages(tcmd);
-	tcmd->rq->bio = NULL;
 	scsi_host_put_command(scsi_tgt_cmd_to_host(cmd), cmd);
 }
 

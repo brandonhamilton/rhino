@@ -13,7 +13,6 @@
 #include <linux/parser.h>
 #include <linux/mount.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 #include <linux/smp_lock.h>
 #include <linux/statfs.h>
 #include "adfs.h"
@@ -352,15 +351,11 @@ static int adfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct adfs_sb_info *asb;
 	struct inode *root;
 
-	lock_kernel();
-
 	sb->s_flags |= MS_NODIRATIME;
 
 	asb = kzalloc(sizeof(*asb), GFP_KERNEL);
-	if (!asb) {
-		unlock_kernel();
+	if (!asb)
 		return -ENOMEM;
-	}
 	sb->s_fs_info = asb;
 
 	/* set default options */
@@ -478,7 +473,6 @@ static int adfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto error;
 	} else
 		sb->s_root->d_op = &adfs_dentry_operations;
-	unlock_kernel();
 	return 0;
 
 error_free_bh:
@@ -486,20 +480,20 @@ error_free_bh:
 error:
 	sb->s_fs_info = NULL;
 	kfree(asb);
-	unlock_kernel();
 	return -EINVAL;
 }
 
-static struct dentry *adfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int adfs_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, adfs_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, adfs_fill_super,
+			   mnt);
 }
 
 static struct file_system_type adfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "adfs",
-	.mount		= adfs_mount,
+	.get_sb		= adfs_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

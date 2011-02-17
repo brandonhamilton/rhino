@@ -75,7 +75,6 @@
 
 #include <linux/fs.h>
 #include <linux/pagemap.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include "ibmasm.h"
@@ -91,10 +90,11 @@ static void ibmasmfs_create_files (struct super_block *sb, struct dentry *root);
 static int ibmasmfs_fill_super (struct super_block *sb, void *data, int silent);
 
 
-static struct dentry *ibmasmfs_mount(struct file_system_type *fst,
-			int flags, const char *name, void *data)
+static int ibmasmfs_get_super(struct file_system_type *fst,
+			int flags, const char *name, void *data,
+			struct vfsmount *mnt)
 {
-	return mount_single(fst, flags, data, ibmasmfs_fill_super);
+	return get_sb_single(fst, flags, data, ibmasmfs_fill_super, mnt);
 }
 
 static const struct super_operations ibmasmfs_s_ops = {
@@ -107,7 +107,7 @@ static const struct file_operations *ibmasmfs_dir_ops = &simple_dir_operations;
 static struct file_system_type ibmasmfs_type = {
 	.owner          = THIS_MODULE,
 	.name           = "ibmasmfs",
-	.mount          = ibmasmfs_mount,
+	.get_sb         = ibmasmfs_get_super,
 	.kill_sb        = kill_litter_super,
 };
 
@@ -145,7 +145,6 @@ static struct inode *ibmasmfs_make_inode(struct super_block *sb, int mode)
 	struct inode *ret = new_inode(sb);
 
 	if (ret) {
-		ret->i_ino = get_next_ino();
 		ret->i_mode = mode;
 		ret->i_atime = ret->i_mtime = ret->i_ctime = CURRENT_TIME;
 	}
@@ -584,7 +583,6 @@ static const struct file_operations command_fops = {
 	.release =	command_file_close,
 	.read =		command_file_read,
 	.write =	command_file_write,
-	.llseek =	generic_file_llseek,
 };
 
 static const struct file_operations event_fops = {
@@ -592,7 +590,6 @@ static const struct file_operations event_fops = {
 	.release =	event_file_close,
 	.read =		event_file_read,
 	.write =	event_file_write,
-	.llseek =	generic_file_llseek,
 };
 
 static const struct file_operations r_heartbeat_fops = {
@@ -600,7 +597,6 @@ static const struct file_operations r_heartbeat_fops = {
 	.release =	r_heartbeat_file_close,
 	.read =		r_heartbeat_file_read,
 	.write =	r_heartbeat_file_write,
-	.llseek =	generic_file_llseek,
 };
 
 static const struct file_operations remote_settings_fops = {
@@ -608,7 +604,6 @@ static const struct file_operations remote_settings_fops = {
 	.release =	remote_settings_file_close,
 	.read =		remote_settings_file_read,
 	.write =	remote_settings_file_write,
-	.llseek =	generic_file_llseek,
 };
 
 

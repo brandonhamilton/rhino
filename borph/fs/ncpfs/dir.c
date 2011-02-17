@@ -15,10 +15,12 @@
 #include <linux/errno.h>
 #include <linux/stat.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
 #include <asm/uaccess.h>
 #include <asm/byteorder.h>
+#include <linux/smp_lock.h>
 
 #include <linux/ncp_fs.h>
 
@@ -48,10 +50,9 @@ extern int ncp_symlink(struct inode *, struct dentry *, const char *);
 		      
 const struct file_operations ncp_dir_operations =
 {
-	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.readdir	= ncp_readdir,
-	.unlocked_ioctl	= ncp_ioctl,
+	.ioctl		= ncp_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= ncp_compat_ioctl,
 #endif
@@ -94,34 +95,6 @@ const struct dentry_operations ncp_root_dentry_operations =
 };
 
 
-#define ncp_namespace(i)	(NCP_SERVER(i)->name_space[NCP_FINFO(i)->volNumber])
-
-static inline int ncp_preserve_entry_case(struct inode *i, __u32 nscreator)
-{
-#ifdef CONFIG_NCPFS_SMALLDOS
-	int ns = ncp_namespace(i);
-
-	if ((ns == NW_NS_DOS)
-#ifdef CONFIG_NCPFS_OS2_NS
-		|| ((ns == NW_NS_OS2) && (nscreator == NW_NS_DOS))
-#endif /* CONFIG_NCPFS_OS2_NS */
-	   )
-		return 0;
-#endif /* CONFIG_NCPFS_SMALLDOS */
-	return 1;
-}
-
-#define ncp_preserve_case(i)	(ncp_namespace(i) != NW_NS_DOS)
-
-static inline int ncp_case_sensitive(struct dentry *dentry)
-{
-#ifdef CONFIG_NCPFS_NFS_NS
-	return ncp_namespace(dentry->d_inode) == NW_NS_NFS;
-#else
-	return 0;
-#endif /* CONFIG_NCPFS_NFS_NS */
-}
-
 /*
  * Note: leave the hash unchanged if the directory
  * is case-sensitive.
@@ -129,12 +102,13 @@ static inline int ncp_case_sensitive(struct dentry *dentry)
 static int 
 ncp_hash_dentry(struct dentry *dentry, struct qstr *this)
 {
-	if (!ncp_case_sensitive(dentry)) {
-		struct nls_table *t;
-		unsigned long hash;
-		int i;
+	struct nls_table *t;
+	unsigned long hash;
+	int i;
 
-		t = NCP_IO_TABLE(dentry);
+	t = NCP_IO_TABLE(dentry);
+
+	if (!ncp_case_sensitive(dentry->d_inode)) {
 		hash = init_name_hash();
 		for (i=0; i<this->len ; i++)
 			hash = partial_name_hash(ncp_tolower(t, this->name[i]),
@@ -150,7 +124,7 @@ ncp_compare_dentry(struct dentry *dentry, struct qstr *a, struct qstr *b)
 	if (a->len != b->len)
 		return 1;
 
-	if (ncp_case_sensitive(dentry))
+	if (ncp_case_sensitive(dentry->d_inode))
 		return strncmp(a->name, b->name, a->len);
 
 	return ncp_strnicmp(NCP_IO_TABLE(dentry), a->name, b->name, a->len);
@@ -292,7 +266,7 @@ leave_me:;
 
 
 static int
-ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
+__ncp_lookup_validate(struct dentry *dentry)
 {
 	struct ncp_server *server;
 	struct dentry *parent;
@@ -308,6 +282,9 @@ ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
 		goto finished;
 
 	server = NCP_SERVER(dir);
+
+	if (!ncp_conn_valid(server))
+		goto finished;
 
 	/*
 	 * Inspired by smbfs:
@@ -327,11 +304,8 @@ ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
 	if (ncp_is_server_root(dir)) {
 		res = ncp_io2vol(server, __name, &len, dentry->d_name.name,
 				 dentry->d_name.len, 1);
-		if (!res) {
+		if (!res)
 			res = ncp_lookup_volume(server, __name, &(finfo.i));
-			if (!res)
-				ncp_update_known_namespace(server, finfo.i.volNumber, NULL);
-		}
 	} else {
 		res = ncp_io2vol(server, __name, &len, dentry->d_name.name,
 				 dentry->d_name.len, !ncp_preserve_case(dir));
@@ -346,23 +320,29 @@ ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
 	 * what we remember, it's not valid any more.
 	 */
 	if (!res) {
-		struct inode *inode = dentry->d_inode;
-
-		mutex_lock(&inode->i_mutex);
-		if (finfo.i.dirEntNum == NCP_FINFO(inode)->dirEntNum) {
+		if (finfo.i.dirEntNum == NCP_FINFO(dentry->d_inode)->dirEntNum) {
 			ncp_new_dentry(dentry);
 			val=1;
 		} else
 			DDPRINTK("ncp_lookup_validate: found, but dirEntNum changed\n");
 
-		ncp_update_inode2(inode, &finfo);
-		mutex_unlock(&inode->i_mutex);
+		ncp_update_inode2(dentry->d_inode, &finfo);
 	}
 
 finished:
 	DDPRINTK("ncp_lookup_validate: result=%d\n", val);
 	dput(parent);
 	return val;
+}
+
+static int
+ncp_lookup_validate(struct dentry * dentry, struct nameidata *nd)
+{
+	int res;
+	lock_kernel();
+	res = __ncp_lookup_validate(dentry);
+	unlock_kernel();
+	return res;
 }
 
 static struct dentry *
@@ -431,6 +411,8 @@ static int ncp_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	int result, mtime_valid = 0;
 	time_t mtime = 0;
 
+	lock_kernel();
+
 	ctl.page  = NULL;
 	ctl.cache = NULL;
 
@@ -439,7 +421,6 @@ static int ncp_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		(int) filp->f_pos);
 
 	result = -EIO;
-	/* Do not generate '.' and '..' when server is dead. */
 	if (!ncp_conn_valid(server))
 		goto out;
 
@@ -551,12 +532,6 @@ read_really:
 	ctl.head.end = ctl.fpos - 1;
 	ctl.head.eof = ctl.valid;
 finished:
-	if (ctl.page) {
-		kunmap(ctl.page);
-		SetPageUptodate(ctl.page);
-		unlock_page(ctl.page);
-		page_cache_release(ctl.page);
-	}
 	if (page) {
 		cache->head = ctl.head;
 		kunmap(page);
@@ -564,17 +539,23 @@ finished:
 		unlock_page(page);
 		page_cache_release(page);
 	}
+	if (ctl.page) {
+		kunmap(ctl.page);
+		SetPageUptodate(ctl.page);
+		unlock_page(ctl.page);
+		page_cache_release(ctl.page);
+	}
 out:
+	unlock_kernel();
 	return result;
 }
 
 static int
 ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
-		struct ncp_cache_control *ctrl, struct ncp_entry_info *entry,
-		int inval_childs)
+		struct ncp_cache_control *ctrl, struct ncp_entry_info *entry)
 {
 	struct dentry *newdent, *dentry = filp->f_path.dentry;
-	struct inode *dir = dentry->d_inode;
+	struct inode *newino, *inode = dentry->d_inode;
 	struct ncp_cache_control ctl = *ctrl;
 	struct qstr qname;
 	int valid = 0;
@@ -583,9 +564,9 @@ ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 	__u8 __name[NCP_MAXPATHLEN + 1];
 
 	qname.len = sizeof(__name);
-	if (ncp_vol2io(NCP_SERVER(dir), __name, &qname.len,
+	if (ncp_vol2io(NCP_SERVER(inode), __name, &qname.len,
 			entry->i.entryName, entry->i.nameLen,
-			!ncp_preserve_entry_case(dir, entry->i.NSCreator)))
+			!ncp_preserve_entry_case(inode, entry->i.NSCreator)))
 		return 1; /* I'm not sure */
 
 	qname.name = __name;
@@ -603,64 +584,22 @@ ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 			goto end_advance;
 	} else {
 		hashed = 1;
-
-		/* If case sensitivity changed for this volume, all entries below this one
-		   should be thrown away.  This entry itself is not affected, as its case
-		   sensitivity is controlled by its own parent. */
-		if (inval_childs)
-			shrink_dcache_parent(newdent);
-
-		/*
-		 * It is not as dangerous as it looks.  NetWare's OS2 namespace is
-		 * case preserving yet case insensitive.  So we update dentry's name
-		 * as received from server.  We found dentry via d_lookup with our
-		 * hash, so we know that hash does not change, and so replacing name
-		 * should be reasonably safe.
-		 */
-		if (qname.len == newdent->d_name.len &&
-		    memcmp(newdent->d_name.name, qname.name, newdent->d_name.len)) {
-			struct inode *inode = newdent->d_inode;
-
-			/*
-			 * Inside ncpfs all uses of d_name are either for debugging,
-			 * or on functions which acquire inode mutex (mknod, creat,
-			 * lookup).  So grab i_mutex here, to be sure.  d_path
-			 * uses dcache_lock when generating path, so we should too.
-			 * And finally d_compare is protected by dentry's d_lock, so
-			 * here we go.
-			 */
-			if (inode)
-				mutex_lock(&inode->i_mutex);
-			spin_lock(&dcache_lock);
-			spin_lock(&newdent->d_lock);
-			memcpy((char *) newdent->d_name.name, qname.name,
-								newdent->d_name.len);
-			spin_unlock(&newdent->d_lock);
-			spin_unlock(&dcache_lock);
-			if (inode)
-				mutex_unlock(&inode->i_mutex);
-		}
+		memcpy((char *) newdent->d_name.name, qname.name,
+							newdent->d_name.len);
 	}
 
 	if (!newdent->d_inode) {
-		struct inode *inode;
-
 		entry->opened = 0;
-		entry->ino = iunique(dir->i_sb, 2);
-		inode = ncp_iget(dir->i_sb, entry);
-		if (inode) {
+		entry->ino = iunique(inode->i_sb, 2);
+		newino = ncp_iget(inode->i_sb, entry);
+		if (newino) {
 			newdent->d_op = &ncp_dentry_operations;
-			d_instantiate(newdent, inode);
+			d_instantiate(newdent, newino);
 			if (!hashed)
 				d_rehash(newdent);
 		}
-	} else {
-		struct inode *inode = newdent->d_inode;
-
-		mutex_lock(&inode->i_mutex);
-		ncp_update_inode2(inode, entry);
-		mutex_unlock(&inode->i_mutex);
-	}
+	} else
+		ncp_update_inode2(newdent->d_inode, entry);
 
 	if (newdent->d_inode) {
 		ino = newdent->d_inode->i_ino;
@@ -678,7 +617,7 @@ ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 		ctl.cache = NULL;
 		ctl.idx  -= NCP_DIRCACHE_SIZE;
 		ctl.ofs  += 1;
-		ctl.page  = grab_cache_page(&dir->i_data, ctl.ofs);
+		ctl.page  = grab_cache_page(&inode->i_data, ctl.ofs);
 		if (ctl.page)
 			ctl.cache = kmap(ctl.page);
 	}
@@ -694,7 +633,7 @@ end_advance:
 		if (!ino)
 			ino = find_inode_number(dentry, &qname);
 		if (!ino)
-			ino = iunique(dir->i_sb, 2);
+			ino = iunique(inode->i_sb, 2);
 		ctl.filled = filldir(dirent, qname.name, qname.len,
 				     filp->f_pos, ino, DT_UNKNOWN);
 		if (!ctl.filled)
@@ -721,7 +660,6 @@ ncp_read_volume_list(struct file *filp, void *dirent, filldir_t filldir,
 			(unsigned long) filp->f_pos);
 
 	for (i = 0; i < NCP_NUMBER_OF_VOLUMES; i++) {
-		int inval_dentry;
 
 		if (ncp_get_volume_info_with_number(server, i, &info) != 0)
 			return;
@@ -737,9 +675,8 @@ ncp_read_volume_list(struct file *filp, void *dirent, filldir_t filldir,
 				info.volume_name);
 			continue;
 		}
-		inval_dentry = ncp_update_known_namespace(server, entry.i.volNumber, NULL);
 		entry.volume = entry.i.volNumber;
-		if (!ncp_fill_cache(filp, dirent, filldir, ctl, &entry, inval_dentry))
+		if (!ncp_fill_cache(filp, dirent, filldir, ctl, &entry))
 			return;
 	}
 }
@@ -802,7 +739,7 @@ ncp_do_readdir(struct file *filp, void *dirent, filldir_t filldir,
 			rpl += onerpl;
 			rpls -= onerpl;
 			entry.volume = entry.i.volNumber;
-			if (!ncp_fill_cache(filp, dirent, filldir, ctl, &entry, 0))
+			if (!ncp_fill_cache(filp, dirent, filldir, ctl, &entry))
 				break;
 		}
 	} while (more);
@@ -838,19 +775,17 @@ int ncp_conn_logged_in(struct super_block *sb)
 		if (dent) {
 			struct inode* ino = dent->d_inode;
 			if (ino) {
-				ncp_update_known_namespace(server, volNumber, NULL);
 				NCP_FINFO(ino)->volNumber = volNumber;
 				NCP_FINFO(ino)->dirEntNum = dirEntNum;
 				NCP_FINFO(ino)->DosDirNum = DosDirNum;
-				result = 0;
 			} else {
 				DPRINTK("ncpfs: sb->s_root->d_inode == NULL!\n");
 			}
 		} else {
 			DPRINTK("ncpfs: sb->s_root == NULL!\n");
 		}
-	} else
-		result = 0;
+	}
+	result = 0;
 
 out:
 	return result;
@@ -864,6 +799,7 @@ static struct dentry *ncp_lookup(struct inode *dir, struct dentry *dentry, struc
 	int error, res, len;
 	__u8 __name[NCP_MAXPATHLEN + 1];
 
+	lock_kernel();
 	error = -EIO;
 	if (!ncp_conn_valid(server))
 		goto finished;
@@ -877,8 +813,6 @@ static struct dentry *ncp_lookup(struct inode *dir, struct dentry *dentry, struc
 				 dentry->d_name.len, 1);
 		if (!res)
 			res = ncp_lookup_volume(server, __name, &(finfo.i));
-			if (!res)
-				ncp_update_known_namespace(server, finfo.i.volNumber, NULL);
 	} else {
 		res = ncp_io2vol(server, __name, &len, dentry->d_name.name,
 				 dentry->d_name.len, !ncp_preserve_case(dir));
@@ -912,6 +846,7 @@ add_entry:
 
 finished:
 	PPRINTK("ncp_lookup: result=%d\n", error);
+	unlock_kernel();
 	return ERR_PTR(error);
 }
 
@@ -952,6 +887,11 @@ int ncp_create_new(struct inode *dir, struct dentry *dentry, int mode,
 	PPRINTK("ncp_create_new: creating %s/%s, mode=%x\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name, mode);
 
+	error = -EIO;
+	lock_kernel();
+	if (!ncp_conn_valid(server))
+		goto out;
+
 	ncp_age_dentry(server, dentry);
 	len = sizeof(__name);
 	error = ncp_io2vol(server, __name, &len, dentry->d_name.name,
@@ -977,8 +917,6 @@ int ncp_create_new(struct inode *dir, struct dentry *dentry, int mode,
 		if (result) {
 			if (result == 0x87)
 				error = -ENAMETOOLONG;
-			else if (result < 0)
-				error = result;
 			DPRINTK("ncp_create: %s/%s failed\n",
 				dentry->d_parent->d_name.name, dentry->d_name.name);
 			goto out;
@@ -997,6 +935,7 @@ int ncp_create_new(struct inode *dir, struct dentry *dentry, int mode,
 
 	error = ncp_instantiate(dir, dentry, &finfo);
 out:
+	unlock_kernel();
 	return error;
 }
 
@@ -1016,6 +955,11 @@ static int ncp_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	DPRINTK("ncp_mkdir: making %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
 
+	error = -EIO;
+	lock_kernel();
+	if (!ncp_conn_valid(server))
+		goto out;
+
 	ncp_age_dentry(server, dentry);
 	len = sizeof(__name);
 	error = ncp_io2vol(server, __name, &len, dentry->d_name.name,
@@ -1023,11 +967,12 @@ static int ncp_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	if (error)
 		goto out;
 
-	error = ncp_open_create_file_or_subdir(server, dir, __name,
+	error = -EACCES;
+	if (ncp_open_create_file_or_subdir(server, dir, __name,
 					   OC_MODE_CREATE, aDIR,
 					   cpu_to_le16(0xffff),
-					   &finfo);
-	if (error == 0) {
+					   &finfo) == 0)
+	{
 		if (ncp_is_nfs_extras(server, finfo.volume)) {
 			mode |= S_IFDIR;
 			finfo.i.nfs.mode = mode;
@@ -1038,10 +983,9 @@ static int ncp_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 				goto out;
 		}
 		error = ncp_instantiate(dir, dentry, &finfo);
-	} else if (error > 0) {
-		error = -EACCES;
 	}
 out:
+	unlock_kernel();
 	return error;
 }
 
@@ -1053,6 +997,11 @@ static int ncp_rmdir(struct inode *dir, struct dentry *dentry)
 
 	DPRINTK("ncp_rmdir: removing %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
+
+	error = -EIO;
+	lock_kernel();
+	if (!ncp_conn_valid(server))
+		goto out;
 
 	error = -EBUSY;
 	if (!d_unhashed(dentry))
@@ -1087,10 +1036,11 @@ static int ncp_rmdir(struct inode *dir, struct dentry *dentry)
 			error = -ENOENT;
 			break;
 		default:
-			error = result < 0 ? result : -EACCES;
+			error = -EACCES;
 			break;
        	}
 out:
+	unlock_kernel();
 	return error;
 }
 
@@ -1100,10 +1050,15 @@ static int ncp_unlink(struct inode *dir, struct dentry *dentry)
 	struct ncp_server *server;
 	int error;
 
+	lock_kernel();
 	server = NCP_SERVER(dir);
 	DPRINTK("ncp_unlink: unlinking %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
 	
+	error = -EIO;
+	if (!ncp_conn_valid(server))
+		goto out;
+
 	/*
 	 * Check whether to close the file ...
 	 */
@@ -1142,9 +1097,12 @@ static int ncp_unlink(struct inode *dir, struct dentry *dentry)
 			error = -ENOENT;
 			break;
 		default:
-			error = error < 0 ? error : -EACCES;
+			error = -EACCES;
 			break;
 	}
+		
+out:
+	unlock_kernel();
 	return error;
 }
 
@@ -1159,6 +1117,11 @@ static int ncp_rename(struct inode *old_dir, struct dentry *old_dentry,
 	DPRINTK("ncp_rename: %s/%s to %s/%s\n",
 		old_dentry->d_parent->d_name.name, old_dentry->d_name.name,
 		new_dentry->d_parent->d_name.name, new_dentry->d_name.name);
+
+	error = -EIO;
+	lock_kernel();
+	if (!ncp_conn_valid(server))
+		goto out;
 
 	ncp_age_dentry(server, old_dentry);
 	ncp_age_dentry(server, new_dentry);
@@ -1198,10 +1161,11 @@ static int ncp_rename(struct inode *old_dir, struct dentry *old_dentry,
 			error = -ENOENT;
 			break;
 		default:
-			error = error < 0 ? error : -EACCES;
+			error = -EACCES;
 			break;
 	}
 out:
+	unlock_kernel();
 	return error;
 }
 

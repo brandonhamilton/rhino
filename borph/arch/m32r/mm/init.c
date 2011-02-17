@@ -19,7 +19,6 @@
 #include <linux/bitops.h>
 #include <linux/nodemask.h>
 #include <linux/pfn.h>
-#include <linux/gfp.h>
 #include <asm/types.h>
 #include <asm/processor.h>
 #include <asm/page.h>

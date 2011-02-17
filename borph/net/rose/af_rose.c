@@ -18,7 +18,6 @@
 #include <linux/types.h>
 #include <linux/socket.h>
 #include <linux/in.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
@@ -679,7 +678,7 @@ static int rose_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (addr_len == sizeof(struct sockaddr_rose) && addr->srose_ndigis > 1)
 		return -EINVAL;
 
-	if ((unsigned int) addr->srose_ndigis > ROSE_MAX_DIGIS)
+	if (addr->srose_ndigis > ROSE_MAX_DIGIS)
 		return -EINVAL;
 
 	if ((dev = rose_dev_get(&addr->srose_addr)) == NULL) {
@@ -739,7 +738,7 @@ static int rose_connect(struct socket *sock, struct sockaddr *uaddr, int addr_le
 	if (addr_len == sizeof(struct sockaddr_rose) && addr->srose_ndigis > 1)
 		return -EINVAL;
 
-	if ((unsigned int) addr->srose_ndigis > ROSE_MAX_DIGIS)
+	if (addr->srose_ndigis > ROSE_MAX_DIGIS)
 		return -EINVAL;
 
 	/* Source + Destination digis should not exceed ROSE_MAX_DIGIS */
@@ -845,7 +844,7 @@ rose_try_next_neigh:
 		DEFINE_WAIT(wait);
 
 		for (;;) {
-			prepare_to_wait(sk_sleep(sk), &wait,
+			prepare_to_wait(sk->sk_sleep, &wait,
 					TASK_INTERRUPTIBLE);
 			if (sk->sk_state != TCP_SYN_SENT)
 				break;
@@ -858,7 +857,7 @@ rose_try_next_neigh:
 			err = -ERESTARTSYS;
 			break;
 		}
-		finish_wait(sk_sleep(sk), &wait);
+		finish_wait(sk->sk_sleep, &wait);
 
 		if (err)
 			goto out_release;
@@ -911,7 +910,7 @@ static int rose_accept(struct socket *sock, struct socket *newsock, int flags)
 	 *	hooked into the SABM we saved
 	 */
 	for (;;) {
-		prepare_to_wait(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+		prepare_to_wait(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 
 		skb = skb_dequeue(&sk->sk_receive_queue);
 		if (skb)
@@ -930,7 +929,7 @@ static int rose_accept(struct socket *sock, struct socket *newsock, int flags)
 		err = -ERESTARTSYS;
 		break;
 	}
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 	if (err)
 		goto out_release;
 
@@ -1405,13 +1404,29 @@ static int rose_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 static void *rose_info_start(struct seq_file *seq, loff_t *pos)
 	__acquires(rose_list_lock)
 {
+	int i;
+	struct sock *s;
+	struct hlist_node *node;
+
 	spin_lock_bh(&rose_list_lock);
-	return seq_hlist_start_head(&rose_list, *pos);
+	if (*pos == 0)
+		return SEQ_START_TOKEN;
+
+	i = 1;
+	sk_for_each(s, node, &rose_list) {
+		if (i == *pos)
+			return s;
+		++i;
+	}
+	return NULL;
 }
 
 static void *rose_info_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	return seq_hlist_next(v, &rose_list, pos);
+	++*pos;
+
+	return (v == SEQ_START_TOKEN) ? sk_head(&rose_list)
+		: sk_next((struct sock *)v);
 }
 
 static void rose_info_stop(struct seq_file *seq, void *v)
@@ -1429,7 +1444,7 @@ static int rose_info_show(struct seq_file *seq, void *v)
 			 "dest_addr  dest_call src_addr   src_call  dev   lci neigh st vs vr va   t  t1  t2  t3  hb    idle Snd-Q Rcv-Q inode\n");
 
 	else {
-		struct sock *s = sk_entry(v);
+		struct sock *s = v;
 		struct rose_sock *rose = rose_sk(s);
 		const char *devname, *callsign;
 		const struct net_device *dev = rose->device;

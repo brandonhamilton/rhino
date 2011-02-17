@@ -77,10 +77,9 @@ static bool key_gc_keyring(struct key *keyring, time_t limit)
 		goto dont_gc;
 
 	/* scan the keyring looking for dead keys */
-	rcu_read_lock();
 	klist = rcu_dereference(keyring->payload.subscriptions);
 	if (!klist)
-		goto unlock_dont_gc;
+		goto dont_gc;
 
 	for (loop = klist->nkeys - 1; loop >= 0; loop--) {
 		key = klist->keys[loop];
@@ -89,14 +88,11 @@ static bool key_gc_keyring(struct key *keyring, time_t limit)
 			goto do_gc;
 	}
 
-unlock_dont_gc:
-	rcu_read_unlock();
 dont_gc:
 	kleave(" = false");
 	return false;
 
 do_gc:
-	rcu_read_unlock();
 	key_gc_cursor = keyring->serial;
 	key_get(keyring);
 	spin_unlock(&key_serial_lock);

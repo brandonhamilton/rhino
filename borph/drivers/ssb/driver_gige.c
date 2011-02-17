@@ -12,7 +12,6 @@
 #include <linux/ssb/ssb_driver_gige.h>
 #include <linux/pci.h>
 #include <linux/pci_regs.h>
-#include <linux/slab.h>
 
 
 /*

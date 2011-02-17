@@ -16,7 +16,6 @@
  *
  */
 
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -147,15 +146,13 @@ struct wpan_phy *wpan_phy_alloc(size_t priv_size)
 	struct wpan_phy *phy = kzalloc(sizeof(*phy) + priv_size,
 			GFP_KERNEL);
 
-	if (!phy)
-		goto out;
 	mutex_lock(&wpan_phy_mutex);
 	phy->idx = wpan_phy_idx++;
 	if (unlikely(!wpan_phy_idx_valid(phy->idx))) {
 		wpan_phy_idx--;
 		mutex_unlock(&wpan_phy_mutex);
 		kfree(phy);
-		goto out;
+		return NULL;
 	}
 	mutex_unlock(&wpan_phy_mutex);
 
@@ -170,9 +167,6 @@ struct wpan_phy *wpan_phy_alloc(size_t priv_size)
 	phy->current_page = 0; /* for compatibility */
 
 	return phy;
-
-out:
-	return NULL;
 }
 EXPORT_SYMBOL(wpan_phy_alloc);
 

@@ -7,8 +7,7 @@
  *
  */
 #include <linux/module.h>
-#include <linux/edac.h>
-#include <linux/slab.h>
+#include <linux/sysdev.h>
 #include <linux/ctype.h>
 
 #include "edac_core.h"
@@ -122,7 +121,7 @@ static ssize_t edac_pci_instance_store(struct kobject *kobj,
 }
 
 /* fs_ops table */
-static const struct sysfs_ops pci_instance_ops = {
+static struct sysfs_ops pci_instance_ops = {
 	.show = edac_pci_instance_show,
 	.store = edac_pci_instance_store
 };
@@ -262,7 +261,7 @@ static ssize_t edac_pci_dev_store(struct kobject *kobj,
 	return -EIO;
 }
 
-static const struct sysfs_ops edac_pci_sysfs_ops = {
+static struct sysfs_ops edac_pci_sysfs_ops = {
 	.show = edac_pci_dev_show,
 	.store = edac_pci_dev_store
 };
@@ -354,7 +353,7 @@ static int edac_pci_main_kobj_setup(void)
 	/* First time, so create the main kobject and its
 	 * controls and atributes
 	 */
-	edac_class = edac_get_sysfs_class();
+	edac_class = edac_get_edac_class();
 	if (edac_class == NULL) {
 		debugf1("%s() no edac_class\n", __func__);
 		err = -ENODEV;
@@ -368,7 +367,7 @@ static int edac_pci_main_kobj_setup(void)
 	if (!try_module_get(THIS_MODULE)) {
 		debugf1("%s() try_module_get() failed\n", __func__);
 		err = -ENODEV;
-		goto mod_get_fail;
+		goto decrement_count_fail;
 	}
 
 	edac_pci_top_main_kobj = kzalloc(sizeof(struct kobject), GFP_KERNEL);
@@ -403,9 +402,6 @@ kobject_init_and_add_fail:
 kzalloc_fail:
 	module_put(THIS_MODULE);
 
-mod_get_fail:
-	edac_put_sysfs_class();
-
 decrement_count_fail:
 	/* if are on this error exit, nothing to tear down */
 	atomic_dec(&edac_pci_sysfs_refcount);
@@ -432,7 +428,6 @@ static void edac_pci_main_kobj_teardown(void)
 			__func__);
 		kobject_put(edac_pci_top_main_kobj);
 	}
-	edac_put_sysfs_class();
 }
 
 /*
@@ -538,6 +533,8 @@ static u16 get_pci_parity_status(struct pci_dev *dev, int secondary)
 static void edac_pci_dev_parity_clear(struct pci_dev *dev)
 {
 	u8 header_type;
+
+	debugf0("%s()\n", __func__);
 
 	get_pci_parity_status(dev, 0);
 

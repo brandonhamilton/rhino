@@ -10,15 +10,11 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/highmem.h>
 
 #include <asm/cacheflush.h>
 #include <asm/cachetype.h>
-#include <asm/highmem.h>
-#include <asm/smp_plat.h>
 #include <asm/system.h>
 #include <asm/tlbflush.h>
-#include <asm/smp_plat.h>
 
 #include "mm.h"
 
@@ -39,18 +35,6 @@ static void flush_pfn_alias(unsigned long pfn, unsigned long vaddr)
 	    :
 	    : "r" (to), "r" (to + PAGE_SIZE - L1_CACHE_BYTES), "r" (zero)
 	    : "cc");
-}
-
-static void flush_icache_alias(unsigned long pfn, unsigned long vaddr, unsigned long len)
-{
-	unsigned long colour = CACHE_COLOUR(vaddr);
-	unsigned long offset = vaddr & (PAGE_SIZE - 1);
-	unsigned long to;
-
-	set_pte_ext(TOP_PTE(ALIAS_FLUSH_START) + colour, pfn_pte(pfn, PAGE_KERNEL), 0);
-	to = ALIAS_FLUSH_START + (colour << PAGE_SHIFT) + offset;
-	flush_tlb_kernel_page(to);
-	flush_icache_range(to, to + len);
 }
 
 void flush_cache_mm(struct mm_struct *mm)
@@ -104,25 +88,12 @@ void flush_cache_page(struct vm_area_struct *vma, unsigned long user_addr, unsig
 		__flush_icache_all();
 }
 
-#else
-#define flush_pfn_alias(pfn,vaddr)		do { } while (0)
-#define flush_icache_alias(pfn,vaddr,len)	do { } while (0)
-#endif
-
-static void flush_ptrace_access_other(void *args)
-{
-	__flush_icache_all();
-}
-
-static
 void flush_ptrace_access(struct vm_area_struct *vma, struct page *page,
-			 unsigned long uaddr, void *kaddr, unsigned long len)
+			 unsigned long uaddr, void *kaddr,
+			 unsigned long len, int write)
 {
 	if (cache_is_vivt()) {
-		if (cpumask_test_cpu(smp_processor_id(), mm_cpumask(vma->vm_mm))) {
-			unsigned long addr = (unsigned long)kaddr;
-			__cpuc_coherent_kern_range(addr, addr + len);
-		}
+		vivt_flush_ptrace_access(vma, page, uaddr, kaddr, len, write);
 		return;
 	}
 
@@ -132,61 +103,35 @@ void flush_ptrace_access(struct vm_area_struct *vma, struct page *page,
 		return;
 	}
 
-	/* VIPT non-aliasing D-cache */
-	if (vma->vm_flags & VM_EXEC) {
+	/* VIPT non-aliasing cache */
+	if (cpumask_test_cpu(smp_processor_id(), mm_cpumask(vma->vm_mm)) &&
+	    vma->vm_flags & VM_EXEC) {
 		unsigned long addr = (unsigned long)kaddr;
-		if (icache_is_vipt_aliasing())
-			flush_icache_alias(page_to_pfn(page), uaddr, len);
-		else
-			__cpuc_coherent_kern_range(addr, addr + len);
-		if (cache_ops_need_broadcast())
-			smp_call_function(flush_ptrace_access_other,
-					  NULL, 1);
+		/* only flushing the kernel mapping on non-aliasing VIPT */
+		__cpuc_coherent_kern_range(addr, addr + len);
 	}
 }
-
-/*
- * Copy user data from/to a page which is mapped into a different
- * processes address space.  Really, we want to allow our "user
- * space" model to handle this.
- *
- * Note that this code needs to run on the current CPU.
- */
-void copy_to_user_page(struct vm_area_struct *vma, struct page *page,
-		       unsigned long uaddr, void *dst, const void *src,
-		       unsigned long len)
-{
-#ifdef CONFIG_SMP
-	preempt_disable();
+#else
+#define flush_pfn_alias(pfn,vaddr)	do { } while (0)
 #endif
-	memcpy(dst, src, len);
-	flush_ptrace_access(vma, page, uaddr, dst, len);
-#ifdef CONFIG_SMP
-	preempt_enable();
-#endif
-}
 
 void __flush_dcache_page(struct address_space *mapping, struct page *page)
 {
+	void *addr = page_address(page);
+
 	/*
 	 * Writeback any data associated with the kernel mapping of this
 	 * page.  This ensures that data in the physical page is mutually
 	 * coherent with the kernels mapping.
 	 */
-	if (!PageHighMem(page)) {
-		__cpuc_flush_dcache_area(page_address(page), PAGE_SIZE);
-	} else {
-		void *addr = kmap_high_get(page);
-		if (addr) {
-			__cpuc_flush_dcache_area(addr, PAGE_SIZE);
-			kunmap_high(page);
-		} else if (cache_is_vipt()) {
-			/* unmapped pages might still be cached */
-			addr = kmap_atomic(page);
-			__cpuc_flush_dcache_area(addr, PAGE_SIZE);
-			kunmap_atomic(addr);
-		}
-	}
+#ifdef CONFIG_HIGHMEM
+	/*
+	 * kmap_atomic() doesn't set the page virtual address, and
+	 * kunmap_atomic() takes care of cache flushing already.
+	 */
+	if (addr)
+#endif
+		__cpuc_flush_dcache_page(addr);
 
 	/*
 	 * If this is a page cache page, and we have an aliasing VIPT cache,
@@ -230,36 +175,6 @@ static void __flush_dcache_aliases(struct address_space *mapping, struct page *p
 	flush_dcache_mmap_unlock(mapping);
 }
 
-#if __LINUX_ARM_ARCH__ >= 6
-void __sync_icache_dcache(pte_t pteval)
-{
-	unsigned long pfn;
-	struct page *page;
-	struct address_space *mapping;
-
-	if (!pte_present_user(pteval))
-		return;
-	if (cache_is_vipt_nonaliasing() && !pte_exec(pteval))
-		/* only flush non-aliasing VIPT caches for exec mappings */
-		return;
-	pfn = pte_pfn(pteval);
-	if (!pfn_valid(pfn))
-		return;
-
-	page = pfn_to_page(pfn);
-	if (cache_is_vipt_aliasing())
-		mapping = page_mapping(page);
-	else
-		mapping = NULL;
-
-	if (!test_and_set_bit(PG_dcache_clean, &page->flags))
-		__flush_dcache_page(mapping, page);
-	/* pte_exec() already checked above for non-aliasing VIPT cache */
-	if (cache_is_vipt_nonaliasing() || pte_exec(pteval))
-		__flush_icache_all();
-}
-#endif
-
 /*
  * Ensure cache coherency between kernel mapping and userspace mapping
  * of this page.
@@ -291,16 +206,17 @@ void flush_dcache_page(struct page *page)
 
 	mapping = page_mapping(page);
 
-	if (!cache_ops_need_broadcast() &&
-	    mapping && !mapping_mapped(mapping))
-		clear_bit(PG_dcache_clean, &page->flags);
-	else {
+#ifndef CONFIG_SMP
+	if (!PageHighMem(page) && mapping && !mapping_mapped(mapping))
+		set_bit(PG_dcache_dirty, &page->flags);
+	else
+#endif
+	{
 		__flush_dcache_page(mapping, page);
 		if (mapping && cache_is_vivt())
 			__flush_dcache_aliases(mapping, page);
 		else if (mapping)
 			__flush_icache_all();
-		set_bit(PG_dcache_clean, &page->flags);
 	}
 }
 EXPORT_SYMBOL(flush_dcache_page);
@@ -342,5 +258,5 @@ void __flush_anon_page(struct vm_area_struct *vma, struct page *page, unsigned l
 	 * in this mapping of the page.  FIXME: this is overkill
 	 * since we actually ask for a write-back and invalidate.
 	 */
-	__cpuc_flush_dcache_area(page_address(page), PAGE_SIZE);
+	__cpuc_flush_dcache_page(page_address(page));
 }

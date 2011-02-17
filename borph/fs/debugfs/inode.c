@@ -27,7 +27,6 @@
 #include <linux/fsnotify.h>
 #include <linux/string.h>
 #include <linux/magic.h>
-#include <linux/slab.h>
 
 static struct vfsmount *debugfs_mount;
 static int debugfs_mount_count;
@@ -40,7 +39,6 @@ static struct inode *debugfs_get_inode(struct super_block *sb, int mode, dev_t d
 	struct inode *inode = new_inode(sb);
 
 	if (inode) {
-		inode->i_ino = get_next_ino();
 		inode->i_mode = mode;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		switch (mode & S_IFMT) {
@@ -135,17 +133,17 @@ static int debug_fill_super(struct super_block *sb, void *data, int silent)
 	return simple_fill_super(sb, DEBUGFS_MAGIC, debug_files);
 }
 
-static struct dentry *debug_mount(struct file_system_type *fs_type,
+static int debug_get_sb(struct file_system_type *fs_type,
 			int flags, const char *dev_name,
-			void *data)
+			void *data, struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, data, debug_fill_super);
+	return get_sb_single(fs_type, flags, data, debug_fill_super, mnt);
 }
 
 static struct file_system_type debug_fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"debugfs",
-	.mount =	debug_mount,
+	.get_sb =	debug_get_sb,
 	.kill_sb =	kill_litter_super,
 };
 
@@ -162,8 +160,15 @@ static int debugfs_create_by_name(const char *name, mode_t mode,
 	 * block. A pointer to that is in the struct vfsmount that we
 	 * have around.
 	 */
-	if (!parent)
-		parent = debugfs_mount->mnt_sb->s_root;
+	if (!parent) {
+		if (debugfs_mount && debugfs_mount->mnt_sb) {
+			parent = debugfs_mount->mnt_sb->s_root;
+		}
+	}
+	if (!parent) {
+		pr_debug("debugfs: Ah! can not find a parent!\n");
+		return -EFAULT;
+	}
 
 	*dentry = NULL;
 	mutex_lock(&parent->d_inode->i_mutex);
@@ -498,7 +503,7 @@ struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
 	}
 	d_move(old_dentry, dentry);
 	fsnotify_move(old_dir->d_inode, new_dir->d_inode, old_name,
-		S_ISDIR(old_dentry->d_inode->i_mode),
+		old_dentry->d_name.name, S_ISDIR(old_dentry->d_inode->i_mode),
 		NULL, old_dentry);
 	fsnotify_oldname_free(old_name);
 	unlock_rename(new_dir, old_dir);

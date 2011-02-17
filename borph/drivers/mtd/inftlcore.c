@@ -1,11 +1,11 @@
 /*
  * inftlcore.c -- Linux driver for Inverse Flash Translation Layer (INFTL)
  *
- * Copyright © 2002, Greg Ungerer (gerg@snapgear.com)
+ * (C) Copyright 2002, Greg Ungerer (gerg@snapgear.com)
  *
  * Based heavily on the nftlcore.c code which is:
- * Copyright © 1999 Machine Vision Holdings, Inc.
- * Copyright © 1999 David Woodhouse <dwmw2@infradead.org>
+ * (c) 1999 Machine Vision Holdings, Inc.
+ * Author: David Woodhouse <dwmw2@infradead.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -139,6 +139,7 @@ static void inftl_remove_dev(struct mtd_blktrans_dev *dev)
 
 	kfree(inftl->PUtable);
 	kfree(inftl->VUtable);
+	kfree(inftl);
 }
 
 /*

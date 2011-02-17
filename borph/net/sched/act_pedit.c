@@ -17,7 +17,6 @@
 #include <linux/rtnetlink.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <net/netlink.h>
 #include <net/pkt_sched.h>
 #include <linux/tc_act/tc_pedit.h>
@@ -125,15 +124,16 @@ static int tcf_pedit(struct sk_buff *skb, struct tc_action *a,
 {
 	struct tcf_pedit *p = a->priv;
 	int i, munged = 0;
-	unsigned int off;
+	u8 *pptr;
 
-	if (skb_cloned(skb)) {
+	if (!(skb->tc_verd & TC_OK2MUNGE)) {
+		/* should we set skb->cloned? */
 		if (pskb_expand_head(skb, 0, 0, GFP_ATOMIC)) {
 			return p->tcf_action;
 		}
 	}
 
-	off = skb_network_offset(skb);
+	pptr = skb_network_header(skb);
 
 	spin_lock(&p->tcf_lock);
 
@@ -143,46 +143,41 @@ static int tcf_pedit(struct sk_buff *skb, struct tc_action *a,
 		struct tc_pedit_key *tkey = p->tcfp_keys;
 
 		for (i = p->tcfp_nkeys; i > 0; i--, tkey++) {
-			u32 *ptr, _data;
+			u32 *ptr;
 			int offset = tkey->off;
 
 			if (tkey->offmask) {
-				char *d, _d;
-
-				d = skb_header_pointer(skb, off + tkey->at, 1,
-						       &_d);
-				if (!d)
+				if (skb->len > tkey->at) {
+					 char *j = pptr + tkey->at;
+					 offset += ((*j & tkey->offmask) >>
+						   tkey->shift);
+				} else {
 					goto bad;
-				offset += (*d & tkey->offmask) >> tkey->shift;
+				}
 			}
 
 			if (offset % 4) {
-				pr_info("tc filter pedit"
-					" offset must be on 32 bit boundaries\n");
+				printk("offset must be on 32 bit boundaries\n");
 				goto bad;
 			}
 			if (offset > 0 && offset > skb->len) {
-				pr_info("tc filter pedit"
-					" offset %d cant exceed pkt length %d\n",
+				printk("offset %d cant exceed pkt length %d\n",
 				       offset, skb->len);
 				goto bad;
 			}
 
-			ptr = skb_header_pointer(skb, off + offset, 4, &_data);
-			if (!ptr)
-				goto bad;
+			ptr = (u32 *)(pptr+offset);
 			/* just do it, baby */
 			*ptr = ((*ptr & tkey->mask) ^ tkey->val);
-			if (ptr == &_data)
-				skb_store_bits(skb, off + offset, ptr, 4);
 			munged++;
 		}
 
 		if (munged)
 			skb->tc_verd = SET_TC_MUNGED(skb->tc_verd);
 		goto done;
-	} else
-		WARN(1, "pedit BUG: index %d\n", p->tcf_index);
+	} else {
+		printk("pedit BUG: index %d\n", p->tcf_index);
+	}
 
 bad:
 	p->tcf_qstats.overlimits++;

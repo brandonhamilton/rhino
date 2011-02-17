@@ -53,7 +53,6 @@
 #include <linux/mtd/nand_ecc.h>
 #include <linux/mtd/partitions.h>
 
-#include <plat/gpio-cfg.h>
 #include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
@@ -103,10 +102,10 @@ static void mini2440_udc_pullup(enum s3c2410_udc_cmd_e cmd)
 
 	switch (cmd) {
 		case S3C2410_UDC_P_ENABLE :
-			gpio_set_value(S3C2410_GPC(5), 1);
+			s3c2410_gpio_setpin(S3C2410_GPC(5), 1);
 			break;
 		case S3C2410_UDC_P_DISABLE :
-			gpio_set_value(S3C2410_GPC(5), 0);
+			s3c2410_gpio_setpin(S3C2410_GPC(5), 0);
 			break;
 		case S3C2410_UDC_P_RESET :
 			break;
@@ -289,7 +288,7 @@ static struct s3c2410_platform_nand mini2440_nand_info __initdata = {
 
 /* DM9000AEP 10/100 ethernet controller */
 
-static struct resource mini2440_dm9k_resource[] = {
+static struct resource mini2440_dm9k_resource[] __initdata = {
 	[0] = {
 		.start = MACH_MINI2440_DM9K_BASE,
 		.end   = MACH_MINI2440_DM9K_BASE + 3,
@@ -311,11 +310,11 @@ static struct resource mini2440_dm9k_resource[] = {
  * The DM9000 has no eeprom, and it's MAC address is set by
  * the bootloader before starting the kernel.
  */
-static struct dm9000_plat_data mini2440_dm9k_pdata = {
+static struct dm9000_plat_data mini2440_dm9k_pdata __initdata = {
 	.flags		= (DM9000_PLATF_16BITONLY | DM9000_PLATF_NO_EEPROM),
 };
 
-static struct platform_device mini2440_device_eth = {
+static struct platform_device mini2440_device_eth __initdata = {
 	.name		= "dm9000",
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(mini2440_dm9k_resource),
@@ -342,7 +341,7 @@ static struct platform_device mini2440_device_eth = {
  *	|  |  +----+  +----+
  *	  .....
  */
-static struct gpio_keys_button mini2440_buttons[] = {
+static struct gpio_keys_button mini2440_buttons[] __initdata = {
 	{
 		.gpio		= S3C2410_GPG(0),		/* K1 */
 		.code		= KEY_F1,
@@ -385,12 +384,12 @@ static struct gpio_keys_button mini2440_buttons[] = {
 #endif
 };
 
-static struct gpio_keys_platform_data mini2440_button_data = {
+static struct gpio_keys_platform_data mini2440_button_data __initdata = {
 	.buttons	= mini2440_buttons,
 	.nbuttons	= ARRAY_SIZE(mini2440_buttons),
 };
 
-static struct platform_device mini2440_button_device = {
+static struct platform_device mini2440_button_device __initdata = {
 	.name		= "gpio-keys",
 	.id		= -1,
 	.dev		= {
@@ -400,41 +399,41 @@ static struct platform_device mini2440_button_device = {
 
 /* LEDS */
 
-static struct s3c24xx_led_platdata mini2440_led1_pdata = {
+static struct s3c24xx_led_platdata mini2440_led1_pdata __initdata = {
 	.name		= "led1",
 	.gpio		= S3C2410_GPB(5),
 	.flags		= S3C24XX_LEDF_ACTLOW | S3C24XX_LEDF_TRISTATE,
 	.def_trigger	= "heartbeat",
 };
 
-static struct s3c24xx_led_platdata mini2440_led2_pdata = {
+static struct s3c24xx_led_platdata mini2440_led2_pdata __initdata = {
 	.name		= "led2",
 	.gpio		= S3C2410_GPB(6),
 	.flags		= S3C24XX_LEDF_ACTLOW | S3C24XX_LEDF_TRISTATE,
 	.def_trigger	= "nand-disk",
 };
 
-static struct s3c24xx_led_platdata mini2440_led3_pdata = {
+static struct s3c24xx_led_platdata mini2440_led3_pdata __initdata = {
 	.name		= "led3",
 	.gpio		= S3C2410_GPB(7),
 	.flags		= S3C24XX_LEDF_ACTLOW | S3C24XX_LEDF_TRISTATE,
 	.def_trigger	= "mmc0",
 };
 
-static struct s3c24xx_led_platdata mini2440_led4_pdata = {
+static struct s3c24xx_led_platdata mini2440_led4_pdata __initdata = {
 	.name		= "led4",
 	.gpio		= S3C2410_GPB(8),
 	.flags		= S3C24XX_LEDF_ACTLOW | S3C24XX_LEDF_TRISTATE,
 	.def_trigger	= "",
 };
 
-static struct s3c24xx_led_platdata mini2440_led_backlight_pdata = {
+static struct s3c24xx_led_platdata mini2440_led_backlight_pdata __initdata = {
 	.name		= "backlight",
 	.gpio		= S3C2410_GPG(4),
 	.def_trigger	= "backlight",
 };
 
-static struct platform_device mini2440_led1 = {
+static struct platform_device mini2440_led1 __initdata = {
 	.name		= "s3c24xx_led",
 	.id		= 1,
 	.dev		= {
@@ -442,7 +441,7 @@ static struct platform_device mini2440_led1 = {
 	},
 };
 
-static struct platform_device mini2440_led2 = {
+static struct platform_device mini2440_led2 __initdata = {
 	.name		= "s3c24xx_led",
 	.id		= 2,
 	.dev		= {
@@ -450,7 +449,7 @@ static struct platform_device mini2440_led2 = {
 	},
 };
 
-static struct platform_device mini2440_led3 = {
+static struct platform_device mini2440_led3 __initdata = {
 	.name		= "s3c24xx_led",
 	.id		= 3,
 	.dev		= {
@@ -458,7 +457,7 @@ static struct platform_device mini2440_led3 = {
 	},
 };
 
-static struct platform_device mini2440_led4 = {
+static struct platform_device mini2440_led4 __initdata = {
 	.name		= "s3c24xx_led",
 	.id		= 4,
 	.dev		= {
@@ -466,7 +465,7 @@ static struct platform_device mini2440_led4 = {
 	},
 };
 
-static struct platform_device mini2440_led_backlight = {
+static struct platform_device mini2440_led_backlight __initdata = {
 	.name		= "s3c24xx_led",
 	.id		= 5,
 	.dev		= {
@@ -476,14 +475,14 @@ static struct platform_device mini2440_led_backlight = {
 
 /* AUDIO */
 
-static struct s3c24xx_uda134x_platform_data mini2440_audio_pins = {
+static struct s3c24xx_uda134x_platform_data mini2440_audio_pins __initdata = {
 	.l3_clk = S3C2410_GPB(4),
 	.l3_mode = S3C2410_GPB(2),
 	.l3_data = S3C2410_GPB(3),
 	.model = UDA134X_UDA1341
 };
 
-static struct platform_device mini2440_audio = {
+static struct platform_device mini2440_audio __initdata = {
 	.name		= "s3c24xx_uda134x",
 	.id		= 0,
 	.dev		= {
@@ -507,8 +506,9 @@ static struct i2c_board_info mini2440_i2c_devs[] __initdata = {
 };
 
 static struct platform_device *mini2440_devices[] __initdata = {
-	&s3c_device_ohci,
+	&s3c_device_usb,
 	&s3c_device_wdt,
+/*	&s3c_device_adc,*/ /* ADC doesn't like living with touchscreen ! */
 	&s3c_device_i2c0,
 	&s3c_device_rtc,
 	&s3c_device_usbgadget,
@@ -522,6 +522,8 @@ static struct platform_device *mini2440_devices[] __initdata = {
 	&s3c_device_sdi,
 	&s3c_device_iis,
 	&mini2440_audio,
+/*	&s3c_device_timer[0],*/	/* buzzer pwm, no API for it */
+	/* remaining devices are optional */
 };
 
 static void __init mini2440_map_io(void)
@@ -529,6 +531,8 @@ static void __init mini2440_map_io(void)
 	s3c24xx_init_io(mini2440_iodesc, ARRAY_SIZE(mini2440_iodesc));
 	s3c24xx_init_clocks(12000000);
 	s3c24xx_init_uarts(mini2440_uartcfgs, ARRAY_SIZE(mini2440_uartcfgs));
+
+	s3c_device_sdi.dev.platform_data = &mini2440_mmc_cfg;
 }
 
 /*
@@ -633,25 +637,25 @@ static void __init mini2440_init(void)
 	mini2440_parse_features(&features, mini2440_features_str);
 
 	/* turn LCD on */
-	s3c_gpio_cfgpin(S3C2410_GPC(0), S3C2410_GPC0_LEND);
+	s3c2410_gpio_cfgpin(S3C2410_GPC(0), S3C2410_GPC0_LEND);
 
 	/* Turn the backlight early on */
-	WARN_ON(gpio_request(S3C2410_GPG(4), "backlight"));
-	gpio_direction_output(S3C2410_GPG(4), 1);
+	s3c2410_gpio_setpin(S3C2410_GPG(4), 1);
+	s3c2410_gpio_cfgpin(S3C2410_GPG(4), S3C2410_GPIO_OUTPUT);
 
 	/* remove pullup on optional PWM backlight -- unused on 3.5 and 7"s */
-	s3c_gpio_setpull(S3C2410_GPB(1), S3C_GPIO_PULL_UP);
+	s3c2410_gpio_pullup(S3C2410_GPB(1), 0);
 	s3c2410_gpio_setpin(S3C2410_GPB(1), 0);
-	s3c_gpio_cfgpin(S3C2410_GPB(1), S3C2410_GPIO_INPUT);
+	s3c2410_gpio_cfgpin(S3C2410_GPB(1), S3C2410_GPIO_INPUT);
 
 	/* Make sure the D+ pullup pin is output */
-	WARN_ON(gpio_request(S3C2410_GPC(5), "udc pup"));
-	gpio_direction_output(S3C2410_GPC(5), 0);
+	s3c2410_gpio_cfgpin(S3C2410_GPC(5), S3C2410_GPIO_OUTPUT);
 
 	/* mark the key as input, without pullups (there is one on the board) */
 	for (i = 0; i < ARRAY_SIZE(mini2440_buttons); i++) {
-		s3c_gpio_setpull(mini2440_buttons[i].gpio, S3C_GPIO_PULL_UP);
-		s3c_gpio_cfgpin(mini2440_buttons[i].gpio, S3C2410_GPIO_INPUT);
+		s3c2410_gpio_pullup(mini2440_buttons[i].gpio, 0);
+		s3c2410_gpio_cfgpin(mini2440_buttons[i].gpio,
+					S3C2410_GPIO_INPUT);
 	}
 	if (features.lcd_index != -1) {
 		int li;
@@ -674,7 +678,6 @@ static void __init mini2440_init(void)
 	}
 
 	s3c24xx_udc_set_platdata(&mini2440_udc_cfg);
-	s3c24xx_mci_set_platdata(&mini2440_mmc_cfg);
 	s3c_nand_set_platdata(&mini2440_nand_info);
 	s3c_i2c0_set_platdata(NULL);
 
@@ -691,6 +694,8 @@ static void __init mini2440_init(void)
 
 MACHINE_START(MINI2440, "MINI2440")
 	/* Maintainer: Michel Pollet <buserror@gmail.com> */
+	.phys_io	= S3C2410_PA_UART,
+	.io_pg_offst	= (((u32)S3C24XX_VA_UART) >> 18) & 0xfffc,
 	.boot_params	= S3C2410_SDRAM_PA + 0x100,
 	.map_io		= mini2440_map_io,
 	.init_machine	= mini2440_init,

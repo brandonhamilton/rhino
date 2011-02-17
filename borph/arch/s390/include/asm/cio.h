@@ -20,7 +20,7 @@
 /**
  * struct ccw1 - channel command word
  * @cmd_code: command code
- * @flags: flags, like IDA addressing, etc.
+ * @flags: flags, like IDA adressing, etc.
  * @count: byte count
  * @cda: data address
  *

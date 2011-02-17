@@ -30,12 +30,8 @@
  * Shared functions for accessing and configuring the adapter
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include "ixgb_hw.h"
 #include "ixgb_ids.h"
-
-#include <linux/etherdevice.h>
 
 /*  Local function prototypes */
 
@@ -124,13 +120,13 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
 	u32 ctrl_reg;
 	u32 icr_reg;
 
-	ENTER();
+	DEBUGFUNC("ixgb_adapter_stop");
 
 	/* If we are stopped or resetting exit gracefully and wait to be
 	 * started again before accessing the hardware.
 	 */
 	if (hw->adapter_stopped) {
-		pr_debug("Exiting because the adapter is already stopped!!!\n");
+		DEBUGOUT("Exiting because the adapter is already stopped!!!\n");
 		return false;
 	}
 
@@ -140,7 +136,7 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
 	hw->adapter_stopped = true;
 
 	/* Clear interrupt mask to stop board from generating interrupts */
-	pr_debug("Masking off all interrupts\n");
+	DEBUGOUT("Masking off all interrupts\n");
 	IXGB_WRITE_REG(hw, IMC, 0xFFFFFFFF);
 
 	/* Disable the Transmit and Receive units.  Then delay to allow
@@ -156,18 +152,18 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
 	 * the current PCI configuration.  The global reset bit is self-
 	 * clearing, and should clear within a microsecond.
 	 */
-	pr_debug("Issuing a global reset to MAC\n");
+	DEBUGOUT("Issuing a global reset to MAC\n");
 
 	ctrl_reg = ixgb_mac_reset(hw);
 
 	/* Clear interrupt mask to stop board from generating interrupts */
-	pr_debug("Masking off all interrupts\n");
+	DEBUGOUT("Masking off all interrupts\n");
 	IXGB_WRITE_REG(hw, IMC, 0xffffffff);
 
 	/* Clear any pending interrupt events. */
 	icr_reg = IXGB_READ_REG(hw, ICR);
 
-	return ctrl_reg & IXGB_CTRL0_RST;
+	return (ctrl_reg & IXGB_CTRL0_RST);
 }
 
 
@@ -187,7 +183,7 @@ ixgb_identify_xpak_vendor(struct ixgb_hw *hw)
 	u16 vendor_name[5];
 	ixgb_xpak_vendor xpak_vendor;
 
-	ENTER();
+	DEBUGFUNC("ixgb_identify_xpak_vendor");
 
 	/* Read the first few bytes of the vendor string from the XPAK NVR
 	 * registers.  These are standard XENPAK/XPAK registers, so all XPAK
@@ -209,7 +205,7 @@ ixgb_identify_xpak_vendor(struct ixgb_hw *hw)
 		xpak_vendor = ixgb_xpak_vendor_infineon;
 	}
 
-	return xpak_vendor;
+	return (xpak_vendor);
 }
 
 /******************************************************************************
@@ -226,12 +222,12 @@ ixgb_identify_phy(struct ixgb_hw *hw)
 	ixgb_phy_type phy_type;
 	ixgb_xpak_vendor xpak_vendor;
 
-	ENTER();
+	DEBUGFUNC("ixgb_identify_phy");
 
 	/* Infer the transceiver/phy type from the device id */
 	switch (hw->device_id) {
 	case IXGB_DEVICE_ID_82597EX:
-		pr_debug("Identified TXN17401 optics\n");
+		DEBUGOUT("Identified TXN17401 optics\n");
 		phy_type = ixgb_phy_type_txn17401;
 		break;
 
@@ -241,30 +237,30 @@ ixgb_identify_phy(struct ixgb_hw *hw)
 		 * type of optics. */
 		xpak_vendor = ixgb_identify_xpak_vendor(hw);
 		if (xpak_vendor == ixgb_xpak_vendor_intel) {
-			pr_debug("Identified TXN17201 optics\n");
+			DEBUGOUT("Identified TXN17201 optics\n");
 			phy_type = ixgb_phy_type_txn17201;
 		} else {
-			pr_debug("Identified G6005 optics\n");
+			DEBUGOUT("Identified G6005 optics\n");
 			phy_type = ixgb_phy_type_g6005;
 		}
 		break;
 	case IXGB_DEVICE_ID_82597EX_LR:
-		pr_debug("Identified G6104 optics\n");
+		DEBUGOUT("Identified G6104 optics\n");
 		phy_type = ixgb_phy_type_g6104;
 		break;
 	case IXGB_DEVICE_ID_82597EX_CX4:
-		pr_debug("Identified CX4\n");
+		DEBUGOUT("Identified CX4\n");
 		xpak_vendor = ixgb_identify_xpak_vendor(hw);
 		if (xpak_vendor == ixgb_xpak_vendor_intel) {
-			pr_debug("Identified TXN17201 optics\n");
+			DEBUGOUT("Identified TXN17201 optics\n");
 			phy_type = ixgb_phy_type_txn17201;
 		} else {
-			pr_debug("Identified G6005 optics\n");
+			DEBUGOUT("Identified G6005 optics\n");
 			phy_type = ixgb_phy_type_g6005;
 		}
 		break;
 	default:
-		pr_debug("Unknown physical layer module\n");
+		DEBUGOUT("Unknown physical layer module\n");
 		phy_type = ixgb_phy_type_unknown;
 		break;
 	}
@@ -273,7 +269,7 @@ ixgb_identify_phy(struct ixgb_hw *hw)
 	if (hw->subsystem_vendor_id == SUN_SUBVENDOR_ID)
 		phy_type = ixgb_phy_type_bcm;
 
-	return phy_type;
+	return (phy_type);
 }
 
 /******************************************************************************
@@ -300,18 +296,18 @@ ixgb_init_hw(struct ixgb_hw *hw)
 	u32 ctrl_reg;
 	bool status;
 
-	ENTER();
+	DEBUGFUNC("ixgb_init_hw");
 
 	/* Issue a global reset to the MAC.  This will reset the chip's
 	 * transmit, receive, DMA, and link units.  It will not effect
 	 * the current PCI configuration.  The global reset bit is self-
 	 * clearing, and should clear within a microsecond.
 	 */
-	pr_debug("Issuing a global reset to MAC\n");
+	DEBUGOUT("Issuing a global reset to MAC\n");
 
 	ctrl_reg = ixgb_mac_reset(hw);
 
-	pr_debug("Issuing an EE reset to MAC\n");
+	DEBUGOUT("Issuing an EE reset to MAC\n");
 #ifdef HP_ZX1
 	/* Workaround for 82597EX reset errata */
 	IXGB_WRITE_REG_IO(hw, CTRL1, IXGB_CTRL1_EE_RST);
@@ -339,7 +335,7 @@ ixgb_init_hw(struct ixgb_hw *hw)
 	 * If it is not valid, we fail hardware init.
 	 */
 	if (!mac_addr_valid(hw->curr_mac_addr)) {
-		pr_debug("MAC address invalid after ixgb_init_rx_addrs\n");
+		DEBUGOUT("MAC address invalid after ixgb_init_rx_addrs\n");
 		return(false);
 	}
 
@@ -350,7 +346,7 @@ ixgb_init_hw(struct ixgb_hw *hw)
 	ixgb_get_bus_info(hw);
 
 	/* Zero out the Multicast HASH table */
-	pr_debug("Zeroing the MTA\n");
+	DEBUGOUT("Zeroing the MTA\n");
 	for (i = 0; i < IXGB_MC_TBL_SIZE; i++)
 		IXGB_WRITE_REG_ARRAY(hw, MTA, i, 0);
 
@@ -366,7 +362,7 @@ ixgb_init_hw(struct ixgb_hw *hw)
 	/* 82597EX errata: Call check-for-link in case lane deskew is locked */
 	ixgb_check_for_link(hw);
 
-	return status;
+	return (status);
 }
 
 /******************************************************************************
@@ -383,7 +379,7 @@ ixgb_init_rx_addrs(struct ixgb_hw *hw)
 {
 	u32 i;
 
-	ENTER();
+	DEBUGFUNC("ixgb_init_rx_addrs");
 
 	/*
 	 * If the current mac address is valid, assume it is a software override
@@ -395,24 +391,35 @@ ixgb_init_rx_addrs(struct ixgb_hw *hw)
 		/* Get the MAC address from the eeprom for later reference */
 		ixgb_get_ee_mac_addr(hw, hw->curr_mac_addr);
 
-		pr_debug("Keeping Permanent MAC Addr = %pM\n",
-			 hw->curr_mac_addr);
+		DEBUGOUT3(" Keeping Permanent MAC Addr =%.2X %.2X %.2X ",
+			  hw->curr_mac_addr[0],
+			  hw->curr_mac_addr[1], hw->curr_mac_addr[2]);
+		DEBUGOUT3("%.2X %.2X %.2X\n",
+			  hw->curr_mac_addr[3],
+			  hw->curr_mac_addr[4], hw->curr_mac_addr[5]);
 	} else {
 
 		/* Setup the receive address. */
-		pr_debug("Overriding MAC Address in RAR[0]\n");
-		pr_debug("New MAC Addr = %pM\n", hw->curr_mac_addr);
+		DEBUGOUT("Overriding MAC Address in RAR[0]\n");
+		DEBUGOUT3(" New MAC Addr =%.2X %.2X %.2X ",
+			  hw->curr_mac_addr[0],
+			  hw->curr_mac_addr[1], hw->curr_mac_addr[2]);
+		DEBUGOUT3("%.2X %.2X %.2X\n",
+			  hw->curr_mac_addr[3],
+			  hw->curr_mac_addr[4], hw->curr_mac_addr[5]);
 
 		ixgb_rar_set(hw, hw->curr_mac_addr, 0);
 	}
 
 	/* Zero out the other 15 receive addresses. */
-	pr_debug("Clearing RAR[1-15]\n");
+	DEBUGOUT("Clearing RAR[1-15]\n");
 	for (i = 1; i < IXGB_RAR_ENTRIES; i++) {
 		/* Write high reg first to disable the AV bit first */
 		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
 		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
 	}
+
+	return;
 }
 
 /******************************************************************************
@@ -437,50 +444,65 @@ ixgb_mc_addr_list_update(struct ixgb_hw *hw,
 	u32 hash_value;
 	u32 i;
 	u32 rar_used_count = 1;		/* RAR[0] is used for our MAC address */
-	u8 *mca;
 
-	ENTER();
+	DEBUGFUNC("ixgb_mc_addr_list_update");
 
 	/* Set the new number of MC addresses that we are being requested to use. */
 	hw->num_mc_addrs = mc_addr_count;
 
 	/* Clear RAR[1-15] */
-	pr_debug("Clearing RAR[1-15]\n");
+	DEBUGOUT(" Clearing RAR[1-15]\n");
 	for (i = rar_used_count; i < IXGB_RAR_ENTRIES; i++) {
 		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
 		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
 	}
 
 	/* Clear the MTA */
-	pr_debug("Clearing MTA\n");
+	DEBUGOUT(" Clearing MTA\n");
 	for (i = 0; i < IXGB_MC_TBL_SIZE; i++)
 		IXGB_WRITE_REG_ARRAY(hw, MTA, i, 0);
 
 	/* Add the new addresses */
-	mca = mc_addr_list;
 	for (i = 0; i < mc_addr_count; i++) {
-		pr_debug("Adding the multicast addresses:\n");
-		pr_debug("MC Addr #%d = %pM\n", i, mca);
+		DEBUGOUT(" Adding the multicast addresses:\n");
+		DEBUGOUT7(" MC Addr #%d =%.2X %.2X %.2X %.2X %.2X %.2X\n", i,
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad)],
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad) +
+				       1],
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad) +
+				       2],
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad) +
+				       3],
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad) +
+				       4],
+			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad) +
+				       5]);
 
 		/* Place this multicast address in the RAR if there is room, *
 		 * else put it in the MTA
 		 */
 		if (rar_used_count < IXGB_RAR_ENTRIES) {
-			ixgb_rar_set(hw, mca, rar_used_count);
-			pr_debug("Added a multicast address to RAR[%d]\n", i);
+			ixgb_rar_set(hw,
+				     mc_addr_list +
+				     (i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad)),
+				     rar_used_count);
+			DEBUGOUT1("Added a multicast address to RAR[%d]\n", i);
 			rar_used_count++;
 		} else {
-			hash_value = ixgb_hash_mc_addr(hw, mca);
+			hash_value = ixgb_hash_mc_addr(hw,
+						       mc_addr_list +
+						       (i *
+							(IXGB_ETH_LENGTH_OF_ADDRESS
+							 + pad)));
 
-			pr_debug("Hash value = 0x%03X\n", hash_value);
+			DEBUGOUT1(" Hash value = 0x%03X\n", hash_value);
 
 			ixgb_mta_set(hw, hash_value);
 		}
-
-		mca += IXGB_ETH_LENGTH_OF_ADDRESS + pad;
 	}
 
-	pr_debug("MC Update Complete\n");
+	DEBUGOUT("MC Update Complete\n");
+	return;
 }
 
 /******************************************************************************
@@ -498,7 +520,7 @@ ixgb_hash_mc_addr(struct ixgb_hw *hw,
 {
 	u32 hash_value = 0;
 
-	ENTER();
+	DEBUGFUNC("ixgb_hash_mc_addr");
 
 	/* The portion of the address that is used for the hash table is
 	 * determined by the mc_filter_type setting.
@@ -525,13 +547,13 @@ ixgb_hash_mc_addr(struct ixgb_hw *hw,
 		break;
 	default:
 		/* Invalid mc_filter_type, what should we do? */
-		pr_debug("MC filter type param set incorrectly\n");
+		DEBUGOUT("MC filter type param set incorrectly\n");
 		ASSERT(0);
 		break;
 	}
 
 	hash_value &= 0xFFF;
-	return hash_value;
+	return (hash_value);
 }
 
 /******************************************************************************
@@ -563,6 +585,8 @@ ixgb_mta_set(struct ixgb_hw *hw,
 	mta_reg |= (1 << hash_bit);
 
 	IXGB_WRITE_REG_ARRAY(hw, MTA, hash_reg, mta_reg);
+
+	return;
 }
 
 /******************************************************************************
@@ -579,7 +603,7 @@ ixgb_rar_set(struct ixgb_hw *hw,
 {
 	u32 rar_low, rar_high;
 
-	ENTER();
+	DEBUGFUNC("ixgb_rar_set");
 
 	/* HW expects these in little endian so we reverse the byte order
 	 * from network order (big endian) to little endian
@@ -595,6 +619,7 @@ ixgb_rar_set(struct ixgb_hw *hw,
 
 	IXGB_WRITE_REG_ARRAY(hw, RA, (index << 1), rar_low);
 	IXGB_WRITE_REG_ARRAY(hw, RA, ((index << 1) + 1), rar_high);
+	return;
 }
 
 /******************************************************************************
@@ -610,6 +635,7 @@ ixgb_write_vfta(struct ixgb_hw *hw,
 		 u32 value)
 {
 	IXGB_WRITE_REG_ARRAY(hw, VFTA, offset, value);
+	return;
 }
 
 /******************************************************************************
@@ -624,6 +650,7 @@ ixgb_clear_vfta(struct ixgb_hw *hw)
 
 	for (offset = 0; offset < IXGB_VLAN_FILTER_TBL_SIZE; offset++)
 		IXGB_WRITE_REG_ARRAY(hw, VFTA, offset, 0);
+	return;
 }
 
 /******************************************************************************
@@ -639,7 +666,7 @@ ixgb_setup_fc(struct ixgb_hw *hw)
 	u32 pap_reg = 0;   /* by default, assume no pause time */
 	bool status = true;
 
-	ENTER();
+	DEBUGFUNC("ixgb_setup_fc");
 
 	/* Get the current control reg 0 settings */
 	ctrl_reg = IXGB_READ_REG(hw, CTRL0);
@@ -683,7 +710,7 @@ ixgb_setup_fc(struct ixgb_hw *hw)
 		break;
 	default:
 		/* We should never get here.  The value should be 0-3. */
-		pr_debug("Flow control param set incorrectly\n");
+		DEBUGOUT("Flow control param set incorrectly\n");
 		ASSERT(0);
 		break;
 	}
@@ -715,7 +742,7 @@ ixgb_setup_fc(struct ixgb_hw *hw)
 		}
 		IXGB_WRITE_REG(hw, FCRTH, hw->fc.high_water);
 	}
-	return status;
+	return (status);
 }
 
 /******************************************************************************
@@ -913,7 +940,7 @@ ixgb_check_for_link(struct ixgb_hw *hw)
 	u32 status_reg;
 	u32 xpcss_reg;
 
-	ENTER();
+	DEBUGFUNC("ixgb_check_for_link");
 
 	xpcss_reg = IXGB_READ_REG(hw, XPCSS);
 	status_reg = IXGB_READ_REG(hw, STATUS);
@@ -923,7 +950,7 @@ ixgb_check_for_link(struct ixgb_hw *hw)
 		hw->link_up = true;
 	} else if (!(xpcss_reg & IXGB_XPCSS_ALIGN_STATUS) &&
 		   (status_reg & IXGB_STATUS_LU)) {
-		pr_debug("XPCSS Not Aligned while Status:LU is set\n");
+		DEBUGOUT("XPCSS Not Aligned while Status:LU is set.\n");
 		hw->link_up = ixgb_link_reset(hw);
 	} else {
 		/*
@@ -954,7 +981,8 @@ bool ixgb_check_for_bad_link(struct ixgb_hw *hw)
 		newRFC = IXGB_READ_REG(hw, RFC);
 		if ((hw->lastLFC + 250 < newLFC)
 		    || (hw->lastRFC + 250 < newRFC)) {
-			pr_debug("BAD LINK! too many LFC/RFC since last check\n");
+			DEBUGOUT
+			    ("BAD LINK! too many LFC/RFC since last check\n");
 			bad_link_returncode = true;
 		}
 		hw->lastLFC = newLFC;
@@ -974,11 +1002,11 @@ ixgb_clear_hw_cntrs(struct ixgb_hw *hw)
 {
 	volatile u32 temp_reg;
 
-	ENTER();
+	DEBUGFUNC("ixgb_clear_hw_cntrs");
 
 	/* if we are stopped or resetting exit gracefully */
 	if (hw->adapter_stopped) {
-		pr_debug("Exiting because the adapter is stopped!!!\n");
+		DEBUGOUT("Exiting because the adapter is stopped!!!\n");
 		return;
 	}
 
@@ -1042,6 +1070,7 @@ ixgb_clear_hw_cntrs(struct ixgb_hw *hw)
 	temp_reg = IXGB_READ_REG(hw, XOFFRXC);
 	temp_reg = IXGB_READ_REG(hw, XOFFTXC);
 	temp_reg = IXGB_READ_REG(hw, RJC);
+	return;
 }
 
 /******************************************************************************
@@ -1057,6 +1086,7 @@ ixgb_led_on(struct ixgb_hw *hw)
 	/* To turn on the LED, clear software-definable pin 0 (SDP0). */
 	ctrl0_reg &= ~IXGB_CTRL0_SDP0;
 	IXGB_WRITE_REG(hw, CTRL0, ctrl0_reg);
+	return;
 }
 
 /******************************************************************************
@@ -1072,6 +1102,7 @@ ixgb_led_off(struct ixgb_hw *hw)
 	/* To turn off the LED, set software-definable pin 0 (SDP0). */
 	ctrl0_reg |= IXGB_CTRL0_SDP0;
 	IXGB_WRITE_REG(hw, CTRL0, ctrl0_reg);
+	return;
 }
 
 /******************************************************************************
@@ -1111,6 +1142,8 @@ ixgb_get_bus_info(struct ixgb_hw *hw)
 
 	hw->bus.width = (status_reg & IXGB_STATUS_BUS64) ?
 		ixgb_bus_width_64 : ixgb_bus_width_32;
+
+	return;
 }
 
 /******************************************************************************
@@ -1123,24 +1156,29 @@ static bool
 mac_addr_valid(u8 *mac_addr)
 {
 	bool is_valid = true;
-	ENTER();
+	DEBUGFUNC("mac_addr_valid");
 
 	/* Make sure it is not a multicast address */
-	if (is_multicast_ether_addr(mac_addr)) {
-		pr_debug("MAC address is multicast\n");
+	if (IS_MULTICAST(mac_addr)) {
+		DEBUGOUT("MAC address is multicast\n");
 		is_valid = false;
 	}
 	/* Not a broadcast address */
-	else if (is_broadcast_ether_addr(mac_addr)) {
-		pr_debug("MAC address is broadcast\n");
+	else if (IS_BROADCAST(mac_addr)) {
+		DEBUGOUT("MAC address is broadcast\n");
 		is_valid = false;
 	}
 	/* Reject the zero address */
-	else if (is_zero_ether_addr(mac_addr)) {
-		pr_debug("MAC address is all zeros\n");
+	else if (mac_addr[0] == 0 &&
+			 mac_addr[1] == 0 &&
+			 mac_addr[2] == 0 &&
+			 mac_addr[3] == 0 &&
+			 mac_addr[4] == 0 &&
+			 mac_addr[5] == 0) {
+		DEBUGOUT("MAC address is all zeros\n");
 		is_valid = false;
 	}
-	return is_valid;
+	return (is_valid);
 }
 
 /******************************************************************************
@@ -1197,6 +1235,8 @@ ixgb_optics_reset(struct ixgb_hw *hw)
 					     IXGB_PHY_ADDRESS,
 					     MDIO_MMD_PMAPMD);
 	}
+
+	return;
 }
 
 /******************************************************************************
@@ -1257,4 +1297,6 @@ ixgb_optics_reset_bcm(struct ixgb_hw *hw)
 
 	/* SerDes needs extra delay */
 	msleep(IXGB_SUN_PHY_RESET_DELAY);
+
+	return;
 }

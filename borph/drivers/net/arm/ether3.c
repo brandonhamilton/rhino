@@ -81,6 +81,7 @@ static int	ether3_open (struct net_device *dev);
 static int	ether3_sendpacket (struct sk_buff *skb, struct net_device *dev);
 static irqreturn_t ether3_interrupt (int irq, void *dev_id);
 static int	ether3_close (struct net_device *dev);
+static struct net_device_stats *ether3_getstats (struct net_device *dev);
 static void	ether3_setmulticastlist (struct net_device *dev);
 static void	ether3_timeout(struct net_device *dev);
 
@@ -322,6 +323,8 @@ ether3_init_for_open(struct net_device *dev)
 {
 	int i;
 
+	memset(&priv(dev)->stats, 0, sizeof(struct net_device_stats));
+
 	/* Reset the chip */
 	ether3_outw(CFG2_RESET, REG_CONFIG2);
 	udelay(4);
@@ -439,6 +442,15 @@ ether3_close(struct net_device *dev)
 }
 
 /*
+ * Get the current statistics.	This may be called with the card open or
+ * closed.
+ */
+static struct net_device_stats *ether3_getstats(struct net_device *dev)
+{
+	return &priv(dev)->stats;
+}
+
+/*
  * Set or clear promiscuous/multicast mode filter for this adaptor.
  *
  * We don't attempt any packet filtering.  The card may have a SEEQ 8004
@@ -451,7 +463,7 @@ static void ether3_setmulticastlist(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC) {
 		/* promiscuous mode */
 		priv(dev)->regs.config1 |= CFG1_RECVPROMISC;
-	} else if (dev->flags & IFF_ALLMULTI || !netdev_mc_empty(dev)) {
+	} else if (dev->flags & IFF_ALLMULTI || dev->mc_count) {
 		priv(dev)->regs.config1 |= CFG1_RECVSPECBRMULTI;
 	} else
 		priv(dev)->regs.config1 |= CFG1_RECVSPECBROAD;
@@ -478,7 +490,7 @@ static void ether3_timeout(struct net_device *dev)
 	local_irq_restore(flags);
 
 	priv(dev)->regs.config2 |= CFG2_CTRLO;
-	dev->stats.tx_errors += 1;
+	priv(dev)->stats.tx_errors += 1;
 	ether3_outw(priv(dev)->regs.config2, REG_CONFIG2);
 	priv(dev)->tx_head = priv(dev)->tx_tail = 0;
 
@@ -497,7 +509,7 @@ ether3_sendpacket(struct sk_buff *skb, struct net_device *dev)
 
 	if (priv(dev)->broken) {
 		dev_kfree_skb(skb);
-		dev->stats.tx_dropped++;
+		priv(dev)->stats.tx_dropped ++;
 		netif_start_queue(dev);
 		return NETDEV_TX_OK;
 	}
@@ -517,6 +529,7 @@ ether3_sendpacket(struct sk_buff *skb, struct net_device *dev)
 		return NETDEV_TX_BUSY;	/* unable to queue */
 	}
 
+	dev->trans_start = jiffies;
 	ptr		 = 0x600 * priv(dev)->tx_head;
 	priv(dev)->tx_head = next_ptr;
 	next_ptr	*= 0x600;
@@ -661,7 +674,7 @@ if (next_ptr < RX_START || next_ptr >= RX_END) {
 			} else
 				goto dropping;
 		} else {
-			struct net_device_stats *stats = &dev->stats;
+			struct net_device_stats *stats = &priv(dev)->stats;
 			ether3_outw(next_ptr >> 8, REG_RECVEND);
 			if (status & RXSTAT_OVERSIZE)	  stats->rx_over_errors ++;
 			if (status & RXSTAT_CRCERROR)	  stats->rx_crc_errors ++;
@@ -673,14 +686,14 @@ if (next_ptr < RX_START || next_ptr >= RX_END) {
 	while (-- maxcnt);
 
 done:
-	dev->stats.rx_packets += received;
+	priv(dev)->stats.rx_packets += received;
 	priv(dev)->rx_head = next_ptr;
 	/*
 	 * If rx went off line, then that means that the buffer may be full.  We
 	 * have dropped at least one packet.
 	 */
 	if (!(ether3_inw(REG_STATUS) & STAT_RXON)) {
-		dev->stats.rx_dropped++;
+		priv(dev)->stats.rx_dropped ++;
     		ether3_outw(next_ptr, REG_RECVPTR);
 		ether3_outw(priv(dev)->regs.command | CMD_RXON, REG_COMMAND);
 	}
@@ -698,7 +711,7 @@ dropping:{
 		last_warned = jiffies;
 		printk("%s: memory squeeze, dropping packet.\n", dev->name);
 	}
-	dev->stats.rx_dropped++;
+	priv(dev)->stats.rx_dropped ++;
 	goto done;
 	}
 }
@@ -731,13 +744,13 @@ static void ether3_tx(struct net_device *dev)
 		 * Update errors
 		 */
 		if (!(status & (TXSTAT_BABBLED | TXSTAT_16COLLISIONS)))
-			dev->stats.tx_packets++;
+			priv(dev)->stats.tx_packets++;
 		else {
-			dev->stats.tx_errors++;
+			priv(dev)->stats.tx_errors ++;
 			if (status & TXSTAT_16COLLISIONS)
-				dev->stats.collisions += 16;
+				priv(dev)->stats.collisions += 16;
 			if (status & TXSTAT_BABBLED)
-				dev->stats.tx_fifo_errors++;
+				priv(dev)->stats.tx_fifo_errors ++;
 		}
 
 		tx_tail = (tx_tail + 1) & 15;
@@ -761,6 +774,7 @@ static const struct net_device_ops ether3_netdev_ops = {
 	.ndo_open		= ether3_open,
 	.ndo_stop		= ether3_close,
 	.ndo_start_xmit		= ether3_sendpacket,
+	.ndo_get_stats		= ether3_getstats,
 	.ndo_set_multicast_list	= ether3_setmulticastlist,
 	.ndo_tx_timeout		= ether3_timeout,
 	.ndo_validate_addr	= eth_validate_addr,

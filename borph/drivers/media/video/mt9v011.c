@@ -6,13 +6,13 @@
  */
 
 #include <linux/i2c.h>
-#include <linux/slab.h>
 #include <linux/videodev2.h>
 #include <linux/delay.h>
 #include <asm/div64.h>
 #include <media/v4l2-device.h>
-#include <media/v4l2-chip-ident.h>
 #include "mt9v011.h"
+#include <media/v4l2-i2c-drv.h>
+#include <media/v4l2-chip-ident.h>
 
 MODULE_DESCRIPTION("Micron mt9v011 sensor driver");
 MODULE_AUTHOR("Mauro Carvalho Chehab <mchehab@redhat.com>");
@@ -391,25 +391,27 @@ static int mt9v011_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	return 0;
 }
 
-static int mt9v011_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned index,
-					enum v4l2_mbus_pixelcode *code)
+static int mt9v011_enum_fmt(struct v4l2_subdev *sd, struct v4l2_fmtdesc *fmt)
 {
-	if (index > 0)
+	if (fmt->index > 0)
 		return -EINVAL;
 
-	*code = V4L2_MBUS_FMT_SGRBG8_1X8;
+	fmt->flags = 0;
+	strcpy(fmt->description, "8 bpp Bayer GRGR..BGBG");
+	fmt->pixelformat = V4L2_PIX_FMT_SGRBG8;
+
 	return 0;
 }
 
-static int mt9v011_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
+static int mt9v011_try_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
-	if (fmt->code != V4L2_MBUS_FMT_SGRBG8_1X8)
+	struct v4l2_pix_format *pix = &fmt->fmt.pix;
+
+	if (pix->pixelformat != V4L2_PIX_FMT_SGRBG8)
 		return -EINVAL;
 
-	v4l_bound_align_image(&fmt->width, 48, 639, 1,
-			      &fmt->height, 32, 480, 1, 0);
-	fmt->field = V4L2_FIELD_NONE;
-	fmt->colorspace = V4L2_COLORSPACE_SRGB;
+	v4l_bound_align_image(&pix->width, 48, 639, 1,
+			      &pix->height, 32, 480, 1, 0);
 
 	return 0;
 }
@@ -452,17 +454,18 @@ static int mt9v011_s_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *parms)
 	return 0;
 }
 
-static int mt9v011_s_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
+static int mt9v011_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
+	struct v4l2_pix_format *pix = &fmt->fmt.pix;
 	struct mt9v011 *core = to_mt9v011(sd);
 	int rc;
 
-	rc = mt9v011_try_mbus_fmt(sd, fmt);
+	rc = mt9v011_try_fmt(sd, fmt);
 	if (rc < 0)
 		return -EINVAL;
 
-	core->width = fmt->width;
-	core->height = fmt->height;
+	core->width = pix->width;
+	core->height = pix->height;
 
 	set_res(sd);
 
@@ -545,9 +548,9 @@ static const struct v4l2_subdev_core_ops mt9v011_core_ops = {
 };
 
 static const struct v4l2_subdev_video_ops mt9v011_video_ops = {
-	.enum_mbus_fmt = mt9v011_enum_mbus_fmt,
-	.try_mbus_fmt = mt9v011_try_mbus_fmt,
-	.s_mbus_fmt = mt9v011_s_mbus_fmt,
+	.enum_fmt = mt9v011_enum_fmt,
+	.try_fmt = mt9v011_try_fmt,
+	.s_fmt = mt9v011_s_fmt,
 	.g_parm = mt9v011_g_parm,
 	.s_parm = mt9v011_s_parm,
 };
@@ -623,25 +626,9 @@ static const struct i2c_device_id mt9v011_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, mt9v011_id);
 
-static struct i2c_driver mt9v011_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "mt9v011",
-	},
-	.probe		= mt9v011_probe,
-	.remove		= mt9v011_remove,
-	.id_table	= mt9v011_id,
+static struct v4l2_i2c_driver_data v4l2_i2c_data = {
+	.name = "mt9v011",
+	.probe = mt9v011_probe,
+	.remove = mt9v011_remove,
+	.id_table = mt9v011_id,
 };
-
-static __init int init_mt9v011(void)
-{
-	return i2c_add_driver(&mt9v011_driver);
-}
-
-static __exit void exit_mt9v011(void)
-{
-	i2c_del_driver(&mt9v011_driver);
-}
-
-module_init(init_mt9v011);
-module_exit(exit_mt9v011);

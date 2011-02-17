@@ -21,7 +21,7 @@
  * places
  */
 
-#define PER_CPU(var) var
+#define PER_CPU(var) per_cpu__##var
 
 # ifndef __ASSEMBLY__
 DECLARE_PER_CPU(unsigned int, KSP); /* Saved kernel stack pointer */

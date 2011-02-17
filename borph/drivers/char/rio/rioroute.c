@@ -31,6 +31,7 @@
 */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <asm/io.h>
 #include <asm/system.h>

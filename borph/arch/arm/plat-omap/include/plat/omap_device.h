@@ -36,8 +36,6 @@
 
 #include <plat/omap_hwmod.h>
 
-extern struct device omap_device_parent;
-
 /* omap_device._state values */
 #define OMAP_DEVICE_STATE_UNKNOWN	0
 #define OMAP_DEVICE_STATE_ENABLED	1
@@ -90,18 +88,15 @@ struct omap_device *omap_device_build(const char *pdev_name, int pdev_id,
 				      struct omap_hwmod *oh, void *pdata,
 				      int pdata_len,
 				      struct omap_device_pm_latency *pm_lats,
-				      int pm_lats_cnt, int is_early_device);
+				      int pm_lats_cnt);
 
 struct omap_device *omap_device_build_ss(const char *pdev_name, int pdev_id,
 					 struct omap_hwmod **oh, int oh_cnt,
 					 void *pdata, int pdata_len,
 					 struct omap_device_pm_latency *pm_lats,
-					 int pm_lats_cnt, int is_early_device);
+					 int pm_lats_cnt);
 
 int omap_device_register(struct omap_device *od);
-int omap_early_device_register(struct omap_device *od);
-
-void __iomem *omap_device_get_rt_va(struct omap_device *od);
 
 /* OMAP PM interface */
 int omap_device_align_pm_lat(struct platform_device *pdev,
@@ -136,15 +131,11 @@ int omap_device_enable_clocks(struct omap_device *od);
  */
 struct omap_device_pm_latency {
 	u32 deactivate_lat;
-	u32 deactivate_lat_worst;
 	int (*deactivate_func)(struct omap_device *od);
 	u32 activate_lat;
-	u32 activate_lat_worst;
 	int (*activate_func)(struct omap_device *od);
-	u32 flags;
 };
 
-#define OMAP_DEVICE_LATENCY_AUTO_ADJUST BIT(1)
 
 /* Get omap_device pointer from platform_device pointer */
 #define to_omap_device(x) container_of((x), struct omap_device, pdev)

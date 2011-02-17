@@ -19,7 +19,6 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/input.h>
@@ -98,9 +97,8 @@ static int __devinit wm831x_on_probe(struct platform_device *pdev)
 	wm831x_on->dev->phys = "wm831x_on/input0";
 	wm831x_on->dev->dev.parent = &pdev->dev;
 
-	ret = request_threaded_irq(irq, NULL, wm831x_on_irq,
-				   IRQF_TRIGGER_RISING, "wm831x_on",
-				   wm831x_on);
+	ret = wm831x_request_irq(wm831x, irq, wm831x_on_irq,
+				 IRQF_TRIGGER_RISING, "wm831x_on", wm831x_on);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Unable to request IRQ: %d\n", ret);
 		goto err_input_dev;
@@ -116,7 +114,7 @@ static int __devinit wm831x_on_probe(struct platform_device *pdev)
 	return 0;
 
 err_irq:
-	free_irq(irq, wm831x_on);
+	wm831x_free_irq(wm831x, irq, NULL);
 err_input_dev:
 	input_free_device(wm831x_on->dev);
 err:
@@ -129,7 +127,7 @@ static int __devexit wm831x_on_remove(struct platform_device *pdev)
 	struct wm831x_on *wm831x_on = platform_get_drvdata(pdev);
 	int irq = platform_get_irq(pdev, 0);
 
-	free_irq(irq, wm831x_on);
+	wm831x_free_irq(wm831x_on->wm831x, irq, wm831x_on);
 	cancel_delayed_work_sync(&wm831x_on->work);
 	input_unregister_device(wm831x_on->dev);
 	kfree(wm831x_on);

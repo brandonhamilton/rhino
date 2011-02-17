@@ -265,8 +265,7 @@
 
 #define GPIO_IRQ_BASE		IRQ_PF0
 
-#define NR_MACH_IRQS		(IRQ_PF47 + 1)
-#define NR_IRQS			(NR_MACH_IRQS + NR_SPARE_IRQS)
+#define NR_IRQS			(IRQ_PF47 + 1)
 
 #define IVG7			7
 #define IVG8			8

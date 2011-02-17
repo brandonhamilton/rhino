@@ -6,7 +6,6 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/swap.h>
-#include <linux/gfp.h>
 #include <linux/bio.h>
 #include <linux/pagemap.h>
 #include <linux/mempool.h>
@@ -116,8 +115,8 @@ static void copy_to_high_bio_irq(struct bio *to, struct bio *from)
 		 */
 		vfrom = page_address(fromvec->bv_page) + tovec->bv_offset;
 
-		bounce_copy_vec(tovec, vfrom);
 		flush_dcache_page(tovec->bv_page);
+		bounce_copy_vec(tovec, vfrom);
 	}
 }
 

@@ -71,7 +71,6 @@ struct ar9170_usb {
 	unsigned int tx_pending_urbs;
 
 	struct completion cmd_wait;
-	struct completion firmware_loading_complete;
 	int readlen;
 	u8 *readbuf;
 

@@ -55,7 +55,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/workqueue.h>
 #include <linux/wait.h>
@@ -159,7 +158,7 @@ static int hwahc_op_start(struct usb_hcd *usb_hcd)
 		goto error_set_cluster_id;
 
 	usb_hcd->uses_new_polling = 1;
-	set_bit(HCD_FLAG_POLL_RH, &usb_hcd->flags);
+	usb_hcd->poll_rh = 1;
 	usb_hcd->state = HC_STATE_RUNNING;
 	result = 0;
 out:
@@ -776,7 +775,7 @@ static int hwahc_probe(struct usb_interface *usb_iface,
 		goto error_alloc;
 	}
 	usb_hcd->wireless = 1;
-	set_bit(HCD_FLAG_SAW_IRQ, &usb_hcd->flags);
+	usb_hcd->flags |= HCD_FLAG_SAW_IRQ;
 	wusbhc = usb_hcd_to_wusbhc(usb_hcd);
 	hwahc = container_of(wusbhc, struct hwahc, wusbhc);
 	hwahc_init(hwahc);

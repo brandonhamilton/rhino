@@ -18,7 +18,6 @@
 /*
  *	switch_to() should switch tasks to task nr n, first
  */
-struct thread_struct;
 struct task_struct *sh64_switch_to(struct task_struct *prev,
 				   struct thread_struct *prev_thread,
 				   struct task_struct *next,
@@ -34,6 +33,11 @@ do {								\
 			      &next->thread);			\
 } while (0)
 
+#define __uses_jump_to_uncached
+
+#define jump_to_uncached()	do { } while (0)
+#define back_to_cached()	do { } while (0)
+
 #define __icbi(addr)	__asm__ __volatile__ ( "icbi %0, 0\n\t" : : "r" (addr))
 #define __ocbp(addr)	__asm__ __volatile__ ( "ocbp %0, 0\n\t" : : "r" (addr))
 #define __ocbi(addr)	__asm__ __volatile__ ( "ocbi %0, 0\n\t" : : "r" (addr))
@@ -42,13 +46,6 @@ do {								\
 static inline reg_size_t register_align(void *val)
 {
 	return (unsigned long long)(signed long long)(signed long)val;
-}
-
-extern void phys_stext(void);
-
-static inline void trigger_address_error(void)
-{
-	phys_stext();
 }
 
 #define SR_BL_LL	0x0000000010000000LL

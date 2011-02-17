@@ -5,6 +5,7 @@
  *  http://www.gnu.org/licenses/gpl.html
  */
 
+
 enum pstate {
 	HW_PSTATE_INVALID = 0xff,
 	HW_PSTATE_0 = 0,
@@ -53,6 +54,7 @@ struct powernow_k8_data {
 	 * structure */
 	struct cpumask *available_cores;
 };
+
 
 /* processor's cpuid instruction support */
 #define CPUID_PROCESSOR_SIGNATURE	1	/* function 1 */

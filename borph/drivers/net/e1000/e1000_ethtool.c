@@ -215,23 +215,6 @@ static int e1000_set_settings(struct net_device *netdev,
 	return 0;
 }
 
-static u32 e1000_get_link(struct net_device *netdev)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-
-	/*
-	 * If the link is not reported up to netdev, interrupts are disabled,
-	 * and so the physical link state may have changed since we last
-	 * looked. Set get_link_status to make sure that the true link
-	 * state is interrogated, rather than pulling a cached and possibly
-	 * stale link state from the driver.
-	 */
-	if (!netif_carrier_ok(netdev))
-		adapter->hw.get_link_status = 1;
-
-	return e1000_has_link(adapter);
-}
-
 static void e1000_get_pauseparam(struct net_device *netdev,
 				 struct ethtool_pauseparam *pause)
 {
@@ -346,7 +329,7 @@ static int e1000_set_tso(struct net_device *netdev, u32 data)
 
 	netdev->features &= ~NETIF_F_TSO6;
 
-	e_info(probe, "TSO is %s\n", data ? "Enabled" : "Disabled");
+	DPRINTK(PROBE, INFO, "TSO is %s\n", data ? "Enabled" : "Disabled");
 	adapter->tso_force = true;
 	return 0;
 }
@@ -714,9 +697,9 @@ static bool reg_pattern_test(struct e1000_adapter *adapter, u64 *data, int reg,
 		writel(write & test[i], address);
 		read = readl(address);
 		if (read != (write & test[i] & mask)) {
-			e_err(drv, "pattern test reg %04X failed: "
-			      "got 0x%08X expected 0x%08X\n",
-			      reg, read, (write & test[i] & mask));
+			DPRINTK(DRV, ERR, "pattern test reg %04X failed: "
+				"got 0x%08X expected 0x%08X\n",
+				reg, read, (write & test[i] & mask));
 			*data = reg;
 			return true;
 		}
@@ -734,9 +717,9 @@ static bool reg_set_and_check(struct e1000_adapter *adapter, u64 *data, int reg,
 	writel(write & mask, address);
 	read = readl(address);
 	if ((read & mask) != (write & mask)) {
-		e_err(drv, "set/check reg %04X test failed: "
-		      "got 0x%08X expected 0x%08X\n",
-		      reg, (read & mask), (write & mask));
+		DPRINTK(DRV, ERR, "set/check reg %04X test failed: "
+			"got 0x%08X expected 0x%08X\n",
+			reg, (read & mask), (write & mask));
 		*data = reg;
 		return true;
 	}
@@ -779,8 +762,8 @@ static int e1000_reg_test(struct e1000_adapter *adapter, u64 *data)
 	ew32(STATUS, toggle);
 	after = er32(STATUS) & toggle;
 	if (value != after) {
-		e_err(drv, "failed STATUS register test got: "
-		      "0x%08X expected: 0x%08X\n", after, value);
+		DPRINTK(DRV, ERR, "failed STATUS register test got: "
+		        "0x%08X expected: 0x%08X\n", after, value);
 		*data = 1;
 		return 1;
 	}
@@ -894,8 +877,8 @@ static int e1000_intr_test(struct e1000_adapter *adapter, u64 *data)
 		*data = 1;
 		return -1;
 	}
-	e_info(hw, "testing %s interrupt\n", (shared_int ?
-	       "shared" : "unshared"));
+	DPRINTK(HW, INFO, "testing %s interrupt\n",
+	        (shared_int ? "shared" : "unshared"));
 
 	/* Disable all the interrupts */
 	ew32(IMC, 0xFFFFFFFF);
@@ -980,10 +963,9 @@ static void e1000_free_desc_rings(struct e1000_adapter *adapter)
 	if (txdr->desc && txdr->buffer_info) {
 		for (i = 0; i < txdr->count; i++) {
 			if (txdr->buffer_info[i].dma)
-				dma_unmap_single(&pdev->dev,
-						 txdr->buffer_info[i].dma,
+				pci_unmap_single(pdev, txdr->buffer_info[i].dma,
 						 txdr->buffer_info[i].length,
-						 DMA_TO_DEVICE);
+						 PCI_DMA_TODEVICE);
 			if (txdr->buffer_info[i].skb)
 				dev_kfree_skb(txdr->buffer_info[i].skb);
 		}
@@ -992,23 +974,20 @@ static void e1000_free_desc_rings(struct e1000_adapter *adapter)
 	if (rxdr->desc && rxdr->buffer_info) {
 		for (i = 0; i < rxdr->count; i++) {
 			if (rxdr->buffer_info[i].dma)
-				dma_unmap_single(&pdev->dev,
-						 rxdr->buffer_info[i].dma,
+				pci_unmap_single(pdev, rxdr->buffer_info[i].dma,
 						 rxdr->buffer_info[i].length,
-						 DMA_FROM_DEVICE);
+						 PCI_DMA_FROMDEVICE);
 			if (rxdr->buffer_info[i].skb)
 				dev_kfree_skb(rxdr->buffer_info[i].skb);
 		}
 	}
 
 	if (txdr->desc) {
-		dma_free_coherent(&pdev->dev, txdr->size, txdr->desc,
-				  txdr->dma);
+		pci_free_consistent(pdev, txdr->size, txdr->desc, txdr->dma);
 		txdr->desc = NULL;
 	}
 	if (rxdr->desc) {
-		dma_free_coherent(&pdev->dev, rxdr->size, rxdr->desc,
-				  rxdr->dma);
+		pci_free_consistent(pdev, rxdr->size, rxdr->desc, rxdr->dma);
 		rxdr->desc = NULL;
 	}
 
@@ -1016,6 +995,8 @@ static void e1000_free_desc_rings(struct e1000_adapter *adapter)
 	txdr->buffer_info = NULL;
 	kfree(rxdr->buffer_info);
 	rxdr->buffer_info = NULL;
+
+	return;
 }
 
 static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
@@ -1041,8 +1022,7 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 
 	txdr->size = txdr->count * sizeof(struct e1000_tx_desc);
 	txdr->size = ALIGN(txdr->size, 4096);
-	txdr->desc = dma_alloc_coherent(&pdev->dev, txdr->size, &txdr->dma,
-					GFP_KERNEL);
+	txdr->desc = pci_alloc_consistent(pdev, txdr->size, &txdr->dma);
 	if (!txdr->desc) {
 		ret_val = 2;
 		goto err_nomem;
@@ -1073,8 +1053,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 		txdr->buffer_info[i].skb = skb;
 		txdr->buffer_info[i].length = skb->len;
 		txdr->buffer_info[i].dma =
-			dma_map_single(&pdev->dev, skb->data, skb->len,
-				       DMA_TO_DEVICE);
+			pci_map_single(pdev, skb->data, skb->len,
+				       PCI_DMA_TODEVICE);
 		tx_desc->buffer_addr = cpu_to_le64(txdr->buffer_info[i].dma);
 		tx_desc->lower.data = cpu_to_le32(skb->len);
 		tx_desc->lower.data |= cpu_to_le32(E1000_TXD_CMD_EOP |
@@ -1096,8 +1076,7 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 	}
 
 	rxdr->size = rxdr->count * sizeof(struct e1000_rx_desc);
-	rxdr->desc = dma_alloc_coherent(&pdev->dev, rxdr->size, &rxdr->dma,
-					GFP_KERNEL);
+	rxdr->desc = pci_alloc_consistent(pdev, rxdr->size, &rxdr->dma);
 	if (!rxdr->desc) {
 		ret_val = 5;
 		goto err_nomem;
@@ -1130,8 +1109,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 		rxdr->buffer_info[i].skb = skb;
 		rxdr->buffer_info[i].length = E1000_RXBUFFER_2048;
 		rxdr->buffer_info[i].dma =
-			dma_map_single(&pdev->dev, skb->data,
-				       E1000_RXBUFFER_2048, DMA_FROM_DEVICE);
+			pci_map_single(pdev, skb->data, E1000_RXBUFFER_2048,
+				       PCI_DMA_FROMDEVICE);
 		rx_desc->buffer_addr = cpu_to_le64(rxdr->buffer_info[i].dma);
 		memset(skb->data, 0x00, skb->len);
 	}
@@ -1448,10 +1427,10 @@ static int e1000_run_loopback_test(struct e1000_adapter *adapter)
 		for (i = 0; i < 64; i++) { /* send the packets */
 			e1000_create_lbtest_frame(txdr->buffer_info[i].skb,
 					1024);
-			dma_sync_single_for_device(&pdev->dev,
-						   txdr->buffer_info[k].dma,
-						   txdr->buffer_info[k].length,
-						   DMA_TO_DEVICE);
+			pci_dma_sync_single_for_device(pdev,
+					txdr->buffer_info[k].dma,
+				    	txdr->buffer_info[k].length,
+				    	PCI_DMA_TODEVICE);
 			if (unlikely(++k == txdr->count)) k = 0;
 		}
 		ew32(TDT, k);
@@ -1459,10 +1438,10 @@ static int e1000_run_loopback_test(struct e1000_adapter *adapter)
 		time = jiffies; /* set the start time for the receive */
 		good_cnt = 0;
 		do { /* receive the sent packets */
-			dma_sync_single_for_cpu(&pdev->dev,
-						rxdr->buffer_info[l].dma,
-						rxdr->buffer_info[l].length,
-						DMA_FROM_DEVICE);
+			pci_dma_sync_single_for_cpu(pdev,
+					rxdr->buffer_info[l].dma,
+				    	rxdr->buffer_info[l].length,
+				    	PCI_DMA_FROMDEVICE);
 
 			ret_val = e1000_check_lbtest_frame(
 					rxdr->buffer_info[l].skb,
@@ -1562,7 +1541,7 @@ static void e1000_diag_test(struct net_device *netdev,
 		u8 forced_speed_duplex = hw->forced_speed_duplex;
 		u8 autoneg = hw->autoneg;
 
-		e_info(hw, "offline testing starting\n");
+		DPRINTK(HW, INFO, "offline testing starting\n");
 
 		/* Link test performed before hardware reset so autoneg doesn't
 		 * interfere with test result */
@@ -1602,7 +1581,7 @@ static void e1000_diag_test(struct net_device *netdev,
 		if (if_running)
 			dev_open(netdev);
 	} else {
-		e_info(hw, "online testing starting\n");
+		DPRINTK(HW, INFO, "online testing starting\n");
 		/* Online tests */
 		if (e1000_link_test(adapter, &data[4]))
 			eth_test->flags |= ETH_TEST_FL_FAILED;
@@ -1695,8 +1674,8 @@ static void e1000_get_wol(struct net_device *netdev,
 		wol->supported &= ~WAKE_UCAST;
 
 		if (adapter->wol & E1000_WUFC_EX)
-			e_err(drv, "Interface does not support directed "
-			      "(unicast) frame wake-up packets\n");
+			DPRINTK(DRV, ERR, "Interface does not support "
+		        "directed (unicast) frame wake-up packets\n");
 		break;
 	default:
 		break;
@@ -1710,6 +1689,8 @@ static void e1000_get_wol(struct net_device *netdev,
 		wol->wolopts |= WAKE_BCAST;
 	if (adapter->wol & E1000_WUFC_MAG)
 		wol->wolopts |= WAKE_MAGIC;
+
+	return;
 }
 
 static int e1000_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
@@ -1727,8 +1708,8 @@ static int e1000_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
 	switch (hw->device_id) {
 	case E1000_DEV_ID_82546GB_QUAD_COPPER_KSP3:
 		if (wol->wolopts & WAKE_UCAST) {
-			e_err(drv, "Interface does not support directed "
-			      "(unicast) frame wake-up packets\n");
+			DPRINTK(DRV, ERR, "Interface does not support "
+		        "directed (unicast) frame wake-up packets\n");
 			return -EOPNOTSUPP;
 		}
 		break;
@@ -1805,7 +1786,7 @@ static int e1000_get_coalesce(struct net_device *netdev,
 	if (adapter->hw.mac_type < e1000_82545)
 		return -EOPNOTSUPP;
 
-	if (adapter->itr_setting <= 4)
+	if (adapter->itr_setting <= 3)
 		ec->rx_coalesce_usecs = adapter->itr_setting;
 	else
 		ec->rx_coalesce_usecs = 1000000 / adapter->itr_setting;
@@ -1823,14 +1804,12 @@ static int e1000_set_coalesce(struct net_device *netdev,
 		return -EOPNOTSUPP;
 
 	if ((ec->rx_coalesce_usecs > E1000_MAX_ITR_USECS) ||
-	    ((ec->rx_coalesce_usecs > 4) &&
+	    ((ec->rx_coalesce_usecs > 3) &&
 	     (ec->rx_coalesce_usecs < E1000_MIN_ITR_USECS)) ||
 	    (ec->rx_coalesce_usecs == 2))
 		return -EINVAL;
 
-	if (ec->rx_coalesce_usecs == 4) {
-		adapter->itr = adapter->itr_setting = 4;
-	} else if (ec->rx_coalesce_usecs <= 3) {
+	if (ec->rx_coalesce_usecs <= 3) {
 		adapter->itr = 20000;
 		adapter->itr_setting = ec->rx_coalesce_usecs;
 	} else {
@@ -1913,7 +1892,7 @@ static const struct ethtool_ops e1000_ethtool_ops = {
 	.get_msglevel           = e1000_get_msglevel,
 	.set_msglevel           = e1000_set_msglevel,
 	.nway_reset             = e1000_nway_reset,
-	.get_link               = e1000_get_link,
+	.get_link               = ethtool_op_get_link,
 	.get_eeprom_len         = e1000_get_eeprom_len,
 	.get_eeprom             = e1000_get_eeprom,
 	.set_eeprom             = e1000_set_eeprom,

@@ -10,7 +10,6 @@
 
 
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/rbtree.h>
 #include <linux/debugfs.h>
 #include "trace_stat.h"

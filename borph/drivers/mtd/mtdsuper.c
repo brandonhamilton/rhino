@@ -1,8 +1,6 @@
 /* MTD-based superblock management
  *
  * Copyright © 2001-2007 Red Hat, Inc. All Rights Reserved.
- * Copyright © 2001-2010 David Woodhouse <dwmw2@infradead.org>
- *
  * Written by:  David Howells <dhowells@redhat.com>
  *              David Woodhouse <dwmw2@infradead.org>
  *
@@ -15,7 +13,6 @@
 #include <linux/mtd/super.h>
 #include <linux/namei.h>
 #include <linux/ctype.h>
-#include <linux/slab.h>
 
 /*
  * compare superblocks to see if they're equivalent
@@ -47,17 +44,17 @@ static int get_sb_mtd_set(struct super_block *sb, void *_mtd)
 
 	sb->s_mtd = mtd;
 	sb->s_dev = MKDEV(MTD_BLOCK_MAJOR, mtd->index);
-	sb->s_bdi = mtd->backing_dev_info;
 	return 0;
 }
 
 /*
  * get a superblock on an MTD-backed filesystem
  */
-static struct dentry *mount_mtd_aux(struct file_system_type *fs_type, int flags,
+static int get_sb_mtd_aux(struct file_system_type *fs_type, int flags,
 			  const char *dev_name, void *data,
 			  struct mtd_info *mtd,
-			  int (*fill_super)(struct super_block *, void *, int))
+			  int (*fill_super)(struct super_block *, void *, int),
+			  struct vfsmount *mnt)
 {
 	struct super_block *sb;
 	int ret;
@@ -78,49 +75,57 @@ static struct dentry *mount_mtd_aux(struct file_system_type *fs_type, int flags,
 	ret = fill_super(sb, data, flags & MS_SILENT ? 1 : 0);
 	if (ret < 0) {
 		deactivate_locked_super(sb);
-		return ERR_PTR(ret);
+		return ret;
 	}
 
 	/* go */
 	sb->s_flags |= MS_ACTIVE;
-	return dget(sb->s_root);
+	simple_set_mnt(mnt, sb);
+
+	return 0;
 
 	/* new mountpoint for an already mounted superblock */
 already_mounted:
 	DEBUG(1, "MTDSB: Device %d (\"%s\") is already mounted\n",
 	      mtd->index, mtd->name);
-	put_mtd_device(mtd);
-	return dget(sb->s_root);
+	simple_set_mnt(mnt, sb);
+	ret = 0;
+	goto out_put;
 
 out_error:
+	ret = PTR_ERR(sb);
+out_put:
 	put_mtd_device(mtd);
-	return ERR_CAST(sb);
+	return ret;
 }
 
 /*
  * get a superblock on an MTD-backed filesystem by MTD device number
  */
-static struct dentry *mount_mtd_nr(struct file_system_type *fs_type, int flags,
+static int get_sb_mtd_nr(struct file_system_type *fs_type, int flags,
 			 const char *dev_name, void *data, int mtdnr,
-			 int (*fill_super)(struct super_block *, void *, int))
+			 int (*fill_super)(struct super_block *, void *, int),
+			 struct vfsmount *mnt)
 {
 	struct mtd_info *mtd;
 
 	mtd = get_mtd_device(NULL, mtdnr);
 	if (IS_ERR(mtd)) {
 		DEBUG(0, "MTDSB: Device #%u doesn't appear to exist\n", mtdnr);
-		return ERR_CAST(mtd);
+		return PTR_ERR(mtd);
 	}
 
-	return mount_mtd_aux(fs_type, flags, dev_name, data, mtd, fill_super);
+	return get_sb_mtd_aux(fs_type, flags, dev_name, data, mtd, fill_super,
+			      mnt);
 }
 
 /*
  * set up an MTD-based superblock
  */
-struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
+int get_sb_mtd(struct file_system_type *fs_type, int flags,
 	       const char *dev_name, void *data,
-	       int (*fill_super)(struct super_block *, void *, int))
+	       int (*fill_super)(struct super_block *, void *, int),
+	       struct vfsmount *mnt)
 {
 #ifdef CONFIG_BLOCK
 	struct block_device *bdev;
@@ -129,7 +134,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 	int mtdnr;
 
 	if (!dev_name)
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 
 	DEBUG(2, "MTDSB: dev_name \"%s\"\n", dev_name);
 
@@ -145,12 +150,18 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 			DEBUG(1, "MTDSB: mtd:%%s, name \"%s\"\n",
 			      dev_name + 4);
 
-			mtd = get_mtd_device_nm(dev_name + 4);
-			if (!IS_ERR(mtd))
-				return mount_mtd_aux(
-					fs_type, flags,
-					dev_name, data, mtd,
-					fill_super);
+			for (mtdnr = 0; mtdnr < MAX_MTD_DEVICES; mtdnr++) {
+				mtd = get_mtd_device(NULL, mtdnr);
+				if (!IS_ERR(mtd)) {
+					if (!strcmp(mtd->name, dev_name + 4))
+						return get_sb_mtd_aux(
+							fs_type, flags,
+							dev_name, data, mtd,
+							fill_super, mnt);
+
+					put_mtd_device(mtd);
+				}
+			}
 
 			printk(KERN_NOTICE "MTD:"
 			       " MTD device with name \"%s\" not found.\n",
@@ -165,9 +176,9 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 				/* It was a valid number */
 				DEBUG(1, "MTDSB: mtd%%d, mtdnr %d\n",
 				      mtdnr);
-				return mount_mtd_nr(fs_type, flags,
+				return get_sb_mtd_nr(fs_type, flags,
 						     dev_name, data,
-						     mtdnr, fill_super);
+						     mtdnr, fill_super, mnt);
 			}
 		}
 	}
@@ -180,7 +191,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 	if (IS_ERR(bdev)) {
 		ret = PTR_ERR(bdev);
 		DEBUG(1, "MTDSB: lookup_bdev() returned %d\n", ret);
-		return ERR_PTR(ret);
+		return ret;
 	}
 	DEBUG(1, "MTDSB: lookup_bdev() returned 0\n");
 
@@ -193,7 +204,8 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 	if (major != MTD_BLOCK_MAJOR)
 		goto not_an_MTD_device;
 
-	return mount_mtd_nr(fs_type, flags, dev_name, data, mtdnr, fill_super);
+	return get_sb_mtd_nr(fs_type, flags, dev_name, data, mtdnr, fill_super,
+			     mnt);
 
 not_an_MTD_device:
 #endif /* CONFIG_BLOCK */
@@ -202,10 +214,10 @@ not_an_MTD_device:
 		printk(KERN_NOTICE
 		       "MTD: Attempt to mount non-MTD device \"%s\"\n",
 		       dev_name);
-	return ERR_PTR(-EINVAL);
+	return -EINVAL;
 }
 
-EXPORT_SYMBOL_GPL(mount_mtd);
+EXPORT_SYMBOL_GPL(get_sb_mtd);
 
 /*
  * destroy an MTD-based superblock

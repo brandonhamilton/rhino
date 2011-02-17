@@ -11,6 +11,7 @@
 
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/serio.h>
@@ -80,12 +81,12 @@ static int serio_raw_open(struct inode *inode, struct file *file)
 	struct serio_raw_list *list;
 	int retval = 0;
 
+	lock_kernel();
 	retval = mutex_lock_interruptible(&serio_raw_mutex);
 	if (retval)
-		return retval;
+		goto out_bkl;
 
-	serio_raw = serio_raw_locate(iminor(inode));
-	if (!serio_raw) {
+	if (!(serio_raw = serio_raw_locate(iminor(inode)))) {
 		retval = -ENODEV;
 		goto out;
 	}
@@ -95,8 +96,7 @@ static int serio_raw_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 
-	list = kzalloc(sizeof(struct serio_raw_list), GFP_KERNEL);
-	if (!list) {
+	if (!(list = kzalloc(sizeof(struct serio_raw_list), GFP_KERNEL))) {
 		retval = -ENOMEM;
 		goto out;
 	}
@@ -109,6 +109,8 @@ static int serio_raw_open(struct inode *inode, struct file *file)
 
 out:
 	mutex_unlock(&serio_raw_mutex);
+out_bkl:
+	unlock_kernel();
 	return retval;
 }
 
@@ -242,7 +244,6 @@ static const struct file_operations serio_raw_fops = {
 	.write =	serio_raw_write,
 	.poll =		serio_raw_poll,
 	.fasync =	serio_raw_fasync,
-	.llseek = noop_llseek,
 };
 
 

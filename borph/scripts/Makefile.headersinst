@@ -3,6 +3,7 @@
 #
 # header-y  - list files to be installed. They are preprocessed
 #             to remove __KERNEL__ section of the file
+# unifdef-y - Same as header-y. Obsolete
 # objhdr-y  - Same as header-y but for generated files
 #
 # ==========================================================================
@@ -19,7 +20,7 @@ include scripts/Kbuild.include
 
 install       := $(INSTALL_HDR_PATH)/$(_dst)
 
-header-y      := $(sort $(header-y))
+header-y      := $(sort $(header-y) $(unifdef-y))
 subdirs       := $(patsubst %/,%,$(filter %/, $(header-y)))
 header-y      := $(filter-out %/, $(header-y))
 

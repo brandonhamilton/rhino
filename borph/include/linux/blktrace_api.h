@@ -5,7 +5,6 @@
 #ifdef __KERNEL__
 #include <linux/blkdev.h>
 #include <linux/relay.h>
-#include <linux/compat.h>
 #endif
 
 /*
@@ -151,8 +150,8 @@ struct blk_user_trace_setup {
 struct blk_trace {
 	int trace_state;
 	struct rchan *rchan;
-	unsigned long __percpu *sequence;
-	unsigned char __percpu *msg_data;
+	unsigned long *sequence;
+	unsigned char *msg_data;
 	u16 act_mask;
 	u64 start_lba;
 	u64 end_lba;
@@ -221,26 +220,11 @@ static inline int blk_trace_init_sysfs(struct device *dev)
 
 #endif /* CONFIG_BLK_DEV_IO_TRACE */
 
-#ifdef CONFIG_COMPAT
-
-struct compat_blk_user_trace_setup {
-	char name[32];
-	u16 act_mask;
-	u32 buf_size;
-	u32 buf_nr;
-	compat_u64 start_lba;
-	compat_u64 end_lba;
-	u32 pid;
-};
-#define BLKTRACESETUP32 _IOWR(0x12, 115, struct compat_blk_user_trace_setup)
-
-#endif
-
 #if defined(CONFIG_EVENT_TRACING) && defined(CONFIG_BLOCK)
 
 static inline int blk_cmd_buf_len(struct request *rq)
 {
-	return (rq->cmd_type == REQ_TYPE_BLOCK_PC) ? rq->cmd_len * 3 : 1;
+	return blk_pc_request(rq) ? rq->cmd_len * 3 : 1;
 }
 
 extern void blk_dump_cmd(char *buf, struct request *rq);

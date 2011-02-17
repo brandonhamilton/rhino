@@ -663,7 +663,7 @@ qh_urb_transaction (
 	 */
 	i = urb->num_sgs;
 	if (len > 0 && i > 0) {
-		sg = urb->sg;
+		sg = urb->sg->sg;
 		buf = sg_dma_address(sg);
 
 		/* urb->transfer_buffer_length may be smaller than the
@@ -849,10 +849,9 @@ qh_make (
 				 * But interval 1 scheduling is simpler, and
 				 * includes high bandwidth.
 				 */
-				urb->interval = 1;
-			} else if (qh->period > ehci->periodic_size) {
-				qh->period = ehci->periodic_size;
-				urb->interval = qh->period << 3;
+				dbg ("intr period %d uframes, NYET!",
+						urb->interval);
+				goto done;
 			}
 		} else {
 			int		think_time;
@@ -875,10 +874,6 @@ qh_make (
 					usb_calc_bus_time (urb->dev->speed,
 					is_input, 0, max_packet (maxp)));
 			qh->period = urb->interval;
-			if (qh->period > ehci->periodic_size) {
-				qh->period = ehci->periodic_size;
-				urb->interval = qh->period;
-			}
 		}
 	}
 
@@ -1126,7 +1121,8 @@ submit_async (
 #endif
 
 	spin_lock_irqsave (&ehci->lock, flags);
-	if (unlikely(!HCD_HW_ACCESSIBLE(ehci_to_hcd(ehci)))) {
+	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE,
+			       &ehci_to_hcd(ehci)->flags))) {
 		rc = -ESHUTDOWN;
 		goto done;
 	}

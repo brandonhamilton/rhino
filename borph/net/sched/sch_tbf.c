@@ -127,7 +127,7 @@ static int tbf_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 		return qdisc_reshape_fail(skb, sch);
 
 	ret = qdisc_enqueue(skb, q->qdisc);
-	if (ret != NET_XMIT_SUCCESS) {
+	if (ret != 0) {
 		if (net_xmit_drop_count(ret))
 			sch->qstats.drops++;
 		return ret;
@@ -136,7 +136,7 @@ static int tbf_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 	sch->q.qlen++;
 	sch->bstats.bytes += qdisc_pkt_len(skb);
 	sch->bstats.packets++;
-	return NET_XMIT_SUCCESS;
+	return 0;
 }
 
 static unsigned int tbf_drop(struct Qdisc* sch)
@@ -273,11 +273,7 @@ static int tbf_change(struct Qdisc* sch, struct nlattr *opt)
 	if (max_size < 0)
 		goto done;
 
-	if (q->qdisc != &noop_qdisc) {
-		err = fifo_set_limit(q->qdisc, qopt->limit);
-		if (err)
-			goto done;
-	} else if (qopt->limit > 0) {
+	if (qopt->limit > 0) {
 		child = fifo_create_dflt(sch, &bfifo_qdisc_ops, qopt->limit);
 		if (IS_ERR(child)) {
 			err = PTR_ERR(child);

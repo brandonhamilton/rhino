@@ -35,7 +35,6 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/audit.h>
-#include <linux/slab.h>
 #include <net/netlabel.h>
 #include <net/cipso_ipv4.h>
 #include <asm/bug.h>
@@ -51,12 +50,9 @@ struct netlbl_domhsh_tbl {
 };
 
 /* Domain hash table */
-/* updates should be so rare that having one spinlock for the entire hash table
- * should be okay */
+/* XXX - updates should be so rare that having one spinlock for the entire
+ * hash table should be okay */
 static DEFINE_SPINLOCK(netlbl_domhsh_lock);
-#define netlbl_domhsh_rcu_deref(p) \
-	rcu_dereference_check(p, rcu_read_lock_held() || \
-				 lockdep_is_held(&netlbl_domhsh_lock))
 static struct netlbl_domhsh_tbl *netlbl_domhsh = NULL;
 static struct netlbl_dom_map *netlbl_domhsh_def = NULL;
 
@@ -110,8 +106,7 @@ static void netlbl_domhsh_free_entry(struct rcu_head *entry)
  * Description:
  * This is the hashing function for the domain hash table, it returns the
  * correct bucket number for the domain.  The caller is responsibile for
- * ensuring that the hash table is protected with either a RCU read lock or the
- * hash table lock.
+ * calling the rcu_read_[un]lock() functions.
  *
  */
 static u32 netlbl_domhsh_hash(const char *key)
@@ -125,7 +120,7 @@ static u32 netlbl_domhsh_hash(const char *key)
 
 	for (iter = 0, val = 0, len = strlen(key); iter < len; iter++)
 		val = (val << 4 | (val >> (8 * sizeof(u32) - 4))) ^ key[iter];
-	return val & (netlbl_domhsh_rcu_deref(netlbl_domhsh)->size - 1);
+	return val & (rcu_dereference(netlbl_domhsh)->size - 1);
 }
 
 /**
@@ -135,8 +130,7 @@ static u32 netlbl_domhsh_hash(const char *key)
  * Description:
  * Searches the domain hash table and returns a pointer to the hash table
  * entry if found, otherwise NULL is returned.  The caller is responsibile for
- * ensuring that the hash table is protected with either a RCU read lock or the
- * hash table lock.
+ * the rcu hash table locks (i.e. the caller much call rcu_read_[un]lock()).
  *
  */
 static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
@@ -147,7 +141,7 @@ static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
 
 	if (domain != NULL) {
 		bkt = netlbl_domhsh_hash(domain);
-		bkt_list = &netlbl_domhsh_rcu_deref(netlbl_domhsh)->tbl[bkt];
+		bkt_list = &rcu_dereference(netlbl_domhsh)->tbl[bkt];
 		list_for_each_entry_rcu(iter, bkt_list, list)
 			if (iter->valid && strcmp(iter->domain, domain) == 0)
 				return iter;
@@ -165,8 +159,8 @@ static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
  * Searches the domain hash table and returns a pointer to the hash table
  * entry if an exact match is found, if an exact match is not present in the
  * hash table then the default entry is returned if valid otherwise NULL is
- * returned.  The caller is responsibile ensuring that the hash table is
- * protected with either a RCU read lock or the hash table lock.
+ * returned.  The caller is responsibile for the rcu hash table locks
+ * (i.e. the caller much call rcu_read_[un]lock()).
  *
  */
 static struct netlbl_dom_map *netlbl_domhsh_search_def(const char *domain)
@@ -175,7 +169,7 @@ static struct netlbl_dom_map *netlbl_domhsh_search_def(const char *domain)
 
 	entry = netlbl_domhsh_search(domain);
 	if (entry == NULL) {
-		entry = netlbl_domhsh_rcu_deref(netlbl_domhsh_def);
+		entry = rcu_dereference(netlbl_domhsh_def);
 		if (entry != NULL && !entry->valid)
 			entry = NULL;
 	}
@@ -312,11 +306,8 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 	struct netlbl_af6list *tmp6;
 #endif /* IPv6 */
 
-	/* XXX - we can remove this RCU read lock as the spinlock protects the
-	 *       entire function, but before we do we need to fixup the
-	 *       netlbl_af[4,6]list RCU functions to do "the right thing" with
-	 *       respect to rcu_dereference() when only a spinlock is held. */
 	rcu_read_lock();
+
 	spin_lock(&netlbl_domhsh_lock);
 	if (entry->domain != NULL)
 		entry_old = netlbl_domhsh_search(entry->domain);
@@ -324,6 +315,7 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 		entry_old = netlbl_domhsh_search_def(entry->domain);
 	if (entry_old == NULL) {
 		entry->valid = 1;
+		INIT_RCU_HEAD(&entry->rcu);
 
 		if (entry->domain != NULL) {
 			u32 bkt = netlbl_domhsh_hash(entry->domain);

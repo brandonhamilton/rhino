@@ -25,8 +25,6 @@ int viafb_ioctl_get_viafb_info(u_long arg)
 {
 	struct viafb_ioctl_info viainfo;
 
-	memset(&viainfo, 0, sizeof(struct viafb_ioctl_info));
-
 	viainfo.viafb_id = VIAID;
 	viainfo.vendor_id = PCI_VIA_VENDOR_ID;
 
@@ -94,7 +92,6 @@ int viafb_ioctl_hotplug(int hres, int vres, int bpp)
 				viafb_CRT_ON = 0;
 				viafb_LCD_ON = 0;
 				viafb_DeviceStatus = DVI_Device;
-				viafb_set_iga_path();
 				return viafb_DeviceStatus;
 			}
 			status = 1;
@@ -108,7 +105,6 @@ int viafb_ioctl_hotplug(int hres, int vres, int bpp)
 		viafb_LCD_ON = 0;
 
 		viafb_DeviceStatus = CRT_Device;
-		viafb_set_iga_path();
 		return viafb_DeviceStatus;
 	}
 

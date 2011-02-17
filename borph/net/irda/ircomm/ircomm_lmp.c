@@ -31,7 +31,6 @@
  ********************************************************************/
 
 #include <linux/init.h>
-#include <linux/gfp.h>
 
 #include <net/irda/irda.h>
 #include <net/irda/irlmp.h>

@@ -24,7 +24,6 @@
 #define MODULE_NAME "jeilinj"
 
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 #include "gspca.h"
 #include "jpeg.h"
 
@@ -50,7 +49,7 @@ struct sd {
 	struct workqueue_struct *work_thread;
 	u8 quality;				 /* image quality */
 	u8 jpegqual;				/* webcam quality */
-	u8 jpeg_hdr[JPEG_HDR_SZ];
+	u8 *jpeg_hdr;
 };
 
 	struct jlj_command {
@@ -82,7 +81,7 @@ static int jlj_write2(struct gspca_dev *gspca_dev, unsigned char *command)
 			usb_sndbulkpipe(gspca_dev->dev, 3),
 			gspca_dev->usb_buf, 2, NULL, 500);
 	if (retval < 0)
-		err("command write [%02x] error %d",
+		PDEBUG(D_ERR, "command write [%02x] error %d",
 				gspca_dev->usb_buf[0], retval);
 	return retval;
 }
@@ -97,7 +96,7 @@ static int jlj_read1(struct gspca_dev *gspca_dev, unsigned char response)
 				gspca_dev->usb_buf, 1, NULL, 500);
 	response = gspca_dev->usb_buf[0];
 	if (retval < 0)
-		err("read command [%02x] error %d",
+		PDEBUG(D_ERR, "read command [%02x] error %d",
 				gspca_dev->usb_buf[0], retval);
 	return retval;
 }
@@ -191,7 +190,7 @@ static void jlj_dostream(struct work_struct *work)
 
 	buffer = kmalloc(JEILINJ_MAX_TRANSFER, GFP_KERNEL | GFP_DMA);
 	if (!buffer) {
-		err("Couldn't allocate USB buffer");
+		PDEBUG(D_ERR, "Couldn't allocate USB buffer");
 		goto quit_stream;
 	}
 	while (gspca_dev->present && gspca_dev->streaming) {
@@ -282,6 +281,7 @@ static void sd_stop0(struct gspca_dev *gspca_dev)
 	destroy_workqueue(dev->work_thread);
 	dev->work_thread = NULL;
 	mutex_lock(&gspca_dev->usb_lock);
+	kfree(dev->jpeg_hdr);
 }
 
 /* this function is called at probe and resume time */
@@ -297,6 +297,9 @@ static int sd_start(struct gspca_dev *gspca_dev)
 	int ret;
 
 	/* create the JPEG header */
+	dev->jpeg_hdr = kmalloc(JPEG_HDR_SZ, GFP_KERNEL);
+	if (dev->jpeg_hdr == NULL)
+		return -ENOMEM;
 	jpeg_define(dev->jpeg_hdr, gspca_dev->height, gspca_dev->width,
 			0x21);          /* JPEG 422 */
 	jpeg_set_qual(dev->jpeg_hdr, dev->quality);
@@ -354,12 +357,19 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init sd_mod_init(void)
 {
-	return usb_register(&sd_driver);
+	int ret;
+
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	PDEBUG(D_PROBE, "registered");
+	return 0;
 }
 
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
+	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(sd_mod_init);

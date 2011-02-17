@@ -153,6 +153,9 @@ struct ivch_priv {
 	bool quiet;
 
 	uint16_t width, height;
+
+	uint16_t save_VR01;
+	uint16_t save_VR40;
 };
 
 
@@ -167,6 +170,7 @@ static bool ivch_read(struct intel_dvo_device *dvo, int addr, uint16_t *data)
 {
 	struct ivch_priv *priv = dvo->dev_priv;
 	struct i2c_adapter *adapter = dvo->i2c_bus;
+	struct intel_i2c_chan *i2cbus = container_of(adapter, struct intel_i2c_chan, adapter);
 	u8 out_buf[1];
 	u8 in_buf[2];
 
@@ -192,7 +196,7 @@ static bool ivch_read(struct intel_dvo_device *dvo, int addr, uint16_t *data)
 
 	out_buf[0] = addr;
 
-	if (i2c_transfer(adapter, msgs, 3) == 3) {
+	if (i2c_transfer(&i2cbus->adapter, msgs, 3) == 3) {
 		*data = (in_buf[1] << 8) | in_buf[0];
 		return true;
 	};
@@ -200,7 +204,7 @@ static bool ivch_read(struct intel_dvo_device *dvo, int addr, uint16_t *data)
 	if (!priv->quiet) {
 		DRM_DEBUG_KMS("Unable to read register 0x%02x from "
 				"%s:%02x.\n",
-			  addr, adapter->name, dvo->slave_addr);
+			  addr, i2cbus->adapter.name, dvo->slave_addr);
 	}
 	return false;
 }
@@ -210,6 +214,7 @@ static bool ivch_write(struct intel_dvo_device *dvo, int addr, uint16_t data)
 {
 	struct ivch_priv *priv = dvo->dev_priv;
 	struct i2c_adapter *adapter = dvo->i2c_bus;
+	struct intel_i2c_chan *i2cbus = container_of(adapter, struct intel_i2c_chan, adapter);
 	u8 out_buf[3];
 	struct i2c_msg msg = {
 		.addr = dvo->slave_addr,
@@ -222,12 +227,12 @@ static bool ivch_write(struct intel_dvo_device *dvo, int addr, uint16_t data)
 	out_buf[1] = data & 0xff;
 	out_buf[2] = data >> 8;
 
-	if (i2c_transfer(adapter, &msg, 1) == 1)
+	if (i2c_transfer(&i2cbus->adapter, &msg, 1) == 1)
 		return true;
 
 	if (!priv->quiet) {
 		DRM_DEBUG_KMS("Unable to write register 0x%02x to %s:%d.\n",
-			  addr, adapter->name, dvo->slave_addr);
+			  addr, i2cbus->adapter.name, dvo->slave_addr);
 	}
 
 	return false;
@@ -400,6 +405,22 @@ static void ivch_dump_regs(struct intel_dvo_device *dvo)
 	DRM_LOG_KMS("VR8F: 0x%04x\n", val);
 }
 
+static void ivch_save(struct intel_dvo_device *dvo)
+{
+	struct ivch_priv *priv = dvo->dev_priv;
+
+	ivch_read(dvo, VR01, &priv->save_VR01);
+	ivch_read(dvo, VR40, &priv->save_VR40);
+}
+
+static void ivch_restore(struct intel_dvo_device *dvo)
+{
+	struct ivch_priv *priv = dvo->dev_priv;
+
+	ivch_write(dvo, VR01, priv->save_VR01);
+	ivch_write(dvo, VR40, priv->save_VR40);
+}
+
 static void ivch_destroy(struct intel_dvo_device *dvo)
 {
 	struct ivch_priv *priv = dvo->dev_priv;
@@ -413,6 +434,8 @@ static void ivch_destroy(struct intel_dvo_device *dvo)
 struct intel_dvo_dev_ops ivch_ops= {
 	.init = ivch_init,
 	.dpms = ivch_dpms,
+	.save = ivch_save,
+	.restore = ivch_restore,
 	.mode_valid = ivch_mode_valid,
 	.mode_set = ivch_mode_set,
 	.detect = ivch_detect,

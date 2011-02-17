@@ -406,19 +406,10 @@ static int affs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
-	int ret;
-
 	*pagep = NULL;
-	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				affs_get_block,
 				&AFFS_I(mapping->host)->mmu_private);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
-
-	return ret;
 }
 
 static sector_t _affs_bmap(struct address_space *mapping, sector_t block)
@@ -894,9 +885,9 @@ affs_truncate(struct inode *inode)
 		if (AFFS_SB(sb)->s_flags & SF_OFS) {
 			struct buffer_head *bh = affs_bread_ino(inode, last_blk, 0);
 			u32 tmp;
-			if (IS_ERR(bh)) {
+			if (IS_ERR(ext_bh)) {
 				affs_warning(sb, "truncate", "unexpected read error for last block %u (%d)",
-					     ext, PTR_ERR(bh));
+					     ext, PTR_ERR(ext_bh));
 				return;
 			}
 			tmp = be32_to_cpu(AFFS_DATA_HEAD(bh)->next);
@@ -925,9 +916,9 @@ affs_truncate(struct inode *inode)
 	affs_free_prealloc(inode);
 }
 
-int affs_file_fsync(struct file *filp, int datasync)
+int affs_file_fsync(struct file *filp, struct dentry *dentry, int datasync)
 {
-	struct inode *inode = filp->f_mapping->host;
+	struct inode * inode = dentry->d_inode;
 	int ret, err;
 
 	ret = write_inode_now(inode, 0);

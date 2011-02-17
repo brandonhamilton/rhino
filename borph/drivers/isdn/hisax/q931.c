@@ -1152,11 +1152,20 @@ QuickHex(char *txt, u_char * p, int cnt)
 {
 	register int i;
 	register char *t = txt;
+	register u_char w;
 
 	for (i = 0; i < cnt; i++) {
 		*t++ = ' ';
-		*t++ = hex_asc_hi(p[i]);
-		*t++ = hex_asc_lo(p[i]);
+		w = (p[i] >> 4) & 0x0f;
+		if (w < 10)
+			*t++ = '0' + w;
+		else
+			*t++ = 'A' - 10 + w;
+		w = p[i] & 0x0f;
+		if (w < 10)
+			*t++ = '0' + w;
+		else
+			*t++ = 'A' - 10 + w;
 	}
 	*t++ = 0;
 	return (t - txt);

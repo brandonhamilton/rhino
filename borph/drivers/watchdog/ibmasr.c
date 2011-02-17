@@ -12,6 +12,7 @@
 
 #include <linux/fs.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/timer.h>

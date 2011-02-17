@@ -278,12 +278,9 @@ static ssize_t pnp_show_current_resources(struct device *dmdev,
 		switch (pnp_resource_type(res)) {
 		case IORESOURCE_IO:
 		case IORESOURCE_MEM:
-		case IORESOURCE_BUS:
-			pnp_printf(buffer, " %#llx-%#llx%s\n",
+			pnp_printf(buffer, " %#llx-%#llx\n",
 				   (unsigned long long) res->start,
-				   (unsigned long long) res->end,
-				   res->flags & IORESOURCE_WINDOW ?
-					" window" : "");
+				   (unsigned long long) res->end);
 			break;
 		case IORESOURCE_IRQ:
 		case IORESOURCE_DMA:

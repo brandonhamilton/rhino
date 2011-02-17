@@ -8,7 +8,7 @@
 #####
 # 1) Generate bounds.h
 
-bounds-file := include/generated/bounds.h
+bounds-file := include/linux/bounds.h
 
 always  := $(bounds-file)
 targets := $(bounds-file) kernel/bounds.s
@@ -43,7 +43,7 @@ $(obj)/$(bounds-file): kernel/bounds.s Kbuild
 # 2) Generate asm-offsets.h
 #
 
-offsets-file := include/generated/asm-offsets.h
+offsets-file := include/asm/asm-offsets.h
 
 always  += $(offsets-file)
 targets += $(offsets-file)
@@ -53,7 +53,6 @@ targets += arch/$(SRCARCH)/kernel/asm-offsets.s
 # Default sed regexp - multiline due to syntax constraints
 define sed-y
 	"/^->/{s:->#\(.*\):/* \1 */:; \
-	s:^->\([^ ]*\) [\$$#]*\([-0-9]*\) \(.*\):#define \1 \2 /* \3 */:; \
 	s:^->\([^ ]*\) [\$$#]*\([^ ]*\) \(.*\):#define \1 \2 /* \3 */:; \
 	s:->::; p;}"
 endef
@@ -95,5 +94,5 @@ PHONY += missing-syscalls
 missing-syscalls: scripts/checksyscalls.sh FORCE
 	$(call cmd,syscalls)
 
-# Keep these two files during make clean
-no-clean-files := $(bounds-file) $(offsets-file)
+# Delete all targets during make clean
+clean-files := $(addprefix $(objtree)/,$(filter-out $(bounds-file) $(offsets-file),$(targets)))

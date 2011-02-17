@@ -282,7 +282,6 @@ error:
 static const struct file_operations romfs_dir_operations = {
 	.read		= generic_read_dir,
 	.readdir	= romfs_readdir,
-	.llseek		= default_llseek,
 };
 
 static const struct inode_operations romfs_dir_inode_operations = {
@@ -545,26 +544,26 @@ error:
 error_rsb_inval:
 	ret = -EINVAL;
 error_rsb:
-	kfree(rsb);
 	return ret;
 }
 
 /*
  * get a superblock for mounting
  */
-static struct dentry *romfs_mount(struct file_system_type *fs_type,
+static int romfs_get_sb(struct file_system_type *fs_type,
 			int flags, const char *dev_name,
-			void *data)
+			void *data, struct vfsmount *mnt)
 {
-	struct dentry *ret = ERR_PTR(-EINVAL);
+	int ret = -EINVAL;
 
 #ifdef CONFIG_ROMFS_ON_MTD
-	ret = mount_mtd(fs_type, flags, dev_name, data, romfs_fill_super);
+	ret = get_sb_mtd(fs_type, flags, dev_name, data, romfs_fill_super,
+			 mnt);
 #endif
 #ifdef CONFIG_ROMFS_ON_BLOCK
-	if (ret == ERR_PTR(-EINVAL))
-		ret = mount_bdev(fs_type, flags, dev_name, data,
-				  romfs_fill_super);
+	if (ret == -EINVAL)
+		ret = get_sb_bdev(fs_type, flags, dev_name, data,
+				  romfs_fill_super, mnt);
 #endif
 	return ret;
 }
@@ -591,7 +590,7 @@ static void romfs_kill_sb(struct super_block *sb)
 static struct file_system_type romfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "romfs",
-	.mount		= romfs_mount,
+	.get_sb		= romfs_get_sb,
 	.kill_sb	= romfs_kill_sb,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

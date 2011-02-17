@@ -14,8 +14,6 @@ Required properties:
     reports inverted write-protect state;
   - sdhci,1-bit-only : (optional) specifies that a controller can
     only handle 1-bit data transfers.
-  - sdhci,auto-cmd12: (optional) specifies that a controller can
-    only handle auto CMD12.
 
 Example:
 

@@ -69,10 +69,8 @@ char *pnp_resource_type_name(struct resource *res)
 		return "irq";
 	case IORESOURCE_DMA:
 		return "dma";
-	case IORESOURCE_BUS:
-		return "bus";
 	}
-	return "unknown";
+	return NULL;
 }
 
 void dbg_pnp_show_resources(struct pnp_dev *dev, char *desc)

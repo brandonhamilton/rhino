@@ -51,6 +51,6 @@ struct gaudio {
 };
 
 int gaudio_setup(struct gaudio *card);
-void gaudio_cleanup(void);
+void gaudio_cleanup(struct gaudio *card);
 
 #endif /* __U_AUDIO_H */

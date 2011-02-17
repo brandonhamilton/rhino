@@ -365,10 +365,6 @@ static inline int minix_test_bit(int nr, const void *vaddr)
 #define ext2_set_bit_atomic(lock, nr, addr)	test_and_set_bit((nr) ^ 24, (unsigned long *)(addr))
 #define ext2_clear_bit(nr, addr)		__test_and_clear_bit((nr) ^ 24, (unsigned long *)(addr))
 #define ext2_clear_bit_atomic(lock, nr, addr)	test_and_clear_bit((nr) ^ 24, (unsigned long *)(addr))
-#define ext2_find_next_zero_bit(addr, size, offset) \
-	generic_find_next_zero_le_bit((unsigned long *)addr, size, offset)
-#define ext2_find_next_bit(addr, size, offset) \
-	generic_find_next_le_bit((unsigned long *)addr, size, offset)
 
 static inline int ext2_test_bit(int nr, const void *vaddr)
 {
@@ -398,9 +394,10 @@ static inline int ext2_find_first_zero_bit(const void *vaddr, unsigned size)
 	return (p - addr) * 32 + res;
 }
 
-static inline unsigned long generic_find_next_zero_le_bit(const unsigned long *addr,
-		unsigned long size, unsigned long offset)
+static inline int ext2_find_next_zero_bit(const void *vaddr, unsigned size,
+					  unsigned offset)
 {
+	const unsigned long *addr = vaddr;
 	const unsigned long *p = addr + (offset >> 5);
 	int bit = offset & 31UL, res;
 
@@ -440,9 +437,10 @@ static inline int ext2_find_first_bit(const void *vaddr, unsigned size)
 	return (p - addr) * 32 + res;
 }
 
-static inline unsigned long generic_find_next_le_bit(const unsigned long *addr,
-		unsigned long size, unsigned long offset)
+static inline int ext2_find_next_bit(const void *vaddr, unsigned size,
+				     unsigned offset)
 {
+	const unsigned long *addr = vaddr;
 	const unsigned long *p = addr + (offset >> 5);
 	int bit = offset & 31UL, res;
 

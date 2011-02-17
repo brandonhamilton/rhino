@@ -95,11 +95,8 @@
 
 /* Use our own dbg macro */
 #undef dbg
-#define dbg(lvl, format, arg...)					\
-do {									\
-	if (debug >= lvl)						\
-		printk(KERN_DEBUG "%s: " format "\n", __FILE__, ##arg);	\
-} while (0)
+#define dbg(lvl, format, arg...) do { if (debug >= lvl) printk(KERN_DEBUG  __FILE__ ": " format "\n", ## arg); } while (0)
+
 
 /* Version Information */
 #define DRIVER_VERSION "v0.96"
@@ -195,7 +192,7 @@ struct tower_get_version_reply {
 
 
 /* table of devices that work with this driver */
-static const struct usb_device_id tower_table[] = {
+static struct usb_device_id tower_table [] = {
 	{ USB_DEVICE(LEGO_USB_TOWER_VENDOR_ID, LEGO_USB_TOWER_PRODUCT_ID) },
 	{ }					/* Terminating entry */
 };
@@ -305,7 +302,7 @@ static inline void lego_usb_tower_debug_data (int level, const char *function, i
 	if (debug < level)
 		return;
 
-	printk (KERN_DEBUG "%s: %s - length = %d, data = ", __FILE__, function, size);
+	printk (KERN_DEBUG __FILE__": %s - length = %d, data = ", function, size);
 	for (i = 0; i < size; ++i) {
 		printk ("%.2x ", data[i]);
 	}
@@ -448,7 +445,7 @@ static int tower_release (struct inode *inode, struct file *file)
 
 	dbg(2, "%s: enter", __func__);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	if (dev == NULL) {
 		dbg(1, "%s: object is NULL", __func__);
@@ -597,7 +594,7 @@ static ssize_t tower_read (struct file *file, char __user *buffer, size_t count,
 
 	dbg(2, "%s: enter, count = %Zd", __func__, count);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	/* lock this object */
 	if (mutex_lock_interruptible(&dev->lock)) {
@@ -686,7 +683,7 @@ static ssize_t tower_write (struct file *file, const char __user *buffer, size_t
 
 	dbg(2, "%s: enter, count = %Zd", __func__, count);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	/* lock this object */
 	if (mutex_lock_interruptible(&dev->lock)) {
@@ -1058,7 +1055,7 @@ static int __init lego_usb_tower_init(void)
 	/* register this driver with the USB subsystem */
 	result = usb_register(&tower_driver);
 	if (result < 0) {
-		err("usb_register failed for the %s driver. Error number %d", __FILE__, result);
+		err("usb_register failed for the "__FILE__" driver. Error number %d", result);
 		retval = -1;
 		goto exit;
 	}

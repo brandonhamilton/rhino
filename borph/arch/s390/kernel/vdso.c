@@ -23,7 +23,6 @@
 #include <linux/security.h>
 #include <linux/bootmem.h>
 #include <linux/compat.h>
-#include <asm/asm-offsets.h>
 #include <asm/pgtable.h>
 #include <asm/system.h>
 #include <asm/processor.h>
@@ -84,7 +83,11 @@ struct vdso_data *vdso_data = &vdso_data_store.data;
  */
 static void vdso_init_data(struct vdso_data *vd)
 {
-	vd->ectg_available = user_mode != HOME_SPACE_MODE && test_facility(31);
+	unsigned int facility_list;
+
+	facility_list = stfl();
+	vd->ectg_available =
+		user_mode != HOME_SPACE_MODE && (facility_list & 1);
 }
 
 #ifdef CONFIG_64BIT
@@ -98,7 +101,11 @@ static void vdso_init_per_cpu_data(int cpu, struct vdso_per_cpu_data *vpcd)
 /*
  * Allocate/free per cpu vdso data.
  */
+#ifdef CONFIG_64BIT
 #define SEGMENT_ORDER	2
+#else
+#define SEGMENT_ORDER	1
+#endif
 
 int vdso_alloc_per_cpu(int cpu, struct _lowcore *lowcore)
 {

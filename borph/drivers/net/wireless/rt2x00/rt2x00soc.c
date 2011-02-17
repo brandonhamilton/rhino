@@ -28,7 +28,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include "rt2x00.h"
 #include "rt2x00soc.h"
@@ -72,7 +71,9 @@ exit:
 	return -ENOMEM;
 }
 
-int rt2x00soc_probe(struct platform_device *pdev, const struct rt2x00_ops *ops)
+int rt2x00soc_probe(struct platform_device *pdev,
+		    const unsigned short chipset,
+		    const struct rt2x00_ops *ops)
 {
 	struct ieee80211_hw *hw;
 	struct rt2x00_dev *rt2x00dev;
@@ -93,7 +94,12 @@ int rt2x00soc_probe(struct platform_device *pdev, const struct rt2x00_ops *ops)
 	rt2x00dev->irq = platform_get_irq(pdev, 0);
 	rt2x00dev->name = pdev->dev.driver->name;
 
-	rt2x00_set_chip_intf(rt2x00dev, RT2X00_CHIP_INTF_SOC);
+	/*
+	 * SoC devices mimic PCI behavior.
+	 */
+	rt2x00_set_chip_intf(rt2x00dev, RT2X00_CHIP_INTF_PCI);
+
+	rt2x00_set_chip_rt(rt2x00dev, chipset);
 
 	retval = rt2x00soc_alloc_reg(rt2x00dev);
 	if (retval)
@@ -113,7 +119,6 @@ exit_free_device:
 
 	return retval;
 }
-EXPORT_SYMBOL_GPL(rt2x00soc_probe);
 
 int rt2x00soc_remove(struct platform_device *pdev)
 {

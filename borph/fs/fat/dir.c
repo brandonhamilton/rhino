@@ -19,7 +19,6 @@
 #include <linux/buffer_head.h>
 #include <linux/compat.h>
 #include <asm/uaccess.h>
-#include <linux/kernel.h>
 #include "fat.h"
 
 /*
@@ -141,22 +140,28 @@ static int uni16_to_x8(unsigned char *ascii, const wchar_t *uni, int len,
 {
 	const wchar_t *ip;
 	wchar_t ec;
-	unsigned char *op;
+	unsigned char *op, nc;
 	int charlen;
+	int k;
 
 	ip = uni;
 	op = ascii;
 
 	while (*ip && ((len - NLS_MAX_CHARSET_SIZE) > 0)) {
 		ec = *ip++;
-		if ((charlen = nls->uni2char(ec, op, NLS_MAX_CHARSET_SIZE)) > 0) {
+		if ( (charlen = nls->uni2char(ec, op, NLS_MAX_CHARSET_SIZE)) > 0) {
 			op += charlen;
 			len -= charlen;
 		} else {
 			if (uni_xlate == 1) {
-				*op++ = ':';
-				op = pack_hex_byte(op, ec >> 8);
-				op = pack_hex_byte(op, ec);
+				*op = ':';
+				for (k = 4; k > 0; k--) {
+					nc = ec & 0xF;
+					op[k] = nc > 9	? nc + ('a' - 10)
+							: nc + '0';
+					ec >>= 4;
+				}
+				op += 5;
 				len -= 5;
 			} else {
 				*op++ = '?';
@@ -753,10 +758,9 @@ static int fat_ioctl_readdir(struct inode *inode, struct file *filp,
 	return ret;
 }
 
-static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
-			  unsigned long arg)
+static int fat_dir_ioctl(struct inode *inode, struct file *filp,
+			 unsigned int cmd, unsigned long arg)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct __fat_dirent __user *d1 = (struct __fat_dirent __user *)arg;
 	int short_only, both;
 
@@ -770,7 +774,7 @@ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
 		both = 1;
 		break;
 	default:
-		return fat_generic_ioctl(filp, cmd, arg);
+		return fat_generic_ioctl(inode, filp, cmd, arg);
 	}
 
 	if (!access_ok(VERIFY_WRITE, d1, sizeof(struct __fat_dirent[2])))
@@ -810,7 +814,7 @@ static long fat_compat_dir_ioctl(struct file *filp, unsigned cmd,
 		both = 1;
 		break;
 	default:
-		return fat_generic_ioctl(filp, cmd, (unsigned long)arg);
+		return -ENOIOCTLCMD;
 	}
 
 	if (!access_ok(VERIFY_WRITE, d1, sizeof(struct compat_dirent[2])))
@@ -832,7 +836,7 @@ const struct file_operations fat_dir_operations = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.readdir	= fat_readdir,
-	.unlocked_ioctl	= fat_dir_ioctl,
+	.ioctl		= fat_dir_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= fat_compat_dir_ioctl,
 #endif

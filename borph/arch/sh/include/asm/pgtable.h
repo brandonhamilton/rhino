@@ -12,11 +12,7 @@
 #ifndef __ASM_SH_PGTABLE_H
 #define __ASM_SH_PGTABLE_H
 
-#ifdef CONFIG_X2TLB
-#include <asm/pgtable-3level.h>
-#else
-#include <asm/pgtable-2level.h>
-#endif
+#include <asm-generic/pgtable-nopmd.h>
 #include <asm/page.h>
 
 #ifndef __ASSEMBLY__
@@ -55,17 +51,34 @@ static inline unsigned long long neff_sign_extend(unsigned long val)
 #define	NPHYS_SIGN	(1LL << (NPHYS - 1))
 #define	NPHYS_MASK	(-1LL << NPHYS)
 
+/*
+ * traditional two-level paging structure
+ */
+/* PTE bits */
+#if defined(CONFIG_X2TLB) || defined(CONFIG_SUPERH64)
+# define PTE_MAGNITUDE	3	/* 64-bit PTEs on extended mode SH-X2 TLB */
+#else
+# define PTE_MAGNITUDE	2	/* 32-bit PTEs */
+#endif
+#define PTE_SHIFT	PAGE_SHIFT
+#define PTE_BITS	(PTE_SHIFT - PTE_MAGNITUDE)
+
+/* PGD bits */
+#define PGDIR_SHIFT	(PTE_SHIFT + PTE_BITS)
 #define PGDIR_SIZE	(1UL << PGDIR_SHIFT)
 #define PGDIR_MASK	(~(PGDIR_SIZE-1))
 
 /* Entries per level */
 #define PTRS_PER_PTE	(PAGE_SIZE / (1 << PTE_MAGNITUDE))
+#define PTRS_PER_PGD	(PAGE_SIZE / sizeof(pgd_t))
 
+#define USER_PTRS_PER_PGD	(TASK_SIZE/PGDIR_SIZE)
 #define FIRST_USER_ADDRESS	0
 
 #define PHYS_ADDR_MASK29		0x1fffffff
 #define PHYS_ADDR_MASK32		0xffffffff
 
+#ifdef CONFIG_PMB
 static inline unsigned long phys_addr_mask(void)
 {
 	/* Is the MMU in 29bit mode? */
@@ -74,6 +87,17 @@ static inline unsigned long phys_addr_mask(void)
 
 	return PHYS_ADDR_MASK32;
 }
+#elif defined(CONFIG_32BIT)
+static inline unsigned long phys_addr_mask(void)
+{
+	return PHYS_ADDR_MASK32;
+}
+#else
+static inline unsigned long phys_addr_mask(void)
+{
+	return PHYS_ADDR_MASK29;
+}
+#endif
 
 #define PTE_PHYS_MASK		(phys_addr_mask() & PAGE_MASK)
 #define PTE_FLAGS_MASK		(~(PTE_PHYS_MASK) << PAGE_SHIFT)
@@ -129,9 +153,9 @@ typedef pte_t *pte_addr_t;
 #define pte_pfn(x)		((unsigned long)(((x).pte_low >> PAGE_SHIFT)))
 
 /*
- * Initialise the page table caches
+ * No page table caches to initialise
  */
-extern void pgtable_cache_init(void);
+#define pgtable_cache_init()	do { } while (0)
 
 struct vm_area_struct;
 
@@ -141,9 +165,8 @@ extern void __update_tlb(struct vm_area_struct *vma,
 			 unsigned long address, pte_t pte);
 
 static inline void
-update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *ptep)
+update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t pte)
 {
-	pte_t pte = *ptep;
 	__update_cache(vma, address, pte);
 	__update_tlb(vma, address, pte);
 }
@@ -156,8 +179,6 @@ extern void page_table_range_init(unsigned long start, unsigned long end,
 /* arch/sh/mm/mmap.c */
 #define HAVE_ARCH_UNMAPPED_AREA
 #define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
-
-#define __HAVE_ARCH_PTE_SPECIAL
 
 #include <asm-generic/pgtable.h>
 

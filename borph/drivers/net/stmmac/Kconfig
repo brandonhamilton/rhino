@@ -2,12 +2,10 @@ config STMMAC_ETH
 	tristate "STMicroelectronics 10/100/1000 Ethernet driver"
 	select MII
 	select PHYLIB
-	select CRC32
-	depends on NETDEVICES && HAS_IOMEM
+	depends on NETDEVICES && CPU_SUBTYPE_ST40
 	help
-	  This is the driver for the Ethernet IPs are built around a
-	  Synopsys IP Core and only tested on the STMicroelectronics
-	  platforms.
+	  This is the driver for the ST MAC 10/100/1000 on-chip Ethernet
+	  controllers. ST Ethernet IPs are built around a Synopsys IP Core.
 
 if STMMAC_ETH
 
@@ -32,11 +30,9 @@ config STMMAC_DUAL_MAC
 config STMMAC_TIMER
 	bool "STMMAC Timer optimisation"
 	default n
-	depends on RTC_HCTOSYS_DEVICE
 	help
 	  Use an external timer for mitigating the number of network
-	  interrupts. Currently, for SH architectures, it is possible
-	  to use the TMU channel 2 and the SH-RTC device.
+	  interrupts.
 
 choice
         prompt "Select Timer device"

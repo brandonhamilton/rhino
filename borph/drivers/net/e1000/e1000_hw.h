@@ -35,7 +35,6 @@
 
 #include "e1000_osdep.h"
 
-
 /* Forward declarations of structures used by the shared code */
 struct e1000_hw;
 struct e1000_hw_stats;

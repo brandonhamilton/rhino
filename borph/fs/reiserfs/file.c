@@ -38,23 +38,19 @@ static int reiserfs_file_release(struct inode *inode, struct file *filp)
 
 	BUG_ON(!S_ISREG(inode->i_mode));
 
-        if (atomic_add_unless(&REISERFS_I(inode)->openers, -1, 1))
-		return 0;
-
-	mutex_lock(&(REISERFS_I(inode)->tailpack));
-
-        if (!atomic_dec_and_test(&REISERFS_I(inode)->openers)) {
-		mutex_unlock(&(REISERFS_I(inode)->tailpack));
-		return 0;
-	}
-
 	/* fast out for when nothing needs to be done */
-	if ((!(REISERFS_I(inode)->i_flags & i_pack_on_close_mask) ||
+	if ((atomic_read(&inode->i_count) > 1 ||
+	     !(REISERFS_I(inode)->i_flags & i_pack_on_close_mask) ||
 	     !tail_has_to_be_packed(inode)) &&
 	    REISERFS_I(inode)->i_prealloc_count <= 0) {
-		mutex_unlock(&(REISERFS_I(inode)->tailpack));
 		return 0;
 	}
+
+	mutex_lock(&inode->i_mutex);
+
+	mutex_lock(&(REISERFS_I(inode)->i_mmap));
+	if (REISERFS_I(inode)->i_flags & i_ever_mapped)
+		REISERFS_I(inode)->i_flags &= ~i_pack_on_close_mask;
 
 	reiserfs_write_lock(inode->i_sb);
 	/* freeing preallocation only involves relogging blocks that
@@ -98,10 +94,9 @@ static int reiserfs_file_release(struct inode *inode, struct file *filp)
 	if (!err)
 		err = jbegin_failure;
 
-	if (!err &&
+	if (!err && atomic_read(&inode->i_count) <= 1 &&
 	    (REISERFS_I(inode)->i_flags & i_pack_on_close_mask) &&
 	    tail_has_to_be_packed(inode)) {
-
 		/* if regular file is released by last holder and it has been
 		   appended (we append by unformatted node only) or its direct
 		   item(s) had to be converted, then it may have to be
@@ -109,28 +104,27 @@ static int reiserfs_file_release(struct inode *inode, struct file *filp)
 		err = reiserfs_truncate_file(inode, 0);
 	}
       out:
+	mutex_unlock(&(REISERFS_I(inode)->i_mmap));
+	mutex_unlock(&inode->i_mutex);
 	reiserfs_write_unlock(inode->i_sb);
-	mutex_unlock(&(REISERFS_I(inode)->tailpack));
 	return err;
 }
 
-static int reiserfs_file_open(struct inode *inode, struct file *file)
+static int reiserfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	int err = dquot_file_open(inode, file);
-        if (!atomic_inc_not_zero(&REISERFS_I(inode)->openers)) {
-		/* somebody might be tailpacking on final close; wait for it */
-		mutex_lock(&(REISERFS_I(inode)->tailpack));
-		atomic_inc(&REISERFS_I(inode)->openers);
-		mutex_unlock(&(REISERFS_I(inode)->tailpack));
-	}
-	return err;
+	struct inode *inode;
+
+	inode = file->f_path.dentry->d_inode;
+	mutex_lock(&(REISERFS_I(inode)->i_mmap));
+	REISERFS_I(inode)->i_flags |= i_ever_mapped;
+	mutex_unlock(&(REISERFS_I(inode)->i_mmap));
+
+	return generic_file_mmap(file, vma);
 }
 
 static void reiserfs_vfs_truncate_file(struct inode *inode)
 {
-	mutex_lock(&(REISERFS_I(inode)->tailpack));
 	reiserfs_truncate_file(inode, 1);
-	mutex_unlock(&(REISERFS_I(inode)->tailpack));
 }
 
 /* Sync a reiserfs file. */
@@ -140,9 +134,10 @@ static void reiserfs_vfs_truncate_file(struct inode *inode)
  * be removed...
  */
 
-static int reiserfs_sync_file(struct file *filp, int datasync)
+static int reiserfs_sync_file(struct file *filp,
+			      struct dentry *dentry, int datasync)
 {
-	struct inode *inode = filp->f_mapping->host;
+	struct inode *inode = dentry->d_inode;
 	int err;
 	int barrier_done;
 
@@ -152,7 +147,7 @@ static int reiserfs_sync_file(struct file *filp, int datasync)
 	barrier_done = reiserfs_commit_for_inode(inode);
 	reiserfs_write_unlock(inode->i_sb);
 	if (barrier_done != 1 && reiserfs_barrier_flush(inode->i_sb))
-		blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
 	if (barrier_done < 0)
 		return barrier_done;
 	return (err < 0) ? -EIO : 0;
@@ -293,8 +288,8 @@ const struct file_operations reiserfs_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = reiserfs_compat_ioctl,
 #endif
-	.mmap = generic_file_mmap,
-	.open = reiserfs_file_open,
+	.mmap = reiserfs_file_mmap,
+	.open = generic_file_open,
 	.release = reiserfs_file_release,
 	.fsync = reiserfs_sync_file,
 	.aio_read = generic_file_aio_read,

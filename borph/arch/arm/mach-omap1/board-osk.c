@@ -37,7 +37,6 @@
 
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/mtd/physmap.h>
 
 #include <linux/i2c/tps65010.h>
 
@@ -47,8 +46,8 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <asm/mach/flash.h>
 
-#include <plat/flash.h>
 #include <plat/usb.h>
 #include <plat/mux.h>
 #include <plat/tc.h>
@@ -95,9 +94,9 @@ static struct mtd_partition osk_partitions[] = {
 	}
 };
 
-static struct physmap_flash_data osk_flash_data = {
+static struct flash_platform_data osk_flash_data = {
+	.map_name	= "cfi_probe",
 	.width		= 2,
-	.set_vpp	= omap1_set_vpp,
 	.parts		= osk_partitions,
 	.nr_parts	= ARRAY_SIZE(osk_partitions),
 };
@@ -108,7 +107,7 @@ static struct resource osk_flash_resource = {
 };
 
 static struct platform_device osk5912_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "omapflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &osk_flash_data,
@@ -560,7 +559,7 @@ static void __init osk_init(void)
 	l |= (3 << 1);
 	omap_writel(l, USB_TRANSCEIVER_CTRL);
 
-	omap1_usb_init(&osk_usb_config);
+	omap_usb_init(&osk_usb_config);
 
 	/* irq for tps65010 chip */
 	/* bootloader effectively does:  omap_cfg_reg(U19_1610_MPUIO1); */
@@ -580,9 +579,10 @@ static void __init osk_map_io(void)
 
 MACHINE_START(OMAP_OSK, "TI-OSK")
 	/* Maintainer: Dirk Behme <dirk.behme@de.bosch.com> */
+	.phys_io	= 0xfff00000,
+	.io_pg_offst	= ((0xfef00000) >> 18) & 0xfffc,
 	.boot_params	= 0x10000100,
 	.map_io		= osk_map_io,
-	.reserve	= omap_reserve,
 	.init_irq	= osk_init_irq,
 	.init_machine	= osk_init,
 	.timer		= &omap_timer,

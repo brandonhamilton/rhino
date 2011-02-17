@@ -468,13 +468,13 @@ static void parse_input(struct hda_codec *codec)
 			spec->dig_in = nid;
 			continue;
 		}
-		for (j = 0; j < cfg->num_inputs; j++)
-			if (cfg->inputs[j].pin == pin)
+		for (j = 0; j < AUTO_PIN_LAST; j++)
+			if (cfg->input_pins[j] == pin)
 				break;
-		if (j >= cfg->num_inputs)
+		if (j >= AUTO_PIN_LAST)
 			continue;
 		spec->input_pins[n] = pin;
-		spec->input_labels[n] = hda_get_input_pin_label(codec, pin, 1);
+		spec->input_labels[n] = auto_pin_cfg_labels[j];
 		spec->adcs[n] = nid;
 		n++;
 	}
@@ -489,7 +489,7 @@ static void parse_digital(struct hda_codec *codec)
 	if (cfg->dig_outs &&
 	    snd_hda_get_connections(codec, cfg->dig_out_pins[0],
 				    &spec->dig_out, 1) == 1)
-		spec->multiout.dig_out_nid = spec->dig_out;
+		spec->multiout.dig_out_nid = cfg->dig_out_pins[0];
 }
 
 static int ca0110_parse_auto_config(struct hda_codec *codec)

@@ -354,10 +354,7 @@ static int cpio_mkfile(const char *name, const char *location,
 		push_pad();
 
 		if (size) {
-			if (fwrite(filebuf, size, 1, stdout) != 1) {
-				fprintf(stderr, "writing filebuf failed\n");
-				goto error;
-			}
+			fwrite(filebuf, size, 1, stdout);
 			offset += size;
 			push_pad();
 		}

@@ -72,14 +72,13 @@ enum {
 	MODEL_CLARO_HALO,	/* HT-Omega Claro halo */
 };
 
-static DEFINE_PCI_DEVICE_TABLE(oxygen_ids) = {
+static struct pci_device_id oxygen_ids[] __devinitdata = {
 	{ OXYGEN_PCI_SUBID(0x10b0, 0x0216), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x10b0, 0x0218), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x10b0, 0x0219), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x13f6, 0x0001), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x13f6, 0x0010), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x13f6, 0x8788), .driver_data = MODEL_CMEDIA_REF },
-	{ OXYGEN_PCI_SUBID(0x13f6, 0xffff), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x147a, 0xa017), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x1a58, 0x0910), .driver_data = MODEL_CMEDIA_REF },
 	{ OXYGEN_PCI_SUBID(0x415a, 0x5431), .driver_data = MODEL_MERIDIAN },
@@ -506,8 +505,7 @@ static const struct oxygen_model model_generic = {
 			 PLAYBACK_2_TO_AC97_1 |
 			 CAPTURE_0_FROM_I2S_1 |
 			 CAPTURE_1_FROM_SPDIF |
-			 CAPTURE_2_FROM_AC97_1 |
-			 AC97_CD_INPUT,
+			 CAPTURE_2_FROM_AC97_1,
 	.dac_channels = 8,
 	.dac_volume_min = 0,
 	.dac_volume_max = 255,
@@ -545,10 +543,6 @@ static int __devinit get_oxygen_model(struct oxygen *chip,
 		chip->model.suspend = claro_suspend;
 		chip->model.resume = claro_resume;
 		chip->model.set_adc_params = set_ak5385_params;
-		chip->model.device_config = PLAYBACK_0_TO_I2S |
-					    PLAYBACK_1_TO_SPDIF |
-					    CAPTURE_0_FROM_I2S_2 |
-					    CAPTURE_1_FROM_SPDIF;
 		break;
 	}
 	if (id->driver_data == MODEL_MERIDIAN ||

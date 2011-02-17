@@ -15,6 +15,7 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <asm/uaccess.h>
 #include <asm/nvram.h>

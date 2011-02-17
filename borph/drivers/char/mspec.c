@@ -316,8 +316,7 @@ uncached_mmap(struct file *file, struct vm_area_struct *vma)
 
 static const struct file_operations fetchop_fops = {
 	.owner = THIS_MODULE,
-	.mmap = fetchop_mmap,
-	.llseek = noop_llseek,
+	.mmap = fetchop_mmap
 };
 
 static struct miscdevice fetchop_miscdev = {
@@ -328,8 +327,7 @@ static struct miscdevice fetchop_miscdev = {
 
 static const struct file_operations cached_fops = {
 	.owner = THIS_MODULE,
-	.mmap = cached_mmap,
-	.llseek = noop_llseek,
+	.mmap = cached_mmap
 };
 
 static struct miscdevice cached_miscdev = {
@@ -340,8 +338,7 @@ static struct miscdevice cached_miscdev = {
 
 static const struct file_operations uncached_fops = {
 	.owner = THIS_MODULE,
-	.mmap = uncached_mmap,
-	.llseek = noop_llseek,
+	.mmap = uncached_mmap
 };
 
 static struct miscdevice uncached_miscdev = {

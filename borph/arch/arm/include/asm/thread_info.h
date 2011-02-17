@@ -115,8 +115,7 @@ extern void iwmmxt_task_restore(struct thread_info *, void *);
 extern void iwmmxt_task_release(struct thread_info *);
 extern void iwmmxt_task_switch(struct thread_info *);
 
-extern void vfp_sync_hwstate(struct thread_info *);
-extern void vfp_flush_hwstate(struct thread_info *);
+extern void vfp_sync_state(struct thread_info *thread);
 
 #endif
 
@@ -141,10 +140,9 @@ extern void vfp_flush_hwstate(struct thread_info *);
 #define TIF_SYSCALL_TRACE	8
 #define TIF_POLLING_NRFLAG	16
 #define TIF_USING_IWMMXT	17
-#define TIF_MEMDIE		18	/* is terminating due to OOM killer */
+#define TIF_MEMDIE		18
 #define TIF_FREEZE		19
 #define TIF_RESTORE_SIGMASK	20
-#define TIF_SECCOMP		21
 
 #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
 #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)
@@ -154,7 +152,6 @@ extern void vfp_flush_hwstate(struct thread_info *);
 #define _TIF_USING_IWMMXT	(1 << TIF_USING_IWMMXT)
 #define _TIF_FREEZE		(1 << TIF_FREEZE)
 #define _TIF_RESTORE_SIGMASK	(1 << TIF_RESTORE_SIGMASK)
-#define _TIF_SECCOMP		(1 << TIF_SECCOMP)
 
 /*
  * Change these and you break ASM code in entry-common.S

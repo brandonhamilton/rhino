@@ -12,7 +12,6 @@
 #include <linux/device.h>
 #include <linux/fb.h>
 #include <linux/i2c-algo-bit.h>
-#include <linux/slab.h>
 
 #include "edid.h"
 

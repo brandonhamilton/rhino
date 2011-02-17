@@ -1,11 +1,10 @@
+#include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/etherdevice.h>
 #include <linux/netdevice.h>
-#include <linux/if_ether.h>
 #include <linux/if_arp.h>
 #include <linux/kthread.h>
 #include <linux/kfifo.h>
-#include <net/cfg80211.h>
 
 #include "mesh.h"
 #include "decl.h"
@@ -197,14 +196,7 @@ int lbs_init_mesh(struct lbs_private *priv)
 
 	lbs_deb_enter(LBS_DEB_MESH);
 
-	priv->mesh_connect_status = LBS_DISCONNECTED;
-
-	/* Determine mesh_fw_ver from fwrelease and fwcapinfo */
-	/* 5.0.16p0 9.0.0.p0 is known to NOT support any mesh */
-	/* 5.110.22 have mesh command with 0xa3 command id */
-	/* 10.0.0.p0 FW brings in mesh config command with different id */
-	/* Check FW version MSB and initialize mesh_fw_ver */
-	if (MRVL_FW_MAJOR_REV(priv->fwrelease) == MRVL_FW_V5) {
+	if (priv->mesh_fw_ver == MESH_FW_OLD) {
 		/* Enable mesh, if supported, and work out which TLV it uses.
 		   0x100 + 291 is an unofficial value used in 5.110.20.pXX
 		   0x100 + 37 is the official value used in 5.110.21.pXX
@@ -226,9 +218,7 @@ int lbs_init_mesh(struct lbs_private *priv)
 					    priv->channel))
 				priv->mesh_tlv = 0;
 		}
-	} else
-	if ((MRVL_FW_MAJOR_REV(priv->fwrelease) >= MRVL_FW_V10) &&
-		(priv->fwcapinfo & MESH_CAPINFO_ENABLE_MASK)) {
+	} else if (priv->mesh_fw_ver == MESH_FW_NEW) {
 		/* 10.0.0.pXX new firmwares should succeed with TLV
 		 * 0x100+37; Do not invoke command with old TLV.
 		 */
@@ -237,12 +227,7 @@ int lbs_init_mesh(struct lbs_private *priv)
 				    priv->channel))
 			priv->mesh_tlv = 0;
 	}
-
-
 	if (priv->mesh_tlv) {
-		sprintf(priv->mesh_ssid, "mesh");
-		priv->mesh_ssid_len = 4;
-
 		lbs_add_mesh(priv);
 
 		if (device_create_file(&dev->dev, &dev_attr_lbs_mesh))
@@ -315,7 +300,7 @@ static int lbs_mesh_dev_open(struct net_device *dev)
 
 	spin_lock_irq(&priv->driver_lock);
 
-	if (priv->wdev->iftype == NL80211_IFTYPE_MONITOR) {
+	if (priv->monitormode) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -366,10 +351,14 @@ int lbs_add_mesh(struct lbs_private *priv)
 
 	mesh_dev->netdev_ops = &mesh_netdev_ops;
 	mesh_dev->ethtool_ops = &lbs_ethtool_ops;
-	memcpy(mesh_dev->dev_addr, priv->dev->dev_addr, ETH_ALEN);
+	memcpy(mesh_dev->dev_addr, priv->dev->dev_addr,
+			sizeof(priv->dev->dev_addr));
 
 	SET_NETDEV_DEV(priv->mesh_dev, priv->dev->dev.parent);
 
+#ifdef	WIRELESS_EXT
+	mesh_dev->wireless_handlers = &mesh_handler_def;
+#endif
 	mesh_dev->flags |= IFF_BROADCAST | IFF_MULTICAST;
 	/* Register virtual mesh interface */
 	ret = register_netdev(mesh_dev);
@@ -427,10 +416,10 @@ struct net_device *lbs_mesh_set_dev(struct lbs_private *priv,
 	struct net_device *dev, struct rxpd *rxpd)
 {
 	if (priv->mesh_dev) {
-		if (priv->mesh_tlv == TLV_TYPE_OLD_MESH_ID) {
+		if (priv->mesh_fw_ver == MESH_FW_OLD) {
 			if (rxpd->rx_control & RxPD_MESH_FRAME)
 				dev = priv->mesh_dev;
-		} else if (priv->mesh_tlv == TLV_TYPE_MESH_ID) {
+		} else if (priv->mesh_fw_ver == MESH_FW_NEW) {
 			if (rxpd->u.bss.bss_num == MESH_IFACE_ID)
 				dev = priv->mesh_dev;
 		}
@@ -443,9 +432,9 @@ void lbs_mesh_set_txpd(struct lbs_private *priv,
 	struct net_device *dev, struct txpd *txpd)
 {
 	if (dev == priv->mesh_dev) {
-		if (priv->mesh_tlv == TLV_TYPE_OLD_MESH_ID)
+		if (priv->mesh_fw_ver == MESH_FW_OLD)
 			txpd->tx_control |= cpu_to_le32(TxPD_MESH_FRAME);
-		else if (priv->mesh_tlv == TLV_TYPE_MESH_ID)
+		else if (priv->mesh_fw_ver == MESH_FW_NEW)
 			txpd->u.bss.bss_num = MESH_IFACE_ID;
 	}
 }
@@ -455,189 +444,65 @@ void lbs_mesh_set_txpd(struct lbs_private *priv,
  * Mesh command handling
  */
 
-/**
- *  @brief Add or delete Mesh Blinding Table entries
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *  @param add  	TRUE to add the entry, FALSE to delete it
- *  @param addr1        Destination address to blind or unblind
- *
- *  @return 	   	0 on success, error on failure
- */
-int lbs_mesh_bt_add_del(struct lbs_private *priv, bool add, u8 *addr1)
+int lbs_cmd_bt_access(struct cmd_ds_command *cmd,
+			       u16 cmd_action, void *pdata_buf)
 {
-	struct cmd_ds_bt_access cmd;
-	int ret = 0;
-
-	lbs_deb_enter(LBS_DEB_CMD);
-
-	BUG_ON(addr1 == NULL);
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
-	memcpy(cmd.addr1, addr1, ETH_ALEN);
-	if (add) {
-		cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_ADD);
-		lbs_deb_hex(LBS_DEB_MESH, "BT_ADD: blinded MAC addr",
-			addr1, ETH_ALEN);
-	} else {
-		cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_DEL);
-		lbs_deb_hex(LBS_DEB_MESH, "BT_DEL: blinded MAC addr",
-			addr1, ETH_ALEN);
-	}
-
-	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
-
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
-	return ret;
-}
-
-/**
- *  @brief Reset/clear the mesh blinding table
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *
- *  @return 	   	0 on success, error on failure
- */
-int lbs_mesh_bt_reset(struct lbs_private *priv)
-{
-	struct cmd_ds_bt_access cmd;
-	int ret = 0;
-
-	lbs_deb_enter(LBS_DEB_CMD);
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
-	cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_RESET);
-
-	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
-
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
-	return ret;
-}
-
-/**
- *  @brief Gets the inverted status of the mesh blinding table
- *
- *  Normally the firmware "blinds" or ignores traffic from mesh nodes in the
- *  table, but an inverted table allows *only* traffic from nodes listed in
- *  the table.
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *  @param invert  	On success, TRUE if the blinding table is inverted,
- *                        FALSE if it is not inverted
- *
- *  @return 	   	0 on success, error on failure
- */
-int lbs_mesh_bt_get_inverted(struct lbs_private *priv, bool *inverted)
-{
-	struct cmd_ds_bt_access cmd;
-	int ret = 0;
-
-	lbs_deb_enter(LBS_DEB_CMD);
-
-	BUG_ON(inverted == NULL);
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
-	cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_GET_INVERT);
-
-	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
-	if (ret == 0)
-		*inverted = !!cmd.id;
-
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
-	return ret;
-}
-
-/**
- *  @brief Sets the inverted status of the mesh blinding table
- *
- *  Normally the firmware "blinds" or ignores traffic from mesh nodes in the
- *  table, but an inverted table allows *only* traffic from nodes listed in
- *  the table.
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *  @param invert  	TRUE to invert the blinding table (only traffic from
- *                         listed nodes allowed), FALSE to return it
- *                         to normal state (listed nodes ignored)
- *
- *  @return 	   	0 on success, error on failure
- */
-int lbs_mesh_bt_set_inverted(struct lbs_private *priv, bool inverted)
-{
-	struct cmd_ds_bt_access cmd;
-	int ret = 0;
-
-	lbs_deb_enter(LBS_DEB_CMD);
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
-	cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_SET_INVERT);
-	cmd.id = cpu_to_le32(!!inverted);
-
-	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
-
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
-	return ret;
-}
-
-/**
- *  @brief List an entry in the mesh blinding table
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *  @param id		The ID of the entry to list
- *  @param addr1	MAC address associated with the table entry
- *
- *  @return 	   	0 on success, error on failure
- */
-int lbs_mesh_bt_get_entry(struct lbs_private *priv, u32 id, u8 *addr1)
-{
-	struct cmd_ds_bt_access cmd;
-	int ret = 0;
-
-	lbs_deb_enter(LBS_DEB_CMD);
-
-	BUG_ON(addr1 == NULL);
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
-	cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_SET_INVERT);
-	cmd.id = cpu_to_le32(id);
-
-	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
-	if (ret == 0)
-		memcpy(addr1, cmd.addr1, sizeof(cmd.addr1));
-
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
-	return ret;
-}
-
-/**
- *  @brief Access the mesh forwarding table
- *
- *  @param priv    	A pointer to struct lbs_private structure
- *  @param cmd_action	The forwarding table action to perform
- *  @param cmd		The pre-filled FWT_ACCESS command
- *
- *  @return 	   	0 on success and 'cmd' will be filled with the
- *                        firmware's response
- */
-int lbs_cmd_fwt_access(struct lbs_private *priv, u16 cmd_action,
-			struct cmd_ds_fwt_access *cmd)
-{
-	int ret;
-
+	struct cmd_ds_bt_access *bt_access = &cmd->params.bt;
 	lbs_deb_enter_args(LBS_DEB_CMD, "action %d", cmd_action);
 
-	cmd->hdr.command = cpu_to_le16(CMD_FWT_ACCESS);
-	cmd->hdr.size = cpu_to_le16(sizeof(struct cmd_ds_fwt_access));
-	cmd->hdr.result = 0;
-	cmd->action = cpu_to_le16(cmd_action);
+	cmd->command = cpu_to_le16(CMD_BT_ACCESS);
+	cmd->size = cpu_to_le16(sizeof(struct cmd_ds_bt_access) +
+		sizeof(struct cmd_header));
+	cmd->result = 0;
+	bt_access->action = cpu_to_le16(cmd_action);
 
-	ret = lbs_cmd_with_response(priv, CMD_FWT_ACCESS, cmd);
+	switch (cmd_action) {
+	case CMD_ACT_BT_ACCESS_ADD:
+		memcpy(bt_access->addr1, pdata_buf, 2 * ETH_ALEN);
+		lbs_deb_hex(LBS_DEB_MESH, "BT_ADD: blinded MAC addr",
+			bt_access->addr1, 6);
+		break;
+	case CMD_ACT_BT_ACCESS_DEL:
+		memcpy(bt_access->addr1, pdata_buf, 1 * ETH_ALEN);
+		lbs_deb_hex(LBS_DEB_MESH, "BT_DEL: blinded MAC addr",
+			bt_access->addr1, 6);
+		break;
+	case CMD_ACT_BT_ACCESS_LIST:
+		bt_access->id = cpu_to_le32(*(u32 *) pdata_buf);
+		break;
+	case CMD_ACT_BT_ACCESS_RESET:
+		break;
+	case CMD_ACT_BT_ACCESS_SET_INVERT:
+		bt_access->id = cpu_to_le32(*(u32 *) pdata_buf);
+		break;
+	case CMD_ACT_BT_ACCESS_GET_INVERT:
+		break;
+	default:
+		break;
+	}
+	lbs_deb_leave(LBS_DEB_CMD);
+	return 0;
+}
 
-	lbs_deb_leave_args(LBS_DEB_CMD, "ret %d", ret);
+int lbs_cmd_fwt_access(struct cmd_ds_command *cmd,
+			       u16 cmd_action, void *pdata_buf)
+{
+	struct cmd_ds_fwt_access *fwt_access = &cmd->params.fwt;
+	lbs_deb_enter_args(LBS_DEB_CMD, "action %d", cmd_action);
+
+	cmd->command = cpu_to_le16(CMD_FWT_ACCESS);
+	cmd->size = cpu_to_le16(sizeof(struct cmd_ds_fwt_access) +
+		sizeof(struct cmd_header));
+	cmd->result = 0;
+
+	if (pdata_buf)
+		memcpy(fwt_access, pdata_buf, sizeof(*fwt_access));
+	else
+		memset(fwt_access, 0, sizeof(*fwt_access));
+
+	fwt_access->action = cpu_to_le16(cmd_action);
+
+	lbs_deb_leave(LBS_DEB_CMD);
 	return 0;
 }
 
@@ -673,7 +538,7 @@ static int __lbs_mesh_config_send(struct lbs_private *priv,
 	 * Command id is 0xac for v10 FW along with mesh interface
 	 * id in bits 14-13-12.
 	 */
-	if (priv->mesh_tlv == TLV_TYPE_MESH_ID)
+	if (priv->mesh_fw_ver == MESH_FW_NEW)
 		command = CMD_MESH_CONFIG |
 			  (MESH_IFACE_ID << MESH_IFACE_BIT_OFFSET);
 

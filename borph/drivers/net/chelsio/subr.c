@@ -90,7 +90,7 @@ int __t1_tpi_write(adapter_t *adapter, u32 addr, u32 value)
 	tpi_busy = t1_wait_op_done(adapter, A_TPI_CSR, F_TPIRDY, 1,
 				   TPI_ATTEMPTS, 3);
 	if (tpi_busy)
-		pr_alert("%s: TPI write to 0x%x failed\n",
+		CH_ALERT("%s: TPI write to 0x%x failed\n",
 			 adapter->name, addr);
 	return tpi_busy;
 }
@@ -118,7 +118,7 @@ int __t1_tpi_read(adapter_t *adapter, u32 addr, u32 *valp)
 	tpi_busy = t1_wait_op_done(adapter, A_TPI_CSR, F_TPIRDY, 1,
 				   TPI_ATTEMPTS, 3);
 	if (tpi_busy)
-		pr_alert("%s: TPI read from 0x%x failed\n",
+		CH_ALERT("%s: TPI read from 0x%x failed\n",
 			 adapter->name, addr);
 	else
 		*valp = readl(adapter->regs + A_TPI_RD_DATA);
@@ -185,6 +185,9 @@ static int t1_pci_intr_handler(adapter_t *adapter)
 	return 0;
 }
 
+#ifdef CONFIG_CHELSIO_T1_COUGAR
+#include "cspi.h"
+#endif
 #ifdef CONFIG_CHELSIO_T1_1G
 #include "fpga_defs.h"
 
@@ -259,7 +262,7 @@ static int mi1_wait_until_ready(adapter_t *adapter, int mi1_reg)
 			udelay(10);
 	} while (busy && --attempts);
 	if (busy)
-		pr_alert("%s: MDIO operation timed out\n", adapter->name);
+		CH_ALERT("%s: MDIO operation timed out\n", adapter->name);
 	return busy;
 }
 
@@ -277,7 +280,7 @@ static void mi1_mdio_init(adapter_t *adapter, const struct board_info *bi)
 	t1_tpi_write(adapter, A_ELMER0_PORT0_MI1_CFG, val);
 }
 
-#if defined(CONFIG_CHELSIO_T1_1G)
+#if defined(CONFIG_CHELSIO_T1_1G) || defined(CONFIG_CHELSIO_T1_COUGAR)
 /*
  * Elmer MI1 MDIO read/write operations.
  */
@@ -314,12 +317,14 @@ static int mi1_mdio_write(struct net_device *dev, int phy_addr, int mmd_addr,
 	return 0;
 }
 
+#if defined(CONFIG_CHELSIO_T1_1G) || defined(CONFIG_CHELSIO_T1_COUGAR)
 static const struct mdio_ops mi1_mdio_ops = {
 	.init = mi1_mdio_init,
 	.read = mi1_mdio_read,
 	.write = mi1_mdio_write,
 	.mode_support = MDIO_SUPPORTS_C22
 };
+#endif
 
 #endif
 
@@ -523,7 +528,7 @@ static const struct board_info t1_board[] = {
 
 };
 
-DEFINE_PCI_DEVICE_TABLE(t1_pci_tbl) = {
+struct pci_device_id t1_pci_tbl[] = {
 	CH_DEVICE(8, 0, CH_BRD_T110_1CU),
 	CH_DEVICE(8, 1, CH_BRD_T110_1CU),
 	CH_DEVICE(7, 0, CH_BRD_N110_1F),
@@ -576,7 +581,7 @@ int t1_seeprom_read(adapter_t *adapter, u32 addr, __le32 *data)
 	} while (!(val & F_VPD_OP_FLAG) && --i);
 
 	if (!(val & F_VPD_OP_FLAG)) {
-		pr_err("%s: reading EEPROM address 0x%x failed\n",
+		CH_ERR("%s: reading EEPROM address 0x%x failed\n",
 		       adapter->name, addr);
 		return -EIO;
 	}
@@ -729,9 +734,8 @@ int t1_elmer0_ext_intr_handler(adapter_t *adapter)
 		break;
 	case CHBT_BOARD_8000:
 	case CHBT_BOARD_CHT110:
-		if (netif_msg_intr(adapter))
-			dev_dbg(&adapter->pdev->dev,
-				"External interrupt cause 0x%x\n", cause);
+		CH_DBG(adapter, INTR, "External interrupt cause 0x%x\n",
+		       cause);
 		if (cause & ELMER0_GP_BIT1) {        /* PMC3393 INTB */
 			struct cmac *mac = adapter->port[0].mac;
 
@@ -742,11 +746,35 @@ int t1_elmer0_ext_intr_handler(adapter_t *adapter)
 
 			t1_tpi_read(adapter,
 					A_ELMER0_GPI_STAT, &mod_detect);
-			if (netif_msg_link(adapter))
-				dev_info(&adapter->pdev->dev, "XPAK %s\n",
-					 mod_detect ? "removed" : "inserted");
+			CH_MSG(adapter, INFO, LINK, "XPAK %s\n",
+			       mod_detect ? "removed" : "inserted");
 		}
 		break;
+#ifdef CONFIG_CHELSIO_T1_COUGAR
+	case CHBT_BOARD_COUGAR:
+		if (adapter->params.nports == 1) {
+			if (cause & ELMER0_GP_BIT1) {         /* Vitesse MAC */
+				struct cmac *mac = adapter->port[0].mac;
+				mac->ops->interrupt_handler(mac);
+			}
+			if (cause & ELMER0_GP_BIT5) {     /* XPAK MOD_DETECT */
+			}
+		} else {
+			int i, port_bit;
+
+			for_each_port(adapter, i) {
+				port_bit = i ? i + 1 : 0;
+				if (!(cause & (1 << port_bit)))
+					continue;
+
+				phy = adapter->port[i].phy;
+				phy_cause = phy->ops->interrupt_handler(phy);
+				if (phy_cause & cphy_cause_link_change)
+					t1_link_changed(adapter, i);
+			}
+		}
+		break;
+#endif
 	}
 	t1_tpi_write(adapter, A_ELMER0_INT_CAUSE, cause);
 	return 0;
@@ -925,6 +953,7 @@ static int board_init(adapter_t *adapter, const struct board_info *bi)
 	case CHBT_BOARD_N110:
 	case CHBT_BOARD_N210:
 	case CHBT_BOARD_CHT210:
+	case CHBT_BOARD_COUGAR:
 		t1_tpi_par(adapter, 0xf);
 		t1_tpi_write(adapter, A_ELMER0_GPO, 0x800);
 		break;
@@ -973,6 +1002,10 @@ int t1_init_hw_modules(adapter_t *adapter)
 		       adapter->regs + A_MC5_CONFIG);
 	}
 
+#ifdef CONFIG_CHELSIO_T1_COUGAR
+	if (adapter->cspi && t1_cspi_init(adapter->cspi))
+		goto out_err;
+#endif
 	if (adapter->espi && t1_espi_init(adapter->espi, bi->chip_mac,
 					  bi->espi_nports))
 		goto out_err;
@@ -1026,6 +1059,10 @@ void t1_free_sw_modules(adapter_t *adapter)
 		t1_tp_destroy(adapter->tp);
 	if (adapter->espi)
 		t1_espi_destroy(adapter->espi);
+#ifdef CONFIG_CHELSIO_T1_COUGAR
+	if (adapter->cspi)
+		t1_cspi_destroy(adapter->cspi);
+#endif
 }
 
 static void __devinit init_link_config(struct link_config *lc,
@@ -1045,6 +1082,14 @@ static void __devinit init_link_config(struct link_config *lc,
 	}
 }
 
+#ifdef CONFIG_CHELSIO_T1_COUGAR
+	if (bi->clock_cspi && !(adapter->cspi = t1_cspi_create(adapter))) {
+		CH_ERR("%s: CSPI initialization failed\n",
+		       adapter->name);
+		goto error;
+	}
+#endif
+
 /*
  * Allocate and initialize the data structures that hold the SW state of
  * the Terminator HW modules.
@@ -1060,20 +1105,20 @@ int __devinit t1_init_sw_modules(adapter_t *adapter,
 
 	adapter->sge = t1_sge_create(adapter, &adapter->params.sge);
 	if (!adapter->sge) {
-		pr_err("%s: SGE initialization failed\n",
+		CH_ERR("%s: SGE initialization failed\n",
 		       adapter->name);
 		goto error;
 	}
 
 	if (bi->espi_nports && !(adapter->espi = t1_espi_create(adapter))) {
-		pr_err("%s: ESPI initialization failed\n",
+		CH_ERR("%s: ESPI initialization failed\n",
 		       adapter->name);
 		goto error;
 	}
 
 	adapter->tp = t1_tp_create(adapter, &adapter->params.tp);
 	if (!adapter->tp) {
-		pr_err("%s: TP initialization failed\n",
+		CH_ERR("%s: TP initialization failed\n",
 		       adapter->name);
 		goto error;
 	}
@@ -1093,14 +1138,14 @@ int __devinit t1_init_sw_modules(adapter_t *adapter,
 		adapter->port[i].phy = bi->gphy->create(adapter->port[i].dev,
 							phy_addr, bi->mdio_ops);
 		if (!adapter->port[i].phy) {
-			pr_err("%s: PHY %d initialization failed\n",
+			CH_ERR("%s: PHY %d initialization failed\n",
 			       adapter->name, i);
 			goto error;
 		}
 
 		adapter->port[i].mac = mac = bi->gmac->create(adapter, i);
 		if (!mac) {
-			pr_err("%s: MAC %d initialization failed\n",
+			CH_ERR("%s: MAC %d initialization failed\n",
 			       adapter->name, i);
 			goto error;
 		}
@@ -1112,7 +1157,7 @@ int __devinit t1_init_sw_modules(adapter_t *adapter,
 		if (!t1_is_asic(adapter) || bi->chip_mac == CHBT_MAC_DUMMY)
 			mac->ops->macaddress_get(mac, hw_addr);
 		else if (vpd_macaddress_get(adapter, i, hw_addr)) {
-			pr_err("%s: could not read MAC address from VPD ROM\n",
+			CH_ERR("%s: could not read MAC address from VPD ROM\n",
 			       adapter->port[i].dev->name);
 			goto error;
 		}

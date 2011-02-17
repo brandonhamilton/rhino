@@ -168,7 +168,7 @@ static int ohci_hcd_sm501_drv_probe(struct platform_device *pdev)
 
 	retval = usb_add_hcd(hcd, irq, IRQF_DISABLED | IRQF_SHARED);
 	if (retval)
-		goto err5;
+		goto err4;
 
 	/* enable power and unmask interrupts */
 
@@ -176,8 +176,6 @@ static int ohci_hcd_sm501_drv_probe(struct platform_device *pdev)
 	sm501_modify_reg(dev->parent, SM501_IRQ_MASK, 1 << 6, 0);
 
 	return 0;
-err5:
-	iounmap(hcd->regs);
 err4:
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 err3:

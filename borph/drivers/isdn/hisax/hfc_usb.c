@@ -39,7 +39,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/moduleparam.h>
-#include <linux/slab.h>
 #include "hisax.h"
 #include "hisax_if.h"
 #include "hfc_usb.h"

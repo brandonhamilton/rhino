@@ -11,12 +11,12 @@
  */
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/nwpserial.h>
+
+#include <asm/prom.h>
 
 struct of_serial_info {
 	int type;
@@ -26,13 +26,13 @@ struct of_serial_info {
 /*
  * Fill a struct uart_port for a given device node
  */
-static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
+static int __devinit of_platform_serial_setup(struct of_device *ofdev,
 					int type, struct uart_port *port)
 {
 	struct resource resource;
-	struct device_node *np = ofdev->dev.of_node;
-	const __be32 *clk, *spd;
-	const __be32 *prop;
+	struct device_node *np = ofdev->node;
+	const unsigned int *clk, *spd;
+	const u32 *prop;
 	int ret, prop_size;
 
 	memset(port, 0, sizeof *port);
@@ -55,23 +55,23 @@ static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
 	/* Check for shifted address mapping */
 	prop = of_get_property(np, "reg-offset", &prop_size);
 	if (prop && (prop_size == sizeof(u32)))
-		port->mapbase += be32_to_cpup(prop);
+		port->mapbase += *prop;
 
 	/* Check for registers offset within the devices address range */
 	prop = of_get_property(np, "reg-shift", &prop_size);
 	if (prop && (prop_size == sizeof(u32)))
-		port->regshift = be32_to_cpup(prop);
+		port->regshift = *prop;
 
 	port->irq = irq_of_parse_and_map(np, 0);
 	port->iotype = UPIO_MEM;
 	port->type = type;
-	port->uartclk = be32_to_cpup(clk);
+	port->uartclk = *clk;
 	port->flags = UPF_SHARE_IRQ | UPF_BOOT_AUTOCONF | UPF_IOREMAP
 		| UPF_FIXED_PORT | UPF_FIXED_TYPE;
 	port->dev = &ofdev->dev;
 	/* If current-speed was set, then try not to change it. */
 	if (spd)
-		port->custom_divisor = be32_to_cpup(clk) / (16 * (be32_to_cpup(spd)));
+		port->custom_divisor = *clk / (16 * (*spd));
 
 	return 0;
 }
@@ -79,7 +79,7 @@ static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
 /*
  * Try to register a serial port
  */
-static int __devinit of_platform_serial_probe(struct platform_device *ofdev,
+static int __devinit of_platform_serial_probe(struct of_device *ofdev,
 						const struct of_device_id *id)
 {
 	struct of_serial_info *info;
@@ -87,7 +87,7 @@ static int __devinit of_platform_serial_probe(struct platform_device *ofdev,
 	int port_type;
 	int ret;
 
-	if (of_find_property(ofdev->dev.of_node, "used-by-rtas", NULL))
+	if (of_find_property(ofdev->node, "used-by-rtas", NULL))
 		return -EBUSY;
 
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
@@ -133,7 +133,7 @@ out:
 /*
  * Release a line
  */
-static int of_platform_serial_remove(struct platform_device *ofdev)
+static int of_platform_serial_remove(struct of_device *ofdev)
 {
 	struct of_serial_info *info = dev_get_drvdata(&ofdev->dev);
 	switch (info->type) {
@@ -174,13 +174,11 @@ static struct of_device_id __devinitdata of_platform_serial_table[] = {
 };
 
 static struct of_platform_driver of_platform_serial_driver = {
-	.driver = {
-		.name = "of_serial",
-		.owner = THIS_MODULE,
-		.of_match_table = of_platform_serial_table,
-	},
+	.owner = THIS_MODULE,
+	.name = "of_serial",
 	.probe = of_platform_serial_probe,
 	.remove = of_platform_serial_remove,
+	.match_table = of_platform_serial_table,
 };
 
 static int __init of_platform_serial_init(void)

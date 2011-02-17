@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/fs.h>
@@ -62,6 +63,8 @@ static void jffs2_write_super(struct super_block *sb)
 
 	if (!(sb->s_flags & MS_RDONLY)) {
 		D1(printk(KERN_DEBUG "jffs2_write_super()\n"));
+		jffs2_garbage_collect_trigger(c);
+		jffs2_erase_pending_blocks(c, 0);
 		jffs2_flush_wbuf_gc(c, 0);
 	}
 
@@ -134,7 +137,7 @@ static const struct super_operations jffs2_super_operations =
 	.write_super =	jffs2_write_super,
 	.statfs =	jffs2_statfs,
 	.remount_fs =	jffs2_remount_fs,
-	.evict_inode =	jffs2_evict_inode,
+	.clear_inode =	jffs2_clear_inode,
 	.dirty_inode =	jffs2_dirty_inode,
 	.sync_fs =	jffs2_sync_fs,
 };
@@ -145,7 +148,6 @@ static const struct super_operations jffs2_super_operations =
 static int jffs2_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct jffs2_sb_info *c;
-	int ret;
 
 	D1(printk(KERN_DEBUG "jffs2_get_sb_mtd():"
 		  " New superblock for device %d (\"%s\")\n",
@@ -175,15 +177,15 @@ static int jffs2_fill_super(struct super_block *sb, void *data, int silent)
 #ifdef CONFIG_JFFS2_FS_POSIX_ACL
 	sb->s_flags |= MS_POSIXACL;
 #endif
-	ret = jffs2_do_fill_super(sb, data, silent);
-	return ret;
+	return jffs2_do_fill_super(sb, data, silent);
 }
 
-static struct dentry *jffs2_mount(struct file_system_type *fs_type,
+static int jffs2_get_sb(struct file_system_type *fs_type,
 			int flags, const char *dev_name,
-			void *data)
+			void *data, struct vfsmount *mnt)
 {
-	return mount_mtd(fs_type, flags, dev_name, data, jffs2_fill_super);
+	return get_sb_mtd(fs_type, flags, dev_name, data, jffs2_fill_super,
+			  mnt);
 }
 
 static void jffs2_put_super (struct super_block *sb)
@@ -191,6 +193,8 @@ static void jffs2_put_super (struct super_block *sb)
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(sb);
 
 	D2(printk(KERN_DEBUG "jffs2: jffs2_put_super()\n"));
+
+	lock_kernel();
 
 	if (sb->s_dirt)
 		jffs2_write_super(sb);
@@ -213,6 +217,8 @@ static void jffs2_put_super (struct super_block *sb)
 	if (c->mtd->sync)
 		c->mtd->sync(c->mtd);
 
+	unlock_kernel();
+
 	D1(printk(KERN_DEBUG "jffs2_put_super returning\n"));
 }
 
@@ -228,7 +234,7 @@ static void jffs2_kill_sb(struct super_block *sb)
 static struct file_system_type jffs2_fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"jffs2",
-	.mount =	jffs2_mount,
+	.get_sb =	jffs2_get_sb,
 	.kill_sb =	jffs2_kill_sb,
 };
 

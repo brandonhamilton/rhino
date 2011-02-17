@@ -50,6 +50,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/in.h>
 #include <linux/pci.h>
 #include <linux/proc_fs.h>
@@ -335,7 +336,7 @@ static inline unsigned int eata_pio_send_command(unsigned long base, unsigned ch
 	return 0;
 }
 
-static int eata_pio_queue_lck(struct scsi_cmnd *cmd,
+static int eata_pio_queue(struct scsi_cmnd *cmd,
 		void (*done)(struct scsi_cmnd *))
 {
 	unsigned int x, y;
@@ -437,8 +438,6 @@ static int eata_pio_queue_lck(struct scsi_cmnd *cmd,
 
 	return 0;
 }
-
-static DEF_SCSI_QCMD(eata_pio_queue)
 
 static int eata_pio_abort(struct scsi_cmnd *cmd)
 {

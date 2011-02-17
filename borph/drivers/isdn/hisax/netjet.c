@@ -21,7 +21,6 @@
 #include "isdnl1.h"
 #include <linux/interrupt.h>
 #include <linux/ppp_defs.h>
-#include <linux/slab.h>
 #include <asm/io.h>
 #include "netjet.h"
 

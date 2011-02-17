@@ -247,12 +247,6 @@ struct ma_format {	/* FPU multipy and add format (MIPS IV) */
 	unsigned int fmt : 2;
 };
 
-struct b_format { /* BREAK and SYSCALL */
-	unsigned int opcode:6;
-	unsigned int code:20;
-	unsigned int func:6;
-};
-
 #elif defined(__MIPSEL__)
 
 struct j_format {	/* Jump format */
@@ -320,12 +314,6 @@ struct ma_format {	/* FPU multipy and add format (MIPS IV) */
 	unsigned int opcode : 6;
 };
 
-struct b_format { /* BREAK and SYSCALL */
-	unsigned int func:6;
-	unsigned int code:20;
-	unsigned int opcode:6;
-};
-
 #else /* !defined (__MIPSEB__) && !defined (__MIPSEL__) */
 #error "MIPS but neither __MIPSEL__ nor __MIPSEB__?"
 #endif
@@ -340,8 +328,7 @@ union mips_instruction {
 	struct c_format c_format;
 	struct r_format r_format;
 	struct f_format f_format;
-	struct ma_format ma_format;
-	struct b_format b_format;
+        struct ma_format ma_format;
 };
 
 /* HACHACHAHCAHC ...  */

@@ -13,6 +13,7 @@
 #define __SAVAGEFB_H__
 
 #include <linux/i2c.h>
+#include <linux/i2c-id.h>
 #include <linux/i2c-algo-bit.h>
 #include <linux/mutex.h>
 #include <video/vga.h>

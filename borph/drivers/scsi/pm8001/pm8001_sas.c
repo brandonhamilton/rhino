@@ -38,7 +38,6 @@
  *
  */
 
-#include <linux/slab.h>
 #include "pm8001_sas.h"
 
 /**
@@ -330,23 +329,6 @@ int pm8001_slave_configure(struct scsi_device *sdev)
 	}
 	return 0;
 }
- /* Find the local port id that's attached to this device */
-static int sas_find_local_port_id(struct domain_device *dev)
-{
-	struct domain_device *pdev = dev->parent;
-
-	/* Directly attached device */
-	if (!pdev)
-		return dev->port->id;
-	while (pdev) {
-		struct domain_device *pdev_p = pdev->parent;
-		if (!pdev_p)
-			return pdev->port->id;
-		pdev = pdev->parent;
-	}
-	return 0;
-}
-
 /**
   * pm8001_task_exec - queue the task(ssp, smp && ata) to the hardware.
   * @task: the task to be execute.
@@ -364,12 +346,11 @@ static int pm8001_task_exec(struct sas_task *task, const int num,
 	struct domain_device *dev = task->dev;
 	struct pm8001_hba_info *pm8001_ha;
 	struct pm8001_device *pm8001_dev;
-	struct pm8001_port *port = NULL;
 	struct sas_task *t = task;
 	struct pm8001_ccb_info *ccb;
 	u32 tag = 0xdeadbeef, rc, n_elem = 0;
 	u32 n = num;
-	unsigned long flags = 0, flags_libsas = 0;
+	unsigned long flags = 0;
 
 	if (!dev->port) {
 		struct task_status_struct *tsm = &t->task_status;
@@ -397,35 +378,6 @@ static int pm8001_task_exec(struct sas_task *task, const int num,
 			}
 			rc = SAS_PHY_DOWN;
 			goto out_done;
-		}
-		port = &pm8001_ha->port[sas_find_local_port_id(dev)];
-		if (!port->port_attached) {
-			if (sas_protocol_ata(t->task_proto)) {
-				struct task_status_struct *ts = &t->task_status;
-				ts->resp = SAS_TASK_UNDELIVERED;
-				ts->stat = SAS_PHY_DOWN;
-
-				spin_unlock_irqrestore(&pm8001_ha->lock, flags);
-				spin_unlock_irqrestore(dev->sata_dev.ap->lock,
-						flags_libsas);
-				t->task_done(t);
-				spin_lock_irqsave(dev->sata_dev.ap->lock,
-					flags_libsas);
-				spin_lock_irqsave(&pm8001_ha->lock, flags);
-				if (n > 1)
-					t = list_entry(t->list.next,
-							struct sas_task, list);
-				continue;
-			} else {
-				struct task_status_struct *ts = &t->task_status;
-				ts->resp = SAS_TASK_UNDELIVERED;
-				ts->stat = SAS_PHY_DOWN;
-				t->task_done(t);
-				if (n > 1)
-					t = list_entry(t->list.next,
-							struct sas_task, list);
-				continue;
-			}
 		}
 		rc = pm8001_tag_alloc(pm8001_ha, &tag);
 		if (rc)
@@ -601,7 +553,7 @@ static void pm8001_free_dev(struct pm8001_device *pm8001_dev)
   * by the command "OPC_INB_REG_DEV", after that the HBA will assign a
   * device ID(according to device's sas address) and returned it to LLDD. From
   * now on, we communicate with HBA FW with the device ID which HBA assigned
-  * rather than sas address. it is the necessary step for our HBA but it is
+  * rather than sas address. it is the neccessary step for our HBA but it is
   * the optional for other HBA driver.
   */
 static int pm8001_dev_found_notify(struct domain_device *dev)
@@ -617,11 +569,11 @@ static int pm8001_dev_found_notify(struct domain_device *dev)
 	spin_lock_irqsave(&pm8001_ha->lock, flags);
 
 	pm8001_device = pm8001_alloc_dev(pm8001_ha);
+	pm8001_device->sas_device = dev;
 	if (!pm8001_device) {
 		res = -1;
 		goto found_out;
 	}
-	pm8001_device->sas_device = dev;
 	dev->lldd_dev = pm8001_device;
 	pm8001_device->dev_type = dev->dev_type;
 	pm8001_device->dcompletion = &completion;
@@ -657,7 +609,7 @@ static int pm8001_dev_found_notify(struct domain_device *dev)
 	wait_for_completion(&completion);
 	if (dev->dev_type == SAS_END_DEV)
 		msleep(50);
-	pm8001_ha->flags |= PM8001F_RUN_TIME ;
+	pm8001_ha->flags = PM8001F_RUN_TIME ;
 	return 0;
 found_out:
 	spin_unlock_irqrestore(&pm8001_ha->lock, flags);
@@ -763,7 +715,7 @@ static int pm8001_exec_internal_tmf_task(struct domain_device *dev,
 		}
 
 		if (task->task_status.resp == SAS_TASK_COMPLETE &&
-			task->task_status.stat == SAM_STAT_GOOD) {
+			task->task_status.stat == SAM_GOOD) {
 			res = TMF_RESP_FUNC_COMPLETE;
 			break;
 		}
@@ -820,7 +772,7 @@ pm8001_exec_internal_task_abort(struct pm8001_hba_info *pm8001_ha,
 		task->task_done = pm8001_task_done;
 		task->timer.data = (unsigned long)task;
 		task->timer.function = pm8001_tmf_timedout;
-		task->timer.expires = jiffies + PM8001_TASK_TIMEOUT * HZ;
+		task->timer.expires = jiffies + PM8001_TASK_TIMEOUT*HZ;
 		add_timer(&task->timer);
 
 		res = pm8001_tag_alloc(pm8001_ha, &ccb_tag);
@@ -853,7 +805,7 @@ pm8001_exec_internal_task_abort(struct pm8001_hba_info *pm8001_ha,
 		}
 
 		if (task->task_status.resp == SAS_TASK_COMPLETE &&
-			task->task_status.stat == SAM_STAT_GOOD) {
+			task->task_status.stat == SAM_GOOD) {
 			res = TMF_RESP_FUNC_COMPLETE;
 			break;
 
@@ -885,13 +837,11 @@ static void pm8001_dev_gone_notify(struct domain_device *dev)
 	u32 tag;
 	struct pm8001_hba_info *pm8001_ha;
 	struct pm8001_device *pm8001_dev = dev->lldd_dev;
-
+	u32 device_id = pm8001_dev->device_id;
 	pm8001_ha = pm8001_find_ha_by_dev(dev);
 	spin_lock_irqsave(&pm8001_ha->lock, flags);
 	pm8001_tag_alloc(pm8001_ha, &tag);
 	if (pm8001_dev) {
-		u32 device_id = pm8001_dev->device_id;
-
 		PM8001_DISC_DBG(pm8001_ha,
 			pm8001_printk("found dev[%d:%x] is gone.\n",
 			pm8001_dev->device_id, pm8001_dev->dev_type));
@@ -947,8 +897,6 @@ int pm8001_I_T_nexus_reset(struct domain_device *dev)
 
 	if (dev_is_sata(dev)) {
 		DECLARE_COMPLETION_ONSTACK(completion_setstate);
-		if (scsi_is_sas_phy_local(phy))
-			return 0;
 		rc = sas_phy_reset(phy, 1);
 		msleep(2000);
 		rc = pm8001_exec_internal_task_abort(pm8001_ha, pm8001_dev ,

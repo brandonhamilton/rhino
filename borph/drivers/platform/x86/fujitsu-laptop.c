@@ -66,7 +66,6 @@
 #include <linux/kfifo.h>
 #include <linux/video_output.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #if defined(CONFIG_LEDS_CLASS) || defined(CONFIG_LEDS_CLASS_MODULE)
 #include <linux/leds.h>
 #endif
@@ -165,7 +164,7 @@ struct fujitsu_hotkey_t {
 	struct input_dev *input;
 	char phys[32];
 	struct platform_device *pf_device;
-	struct kfifo fifo;
+	struct kfifo *fifo;
 	spinlock_t fifo_lock;
 	int rfkill_supported;
 	int rfkill_state;
@@ -182,7 +181,7 @@ static enum led_brightness logolamp_get(struct led_classdev *cdev);
 static void logolamp_set(struct led_classdev *cdev,
 			       enum led_brightness brightness);
 
-static struct led_classdev logolamp_led = {
+struct led_classdev logolamp_led = {
  .name = "fujitsu::logolamp",
  .brightness_get = logolamp_get,
  .brightness_set = logolamp_set
@@ -192,7 +191,7 @@ static enum led_brightness kblamps_get(struct led_classdev *cdev);
 static void kblamps_set(struct led_classdev *cdev,
 			       enum led_brightness brightness);
 
-static struct led_classdev kblamps_led = {
+struct led_classdev kblamps_led = {
  .name = "fujitsu::kblamps",
  .brightness_get = kblamps_get,
  .brightness_set = kblamps_set
@@ -377,8 +376,8 @@ static int get_lcd_level(void)
 
 	status =
 	    acpi_evaluate_integer(fujitsu->acpi_handle, "GBLL", NULL, &state);
-	if (ACPI_FAILURE(status))
-		return 0;
+	if (status < 0)
+		return status;
 
 	fujitsu->brightness_level = state & 0x0fffffff;
 
@@ -399,8 +398,8 @@ static int get_max_brightness(void)
 
 	status =
 	    acpi_evaluate_integer(fujitsu->acpi_handle, "RBLL", NULL, &state);
-	if (ACPI_FAILURE(status))
-		return -1;
+	if (status < 0)
+		return status;
 
 	fujitsu->max_brightness = state;
 
@@ -603,7 +602,7 @@ static int dmi_check_cb_s6410(const struct dmi_system_id *id)
 	dmi_check_cb_common(id);
 	fujitsu->keycode1 = KEY_SCREENLOCK;	/* "Lock" */
 	fujitsu->keycode2 = KEY_HELP;	/* "Mobility Center" */
-	return 1;
+	return 0;
 }
 
 static int dmi_check_cb_s6420(const struct dmi_system_id *id)
@@ -611,7 +610,7 @@ static int dmi_check_cb_s6420(const struct dmi_system_id *id)
 	dmi_check_cb_common(id);
 	fujitsu->keycode1 = KEY_SCREENLOCK;	/* "Lock" */
 	fujitsu->keycode2 = KEY_HELP;	/* "Mobility Center" */
-	return 1;
+	return 0;
 }
 
 static int dmi_check_cb_p8010(const struct dmi_system_id *id)
@@ -620,7 +619,7 @@ static int dmi_check_cb_p8010(const struct dmi_system_id *id)
 	fujitsu->keycode1 = KEY_HELP;	/* "Support" */
 	fujitsu->keycode3 = KEY_SWITCHVIDEOMODE;	/* "Presentation" */
 	fujitsu->keycode4 = KEY_WWW;	/* "Internet" */
-	return 1;
+	return 0;
 }
 
 static struct dmi_system_id fujitsu_dmi_table[] = {
@@ -725,7 +724,6 @@ static int acpi_fujitsu_add(struct acpi_device *device)
 
 err_unregister_input_dev:
 	input_unregister_device(input);
-	input = NULL;
 err_free_input_dev:
 	input_free_device(input);
 err_stop:
@@ -738,6 +736,8 @@ static int acpi_fujitsu_remove(struct acpi_device *device, int type)
 	struct input_dev *input = fujitsu->input;
 
 	input_unregister_device(input);
+
+	input_free_device(input);
 
 	fujitsu->acpi_handle = NULL;
 
@@ -824,10 +824,12 @@ static int acpi_fujitsu_hotkey_add(struct acpi_device *device)
 
 	/* kfifo */
 	spin_lock_init(&fujitsu_hotkey->fifo_lock);
-	error = kfifo_alloc(&fujitsu_hotkey->fifo, RINGBUFFERSIZE * sizeof(int),
-			GFP_KERNEL);
-	if (error) {
+	fujitsu_hotkey->fifo =
+	    kfifo_alloc(RINGBUFFERSIZE * sizeof(int), GFP_KERNEL,
+			&fujitsu_hotkey->fifo_lock);
+	if (IS_ERR(fujitsu_hotkey->fifo)) {
 		printk(KERN_ERR "kfifo_alloc failed\n");
+		error = PTR_ERR(fujitsu_hotkey->fifo);
 		goto err_stop;
 	}
 
@@ -929,11 +931,10 @@ static int acpi_fujitsu_hotkey_add(struct acpi_device *device)
 
 err_unregister_input_dev:
 	input_unregister_device(input);
-	input = NULL;
 err_free_input_dev:
 	input_free_device(input);
 err_free_fifo:
-	kfifo_free(&fujitsu_hotkey->fifo);
+	kfifo_free(fujitsu_hotkey->fifo);
 err_stop:
 	return result;
 }
@@ -953,7 +954,9 @@ static int acpi_fujitsu_hotkey_remove(struct acpi_device *device, int type)
 
 	input_unregister_device(input);
 
-	kfifo_free(&fujitsu_hotkey->fifo);
+	input_free_device(input);
+
+	kfifo_free(fujitsu_hotkey->fifo);
 
 	fujitsu_hotkey->acpi_handle = NULL;
 
@@ -1005,10 +1008,9 @@ static void acpi_fujitsu_hotkey_notify(struct acpi_device *device, u32 event)
 				vdbg_printk(FUJLAPTOP_DBG_TRACE,
 					"Push keycode into ringbuffer [%d]\n",
 					keycode);
-				status = kfifo_in_locked(&fujitsu_hotkey->fifo,
+				status = kfifo_put(fujitsu_hotkey->fifo,
 						   (unsigned char *)&keycode,
-						   sizeof(keycode),
-						   &fujitsu_hotkey->fifo_lock);
+						   sizeof(keycode));
 				if (status != sizeof(keycode)) {
 					vdbg_printk(FUJLAPTOP_DBG_WARN,
 					    "Could not push keycode [0x%x]\n",
@@ -1019,12 +1021,11 @@ static void acpi_fujitsu_hotkey_notify(struct acpi_device *device, u32 event)
 				}
 			} else if (keycode == 0) {
 				while ((status =
-					kfifo_out_locked(
-					 &fujitsu_hotkey->fifo,
-					 (unsigned char *) &keycode_r,
-					 sizeof(keycode_r),
-					 &fujitsu_hotkey->fifo_lock))
-					 == sizeof(keycode_r)) {
+					kfifo_get
+					(fujitsu_hotkey->fifo, (unsigned char *)
+					 &keycode_r,
+					 sizeof
+					 (keycode_r))) == sizeof(keycode_r)) {
 					input_report_key(input, keycode_r, 0);
 					input_sync(input);
 					vdbg_printk(FUJLAPTOP_DBG_TRACE,
@@ -1088,9 +1089,10 @@ static int __init fujitsu_init(void)
 	if (acpi_disabled)
 		return -ENODEV;
 
-	fujitsu = kzalloc(sizeof(struct fujitsu_t), GFP_KERNEL);
+	fujitsu = kmalloc(sizeof(struct fujitsu_t), GFP_KERNEL);
 	if (!fujitsu)
 		return -ENOMEM;
+	memset(fujitsu, 0, sizeof(struct fujitsu_t));
 	fujitsu->keycode1 = KEY_PROG1;
 	fujitsu->keycode2 = KEY_PROG2;
 	fujitsu->keycode3 = KEY_PROG3;
@@ -1124,20 +1126,16 @@ static int __init fujitsu_init(void)
 	/* Register backlight stuff */
 
 	if (!acpi_video_backlight_support()) {
-		struct backlight_properties props;
-
-		memset(&props, 0, sizeof(struct backlight_properties));
-		max_brightness = fujitsu->max_brightness;
-		props.max_brightness = max_brightness - 1;
-		fujitsu->bl_device = backlight_device_register("fujitsu-laptop",
-							       NULL, NULL,
-							       &fujitsubl_ops,
-							       &props);
+		fujitsu->bl_device =
+			backlight_device_register("fujitsu-laptop", NULL, NULL,
+						  &fujitsubl_ops);
 		if (IS_ERR(fujitsu->bl_device)) {
 			ret = PTR_ERR(fujitsu->bl_device);
 			fujitsu->bl_device = NULL;
 			goto fail_sysfs_group;
 		}
+		max_brightness = fujitsu->max_brightness;
+		fujitsu->bl_device->props.max_brightness = max_brightness - 1;
 		fujitsu->bl_device->props.brightness = fujitsu->brightness_level;
 	}
 
@@ -1147,11 +1145,12 @@ static int __init fujitsu_init(void)
 
 	/* Register hotkey driver */
 
-	fujitsu_hotkey = kzalloc(sizeof(struct fujitsu_hotkey_t), GFP_KERNEL);
+	fujitsu_hotkey = kmalloc(sizeof(struct fujitsu_hotkey_t), GFP_KERNEL);
 	if (!fujitsu_hotkey) {
 		ret = -ENOMEM;
 		goto fail_hotkey;
 	}
+	memset(fujitsu_hotkey, 0, sizeof(struct fujitsu_hotkey_t));
 
 	result = acpi_bus_register_driver(&acpi_fujitsu_hotkey_driver);
 	if (result < 0) {

@@ -34,7 +34,7 @@ bool nf_nat_proto_in_range(const struct nf_conntrack_tuple *tuple,
 }
 EXPORT_SYMBOL_GPL(nf_nat_proto_in_range);
 
-void nf_nat_proto_unique_tuple(struct nf_conntrack_tuple *tuple,
+bool nf_nat_proto_unique_tuple(struct nf_conntrack_tuple *tuple,
 			       const struct nf_nat_range *range,
 			       enum nf_nat_manip_type maniptype,
 			       const struct nf_conn *ct,
@@ -53,7 +53,7 @@ void nf_nat_proto_unique_tuple(struct nf_conntrack_tuple *tuple,
 	if (!(range->flags & IP_NAT_RANGE_PROTO_SPECIFIED)) {
 		/* If it's dst rewrite, can't change port */
 		if (maniptype == IP_NAT_MANIP_DST)
-			return;
+			return false;
 
 		if (ntohs(*portptr) < 1024) {
 			/* Loose convention: >> 512 is credential passing */
@@ -81,15 +81,15 @@ void nf_nat_proto_unique_tuple(struct nf_conntrack_tuple *tuple,
 	else
 		off = *rover;
 
-	for (i = 0; ; ++off) {
+	for (i = 0; i < range_size; i++, off++) {
 		*portptr = htons(min + off % range_size);
-		if (++i != range_size && nf_nat_used_tuple(tuple, ct))
+		if (nf_nat_used_tuple(tuple, ct))
 			continue;
 		if (!(range->flags & IP_NAT_RANGE_PROTO_RANDOM))
 			*rover = off;
-		return;
+		return true;
 	}
-	return;
+	return false;
 }
 EXPORT_SYMBOL_GPL(nf_nat_proto_unique_tuple);
 

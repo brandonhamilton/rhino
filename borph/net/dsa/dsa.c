@@ -11,7 +11,6 @@
 #include <linux/list.h>
 #include <linux/netdevice.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <net/dsa.h>
 #include "dsa_priv.h"
 

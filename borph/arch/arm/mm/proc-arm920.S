@@ -69,11 +69,19 @@ ENTRY(cpu_arm920_proc_init)
  * cpu_arm920_proc_fin()
  */
 ENTRY(cpu_arm920_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+#ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
+	bl	arm920_flush_kern_cache_all
+#else
+	bl	v4wt_flush_kern_cache_all
+#endif
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm920_reset(loc)
@@ -108,17 +116,6 @@ ENTRY(cpu_arm920_do_idle)
 
 
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
-
-/*
- *	flush_icache_all()
- *
- *	Unconditionally clean and invalidate the entire icache.
- */
-ENTRY(arm920_flush_icache_all)
-	mov	r0, #0
-	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
-	mov	pc, lr
-ENDPROC(arm920_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -210,16 +207,15 @@ ENTRY(arm920_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_area(void *addr, size_t size)
+ *	flush_kern_dcache_page(void *page)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- kernel address
- *	- size	- region size
+ *	- addr	- page aligned address
  */
-ENTRY(arm920_flush_kern_dcache_area)
-	add	r1, r0, r1
+ENTRY(arm920_flush_kern_dcache_page)
+	add	r1, r0, #PAGE_SZ
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -242,7 +238,7 @@ ENTRY(arm920_flush_kern_dcache_area)
  *
  * (same as v4wb)
  */
-arm920_dma_inv_range:
+ENTRY(arm920_dma_inv_range)
 	tst	r0, #CACHE_DLINESIZE - 1
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -265,7 +261,7 @@ arm920_dma_inv_range:
  *
  * (same as v4wb)
  */
-arm920_dma_clean_range:
+ENTRY(arm920_dma_clean_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -291,40 +287,15 @@ ENTRY(arm920_dma_flush_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm920_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	arm920_dma_clean_range
-	bcs	arm920_dma_inv_range
-	b	arm920_dma_flush_range
-ENDPROC(arm920_dma_map_area)
-
-/*
- *	dma_unmap_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm920_dma_unmap_area)
-	mov	pc, lr
-ENDPROC(arm920_dma_unmap_area)
-
 ENTRY(arm920_cache_fns)
-	.long	arm920_flush_icache_all
 	.long	arm920_flush_kern_cache_all
 	.long	arm920_flush_user_cache_all
 	.long	arm920_flush_user_cache_range
 	.long	arm920_coherent_kern_range
 	.long	arm920_coherent_user_range
-	.long	arm920_flush_kern_dcache_area
-	.long	arm920_dma_map_area
-	.long	arm920_dma_unmap_area
+	.long	arm920_flush_kern_dcache_page
+	.long	arm920_dma_inv_range
+	.long	arm920_dma_clean_range
 	.long	arm920_dma_flush_range
 
 #endif
@@ -387,7 +358,7 @@ ENTRY(cpu_arm920_set_pte_ext)
 #endif
 	mov	pc, lr
 
-	__CPUINIT
+	__INIT
 
 	.type	__arm920_setup, #function
 __arm920_setup:

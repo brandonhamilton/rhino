@@ -18,7 +18,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/root_dev.h>
 #include <linux/initrd.h>
 #include <asm/time.h>

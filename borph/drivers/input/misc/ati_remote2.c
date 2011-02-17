@@ -10,7 +10,6 @@
  */
 
 #include <linux/usb/input.h>
-#include <linux/slab.h>
 
 #define DRIVER_DESC    "ATI/Philips USB RF remote driver"
 #define DRIVER_VERSION "0.3"
@@ -38,8 +37,7 @@ enum {
 };
 
 static int ati_remote2_set_mask(const char *val,
-				const struct kernel_param *kp,
-				unsigned int max)
+				struct kernel_param *kp, unsigned int max)
 {
 	unsigned long mask;
 	int ret;
@@ -60,31 +58,28 @@ static int ati_remote2_set_mask(const char *val,
 }
 
 static int ati_remote2_set_channel_mask(const char *val,
-					const struct kernel_param *kp)
+					struct kernel_param *kp)
 {
 	pr_debug("%s()\n", __func__);
 
 	return ati_remote2_set_mask(val, kp, ATI_REMOTE2_MAX_CHANNEL_MASK);
 }
 
-static int ati_remote2_get_channel_mask(char *buffer,
-					const struct kernel_param *kp)
+static int ati_remote2_get_channel_mask(char *buffer, struct kernel_param *kp)
 {
 	pr_debug("%s()\n", __func__);
 
 	return sprintf(buffer, "0x%04x", *(unsigned int *)kp->arg);
 }
 
-static int ati_remote2_set_mode_mask(const char *val,
-				     const struct kernel_param *kp)
+static int ati_remote2_set_mode_mask(const char *val, struct kernel_param *kp)
 {
 	pr_debug("%s()\n", __func__);
 
 	return ati_remote2_set_mask(val, kp, ATI_REMOTE2_MAX_MODE_MASK);
 }
 
-static int ati_remote2_get_mode_mask(char *buffer,
-				     const struct kernel_param *kp)
+static int ati_remote2_get_mode_mask(char *buffer, struct kernel_param *kp)
 {
 	pr_debug("%s()\n", __func__);
 
@@ -93,19 +88,15 @@ static int ati_remote2_get_mode_mask(char *buffer,
 
 static unsigned int channel_mask = ATI_REMOTE2_MAX_CHANNEL_MASK;
 #define param_check_channel_mask(name, p) __param_check(name, p, unsigned int)
-static struct kernel_param_ops param_ops_channel_mask = {
-	.set = ati_remote2_set_channel_mask,
-	.get = ati_remote2_get_channel_mask,
-};
+#define param_set_channel_mask ati_remote2_set_channel_mask
+#define param_get_channel_mask ati_remote2_get_channel_mask
 module_param(channel_mask, channel_mask, 0644);
 MODULE_PARM_DESC(channel_mask, "Bitmask of channels to accept <15:Channel16>...<1:Channel2><0:Channel1>");
 
 static unsigned int mode_mask = ATI_REMOTE2_MAX_MODE_MASK;
 #define param_check_mode_mask(name, p) __param_check(name, p, unsigned int)
-static struct kernel_param_ops param_ops_mode_mask = {
-	.set = ati_remote2_set_mode_mask,
-	.get = ati_remote2_get_mode_mask,
-};
+#define param_set_mode_mask ati_remote2_set_mode_mask
+#define param_get_mode_mask ati_remote2_get_mode_mask
 module_param(mode_mask, mode_mask, 0644);
 MODULE_PARM_DESC(mode_mask, "Bitmask of modes to accept <4:PC><3:AUX4><2:AUX3><1:AUX2><0:AUX1>");
 
@@ -483,88 +474,51 @@ static void ati_remote2_complete_key(struct urb *urb)
 }
 
 static int ati_remote2_getkeycode(struct input_dev *idev,
-				  struct input_keymap_entry *ke)
+				  int scancode, int *keycode)
 {
 	struct ati_remote2 *ar2 = input_get_drvdata(idev);
-	unsigned int mode;
-	int offset;
-	unsigned int index;
-	unsigned int scancode;
+	int index, mode;
 
-	if (ke->flags & INPUT_KEYMAP_BY_INDEX) {
-		index = ke->index;
-		if (index >= ATI_REMOTE2_MODES *
-				ARRAY_SIZE(ati_remote2_key_table))
-			return -EINVAL;
+	mode = scancode >> 8;
+	if (mode > ATI_REMOTE2_PC || !((1 << mode) & ar2->mode_mask))
+		return -EINVAL;
 
-		mode = ke->index / ARRAY_SIZE(ati_remote2_key_table);
-		offset = ke->index % ARRAY_SIZE(ati_remote2_key_table);
-		scancode = (mode << 8) + ati_remote2_key_table[offset].hw_code;
-	} else {
-		if (input_scancode_to_scalar(ke, &scancode))
-			return -EINVAL;
+	index = ati_remote2_lookup(scancode & 0xFF);
+	if (index < 0)
+		return -EINVAL;
 
-		mode = scancode >> 8;
-		if (mode > ATI_REMOTE2_PC)
-			return -EINVAL;
-
-		offset = ati_remote2_lookup(scancode & 0xff);
-		if (offset < 0)
-			return -EINVAL;
-
-		index = mode * ARRAY_SIZE(ati_remote2_key_table) + offset;
-	}
-
-	ke->keycode = ar2->keycode[mode][offset];
-	ke->len = sizeof(scancode);
-	memcpy(&ke->scancode, &scancode, sizeof(scancode));
-	ke->index = index;
-
+	*keycode = ar2->keycode[mode][index];
 	return 0;
 }
 
-static int ati_remote2_setkeycode(struct input_dev *idev,
-				  const struct input_keymap_entry *ke,
-				  unsigned int *old_keycode)
+static int ati_remote2_setkeycode(struct input_dev *idev, int scancode, int keycode)
 {
 	struct ati_remote2 *ar2 = input_get_drvdata(idev);
-	unsigned int mode;
-	int offset;
-	unsigned int index;
-	unsigned int scancode;
+	int index, mode, old_keycode;
 
-	if (ke->flags & INPUT_KEYMAP_BY_INDEX) {
-		if (ke->index >= ATI_REMOTE2_MODES *
-				ARRAY_SIZE(ati_remote2_key_table))
-			return -EINVAL;
+	mode = scancode >> 8;
+	if (mode > ATI_REMOTE2_PC || !((1 << mode) & ar2->mode_mask))
+		return -EINVAL;
 
-		mode = ke->index / ARRAY_SIZE(ati_remote2_key_table);
-		offset = ke->index % ARRAY_SIZE(ati_remote2_key_table);
-	} else {
-		if (input_scancode_to_scalar(ke, &scancode))
-			return -EINVAL;
+	index = ati_remote2_lookup(scancode & 0xFF);
+	if (index < 0)
+		return -EINVAL;
 
-		mode = scancode >> 8;
-		if (mode > ATI_REMOTE2_PC)
-			return -EINVAL;
+	if (keycode < KEY_RESERVED || keycode > KEY_MAX)
+		return -EINVAL;
 
-		offset = ati_remote2_lookup(scancode & 0xff);
-		if (offset < 0)
-			return -EINVAL;
-	}
-
-	*old_keycode = ar2->keycode[mode][offset];
-	ar2->keycode[mode][offset] = ke->keycode;
-	__set_bit(ke->keycode, idev->keybit);
+	old_keycode = ar2->keycode[mode][index];
+	ar2->keycode[mode][index] = keycode;
+	__set_bit(keycode, idev->keybit);
 
 	for (mode = 0; mode < ATI_REMOTE2_MODES; mode++) {
 		for (index = 0; index < ARRAY_SIZE(ati_remote2_key_table); index++) {
-			if (ar2->keycode[mode][index] == *old_keycode)
+			if (ar2->keycode[mode][index] == old_keycode)
 				return 0;
 		}
 	}
 
-	__clear_bit(*old_keycode, idev->keybit);
+	__clear_bit(old_keycode, idev->keybit);
 
 	return 0;
 }
@@ -612,8 +566,8 @@ static int ati_remote2_input_init(struct ati_remote2 *ar2)
 	idev->open = ati_remote2_open;
 	idev->close = ati_remote2_close;
 
-	idev->getkeycode_new = ati_remote2_getkeycode;
-	idev->setkeycode_new = ati_remote2_setkeycode;
+	idev->getkeycode = ati_remote2_getkeycode;
+	idev->setkeycode = ati_remote2_setkeycode;
 
 	idev->name = ar2->name;
 	idev->phys = ar2->phys;
@@ -634,7 +588,7 @@ static int ati_remote2_urb_init(struct ati_remote2 *ar2)
 	int i, pipe, maxp;
 
 	for (i = 0; i < 2; i++) {
-		ar2->buf[i] = usb_alloc_coherent(udev, 4, GFP_KERNEL, &ar2->buf_dma[i]);
+		ar2->buf[i] = usb_buffer_alloc(udev, 4, GFP_KERNEL, &ar2->buf_dma[i]);
 		if (!ar2->buf[i])
 			return -ENOMEM;
 
@@ -662,7 +616,7 @@ static void ati_remote2_urb_cleanup(struct ati_remote2 *ar2)
 
 	for (i = 0; i < 2; i++) {
 		usb_free_urb(ar2->urb[i]);
-		usb_free_coherent(ar2->udev, 4, ar2->buf[i], ar2->buf_dma[i]);
+		usb_buffer_free(ar2->udev, 4, ar2->buf[i], ar2->buf_dma[i]);
 	}
 }
 

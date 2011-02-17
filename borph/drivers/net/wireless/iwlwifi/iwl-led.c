@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2003 - 2010 Intel Corporation. All rights reserved.
+ * Copyright(c) 2003 - 2009 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -46,7 +46,7 @@
 static int led_mode;
 module_param(led_mode, int, S_IRUGO);
 MODULE_PARM_DESC(led_mode, "led mode: 0=blinking, 1=On(RF On)/Off(RF Off), "
-			   "(default 0)");
+			   "(default 0)\n");
 
 
 static const struct {
@@ -108,13 +108,13 @@ static int iwl_led_pattern(struct iwl_priv *priv, unsigned int idx)
 	BUG_ON(idx > IWL_MAX_BLINK_TBL);
 
 	IWL_DEBUG_LED(priv, "Led blink time compensation= %u\n",
-			priv->cfg->base_params->led_compensation);
+			priv->cfg->led_compensation);
 	led_cmd.on =
 		iwl_blink_compensation(priv, blink_tbl[idx].on_time,
-				priv->cfg->base_params->led_compensation);
+					priv->cfg->led_compensation);
 	led_cmd.off =
 		iwl_blink_compensation(priv, blink_tbl[idx].off_time,
-				priv->cfg->base_params->led_compensation);
+					priv->cfg->led_compensation);
 
 	return priv->cfg->ops->led->cmd(priv, &led_cmd);
 }

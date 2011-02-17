@@ -14,7 +14,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/configfs.h>
-#include <linux/slab.h>
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <net/ipv6.h>

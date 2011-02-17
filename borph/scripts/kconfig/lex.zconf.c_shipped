@@ -2373,10 +2373,9 @@ void zconf_nextfile(const char *name)
 	memset(buf, 0, sizeof(*buf));
 
 	current_buf->state = YY_CURRENT_BUFFER;
-	zconfin = zconf_fopen(file->name);
+	zconfin = zconf_fopen(name);
 	if (!zconfin) {
-		printf("%s:%d: can't open file \"%s\"\n",
-		    zconf_curname(), zconf_lineno(), file->name);
+		printf("%s:%d: can't open file \"%s\"\n", zconf_curname(), zconf_lineno(), name);
 		exit(1);
 	}
 	zconf_switch_to_buffer(zconf_create_buffer(zconfin,YY_BUF_SIZE));
@@ -2423,7 +2422,7 @@ int zconf_lineno(void)
 	return current_pos.lineno;
 }
 
-const char *zconf_curname(void)
+char *zconf_curname(void)
 {
 	return current_pos.file ? current_pos.file->name : "<none>";
 }

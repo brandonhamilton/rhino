@@ -16,7 +16,6 @@
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <linux/icmp.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include <net/ip.h>
@@ -64,8 +63,8 @@ static void rxrpc_assess_MTU_size(struct rxrpc_peer *peer)
 		return;
 	}
 
-	peer->if_mtu = dst_mtu(&rt->dst);
-	dst_release(&rt->dst);
+	peer->if_mtu = dst_mtu(&rt->u.dst);
+	dst_release(&rt->u.dst);
 
 	_leave(" [if_mtu %u]", peer->if_mtu);
 }

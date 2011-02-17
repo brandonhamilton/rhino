@@ -46,11 +46,9 @@
 #include <linux/init.h>
 #include <linux/wait.h>
 #include <linux/blkdev.h>
-#include <linux/mutex.h>
 #include <linux/blkpg.h>
 #include <linux/delay.h>
 #include <linux/io.h>
-#include <linux/gfp.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -58,7 +56,6 @@
 
 #include "xd.h"
 
-static DEFINE_MUTEX(xd_mutex);
 static void __init do_xd_setup (int *integers);
 #ifdef MODULE
 static int xd[5] = { -1,-1,-1,-1, };
@@ -135,7 +132,7 @@ static int xd_getgeo(struct block_device *bdev, struct hd_geometry *geo);
 
 static const struct block_device_operations xd_fops = {
 	.owner	= THIS_MODULE,
-	.ioctl	= xd_ioctl,
+	.locked_ioctl	= xd_ioctl,
 	.getgeo = xd_getgeo,
 };
 static DECLARE_WAIT_QUEUE_HEAD(xd_wait_int);
@@ -245,7 +242,7 @@ static int __init xd_init(void)
 	}
 
 	/* xd_maxsectors depends on controller - so set after detection */
-	blk_queue_max_hw_sectors(xd_queue, xd_maxsectors);
+	blk_queue_max_sectors(xd_queue, xd_maxsectors);
 
 	for (i = 0; i < xd_drives; i++)
 		add_disk(xd_gendisk[i]);
@@ -324,7 +321,7 @@ static void do_xd_request (struct request_queue * q)
 		int res = -EIO;
 		int retry;
 
-		if (req->cmd_type != REQ_TYPE_FS)
+		if (!blk_fs_request(req))
 			goto done;
 		if (block + count > get_capacity(req->rq_disk))
 			goto done;
@@ -349,7 +346,7 @@ static int xd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 }
 
 /* xd_ioctl: handle device ioctl's */
-static int xd_locked_ioctl(struct block_device *bdev, fmode_t mode, u_int cmd, u_long arg)
+static int xd_ioctl(struct block_device *bdev, fmode_t mode, u_int cmd, u_long arg)
 {
 	switch (cmd) {
 		case HDIO_SET_DMA:
@@ -375,18 +372,6 @@ static int xd_locked_ioctl(struct block_device *bdev, fmode_t mode, u_int cmd, u
 		default:
 			return -EINVAL;
 	}
-}
-
-static int xd_ioctl(struct block_device *bdev, fmode_t mode,
-			     unsigned int cmd, unsigned long param)
-{
-	int ret;
-
-	mutex_lock(&xd_mutex);
-	ret = xd_locked_ioctl(bdev, mode, cmd, param);
-	mutex_unlock(&xd_mutex);
-
-	return ret;
 }
 
 /* xd_readwrite: handle a read/write request */

@@ -64,7 +64,7 @@
 #include <linux/pci.h>
 #include <linux/time.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
@@ -76,7 +76,6 @@
 
 /* Globals */
 #define TW_DRIVER_VERSION "3.26.02.000"
-static DEFINE_MUTEX(twl_chrdev_mutex);
 static TW_Device_Extension *twl_device_extension_list[TW_MAX_SLOT];
 static unsigned int twl_device_extension_count;
 static int twl_major = -1;
@@ -98,7 +97,7 @@ static int twl_reset_device_extension(TW_Device_Extension *tw_dev, int ioctl_res
 /* Functions */
 
 /* This function returns AENs through sysfs */
-static ssize_t twl_sysfs_aen_read(struct file *filp, struct kobject *kobj,
+static ssize_t twl_sysfs_aen_read(struct kobject *kobj,
 				  struct bin_attribute *bin_attr,
 				  char *outbuf, loff_t offset, size_t count)
 {
@@ -129,7 +128,7 @@ static struct bin_attribute twl_sysfs_aen_read_attr = {
 };
 
 /* This function returns driver compatibility info through sysfs */
-static ssize_t twl_sysfs_compat_info(struct file *filp, struct kobject *kobj,
+static ssize_t twl_sysfs_compat_info(struct kobject *kobj,
 				     struct bin_attribute *bin_attr,
 				     char *outbuf, loff_t offset, size_t count)
 {
@@ -750,21 +749,18 @@ static void twl_load_sgl(TW_Device_Extension *tw_dev, TW_Command_Full *full_comm
 
 /* This function handles ioctl for the character device
    This interface is used by smartmontools open source software */
-static long twl_chrdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int twl_chrdev_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long timeout;
 	unsigned long *cpu_addr, data_buffer_length_adjusted = 0, flags = 0;
 	dma_addr_t dma_handle;
 	int request_id = 0;
 	TW_Ioctl_Driver_Command driver_command;
-	struct inode *inode = file->f_dentry->d_inode;
 	TW_Ioctl_Buf_Apache *tw_ioctl;
 	TW_Command_Full *full_command_packet;
 	TW_Device_Extension *tw_dev = twl_device_extension_list[iminor(inode)];
 	int retval = -EFAULT;
 	void __user *argp = (void __user *)arg;
-
-	mutex_lock(&twl_chrdev_mutex);
 
 	/* Only let one of these through at a time */
 	if (mutex_lock_interruptible(&tw_dev->ioctl_lock)) {
@@ -861,7 +857,6 @@ out3:
 out2:
 	mutex_unlock(&tw_dev->ioctl_lock);
 out:
-	mutex_unlock(&twl_chrdev_mutex);
 	return retval;
 } /* End twl_chrdev_ioctl() */
 
@@ -876,6 +871,7 @@ static int twl_chrdev_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 
+	cycle_kernel_lock();
 	minor_number = iminor(inode);
 	if (minor_number >= twl_device_extension_count)
 		goto out;
@@ -887,10 +883,9 @@ out:
 /* File operations struct for character device */
 static const struct file_operations twl_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= twl_chrdev_ioctl,
+	.ioctl		= twl_chrdev_ioctl,
 	.open		= twl_chrdev_open,
-	.release	= NULL,
-	.llseek		= noop_llseek,
+	.release	= NULL
 };
 
 /* This function passes sense data from firmware to scsi layer */
@@ -1501,7 +1496,7 @@ out:
 } /* End twl_scsi_eh_reset() */
 
 /* This is the main scsi queue function to handle scsi opcodes */
-static int twl_scsi_queue_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+static int twl_scsi_queue(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	int request_id, retval;
 	TW_Device_Extension *tw_dev = (TW_Device_Extension *)SCpnt->device->host->hostdata;
@@ -1535,8 +1530,6 @@ static int twl_scsi_queue_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_
 out:
 	return retval;
 } /* End twl_scsi_queue() */
-
-static DEF_SCSI_QCMD(twl_scsi_queue)
 
 /* This function tells the controller to shut down */
 static void __twl_shutdown(TW_Device_Extension *tw_dev)

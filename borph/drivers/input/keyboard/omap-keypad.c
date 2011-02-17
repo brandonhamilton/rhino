@@ -34,7 +34,6 @@
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
 #include <linux/errno.h>
-#include <linux/slab.h>
 #include <mach/gpio.h>
 #include <plat/keypad.h>
 #include <plat/menelaus.h>

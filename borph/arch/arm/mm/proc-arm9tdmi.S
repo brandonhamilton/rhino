@@ -36,6 +36,8 @@ ENTRY(cpu_arm9tdmi_switch_mm)
  * cpu_arm9tdmi_proc_fin()
  */
 ENTRY(cpu_arm9tdmi_proc_fin)
+		mov	r0, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+		msr	cpsr_c, r0
 		mov	pc, lr
 
 /*
@@ -46,7 +48,7 @@ ENTRY(cpu_arm9tdmi_proc_fin)
 ENTRY(cpu_arm9tdmi_reset)
 		mov	pc, r0
 
-		__CPUINIT
+		__INIT
 
 		.type	__arm9tdmi_setup, #function
 __arm9tdmi_setup:

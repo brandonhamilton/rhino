@@ -117,6 +117,7 @@ static const char version[] =
 #include <linux/fcntl.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/spinlock.h>
@@ -480,6 +481,7 @@ static netdev_tx_t el_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			/* fire ... Trigger xmit.  */
 			outb(AX_XMIT, AX_CMD);
 			lp->loading = 0;
+			dev->trans_start = jiffies;
 			if (el_debug > 2)
 				pr_debug(" queued xmit.\n");
 			dev_kfree_skb(skb);
@@ -726,6 +728,7 @@ static void el_receive(struct net_device *dev)
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += pkt_len;
 	}
+	return;
 }
 
 /**
@@ -809,7 +812,7 @@ static void set_multicast_list(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC) {
 		outb(RX_PROM, RX_CMD);
 		inb(RX_STATUS);
-	} else if (!netdev_mc_empty(dev) || dev->flags & IFF_ALLMULTI) {
+	} else if (dev->mc_list || dev->flags & IFF_ALLMULTI) {
 		/* Multicast or all multicast is the same */
 		outb(RX_MULT, RX_CMD);
 		inb(RX_STATUS);		/* Clear status. */

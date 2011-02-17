@@ -22,7 +22,6 @@
 
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
-#include <linux/slab.h>
 
 #include "atl1c.h"
 
@@ -38,7 +37,7 @@ static int atl1c_get_settings(struct net_device *netdev,
 			   SUPPORTED_100baseT_Full |
 			   SUPPORTED_Autoneg       |
 			   SUPPORTED_TP);
-	if (hw->link_cap_flags & ATL1C_LINK_CAP_1000M)
+	if (hw->ctrl_flags & ATL1C_LINK_CAP_1000M)
 		ecmd->supported |= SUPPORTED_1000baseT_Full;
 
 	ecmd->advertising = ADVERTISED_TP;
@@ -263,6 +262,8 @@ static void atl1c_get_wol(struct net_device *netdev,
 		wol->wolopts |= WAKE_MAGIC;
 	if (adapter->wol & AT_WUFC_LNKC)
 		wol->wolopts |= WAKE_PHY;
+
+	return;
 }
 
 static int atl1c_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)

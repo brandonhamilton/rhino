@@ -266,8 +266,6 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct zoltrix *zol = video_drvdata(file);
 
-	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
-		return -EINVAL;
 	if (zol_setfreq(zol, f->frequency) != 0)
 		return -EINVAL;
 	return 0;
@@ -278,8 +276,6 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct zoltrix *zol = video_drvdata(file);
 
-	if (f->tuner != 0)
-		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = zol->curfreq;
 	return 0;
@@ -377,7 +373,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 static const struct v4l2_file_operations zoltrix_fops =
 {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= video_ioctl2,
+	.ioctl		= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops zoltrix_ioctl_ops = {
@@ -424,20 +420,6 @@ static int __init zoltrix_init(void)
 		return res;
 	}
 
-	mutex_init(&zol->lock);
-
-	/* mute card - prevents noisy bootups */
-
-	/* this ensures that the volume is all the way down  */
-
-	outb(0, zol->io);
-	outb(0, zol->io);
-	msleep(20);
-	inb(zol->io + 3);
-
-	zol->curvol = 0;
-	zol->stereo = 1;
-
 	strlcpy(zol->vdev.name, v4l2_dev->name, sizeof(zol->vdev.name));
 	zol->vdev.v4l2_dev = v4l2_dev;
 	zol->vdev.fops = &zoltrix_fops;
@@ -451,6 +433,20 @@ static int __init zoltrix_init(void)
 		return -EINVAL;
 	}
 	v4l2_info(v4l2_dev, "Zoltrix Radio Plus card driver.\n");
+
+	mutex_init(&zol->lock);
+
+	/* mute card - prevents noisy bootups */
+
+	/* this ensures that the volume is all the way down  */
+
+	outb(0, zol->io);
+	outb(0, zol->io);
+	msleep(20);
+	inb(zol->io + 3);
+
+	zol->curvol = 0;
+	zol->stereo = 1;
 
 	return 0;
 }

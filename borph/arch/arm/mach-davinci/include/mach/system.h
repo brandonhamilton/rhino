@@ -11,7 +11,7 @@
 #ifndef __ASM_ARCH_SYSTEM_H
 #define __ASM_ARCH_SYSTEM_H
 
-#include <mach/common.h>
+extern void davinci_watchdog_reset(void);
 
 static inline void arch_idle(void)
 {
@@ -20,8 +20,7 @@ static inline void arch_idle(void)
 
 static inline void arch_reset(char mode, const char *cmd)
 {
-	if (davinci_soc_info.reset)
-		davinci_soc_info.reset(davinci_soc_info.reset_device);
+	davinci_watchdog_reset();
 }
 
 #endif /* __ASM_ARCH_SYSTEM_H */

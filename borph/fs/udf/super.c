@@ -107,16 +107,17 @@ struct logicalVolIntegrityDescImpUse *udf_sb_lvidiu(struct udf_sb_info *sbi)
 }
 
 /* UDF filesystem type */
-static struct dentry *udf_mount(struct file_system_type *fs_type,
-		      int flags, const char *dev_name, void *data)
+static int udf_get_sb(struct file_system_type *fs_type,
+		      int flags, const char *dev_name, void *data,
+		      struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, udf_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, udf_fill_super, mnt);
 }
 
 static struct file_system_type udf_fstype = {
 	.owner		= THIS_MODULE,
 	.name		= "udf",
-	.mount		= udf_mount,
+	.get_sb		= udf_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
@@ -174,7 +175,8 @@ static const struct super_operations udf_sb_ops = {
 	.alloc_inode	= udf_alloc_inode,
 	.destroy_inode	= udf_destroy_inode,
 	.write_inode	= udf_write_inode,
-	.evict_inode	= udf_evict_inode,
+	.delete_inode	= udf_delete_inode,
+	.clear_inode	= udf_clear_inode,
 	.put_super	= udf_put_super,
 	.sync_fs	= udf_sync_fs,
 	.statfs		= udf_statfs,
@@ -555,7 +557,6 @@ static int udf_remount_fs(struct super_block *sb, int *flags, char *options)
 {
 	struct udf_options uopt;
 	struct udf_sb_info *sbi = UDF_SB(sb);
-	int error = 0;
 
 	uopt.flags = sbi->s_flags;
 	uopt.uid   = sbi->s_uid;
@@ -581,17 +582,17 @@ static int udf_remount_fs(struct super_block *sb, int *flags, char *options)
 			*flags |= MS_RDONLY;
 	}
 
-	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY))
-		goto out_unlock;
-
+	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY)) {
+		unlock_kernel();
+		return 0;
+	}
 	if (*flags & MS_RDONLY)
 		udf_close_lvid(sb);
 	else
 		udf_open_lvid(sb);
 
-out_unlock:
 	unlock_kernel();
-	return error;
+	return 0;
 }
 
 /* Check Volume Structure Descriptors (ECMA 167 2/9.1) */
@@ -1577,7 +1578,9 @@ static int udf_load_sequence(struct super_block *sb, struct buffer_head *bh,
 {
 	struct anchorVolDescPtr *anchor;
 	long main_s, main_e, reserve_s, reserve_e;
+	struct udf_sb_info *sbi;
 
+	sbi = UDF_SB(sb);
 	anchor = (struct anchorVolDescPtr *)bh->b_data;
 
 	/* Locate the main sequence */
@@ -1879,8 +1882,6 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	struct kernel_lb_addr rootdir, fileset;
 	struct udf_sb_info *sbi;
 
-	lock_kernel();
-
 	uopt.flags = (1 << UDF_FLAG_USE_AD_IN_ICB) | (1 << UDF_FLAG_STRICT);
 	uopt.uid = -1;
 	uopt.gid = -1;
@@ -1889,10 +1890,8 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	uopt.dmode = UDF_INVALID_MODE;
 
 	sbi = kzalloc(sizeof(struct udf_sb_info), GFP_KERNEL);
-	if (!sbi) {
-		unlock_kernel();
+	if (!sbi)
 		return -ENOMEM;
-	}
 
 	sb->s_fs_info = sbi;
 
@@ -1940,7 +1939,7 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	/* Fill in the rest of the superblock */
 	sb->s_op = &udf_sb_ops;
 	sb->s_export_op = &udf_export_ops;
-
+	sb->dq_op = NULL;
 	sb->s_dirt = 0;
 	sb->s_magic = UDF_SUPER_MAGIC;
 	sb->s_time_gran = 1000;
@@ -2038,7 +2037,6 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 		goto error_out;
 	}
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	unlock_kernel();
 	return 0;
 
 error_out:
@@ -2059,7 +2057,6 @@ error_out:
 	kfree(sbi);
 	sb->s_fs_info = NULL;
 
-	unlock_kernel();
 	return -EINVAL;
 }
 

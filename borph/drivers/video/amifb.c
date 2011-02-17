@@ -45,14 +45,14 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-#include <linux/platform_device.h>
-#include <linux/uaccess.h>
 
+#include <linux/uaccess.h>
 #include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/amigahw.h>
@@ -1136,7 +1136,7 @@ static int amifb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg
 	 * Interface to the low level console driver
 	 */
 
-static void amifb_deinit(struct platform_device *pdev);
+static void amifb_deinit(void);
 
 	/*
 	 * Internal routines
@@ -2247,7 +2247,7 @@ static inline void chipfree(void)
 	 * Initialisation
 	 */
 
-static int __init amifb_probe(struct platform_device *pdev)
+static int __init amifb_init(void)
 {
 	int tag, i, err = 0;
 	u_long chipptr;
@@ -2262,6 +2262,16 @@ static int __init amifb_probe(struct platform_device *pdev)
 	}
 	amifb_setup(option);
 #endif
+	if (!MACH_IS_AMIGA || !AMIGAHW_PRESENT(AMI_VIDEO))
+		return -ENODEV;
+
+	/*
+	 * We request all registers starting from bplpt[0]
+	 */
+	if (!request_mem_region(CUSTOM_PHYSADDR+0xe0, 0x120,
+				"amifb [Denise/Lisa]"))
+		return -EBUSY;
+
 	custom.dmacon = DMAF_ALL | DMAF_MASTER;
 
 	switch (amiga_chipset) {
@@ -2368,7 +2378,6 @@ default_chipset:
 	fb_info.fbops = &amifb_ops;
 	fb_info.par = &currentpar;
 	fb_info.flags = FBINFO_DEFAULT;
-	fb_info.device = &pdev->dev;
 
 	if (!fb_find_mode(&fb_info.var, &fb_info, mode_option, ami_modedb,
 			  NUM_TOTAL_MODES, &ami_modedb[defmode], 4)) {
@@ -2443,18 +2452,18 @@ default_chipset:
 	return 0;
 
 amifb_error:
-	amifb_deinit(pdev);
+	amifb_deinit();
 	return err;
 }
 
-static void amifb_deinit(struct platform_device *pdev)
+static void amifb_deinit(void)
 {
 	if (fb_info.cmap.len)
 		fb_dealloc_cmap(&fb_info.cmap);
-	fb_dealloc_cmap(&fb_info.cmap);
 	chipfree();
 	if (videomemory)
 		iounmap((void*)videomemory);
+	release_mem_region(CUSTOM_PHYSADDR+0xe0, 0x120);
 	custom.dmacon = DMAF_ALL | DMAF_MASTER;
 }
 
@@ -3786,35 +3795,14 @@ static void ami_rebuild_copper(void)
 	}
 }
 
-static int __exit amifb_remove(struct platform_device *pdev)
+static void __exit amifb_exit(void)
 {
 	unregister_framebuffer(&fb_info);
-	amifb_deinit(pdev);
+	amifb_deinit();
 	amifb_video_off();
-	return 0;
-}
-
-static struct platform_driver amifb_driver = {
-	.remove = __exit_p(amifb_remove),
-	.driver   = {
-		.name	= "amiga-video",
-		.owner	= THIS_MODULE,
-	},
-};
-
-static int __init amifb_init(void)
-{
-	return platform_driver_probe(&amifb_driver, amifb_probe);
 }
 
 module_init(amifb_init);
-
-static void __exit amifb_exit(void)
-{
-	platform_driver_unregister(&amifb_driver);
-}
-
 module_exit(amifb_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:amiga-video");

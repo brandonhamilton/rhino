@@ -7,7 +7,6 @@
  */
 #include <linux/types.h>
 #include <linux/icmp.h>
-#include <linux/gfp.h>
 #include <linux/ip.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
@@ -98,7 +97,7 @@ nf_nat_fn(unsigned int hooknum,
 		return NF_ACCEPT;
 
 	/* Don't try to NAT if this packet is not conntracked */
-	if (nf_ct_is_untracked(ct))
+	if (ct == &nf_conntrack_untracked)
 		return NF_ACCEPT;
 
 	nat = nfct_nat(ct);
@@ -131,9 +130,16 @@ nf_nat_fn(unsigned int hooknum,
 		if (!nf_nat_initialized(ct, maniptype)) {
 			unsigned int ret;
 
-			ret = nf_nat_rule_find(skb, hooknum, in, out, ct);
-			if (ret != NF_ACCEPT)
+			if (hooknum == NF_INET_LOCAL_IN)
+				/* LOCAL_IN hook doesn't have a chain!  */
+				ret = alloc_null_binding(ct, hooknum);
+			else
+				ret = nf_nat_rule_find(skb, hooknum, in, out,
+						       ct);
+
+			if (ret != NF_ACCEPT) {
 				return ret;
+			}
 		} else
 			pr_debug("Already setup manip %s for ct %p\n",
 				 maniptype == IP_NAT_MANIP_SRC ? "SRC" : "DST",
@@ -287,12 +293,12 @@ static int __init nf_nat_standalone_init(void)
 #endif
 	ret = nf_nat_rule_init();
 	if (ret < 0) {
-		pr_err("nf_nat_init: can't setup rules.\n");
+		printk("nf_nat_init: can't setup rules.\n");
 		goto cleanup_decode_session;
 	}
 	ret = nf_register_hooks(nf_nat_ops, ARRAY_SIZE(nf_nat_ops));
 	if (ret < 0) {
-		pr_err("nf_nat_init: can't register hooks.\n");
+		printk("nf_nat_init: can't register hooks.\n");
 		goto cleanup_rule_init;
 	}
 	return ret;

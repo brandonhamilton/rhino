@@ -9,7 +9,6 @@
 #include <linux/leds.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include <asm/fhc.h>
 #include <asm/upa.h>

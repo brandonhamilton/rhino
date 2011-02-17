@@ -20,42 +20,36 @@
 #include <linux/namei.h>
 #include <linux/fs.h>
 #include <linux/shmem_fs.h>
-#include <linux/ramfs.h>
 #include <linux/cred.h>
 #include <linux/sched.h>
 #include <linux/init_task.h>
-#include <linux/slab.h>
 
 static struct vfsmount *dev_mnt;
 
 #if defined CONFIG_DEVTMPFS_MOUNT
-static int mount_dev = 1;
+static int dev_mount = 1;
 #else
-static int mount_dev;
+static int dev_mount;
 #endif
 
-static DEFINE_MUTEX(dirlock);
+static rwlock_t dirlock;
 
 static int __init mount_param(char *str)
 {
-	mount_dev = simple_strtoul(str, NULL, 0);
+	dev_mount = simple_strtoul(str, NULL, 0);
 	return 1;
 }
 __setup("devtmpfs.mount=", mount_param);
 
-static struct dentry *dev_mount(struct file_system_type *fs_type, int flags,
-		      const char *dev_name, void *data)
+static int dev_get_sb(struct file_system_type *fs_type, int flags,
+		      const char *dev_name, void *data, struct vfsmount *mnt)
 {
-#ifdef CONFIG_TMPFS
-	return mount_single(fs_type, flags, data, shmem_fill_super);
-#else
-	return mount_single(fs_type, flags, data, ramfs_fill_super);
-#endif
+	return get_sb_single(fs_type, flags, data, shmem_fill_super, mnt);
 }
 
 static struct file_system_type dev_fs_type = {
 	.name = "devtmpfs",
-	.mount = dev_mount,
+	.get_sb = dev_get_sb,
 	.kill_sb = kill_litter_super,
 };
 
@@ -99,7 +93,7 @@ static int create_path(const char *nodepath)
 {
 	int err;
 
-	mutex_lock(&dirlock);
+	read_lock(&dirlock);
 	err = dev_mkdir(nodepath, 0755);
 	if (err == -ENOENT) {
 		char *path;
@@ -107,10 +101,8 @@ static int create_path(const char *nodepath)
 
 		/* parent directories do not exist, create them */
 		path = kstrdup(nodepath, GFP_KERNEL);
-		if (!path) {
-			err = -ENOMEM;
-			goto out;
-		}
+		if (!path)
+			return -ENOMEM;
 		s = path;
 		for (;;) {
 			s = strchr(s, '/');
@@ -125,8 +117,7 @@ static int create_path(const char *nodepath)
 		}
 		kfree(path);
 	}
-out:
-	mutex_unlock(&dirlock);
+	read_unlock(&dirlock);
 	return err;
 }
 
@@ -238,7 +229,7 @@ static int delete_path(const char *nodepath)
 	if (!path)
 		return -ENOMEM;
 
-	mutex_lock(&dirlock);
+	write_lock(&dirlock);
 	for (;;) {
 		char *base;
 
@@ -250,7 +241,7 @@ static int delete_path(const char *nodepath)
 		if (err)
 			break;
 	}
-	mutex_unlock(&dirlock);
+	write_unlock(&dirlock);
 
 	kfree(path);
 	return err;
@@ -307,19 +298,6 @@ int devtmpfs_delete_node(struct device *dev)
 		if (dentry->d_inode) {
 			err = vfs_getattr(nd.path.mnt, dentry, &stat);
 			if (!err && dev_mynode(dev, dentry->d_inode, &stat)) {
-				struct iattr newattrs;
-				/*
-				 * before unlinking this node, reset permissions
-				 * of possible references like hardlinks
-				 */
-				newattrs.ia_uid = 0;
-				newattrs.ia_gid = 0;
-				newattrs.ia_mode = stat.mode & ~0777;
-				newattrs.ia_valid =
-					ATTR_UID|ATTR_GID|ATTR_MODE;
-				mutex_lock(&dentry->d_inode->i_mutex);
-				notify_change(dentry, &newattrs);
-				mutex_unlock(&dentry->d_inode->i_mutex);
 				err = vfs_unlink(nd.path.dentry->d_inode,
 						 dentry);
 				if (!err || err == -ENOENT)
@@ -351,7 +329,7 @@ int devtmpfs_mount(const char *mntdir)
 {
 	int err;
 
-	if (!mount_dev)
+	if (!dev_mount)
 		return 0;
 
 	if (!dev_mnt)
@@ -373,7 +351,8 @@ int __init devtmpfs_init(void)
 {
 	int err;
 	struct vfsmount *mnt;
-	char options[] = "mode=0755";
+
+	rwlock_init(&dirlock);
 
 	err = register_filesystem(&dev_fs_type);
 	if (err) {
@@ -382,7 +361,7 @@ int __init devtmpfs_init(void)
 		return err;
 	}
 
-	mnt = kern_mount_data(&dev_fs_type, options);
+	mnt = kern_mount_data(&dev_fs_type, "mode=0755");
 	if (IS_ERR(mnt)) {
 		err = PTR_ERR(mnt);
 		printk(KERN_ERR "devtmpfs: unable to create devtmpfs %i\n", err);

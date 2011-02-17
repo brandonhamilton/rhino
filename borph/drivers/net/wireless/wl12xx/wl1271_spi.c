@@ -21,74 +21,39 @@
  *
  */
 
-#include <linux/irq.h>
 #include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/crc7.h>
 #include <linux/spi/spi.h>
-#include <linux/wl12xx.h>
-#include <linux/slab.h>
 
 #include "wl1271.h"
 #include "wl12xx_80211.h"
-#include "wl1271_io.h"
+#include "wl1271_spi.h"
 
-#include "wl1271_reg.h"
-
-#define WSPI_CMD_READ                 0x40000000
-#define WSPI_CMD_WRITE                0x00000000
-#define WSPI_CMD_FIXED                0x20000000
-#define WSPI_CMD_BYTE_LENGTH          0x1FFE0000
-#define WSPI_CMD_BYTE_LENGTH_OFFSET   17
-#define WSPI_CMD_BYTE_ADDR            0x0001FFFF
-
-#define WSPI_INIT_CMD_CRC_LEN       5
-
-#define WSPI_INIT_CMD_START         0x00
-#define WSPI_INIT_CMD_TX            0x40
-/* the extra bypass bit is sampled by the TNET as '1' */
-#define WSPI_INIT_CMD_BYPASS_BIT    0x80
-#define WSPI_INIT_CMD_FIXEDBUSY_LEN 0x07
-#define WSPI_INIT_CMD_EN_FIXEDBUSY  0x80
-#define WSPI_INIT_CMD_DIS_FIXEDBUSY 0x00
-#define WSPI_INIT_CMD_IOD           0x40
-#define WSPI_INIT_CMD_IP            0x20
-#define WSPI_INIT_CMD_CS            0x10
-#define WSPI_INIT_CMD_WS            0x08
-#define WSPI_INIT_CMD_WSPI          0x01
-#define WSPI_INIT_CMD_END           0x01
-
-#define WSPI_INIT_CMD_LEN           8
-
-#define HW_ACCESS_WSPI_FIXED_BUSY_LEN \
-		((WL1271_BUSY_WORD_LEN - 4) / sizeof(u32))
-#define HW_ACCESS_WSPI_INIT_CMD_MASK  0
-
-/* HW limitation: maximum possible chunk size is 4095 bytes */
-#define WSPI_MAX_CHUNK_SIZE    4092
-
-#define WSPI_MAX_NUM_OF_CHUNKS (WL1271_AGGR_BUFFER_SIZE / WSPI_MAX_CHUNK_SIZE)
-
-static inline struct spi_device *wl_to_spi(struct wl1271 *wl)
+static int wl1271_translate_addr(struct wl1271 *wl, int addr)
 {
-	return wl->if_priv;
+	/*
+	 * To translate, first check to which window of addresses the
+	 * particular address belongs. Then subtract the starting address
+	 * of that window from the address. Then, add offset of the
+	 * translated region.
+	 *
+	 * The translated regions occur next to each other in physical device
+	 * memory, so just add the sizes of the preceeding address regions to
+	 * get the offset to the new region.
+	 *
+	 * Currently, only the two first regions are addressed, and the
+	 * assumption is that all addresses will fall into either of those
+	 * two.
+	 */
+	if ((addr >= wl->part.reg.start) &&
+	    (addr < wl->part.reg.start + wl->part.reg.size))
+		return addr - wl->part.reg.start + wl->part.mem.size;
+	else
+		return addr - wl->part.mem.start;
 }
 
-static struct device *wl1271_spi_wl_to_dev(struct wl1271 *wl)
-{
-	return &(wl_to_spi(wl)->dev);
-}
-
-static void wl1271_spi_disable_interrupts(struct wl1271 *wl)
-{
-	disable_irq(wl->irq);
-}
-
-static void wl1271_spi_enable_interrupts(struct wl1271 *wl)
-{
-	enable_irq(wl->irq);
-}
-
-static void wl1271_spi_reset(struct wl1271 *wl)
+void wl1271_spi_reset(struct wl1271 *wl)
 {
 	u8 *cmd;
 	struct spi_transfer t;
@@ -109,13 +74,12 @@ static void wl1271_spi_reset(struct wl1271 *wl)
 	t.len = WSPI_INIT_CMD_LEN;
 	spi_message_add_tail(&t, &m);
 
-	spi_sync(wl_to_spi(wl), &m);
-	kfree(cmd);
+	spi_sync(wl->spi, &m);
 
 	wl1271_dump(DEBUG_SPI, "spi reset -> ", cmd, WSPI_INIT_CMD_LEN);
 }
 
-static void wl1271_spi_init(struct wl1271 *wl)
+void wl1271_spi_init(struct wl1271 *wl)
 {
 	u8 crc[WSPI_INIT_CMD_CRC_LEN], *cmd;
 	struct spi_transfer t;
@@ -164,24 +128,109 @@ static void wl1271_spi_init(struct wl1271 *wl)
 	t.len = WSPI_INIT_CMD_LEN;
 	spi_message_add_tail(&t, &m);
 
-	spi_sync(wl_to_spi(wl), &m);
+	spi_sync(wl->spi, &m);
+
 	wl1271_dump(DEBUG_SPI, "spi init -> ", cmd, WSPI_INIT_CMD_LEN);
-	kfree(cmd);
+}
+
+/* Set the SPI partitions to access the chip addresses
+ *
+ * To simplify driver code, a fixed (virtual) memory map is defined for
+ * register and memory addresses. Because in the chipset, in different stages
+ * of operation, those addresses will move around, an address translation
+ * mechanism is required.
+ *
+ * There are four partitions (three memory and one register partition),
+ * which are mapped to two different areas of the hardware memory.
+ *
+ *                                Virtual address
+ *                                     space
+ *
+ *                                    |    |
+ *                                 ...+----+--> mem.start
+ *          Physical address    ...   |    |
+ *               space       ...      |    | [PART_0]
+ *                        ...         |    |
+ *  00000000  <--+----+...         ...+----+--> mem.start + mem.size
+ *               |    |         ...   |    |
+ *               |MEM |      ...      |    |
+ *               |    |   ...         |    |
+ *  mem.size  <--+----+...            |    | {unused area)
+ *               |    |   ...         |    |
+ *               |REG |      ...      |    |
+ *  mem.size     |    |         ...   |    |
+ *      +     <--+----+...         ...+----+--> reg.start
+ *  reg.size     |    |   ...         |    |
+ *               |MEM2|      ...      |    | [PART_1]
+ *               |    |         ...   |    |
+ *                                 ...+----+--> reg.start + reg.size
+ *                                    |    |
+ *
+ */
+int wl1271_set_partition(struct wl1271 *wl,
+			 struct wl1271_partition_set *p)
+{
+	/* copy partition info */
+	memcpy(&wl->part, p, sizeof(*p));
+
+	wl1271_debug(DEBUG_SPI, "mem_start %08X mem_size %08X",
+		     p->mem.start, p->mem.size);
+	wl1271_debug(DEBUG_SPI, "reg_start %08X reg_size %08X",
+		     p->reg.start, p->reg.size);
+	wl1271_debug(DEBUG_SPI, "mem2_start %08X mem2_size %08X",
+		     p->mem2.start, p->mem2.size);
+	wl1271_debug(DEBUG_SPI, "mem3_start %08X mem3_size %08X",
+		     p->mem3.start, p->mem3.size);
+
+	/* write partition info to the chipset */
+	wl1271_raw_write32(wl, HW_PART0_START_ADDR, p->mem.start);
+	wl1271_raw_write32(wl, HW_PART0_SIZE_ADDR, p->mem.size);
+	wl1271_raw_write32(wl, HW_PART1_START_ADDR, p->reg.start);
+	wl1271_raw_write32(wl, HW_PART1_SIZE_ADDR, p->reg.size);
+	wl1271_raw_write32(wl, HW_PART2_START_ADDR, p->mem2.start);
+	wl1271_raw_write32(wl, HW_PART2_SIZE_ADDR, p->mem2.size);
+	wl1271_raw_write32(wl, HW_PART3_START_ADDR, p->mem3.start);
+
+	return 0;
 }
 
 #define WL1271_BUSY_WORD_TIMEOUT 1000
 
-static int wl1271_spi_read_busy(struct wl1271 *wl)
+/* FIXME: Check busy words, removed due to SPI bug */
+#if 0
+static void wl1271_spi_read_busy(struct wl1271 *wl, void *buf, size_t len)
 {
 	struct spi_transfer t[1];
 	struct spi_message m;
 	u32 *busy_buf;
 	int num_busy_bytes = 0;
 
+	wl1271_info("spi read BUSY!");
+
+	/*
+	 * Look for the non-busy word in the read buffer, and if found,
+	 * read in the remaining data into the buffer.
+	 */
+	busy_buf = (u32 *)buf;
+	for (; (u32)busy_buf < (u32)buf + len; busy_buf++) {
+		num_busy_bytes += sizeof(u32);
+		if (*busy_buf & 0x1) {
+			spi_message_init(&m);
+			memset(t, 0, sizeof(t));
+			memmove(buf, busy_buf, len - num_busy_bytes);
+			t[0].rx_buf = buf + (len - num_busy_bytes);
+			t[0].len = num_busy_bytes;
+			spi_message_add_tail(&t[0], &m);
+			spi_sync(wl->spi, &m);
+			return;
+		}
+	}
+
 	/*
 	 * Read further busy words from SPI until a non-busy word is
 	 * encountered, then read the data itself into the buffer.
 	 */
+	wl1271_info("spi read BUSY-polling needed!");
 
 	num_busy_bytes = WL1271_BUSY_WORD_TIMEOUT;
 	busy_buf = wl->buffer_busyword;
@@ -191,308 +240,176 @@ static int wl1271_spi_read_busy(struct wl1271 *wl)
 		memset(t, 0, sizeof(t));
 		t[0].rx_buf = busy_buf;
 		t[0].len = sizeof(u32);
-		t[0].cs_change = true;
 		spi_message_add_tail(&t[0], &m);
-		spi_sync(wl_to_spi(wl), &m);
+		spi_sync(wl->spi, &m);
 
-		if (*busy_buf & 0x1)
-			return 0;
+		if (*busy_buf & 0x1) {
+			spi_message_init(&m);
+			memset(t, 0, sizeof(t));
+			t[0].rx_buf = buf;
+			t[0].len = len;
+			spi_message_add_tail(&t[0], &m);
+			spi_sync(wl->spi, &m);
+			return;
+		}
 	}
 
 	/* The SPI bus is unresponsive, the read failed. */
+	memset(buf, 0, len);
 	wl1271_error("SPI read busy-word timeout!\n");
-	return -ETIMEDOUT;
 }
+#endif
 
-static void wl1271_spi_raw_read(struct wl1271 *wl, int addr, void *buf,
-				size_t len, bool fixed)
+void wl1271_spi_raw_read(struct wl1271 *wl, int addr, void *buf,
+			 size_t len, bool fixed)
 {
-	struct spi_transfer t[2];
+	struct spi_transfer t[3];
 	struct spi_message m;
 	u32 *busy_buf;
 	u32 *cmd;
-	u32 chunk_len;
 
-	while (len > 0) {
-		chunk_len = min((size_t)WSPI_MAX_CHUNK_SIZE, len);
+	cmd = &wl->buffer_cmd;
+	busy_buf = wl->buffer_busyword;
 
-		cmd = &wl->buffer_cmd;
-		busy_buf = wl->buffer_busyword;
+	*cmd = 0;
+	*cmd |= WSPI_CMD_READ;
+	*cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
+	*cmd |= addr & WSPI_CMD_BYTE_ADDR;
 
-		*cmd = 0;
-		*cmd |= WSPI_CMD_READ;
-		*cmd |= (chunk_len << WSPI_CMD_BYTE_LENGTH_OFFSET) &
-			WSPI_CMD_BYTE_LENGTH;
-		*cmd |= addr & WSPI_CMD_BYTE_ADDR;
-
-		if (fixed)
-			*cmd |= WSPI_CMD_FIXED;
-
-		spi_message_init(&m);
-		memset(t, 0, sizeof(t));
-
-		t[0].tx_buf = cmd;
-		t[0].len = 4;
-		t[0].cs_change = true;
-		spi_message_add_tail(&t[0], &m);
-
-		/* Busy and non busy words read */
-		t[1].rx_buf = busy_buf;
-		t[1].len = WL1271_BUSY_WORD_LEN;
-		t[1].cs_change = true;
-		spi_message_add_tail(&t[1], &m);
-
-		spi_sync(wl_to_spi(wl), &m);
-
-		if (!(busy_buf[WL1271_BUSY_WORD_CNT - 1] & 0x1) &&
-		    wl1271_spi_read_busy(wl)) {
-			memset(buf, 0, chunk_len);
-			return;
-		}
-
-		spi_message_init(&m);
-		memset(t, 0, sizeof(t));
-
-		t[0].rx_buf = buf;
-		t[0].len = chunk_len;
-		t[0].cs_change = true;
-		spi_message_add_tail(&t[0], &m);
-
-		spi_sync(wl_to_spi(wl), &m);
-
-		wl1271_dump(DEBUG_SPI, "spi_read cmd -> ", cmd, sizeof(*cmd));
-		wl1271_dump(DEBUG_SPI, "spi_read buf <- ", buf, chunk_len);
-
-		if (!fixed)
-			addr += chunk_len;
-		buf += chunk_len;
-		len -= chunk_len;
-	}
-}
-
-static void wl1271_spi_raw_write(struct wl1271 *wl, int addr, void *buf,
-			  size_t len, bool fixed)
-{
-	struct spi_transfer t[2 * WSPI_MAX_NUM_OF_CHUNKS];
-	struct spi_message m;
-	u32 commands[WSPI_MAX_NUM_OF_CHUNKS];
-	u32 *cmd;
-	u32 chunk_len;
-	int i;
-
-	WARN_ON(len > WL1271_AGGR_BUFFER_SIZE);
+	if (fixed)
+		*cmd |= WSPI_CMD_FIXED;
 
 	spi_message_init(&m);
 	memset(t, 0, sizeof(t));
 
-	cmd = &commands[0];
-	i = 0;
-	while (len > 0) {
-		chunk_len = min((size_t)WSPI_MAX_CHUNK_SIZE, len);
+	t[0].tx_buf = cmd;
+	t[0].len = 4;
+	spi_message_add_tail(&t[0], &m);
 
-		*cmd = 0;
-		*cmd |= WSPI_CMD_WRITE;
-		*cmd |= (chunk_len << WSPI_CMD_BYTE_LENGTH_OFFSET) &
-			WSPI_CMD_BYTE_LENGTH;
-		*cmd |= addr & WSPI_CMD_BYTE_ADDR;
+	/* Busy and non busy words read */
+	t[1].rx_buf = busy_buf;
+	t[1].len = WL1271_BUSY_WORD_LEN;
+	spi_message_add_tail(&t[1], &m);
 
-		if (fixed)
-			*cmd |= WSPI_CMD_FIXED;
+	t[2].rx_buf = buf;
+	t[2].len = len;
+	spi_message_add_tail(&t[2], &m);
 
-		t[i].tx_buf = cmd;
-		t[i].len = sizeof(*cmd);
-		spi_message_add_tail(&t[i++], &m);
+	spi_sync(wl->spi, &m);
 
-		t[i].tx_buf = buf;
-		t[i].len = chunk_len;
-		spi_message_add_tail(&t[i++], &m);
+	/* FIXME: Check busy words, removed due to SPI bug */
+	/* if (!(busy_buf[WL1271_BUSY_WORD_CNT - 1] & 0x1))
+	   wl1271_spi_read_busy(wl, buf, len); */
 
-		wl1271_dump(DEBUG_SPI, "spi_write cmd -> ", cmd, sizeof(*cmd));
-		wl1271_dump(DEBUG_SPI, "spi_write buf -> ", buf, chunk_len);
-
-		if (!fixed)
-			addr += chunk_len;
-		buf += chunk_len;
-		len -= chunk_len;
-		cmd++;
-	}
-
-	spi_sync(wl_to_spi(wl), &m);
+	wl1271_dump(DEBUG_SPI, "spi_read cmd -> ", cmd, sizeof(*cmd));
+	wl1271_dump(DEBUG_SPI, "spi_read buf <- ", buf, len);
 }
 
-static irqreturn_t wl1271_irq(int irq, void *cookie)
+void wl1271_spi_raw_write(struct wl1271 *wl, int addr, void *buf,
+			  size_t len, bool fixed)
 {
-	struct wl1271 *wl;
-	unsigned long flags;
+	struct spi_transfer t[2];
+	struct spi_message m;
+	u32 *cmd;
 
-	wl1271_debug(DEBUG_IRQ, "IRQ");
+	cmd = &wl->buffer_cmd;
 
-	wl = cookie;
+	*cmd = 0;
+	*cmd |= WSPI_CMD_WRITE;
+	*cmd |= (len << WSPI_CMD_BYTE_LENGTH_OFFSET) & WSPI_CMD_BYTE_LENGTH;
+	*cmd |= addr & WSPI_CMD_BYTE_ADDR;
 
-	/* complete the ELP completion */
-	spin_lock_irqsave(&wl->wl_lock, flags);
-	if (wl->elp_compl) {
-		complete(wl->elp_compl);
-		wl->elp_compl = NULL;
-	}
+	if (fixed)
+		*cmd |= WSPI_CMD_FIXED;
 
-	if (!test_and_set_bit(WL1271_FLAG_IRQ_RUNNING, &wl->flags))
-		ieee80211_queue_work(wl->hw, &wl->irq_work);
-	set_bit(WL1271_FLAG_IRQ_PENDING, &wl->flags);
-	spin_unlock_irqrestore(&wl->wl_lock, flags);
+	spi_message_init(&m);
+	memset(t, 0, sizeof(t));
 
-	return IRQ_HANDLED;
+	t[0].tx_buf = cmd;
+	t[0].len = sizeof(*cmd);
+	spi_message_add_tail(&t[0], &m);
+
+	t[1].tx_buf = buf;
+	t[1].len = len;
+	spi_message_add_tail(&t[1], &m);
+
+	spi_sync(wl->spi, &m);
+
+	wl1271_dump(DEBUG_SPI, "spi_write cmd -> ", cmd, sizeof(*cmd));
+	wl1271_dump(DEBUG_SPI, "spi_write buf -> ", buf, len);
 }
 
-static int wl1271_spi_set_power(struct wl1271 *wl, bool enable)
+void wl1271_spi_read(struct wl1271 *wl, int addr, void *buf, size_t len,
+		     bool fixed)
 {
-	if (wl->set_power)
-		wl->set_power(enable);
+	int physical;
 
-	return 0;
+	physical = wl1271_translate_addr(wl, addr);
+
+	wl1271_spi_raw_read(wl, physical, buf, len, fixed);
 }
 
-static struct wl1271_if_operations spi_ops = {
-	.read		= wl1271_spi_raw_read,
-	.write		= wl1271_spi_raw_write,
-	.reset		= wl1271_spi_reset,
-	.init		= wl1271_spi_init,
-	.power		= wl1271_spi_set_power,
-	.dev		= wl1271_spi_wl_to_dev,
-	.enable_irq	= wl1271_spi_enable_interrupts,
-	.disable_irq	= wl1271_spi_disable_interrupts
-};
-
-static int __devinit wl1271_probe(struct spi_device *spi)
+void wl1271_spi_write(struct wl1271 *wl, int addr, void *buf, size_t len,
+		      bool fixed)
 {
-	struct wl12xx_platform_data *pdata;
-	struct ieee80211_hw *hw;
-	struct wl1271 *wl;
-	int ret;
+	int physical;
 
-	pdata = spi->dev.platform_data;
-	if (!pdata) {
-		wl1271_error("no platform data");
-		return -ENODEV;
-	}
+	physical = wl1271_translate_addr(wl, addr);
 
-	hw = wl1271_alloc_hw();
-	if (IS_ERR(hw))
-		return PTR_ERR(hw);
-
-	wl = hw->priv;
-
-	dev_set_drvdata(&spi->dev, wl);
-	wl->if_priv = spi;
-
-	wl->if_ops = &spi_ops;
-
-	/* This is the only SPI value that we need to set here, the rest
-	 * comes from the board-peripherals file */
-	spi->bits_per_word = 32;
-
-	ret = spi_setup(spi);
-	if (ret < 0) {
-		wl1271_error("spi_setup failed");
-		goto out_free;
-	}
-
-	wl->set_power = pdata->set_power;
-	if (!wl->set_power) {
-		wl1271_error("set power function missing in platform data");
-		ret = -ENODEV;
-		goto out_free;
-	}
-
-	wl->ref_clock = pdata->board_ref_clock;
-
-	wl->irq = spi->irq;
-	if (wl->irq < 0) {
-		wl1271_error("irq missing in platform data");
-		ret = -ENODEV;
-		goto out_free;
-	}
-
-	ret = request_irq(wl->irq, wl1271_irq, 0, DRIVER_NAME, wl);
-	if (ret < 0) {
-		wl1271_error("request_irq() failed: %d", ret);
-		goto out_free;
-	}
-
-	set_irq_type(wl->irq, IRQ_TYPE_EDGE_RISING);
-
-	disable_irq(wl->irq);
-
-	ret = wl1271_init_ieee80211(wl);
-	if (ret)
-		goto out_irq;
-
-	ret = wl1271_register_hw(wl);
-	if (ret)
-		goto out_irq;
-
-	wl1271_notice("initialized");
-
-	return 0;
-
- out_irq:
-	free_irq(wl->irq, wl);
-
- out_free:
-	wl1271_free_hw(wl);
-
-	return ret;
+	wl1271_spi_raw_write(wl, physical, buf, len, fixed);
 }
 
-static int __devexit wl1271_remove(struct spi_device *spi)
+u32 wl1271_spi_read32(struct wl1271 *wl, int addr)
 {
-	struct wl1271 *wl = dev_get_drvdata(&spi->dev);
-
-	wl1271_unregister_hw(wl);
-	free_irq(wl->irq, wl);
-	wl1271_free_hw(wl);
-
-	return 0;
+	return wl1271_raw_read32(wl, wl1271_translate_addr(wl, addr));
 }
 
-
-static struct spi_driver wl1271_spi_driver = {
-	.driver = {
-		.name		= "wl1271_spi",
-		.bus		= &spi_bus_type,
-		.owner		= THIS_MODULE,
-	},
-
-	.probe		= wl1271_probe,
-	.remove		= __devexit_p(wl1271_remove),
-};
-
-static int __init wl1271_init(void)
+void wl1271_spi_write32(struct wl1271 *wl, int addr, u32 val)
 {
-	int ret;
+	wl1271_raw_write32(wl, wl1271_translate_addr(wl, addr), val);
+}
 
-	ret = spi_register_driver(&wl1271_spi_driver);
-	if (ret < 0) {
-		wl1271_error("failed to register spi driver: %d", ret);
-		goto out;
+void wl1271_top_reg_write(struct wl1271 *wl, int addr, u16 val)
+{
+	/* write address >> 1 + 0x30000 to OCP_POR_CTR */
+	addr = (addr >> 1) + 0x30000;
+	wl1271_spi_write32(wl, OCP_POR_CTR, addr);
+
+	/* write value to OCP_POR_WDATA */
+	wl1271_spi_write32(wl, OCP_DATA_WRITE, val);
+
+	/* write 1 to OCP_CMD */
+	wl1271_spi_write32(wl, OCP_CMD, OCP_CMD_WRITE);
+}
+
+u16 wl1271_top_reg_read(struct wl1271 *wl, int addr)
+{
+	u32 val;
+	int timeout = OCP_CMD_LOOP;
+
+	/* write address >> 1 + 0x30000 to OCP_POR_CTR */
+	addr = (addr >> 1) + 0x30000;
+	wl1271_spi_write32(wl, OCP_POR_CTR, addr);
+
+	/* write 2 to OCP_CMD */
+	wl1271_spi_write32(wl, OCP_CMD, OCP_CMD_READ);
+
+	/* poll for data ready */
+	do {
+		val = wl1271_spi_read32(wl, OCP_DATA_READ);
+		timeout--;
+	} while (!(val & OCP_READY_MASK) && timeout);
+
+	if (!timeout) {
+		wl1271_warning("Top register access timed out.");
+		return 0xffff;
 	}
 
-out:
-	return ret;
+	/* check data status and return if OK */
+	if ((val & OCP_STATUS_MASK) == OCP_STATUS_OK)
+		return val & 0xffff;
+	else {
+		wl1271_warning("Top register access returned error.");
+		return 0xffff;
+	}
 }
-
-static void __exit wl1271_exit(void)
-{
-	spi_unregister_driver(&wl1271_spi_driver);
-
-	wl1271_notice("unloaded");
-}
-
-module_init(wl1271_init);
-module_exit(wl1271_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Luciano Coelho <luciano.coelho@nokia.com>");
-MODULE_AUTHOR("Juuso Oikarinen <juuso.oikarinen@nokia.com>");
-MODULE_FIRMWARE(WL1271_FW_NAME);
-MODULE_ALIAS("spi:wl1271");

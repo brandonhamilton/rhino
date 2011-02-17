@@ -51,7 +51,6 @@ _GLOBAL(__e500_dcache_setup)
 	isync
 	blr
 
-#ifdef CONFIG_PPC32
 _GLOBAL(__setup_cpu_e200)
 	/* enable dedicated debug exception handling resources (Debug APU) */
 	mfspr	r3,SPRN_HID0
@@ -71,19 +70,5 @@ _GLOBAL(__setup_cpu_e500mc)
 	bl	__e500_icache_setup
 	bl	__e500_dcache_setup
 	bl	__setup_e500mc_ivors
-	mtlr	r4
-	blr
-#endif
-/* Right now, restore and setup are the same thing */
-_GLOBAL(__restore_cpu_e5500)
-_GLOBAL(__setup_cpu_e5500)
-	mflr	r4
-	bl	__e500_icache_setup
-	bl	__e500_dcache_setup
-#ifdef CONFIG_PPC_BOOK3E_64
-	bl	.__setup_base_ivors
-#else
-	bl	__setup_e500mc_ivors
-#endif
 	mtlr	r4
 	blr

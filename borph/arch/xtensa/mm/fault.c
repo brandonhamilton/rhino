@@ -105,6 +105,7 @@ good_area:
 	 * make sure we exit gracefully rather than endlessly redo
 	 * the fault.
 	 */
+survive:
 	fault = handle_mm_fault(mm, vma, address, is_write ? FAULT_FLAG_WRITE : 0);
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		if (fault & VM_FAULT_OOM)
@@ -145,10 +146,15 @@ bad_area:
 	 */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (!user_mode(regs))
-		bad_page_fault(regs, address, SIGKILL);
-	else
-		pagefault_out_of_memory();
+	if (is_global_init(current)) {
+		yield();
+		down_read(&mm->mmap_sem);
+		goto survive;
+	}
+	printk("VM: killing process %s\n", current->comm);
+	if (user_mode(regs))
+		do_group_exit(SIGKILL);
+	bad_page_fault(regs, address, SIGKILL);
 	return;
 
 do_sigbus:

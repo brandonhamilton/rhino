@@ -82,7 +82,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -527,8 +526,7 @@ pop_stack:
 
 stack_overflow:
 	if (net_ratelimit())
-		printk(KERN_WARNING "tc ematch: local stack overflow,"
-			" increase NET_EMATCH_STACK\n");
+		printk("Local stack overflow, increase NET_EMATCH_STACK\n");
 	return -1;
 }
 EXPORT_SYMBOL(__tcf_em_tree_match);

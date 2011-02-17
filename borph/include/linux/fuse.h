@@ -34,13 +34,6 @@
  * 7.13
  *  - make max number of background requests and congestion threshold
  *    tunables
- *
- * 7.14
- *  - add splice support to fuse device
- *
- * 7.15
- *  - add store notify
- *  - add retrieve notify
  */
 
 #ifndef _LINUX_FUSE_H
@@ -72,7 +65,7 @@
 #define FUSE_KERNEL_VERSION 7
 
 /** Minor version number of this interface */
-#define FUSE_KERNEL_MINOR_VERSION 15
+#define FUSE_KERNEL_MINOR_VERSION 13
 
 /** The node ID of the root inode */
 #define FUSE_ROOT_ID 1
@@ -255,7 +248,6 @@ enum fuse_opcode {
 	FUSE_DESTROY       = 38,
 	FUSE_IOCTL         = 39,
 	FUSE_POLL          = 40,
-	FUSE_NOTIFY_REPLY  = 41,
 
 	/* CUSE specific operations */
 	CUSE_INIT          = 4096,
@@ -265,8 +257,6 @@ enum fuse_notify_code {
 	FUSE_NOTIFY_POLL   = 1,
 	FUSE_NOTIFY_INVAL_INODE = 2,
 	FUSE_NOTIFY_INVAL_ENTRY = 3,
-	FUSE_NOTIFY_STORE = 4,
-	FUSE_NOTIFY_RETRIEVE = 5,
 	FUSE_NOTIFY_CODE_MAX,
 };
 
@@ -573,31 +563,6 @@ struct fuse_notify_inval_entry_out {
 	__u64	parent;
 	__u32	namelen;
 	__u32	padding;
-};
-
-struct fuse_notify_store_out {
-	__u64	nodeid;
-	__u64	offset;
-	__u32	size;
-	__u32	padding;
-};
-
-struct fuse_notify_retrieve_out {
-	__u64	notify_unique;
-	__u64	nodeid;
-	__u64	offset;
-	__u32	size;
-	__u32	padding;
-};
-
-/* Matches the size of fuse_write_in */
-struct fuse_notify_retrieve_in {
-	__u64	dummy1;
-	__u64	offset;
-	__u32	size;
-	__u32	dummy2;
-	__u64	dummy3;
-	__u64	dummy4;
 };
 
 #endif /* _LINUX_FUSE_H */

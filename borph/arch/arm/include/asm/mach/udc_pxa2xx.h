@@ -21,8 +21,8 @@ struct pxa2xx_udc_mach_info {
 	 * here.  Note that sometimes the signals go through inverters...
 	 */
 	bool	gpio_vbus_inverted;
-	int	gpio_vbus;			/* high == vbus present */
+	u16	gpio_vbus;			/* high == vbus present */
 	bool	gpio_pullup_inverted;
-	int	gpio_pullup;			/* high == pullup activated */
+	u16	gpio_pullup;			/* high == pullup activated */
 };
 

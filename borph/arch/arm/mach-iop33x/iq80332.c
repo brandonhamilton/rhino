@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
 #include <linux/mtd/physmap.h>
@@ -141,6 +142,8 @@ static void __init iq80332_init_machine(void)
 
 MACHINE_START(IQ80332, "Intel IQ80332")
 	/* Maintainer: Intel Corp. */
+	.phys_io	= 0xfefff000,
+	.io_pg_offst	= ((0xfffff000) >> 18) & 0xfffc,
 	.boot_params	= 0x00000100,
 	.map_io		= iop3xx_map_io,
 	.init_irq	= iop33x_init_irq,

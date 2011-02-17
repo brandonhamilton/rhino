@@ -12,12 +12,11 @@
 #include <linux/kernel.h>
 #include <linux/time.h>
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
 #include <linux/string.h>
-#include <linux/spinlock.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -116,10 +115,14 @@ static struct dentry *coda_lookup(struct inode *dir, struct dentry *entry, struc
 		goto exit;
 	}
 
+	lock_kernel();
+
 	error = venus_lookup(dir->i_sb, coda_i2f(dir), name, length,
 			     &type, &resfid);
 	if (!error)
 		error = coda_cnode_make(&inode, &resfid, dir->i_sb);
+
+	unlock_kernel();
 
 	if (error && error != -ENOENT)
 		return ERR_PTR(error);
@@ -136,24 +139,28 @@ exit:
 
 int coda_permission(struct inode *inode, int mask)
 {
-	int error;
+        int error = 0;
 
 	mask &= MAY_READ | MAY_WRITE | MAY_EXEC;
  
 	if (!mask)
-		return 0;
+		return 0; 
 
 	if ((mask & MAY_EXEC) && !execute_ok(inode))
 		return -EACCES;
 
-	if (coda_cache_check(inode, mask))
-		return 0;
+	lock_kernel();
 
-	error = venus_access(inode->i_sb, coda_i2f(inode), mask);
+	if (coda_cache_check(inode, mask))
+		goto out; 
+
+        error = venus_access(inode->i_sb, coda_i2f(inode), mask);
     
 	if (!error)
 		coda_cache_enter(inode, mask);
 
+ out:
+	unlock_kernel();
 	return error;
 }
 
@@ -192,34 +199,41 @@ static inline void coda_dir_drop_nlink(struct inode *dir)
 /* creation routines: create, mknod, mkdir, link, symlink */
 static int coda_create(struct inode *dir, struct dentry *de, int mode, struct nameidata *nd)
 {
-	int error;
+        int error=0;
 	const char *name=de->d_name.name;
 	int length=de->d_name.len;
 	struct inode *inode;
 	struct CodaFid newfid;
 	struct coda_vattr attrs;
 
-	if (coda_isroot(dir) && coda_iscontrol(name, length))
+	lock_kernel();
+
+	if (coda_isroot(dir) && coda_iscontrol(name, length)) {
+		unlock_kernel();
 		return -EPERM;
+	}
 
 	error = venus_create(dir->i_sb, coda_i2f(dir), name, length, 
 				0, mode, &newfid, &attrs);
-	if (error)
-		goto err_out;
+
+        if ( error ) {
+		unlock_kernel();
+		d_drop(de);
+		return error;
+	}
 
 	inode = coda_iget(dir->i_sb, &newfid, &attrs);
-	if (IS_ERR(inode)) {
-		error = PTR_ERR(inode);
-		goto err_out;
+	if ( IS_ERR(inode) ) {
+		unlock_kernel();
+		d_drop(de);
+		return PTR_ERR(inode);
 	}
 
 	/* invalidate the directory cnode's attributes */
 	coda_dir_update_mtime(dir);
+	unlock_kernel();
 	d_instantiate(de, inode);
 	return 0;
-err_out:
-	d_drop(de);
-	return error;
 }
 
 static int coda_mkdir(struct inode *dir, struct dentry *de, int mode)
@@ -231,29 +245,36 @@ static int coda_mkdir(struct inode *dir, struct dentry *de, int mode)
 	int error;
 	struct CodaFid newfid;
 
-	if (coda_isroot(dir) && coda_iscontrol(name, len))
+	lock_kernel();
+
+	if (coda_isroot(dir) && coda_iscontrol(name, len)) {
+		unlock_kernel();
 		return -EPERM;
+	}
 
 	attrs.va_mode = mode;
 	error = venus_mkdir(dir->i_sb, coda_i2f(dir), 
 			       name, len, &newfid, &attrs);
-	if (error)
-		goto err_out;
+        
+        if ( error ) {
+		unlock_kernel();
+		d_drop(de);
+		return error;
+        }
          
 	inode = coda_iget(dir->i_sb, &newfid, &attrs);
-	if (IS_ERR(inode)) {
-		error = PTR_ERR(inode);
-		goto err_out;
+	if ( IS_ERR(inode) ) {
+		unlock_kernel();
+		d_drop(de);
+		return PTR_ERR(inode);
 	}
 
 	/* invalidate the directory cnode's attributes */
 	coda_dir_inc_nlink(dir);
 	coda_dir_update_mtime(dir);
+	unlock_kernel();
 	d_instantiate(de, inode);
 	return 0;
-err_out:
-	d_drop(de);
-	return error;
 }
 
 /* try to make de an entry in dir_inodde linked to source_de */ 
@@ -265,38 +286,52 @@ static int coda_link(struct dentry *source_de, struct inode *dir_inode,
 	int len = de->d_name.len;
 	int error;
 
-	if (coda_isroot(dir_inode) && coda_iscontrol(name, len))
+	lock_kernel();
+
+	if (coda_isroot(dir_inode) && coda_iscontrol(name, len)) {
+		unlock_kernel();
 		return -EPERM;
+	}
 
 	error = venus_link(dir_inode->i_sb, coda_i2f(inode),
 			   coda_i2f(dir_inode), (const char *)name, len);
+
 	if (error) {
 		d_drop(de);
-		return error;
+		goto out;
 	}
 
 	coda_dir_update_mtime(dir_inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	d_instantiate(de, inode);
 	inc_nlink(inode);
-	return 0;
+
+out:
+	unlock_kernel();
+	return(error);
 }
 
 
 static int coda_symlink(struct inode *dir_inode, struct dentry *de,
 			const char *symname)
 {
-	const char *name = de->d_name.name;
+        const char *name = de->d_name.name;
 	int len = de->d_name.len;
 	int symlen;
-	int error;
+	int error = 0;
 
-	if (coda_isroot(dir_inode) && coda_iscontrol(name, len))
+	lock_kernel();
+
+	if (coda_isroot(dir_inode) && coda_iscontrol(name, len)) {
+		unlock_kernel();
 		return -EPERM;
+	}
 
 	symlen = strlen(symname);
-	if (symlen > CODA_MAXPATHLEN)
+	if ( symlen > CODA_MAXPATHLEN ) {
+		unlock_kernel();
 		return -ENAMETOOLONG;
+	}
 
 	/*
 	 * This entry is now negative. Since we do not create
@@ -307,9 +342,10 @@ static int coda_symlink(struct inode *dir_inode, struct dentry *de,
 			      symname, symlen);
 
 	/* mtime is no good anymore */
-	if (!error)
+	if ( !error )
 		coda_dir_update_mtime(dir_inode);
 
+	unlock_kernel();
 	return error;
 }
 
@@ -320,12 +356,17 @@ static int coda_unlink(struct inode *dir, struct dentry *de)
 	const char *name = de->d_name.name;
 	int len = de->d_name.len;
 
+	lock_kernel();
+
 	error = venus_remove(dir->i_sb, coda_i2f(dir), name, len);
-	if (error)
+	if ( error ) {
+		unlock_kernel();
 		return error;
+	}
 
 	coda_dir_update_mtime(dir);
 	drop_nlink(de->d_inode);
+	unlock_kernel();
 	return 0;
 }
 
@@ -334,6 +375,8 @@ static int coda_rmdir(struct inode *dir, struct dentry *de)
 	const char *name = de->d_name.name;
 	int len = de->d_name.len;
 	int error;
+
+	lock_kernel();
 
 	error = venus_rmdir(dir->i_sb, coda_i2f(dir), name, len);
 	if (!error) {
@@ -345,6 +388,7 @@ static int coda_rmdir(struct inode *dir, struct dentry *de)
 		coda_dir_drop_nlink(dir);
 		coda_dir_update_mtime(dir);
 	}
+	unlock_kernel();
 	return error;
 }
 
@@ -358,12 +402,15 @@ static int coda_rename(struct inode *old_dir, struct dentry *old_dentry,
 	int new_length = new_dentry->d_name.len;
 	int error;
 
+	lock_kernel();
+
 	error = venus_rename(old_dir->i_sb, coda_i2f(old_dir),
 			     coda_i2f(new_dir), old_length, new_length,
 			     (const char *) old_name, (const char *)new_name);
-	if (!error) {
-		if (new_dentry->d_inode) {
-			if (S_ISDIR(new_dentry->d_inode->i_mode)) {
+
+	if ( !error ) {
+		if ( new_dentry->d_inode ) {
+			if ( S_ISDIR(new_dentry->d_inode->i_mode) ) {
 				coda_dir_drop_nlink(old_dir);
 				coda_dir_inc_nlink(new_dir);
 			}
@@ -375,6 +422,8 @@ static int coda_rename(struct inode *old_dir, struct dentry *old_dentry,
 			coda_flag_inode(new_dir, C_VATTR);
 		}
 	}
+	unlock_kernel();
+
 	return error;
 }
 
@@ -544,7 +593,10 @@ static int coda_dentry_revalidate(struct dentry *de, struct nameidata *nd)
 	struct inode *inode = de->d_inode;
 	struct coda_inode_info *cii;
 
-	if (!inode || coda_isroot(inode))
+	if (!inode)
+		return 1;
+	lock_kernel();
+	if (coda_isroot(inode))
 		goto out;
 	if (is_bad_inode(inode))
 		goto bad;
@@ -564,12 +616,13 @@ static int coda_dentry_revalidate(struct dentry *de, struct nameidata *nd)
 		goto out;
 
 	/* clear the flags. */
-	spin_lock(&cii->c_lock);
 	cii->c_flags &= ~(C_VATTR | C_PURGE | C_FLUSH);
-	spin_unlock(&cii->c_lock);
+
 bad:
+	unlock_kernel();
 	return 0;
 out:
+	unlock_kernel();
 	return 1;
 }
 
@@ -602,19 +655,20 @@ static int coda_dentry_delete(struct dentry * dentry)
 int coda_revalidate_inode(struct dentry *dentry)
 {
 	struct coda_vattr attr;
-	int error;
+	int error = 0;
 	int old_mode;
 	ino_t old_ino;
 	struct inode *inode = dentry->d_inode;
 	struct coda_inode_info *cii = ITOC(inode);
 
-	if (!cii->c_flags)
-		return 0;
+	lock_kernel();
+	if ( !cii->c_flags )
+		goto ok;
 
 	if (cii->c_flags & (C_VATTR | C_PURGE | C_FLUSH)) {
 		error = venus_getattr(inode->i_sb, &(cii->c_fid), &attr);
-		if (error)
-			return -EIO;
+		if ( error )
+			goto return_bad;
 
 		/* this inode may be lost if:
 		   - it's ino changed 
@@ -633,13 +687,17 @@ int coda_revalidate_inode(struct dentry *dentry)
 		/* the following can happen when a local fid is replaced 
 		   with a global one, here we lose and declare the inode bad */
 		if (inode->i_ino != old_ino)
-			return -EIO;
+			goto return_bad;
 		
 		coda_flag_inode_children(inode, C_FLUSH);
-
-		spin_lock(&cii->c_lock);
 		cii->c_flags &= ~(C_VATTR | C_PURGE | C_FLUSH);
-		spin_unlock(&cii->c_lock);
 	}
+
+ok:
+	unlock_kernel();
 	return 0;
+
+return_bad:
+	unlock_kernel();
+	return -EIO;
 }

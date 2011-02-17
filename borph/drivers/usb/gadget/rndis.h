@@ -18,7 +18,8 @@
 #include "ndis.h"
 
 #define RNDIS_MAXIMUM_FRAME_SIZE	1518
-#define RNDIS_MAX_TOTAL_SIZE		1558
+#define RNDIS_MAX_TOTAL_SIZE		1514
+#define RNDIS_MAX_MULTICAST_SIZE        32
 
 /* Remote NDIS Versions */
 #define RNDIS_MAJOR_VERSION		1
@@ -230,7 +231,8 @@ typedef struct rndis_params
 	u32			speed;
 	u32			media_state;
 
-	const u8		*host_mac;
+	u8                      perm_mac[6];
+	u8                      *host_mac;
 	u16			*filter;
 	struct net_device	*dev;
 
@@ -239,6 +241,7 @@ typedef struct rndis_params
 	void			(*resp_avail)(void *v);
 	void			*v;
 	struct list_head	resp_queue;
+	u8			mcast_addr[RNDIS_MAX_MULTICAST_SIZE][6];
 } rndis_params;
 
 /* RNDIS Message parser and other useless functions */
@@ -262,7 +265,7 @@ int  rndis_signal_disconnect (int configNr);
 int  rndis_state (int configNr);
 extern void rndis_set_host_mac (int configNr, const u8 *addr);
 
-int rndis_init(void);
+int __devinit rndis_init (void);
 void rndis_exit (void);
 
 #endif  /* _LINUX_RNDIS_H */

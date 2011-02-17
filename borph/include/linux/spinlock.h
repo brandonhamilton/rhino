@@ -50,7 +50,6 @@
 #include <linux/preempt.h>
 #include <linux/linkage.h>
 #include <linux/compiler.h>
-#include <linux/irqflags.h>
 #include <linux/thread_info.h>
 #include <linux/kernel.h>
 #include <linux/stringify.h>
@@ -61,7 +60,7 @@
 /*
  * Must define these before including other files, inline functions need them
  */
-#define LOCK_SECTION_NAME ".text..lock."KBUILD_BASENAME
+#define LOCK_SECTION_NAME ".text.lock."KBUILD_BASENAME
 
 #define LOCK_SECTION_START(extra)               \
         ".subsection 1\n\t"                     \
@@ -129,21 +128,19 @@ static inline void smp_mb__after_lock(void) { smp_mb(); }
 #define raw_spin_unlock_wait(lock)	arch_spin_unlock_wait(&(lock)->raw_lock)
 
 #ifdef CONFIG_DEBUG_SPINLOCK
- extern void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock);
+ extern void do_raw_spin_lock(raw_spinlock_t *lock);
 #define do_raw_spin_lock_flags(lock, flags) do_raw_spin_lock(lock)
  extern int do_raw_spin_trylock(raw_spinlock_t *lock);
- extern void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock);
+ extern void do_raw_spin_unlock(raw_spinlock_t *lock);
 #else
-static inline void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock)
+static inline void do_raw_spin_lock(raw_spinlock_t *lock)
 {
-	__acquire(lock);
 	arch_spin_lock(&lock->raw_lock);
 }
 
 static inline void
-do_raw_spin_lock_flags(raw_spinlock_t *lock, unsigned long *flags) __acquires(lock)
+do_raw_spin_lock_flags(raw_spinlock_t *lock, unsigned long *flags)
 {
-	__acquire(lock);
 	arch_spin_lock_flags(&lock->raw_lock, *flags);
 }
 
@@ -152,10 +149,9 @@ static inline int do_raw_spin_trylock(raw_spinlock_t *lock)
 	return arch_spin_trylock(&(lock)->raw_lock);
 }
 
-static inline void do_raw_spin_unlock(raw_spinlock_t *lock) __releases(lock)
+static inline void do_raw_spin_unlock(raw_spinlock_t *lock)
 {
 	arch_spin_unlock(&lock->raw_lock);
-	__release(lock);
 }
 #endif
 

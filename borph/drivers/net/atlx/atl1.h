@@ -56,12 +56,15 @@ struct atl1_adapter;
 struct atl1_hw;
 
 /* function prototypes needed by multiple files */
-static u32 atl1_hash_mc_addr(struct atl1_hw *hw, u8 *mc_addr);
-static void atl1_hash_set(struct atl1_hw *hw, u32 hash_value);
-static void atl1_set_mac_addr(struct atl1_hw *hw);
+u32 atl1_hash_mc_addr(struct atl1_hw *hw, u8 *mc_addr);
+void atl1_hash_set(struct atl1_hw *hw, u32 hash_value);
+s32 atl1_read_phy_reg(struct atl1_hw *hw, u16 reg_addr, u16 *phy_data);
+void atl1_set_mac_addr(struct atl1_hw *hw);
 static int atl1_mii_ioctl(struct net_device *netdev, struct ifreq *ifr,
 	int cmd);
 static u32 atl1_check_link(struct atl1_adapter *adapter);
+
+extern const struct ethtool_ops atl1_ethtool_ops;
 
 /* hardware definitions specific to L1 */
 
@@ -433,8 +436,8 @@ struct rx_free_desc {
 	__le16 buf_len;		/* Size of the receive buffer in host memory */
 	u16 coalese;		/* Update consumer index to host after the
 				 * reception of this frame */
-	/* __packed is required */
-} __packed;
+	/* __attribute__ ((packed)) is required */
+} __attribute__ ((packed));
 
 /*
  * The L1 transmit packet descriptor is comprised of four 32-bit words.

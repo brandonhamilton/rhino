@@ -78,7 +78,7 @@ static int bfs_readdir(struct file *f, void *dirent, filldir_t filldir)
 const struct file_operations bfs_dir_operations = {
 	.read		= generic_read_dir,
 	.readdir	= bfs_readdir,
-	.fsync		= generic_file_fsync,
+	.fsync		= simple_fsync,
 	.llseek		= generic_file_llseek,
 };
 
@@ -105,12 +105,14 @@ static int bfs_create(struct inode *dir, struct dentry *dentry, int mode,
 	}
 	set_bit(ino, info->si_imap);
 	info->si_freei--;
-	inode_init_owner(inode, dir, mode);
+	inode->i_uid = current_fsuid();
+	inode->i_gid = (dir->i_mode & S_ISGID) ? dir->i_gid : current_fsgid();
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
 	inode->i_blocks = 0;
 	inode->i_op = &bfs_file_inops;
 	inode->i_fop = &bfs_file_operations;
 	inode->i_mapping->a_ops = &bfs_aops;
+	inode->i_mode = mode;
 	inode->i_ino = ino;
 	BFS_I(inode)->i_dsk_ino = ino;
 	BFS_I(inode)->i_sblock = 0;
@@ -176,7 +178,7 @@ static int bfs_link(struct dentry *old, struct inode *dir,
 	inc_nlink(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	d_instantiate(new, inode);
 	mutex_unlock(&info->bfs_lock);
 	return 0;

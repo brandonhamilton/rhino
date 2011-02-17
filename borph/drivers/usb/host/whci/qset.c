@@ -17,7 +17,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <linux/uwb/umc.h>
 #include <linux/usb.h>
 
@@ -443,7 +442,7 @@ static int qset_add_urb_sg(struct whc *whc, struct whc_qset *qset, struct urb *u
 
 	remaining = urb->transfer_buffer_length;
 
-	for_each_sg(urb->sg, sg, urb->num_sgs, i) {
+	for_each_sg(urb->sg->sg, sg, urb->num_sgs, i) {
 		dma_addr_t dma_addr;
 		size_t dma_remaining;
 		dma_addr_t sp, ep;
@@ -475,7 +474,7 @@ static int qset_add_urb_sg(struct whc *whc, struct whc_qset *qset, struct urb *u
 			    || (prev_end & (WHCI_PAGE_SIZE-1))
 			    || (dma_addr & (WHCI_PAGE_SIZE-1))
 			    || std->len + WHCI_PAGE_SIZE > QTD_MAX_XFER_SIZE) {
-				if (std && std->len % qset->max_packet != 0)
+				if (std->len % qset->max_packet != 0)
 					return -EINVAL;
 				std = qset_new_std(whc, qset, urb, mem_flags);
 				if (std == NULL) {
@@ -561,7 +560,7 @@ static int qset_add_urb_sg_linearize(struct whc *whc, struct whc_qset *qset,
 
 	remaining = urb->transfer_buffer_length;
 
-	for_each_sg(urb->sg, sg, urb->num_sgs, i) {
+	for_each_sg(urb->sg->sg, sg, urb->sg->nents, i) {
 		size_t len;
 		size_t sg_remaining;
 		void *orig;
@@ -646,7 +645,7 @@ int qset_add_urb(struct whc *whc, struct whc_qset *qset, struct urb *urb,
 	wurb->urb = urb;
 	INIT_WORK(&wurb->dequeue_work, urb_dequeue_work);
 
-	if (urb->num_sgs) {
+	if (urb->sg) {
 		ret = qset_add_urb_sg(whc, qset, urb, mem_flags);
 		if (ret == -EINVAL) {
 			qset_free_stds(qset, urb);

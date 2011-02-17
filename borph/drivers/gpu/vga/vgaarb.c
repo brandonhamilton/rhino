@@ -1,32 +1,12 @@
 /*
- * vgaarb.c: Implements the VGA arbitration. For details refer to
- * Documentation/vgaarbiter.txt
- *
+ * vgaarb.c
  *
  * (C) Copyright 2005 Benjamin Herrenschmidt <benh@kernel.crashing.org>
  * (C) Copyright 2007 Paulo R. Zanoni <przanoni@gmail.com>
  * (C) Copyright 2007, 2009 Tiago Vignatti <vignatti@freedesktop.org>
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS
- * IN THE SOFTWARE.
- *
+ * Implements the VGA arbitration. For details refer to
+ * Documentation/vgaarbiter.txt
  */
 
 #include <linux/module.h>
@@ -40,7 +20,6 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <linux/miscdevice.h>
-#include <linux/slab.h>
 
 #include <linux/uaccess.h>
 
@@ -175,8 +154,8 @@ static struct vga_device *__vga_tryget(struct vga_device *vgadev,
 	    (vgadev->decodes & VGA_RSRC_LEGACY_MEM))
 		rsrc |= VGA_RSRC_LEGACY_MEM;
 
-	pr_debug("%s: %d\n", __func__, rsrc);
-	pr_debug("%s: owns: %d\n", __func__, vgadev->owns);
+	pr_devel("%s: %d\n", __func__, rsrc);
+	pr_devel("%s: owns: %d\n", __func__, vgadev->owns);
 
 	/* Check what resources we need to acquire */
 	wants = rsrc & ~vgadev->owns;
@@ -288,7 +267,7 @@ static void __vga_put(struct vga_device *vgadev, unsigned int rsrc)
 {
 	unsigned int old_locks = vgadev->locks;
 
-	pr_debug("%s\n", __func__);
+	pr_devel("%s\n", __func__);
 
 	/* Update our counters, and account for equivalent legacy resources
 	 * if we decode them
@@ -595,10 +574,9 @@ static inline void vga_update_device_decodes(struct vga_device *vgadev,
 		else
 			vga_decode_count--;
 	}
-	pr_debug("vgaarb: decoding count now is: %d\n", vga_decode_count);
 }
 
-static void __vga_set_legacy_decoding(struct pci_dev *pdev, unsigned int decodes, bool userspace)
+void __vga_set_legacy_decoding(struct pci_dev *pdev, unsigned int decodes, bool userspace)
 {
 	struct vga_device *vgadev;
 	unsigned long flags;
@@ -710,7 +688,7 @@ EXPORT_SYMBOL(vga_client_register);
  * the arbiter.
  */
 
-#define MAX_USER_CARDS         CONFIG_VGA_ARB_MAX_GPUS
+#define MAX_USER_CARDS         16
 #define PCI_INVALID_CARD       ((struct pci_dev *)-1UL)
 
 /*
@@ -852,7 +830,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 		curr_pos += 5;
 		remaining -= 5;
 
-		pr_debug("client 0x%p called 'lock'\n", priv);
+		pr_devel("client 0x%p called 'lock'\n", priv);
 
 		if (!vga_str_to_iostate(curr_pos, remaining, &io_state)) {
 			ret_val = -EPROTO;
@@ -888,7 +866,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 		curr_pos += 7;
 		remaining -= 7;
 
-		pr_debug("client 0x%p called 'unlock'\n", priv);
+		pr_devel("client 0x%p called 'unlock'\n", priv);
 
 		if (strncmp(curr_pos, "all", 3) == 0)
 			io_state = VGA_RSRC_LEGACY_IO | VGA_RSRC_LEGACY_MEM;
@@ -938,7 +916,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 		curr_pos += 8;
 		remaining -= 8;
 
-		pr_debug("client 0x%p called 'trylock'\n", priv);
+		pr_devel("client 0x%p called 'trylock'\n", priv);
 
 		if (!vga_str_to_iostate(curr_pos, remaining, &io_state)) {
 			ret_val = -EPROTO;
@@ -976,15 +954,14 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 		}
 
 	} else if (strncmp(curr_pos, "target ", 7) == 0) {
-		struct pci_bus *pbus;
 		unsigned int domain, bus, devfn;
 		struct vga_device *vgadev;
 
 		curr_pos += 7;
 		remaining -= 7;
-		pr_debug("client 0x%p called 'target'\n", priv);
+		pr_devel("client 0x%p called 'target'\n", priv);
 		/* if target is default */
-		if (!strncmp(curr_pos, "default", 7))
+		if (!strncmp(buf, "default", 7))
 			pdev = pci_dev_get(vga_default_device());
 		else {
 			if (!vga_pci_str_to_vars(curr_pos, remaining,
@@ -992,31 +969,18 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 				ret_val = -EPROTO;
 				goto done;
 			}
-			pr_debug("vgaarb: %s ==> %x:%x:%x.%x\n", curr_pos,
-				domain, bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
 
-			pbus = pci_find_bus(domain, bus);
-			pr_debug("vgaarb: pbus %p\n", pbus);
-			if (pbus == NULL) {
-				pr_err("vgaarb: invalid PCI domain and/or bus address %x:%x\n",
-					domain, bus);
-				ret_val = -ENODEV;
-				goto done;
-			}
-			pdev = pci_get_slot(pbus, devfn);
-			pr_debug("vgaarb: pdev %p\n", pdev);
+			pdev = pci_get_bus_and_slot(bus, devfn);
 			if (!pdev) {
-				pr_err("vgaarb: invalid PCI address %x:%x\n",
-					bus, devfn);
+				pr_info("vgaarb: invalid PCI address!\n");
 				ret_val = -ENODEV;
 				goto done;
 			}
 		}
 
 		vgadev = vgadev_find(pdev);
-		pr_debug("vgaarb: vgadev %p\n", vgadev);
 		if (vgadev == NULL) {
-			pr_err("vgaarb: this pci device is not a vga device\n");
+			pr_info("vgaarb: this pci device is not a vga device\n");
 			pci_dev_put(pdev);
 			ret_val = -ENODEV;
 			goto done;
@@ -1034,8 +998,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 			}
 		}
 		if (i == MAX_USER_CARDS) {
-			pr_err("vgaarb: maximum user cards (%d) number reached!\n",
-				MAX_USER_CARDS);
+			pr_err("vgaarb: maximum user cards number reached!\n");
 			pci_dev_put(pdev);
 			/* XXX: which value to return? */
 			ret_val =  -ENOMEM;
@@ -1050,7 +1013,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user * buf,
 	} else if (strncmp(curr_pos, "decodes ", 8) == 0) {
 		curr_pos += 8;
 		remaining -= 8;
-		pr_debug("vgaarb: client 0x%p called 'decodes'\n", priv);
+		pr_devel("vgaarb: client 0x%p called 'decodes'\n", priv);
 
 		if (!vga_str_to_iostate(curr_pos, remaining, &io_state)) {
 			ret_val = -EPROTO;
@@ -1079,7 +1042,7 @@ static unsigned int vga_arb_fpoll(struct file *file, poll_table * wait)
 {
 	struct vga_arb_private *priv = file->private_data;
 
-	pr_debug("%s\n", __func__);
+	pr_devel("%s\n", __func__);
 
 	if (priv == NULL)
 		return -ENODEV;
@@ -1092,7 +1055,7 @@ static int vga_arb_open(struct inode *inode, struct file *file)
 	struct vga_arb_private *priv;
 	unsigned long flags;
 
-	pr_debug("%s\n", __func__);
+	pr_devel("%s\n", __func__);
 
 	priv = kmalloc(sizeof(struct vga_arb_private), GFP_KERNEL);
 	if (priv == NULL)
@@ -1122,7 +1085,7 @@ static int vga_arb_release(struct inode *inode, struct file *file)
 	unsigned long flags;
 	int i;
 
-	pr_debug("%s\n", __func__);
+	pr_devel("%s\n", __func__);
 
 	if (priv == NULL)
 		return -ENODEV;
@@ -1133,7 +1096,7 @@ static int vga_arb_release(struct inode *inode, struct file *file)
 		uc = &priv->cards[i];
 		if (uc->pdev == NULL)
 			continue;
-		pr_debug("uc->io_cnt == %d, uc->mem_cnt == %d\n",
+		pr_devel("uc->io_cnt == %d, uc->mem_cnt == %d\n",
 			 uc->io_cnt, uc->mem_cnt);
 		while (uc->io_cnt--)
 			vga_put(uc->pdev, VGA_RSRC_LEGACY_IO);
@@ -1186,7 +1149,7 @@ static int pci_notify(struct notifier_block *nb, unsigned long action,
 	struct pci_dev *pdev = to_pci_dev(dev);
 	bool notify = false;
 
-	pr_debug("%s\n", __func__);
+	pr_devel("%s\n", __func__);
 
 	/* For now we're only intereted in devices added and removed. I didn't
 	 * test this thing here, so someone needs to double check for the
@@ -1211,7 +1174,6 @@ static const struct file_operations vga_arb_device_fops = {
 	.poll = vga_arb_fpoll,
 	.open = vga_arb_open,
 	.release = vga_arb_release,
-	.llseek = noop_llseek,
 };
 
 static struct miscdevice vga_arb_device = {

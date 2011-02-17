@@ -30,8 +30,6 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/io.h>
-#include <linux/slab.h>
-#include <linux/irq.h>
 
 #include <linux/vlynq.h>
 

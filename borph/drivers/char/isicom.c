@@ -113,8 +113,6 @@
  *		64-bit verification
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/firmware.h>
 #include <linux/kernel.h>
@@ -124,12 +122,12 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/serial.h>
+#include <linux/smp_lock.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 
 #include <linux/uaccess.h>
 #include <linux/io.h>
@@ -142,6 +140,7 @@
 #define InterruptTheCard(base) outw(0, (base) + 0xc)
 #define ClearInterrupt(base) inw((base) + 0x0a)
 
+#define pr_dbg(str...) pr_debug("ISICOM: " str)
 #ifdef DEBUG
 #define isicom_paranoia_check(a, b, c) __isicom_paranoia_check((a), (b), (c))
 #else
@@ -250,7 +249,8 @@ static int lock_card(struct isi_board *card)
 		spin_unlock_irqrestore(&card->card_lock, card->flags);
 		msleep(10);
 	}
-	pr_warning("Failed to lock Card (0x%lx)\n", card->base);
+	printk(KERN_WARNING "ISICOM: Failed to lock Card (0x%lx)\n",
+		card->base);
 
 	return 0;	/* Failed to acquire the card! */
 }
@@ -379,13 +379,13 @@ static inline int __isicom_paranoia_check(struct isi_port const *port,
 	char *name, const char *routine)
 {
 	if (!port) {
-		pr_warning("Warning: bad isicom magic for dev %s in %s.\n",
-			   name, routine);
+		printk(KERN_WARNING "ISICOM: Warning: bad isicom magic for "
+			"dev %s in %s.\n", name, routine);
 		return 1;
 	}
 	if (port->magic != ISICOM_MAGIC) {
-		pr_warning("Warning: NULL isicom port for dev %s in %s.\n",
-			   name, routine);
+		printk(KERN_WARNING "ISICOM: Warning: NULL isicom port for "
+			"dev %s in %s.\n", name, routine);
 		return 1;
 	}
 
@@ -450,8 +450,8 @@ static void isicom_tx(unsigned long _data)
 		if (!(inw(base + 0x02) & (1 << port->channel)))
 			continue;
 
-		pr_debug("txing %d bytes, port%d.\n",
-			 txcount, port->channel + 1);
+		pr_dbg("txing %d bytes, port%d.\n", txcount,
+			port->channel + 1);
 		outw((port->channel << isi_card[card].shift_count) | txcount,
 			base);
 		residue = NO;
@@ -547,8 +547,8 @@ static irqreturn_t isicom_interrupt(int irq, void *dev_id)
 	byte_count = header & 0xff;
 
 	if (channel + 1 > card->port_count) {
-		pr_warning("%s(0x%lx): %d(channel) > port_count.\n",
-			   __func__, base, channel+1);
+		printk(KERN_WARNING "ISICOM: isicom_interrupt(0x%lx): "
+			"%d(channel) > port_count.\n", base, channel+1);
 		outw(0x0000, base+0x04); /* enable interrupts */
 		spin_unlock(&card->card_lock);
 		return IRQ_HANDLED;
@@ -582,15 +582,14 @@ static irqreturn_t isicom_interrupt(int irq, void *dev_id)
 				if (port->status & ISI_DCD) {
 					if (!(header & ISI_DCD)) {
 					/* Carrier has been lost  */
-						pr_debug("%s: DCD->low.\n",
-							 __func__);
+						pr_dbg("interrupt: DCD->low.\n"
+							);
 						port->status &= ~ISI_DCD;
 						tty_hangup(tty);
 					}
 				} else if (header & ISI_DCD) {
 				/* Carrier has been detected */
-					pr_debug("%s: DCD->high.\n",
-						__func__);
+					pr_dbg("interrupt: DCD->high.\n");
 					port->status |= ISI_DCD;
 					wake_up_interruptible(&port->port.open_wait);
 				}
@@ -642,19 +641,17 @@ static irqreturn_t isicom_interrupt(int irq, void *dev_id)
 			break;
 
 		case 2:	/* Statistics		 */
-			pr_debug("%s: stats!!!\n", __func__);
+			pr_dbg("isicom_interrupt: stats!!!.\n");
 			break;
 
 		default:
-			pr_debug("%s: Unknown code in status packet.\n",
-				 __func__);
+			pr_dbg("Intr: Unknown code in status packet.\n");
 			break;
 		}
 	} else {				/* Data   Packet */
 
 		count = tty_prepare_flip_string(tty, &rp, byte_count & ~1);
-		pr_debug("%s: Can rx %d of %d bytes.\n",
-			 __func__, count, byte_count);
+		pr_dbg("Intr: Can rx %d of %d bytes.\n", count, byte_count);
 		word_count = count >> 1;
 		insw(base, rp, word_count);
 		byte_count -= (word_count << 1);
@@ -664,8 +661,8 @@ static irqreturn_t isicom_interrupt(int irq, void *dev_id)
 			byte_count -= 2;
 		}
 		if (byte_count > 0) {
-			pr_debug("%s(0x%lx:%d): Flip buffer overflow! dropping bytes...\n",
-				 __func__, base, channel + 1);
+			pr_dbg("Intr(0x%lx:%d): Flip buffer overflow! dropping "
+				"bytes...\n", base, channel + 1);
 		/* drain out unread xtra data */
 		while (byte_count > 0) {
 				inw(base);
@@ -871,14 +868,15 @@ static struct tty_port *isicom_find_port(struct tty_struct *tty)
 static int isicom_open(struct tty_struct *tty, struct file *filp)
 {
 	struct isi_port *port;
+	struct isi_board *card;
 	struct tty_port *tport;
 
 	tport = isicom_find_port(tty);
 	if (tport == NULL)
 		return -ENODEV;
 	port = container_of(tport, struct isi_port, port);
+	card = &isi_card[BOARD(tty->index)];
 
-	tty->driver_data = port;
 	return tty_port_open(tport, tty, filp);
 }
 
@@ -890,8 +888,8 @@ static void isicom_shutdown_port(struct isi_port *port)
 	struct isi_board *card = port->card;
 
 	if (--card->count < 0) {
-		pr_debug("%s: bad board(0x%lx) count %d.\n",
-			 __func__, card->base, card->count);
+		pr_dbg("isicom_shutdown_port: bad board(0x%lx) count %d.\n",
+			card->base, card->count);
 		card->count = 0;
 	}
 	/* last port was closed, shutdown that board too */
@@ -934,12 +932,7 @@ static void isicom_shutdown(struct tty_port *port)
 static void isicom_close(struct tty_struct *tty, struct file *filp)
 {
 	struct isi_port *ip = tty->driver_data;
-	struct tty_port *port;
-
-	if (ip == NULL)
-		return;
-
-	port = &ip->port;
+	struct tty_port *port = &ip->port;
 	if (isicom_paranoia_check(ip, tty->name, "isicom_close"))
 		return;
 	tty_port_close(port, tty, filp);
@@ -1116,7 +1109,8 @@ static int isicom_set_serial_info(struct tty_struct *tty,
 	if (copy_from_user(&newinfo, info, sizeof(newinfo)))
 		return -EFAULT;
 
-	mutex_lock(&port->port.mutex);
+	lock_kernel();
+
 	reconfig_port = ((port->port.flags & ASYNC_SPD_MASK) !=
 		(newinfo.flags & ASYNC_SPD_MASK));
 
@@ -1125,7 +1119,7 @@ static int isicom_set_serial_info(struct tty_struct *tty,
 				(newinfo.closing_wait != port->port.closing_wait) ||
 				((newinfo.flags & ~ASYNC_USR_MASK) !=
 				(port->port.flags & ~ASYNC_USR_MASK))) {
-			mutex_unlock(&port->port.mutex);
+			unlock_kernel();
 			return -EPERM;
 		}
 		port->port.flags = ((port->port.flags & ~ASYNC_USR_MASK) |
@@ -1142,7 +1136,7 @@ static int isicom_set_serial_info(struct tty_struct *tty,
 		isicom_config_port(tty);
 		spin_unlock_irqrestore(&port->card->card_lock, flags);
 	}
-	mutex_unlock(&port->port.mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -1151,7 +1145,7 @@ static int isicom_get_serial_info(struct isi_port *port,
 {
 	struct serial_struct out_info;
 
-	mutex_lock(&port->port.mutex);
+	lock_kernel();
 	memset(&out_info, 0, sizeof(out_info));
 /*	out_info.type = ? */
 	out_info.line = port - isi_ports;
@@ -1161,7 +1155,7 @@ static int isicom_get_serial_info(struct isi_port *port,
 /*	out_info.baud_base = ? */
 	out_info.close_delay = port->port.close_delay;
 	out_info.closing_wait = port->port.closing_wait;
-	mutex_unlock(&port->port.mutex);
+	unlock_kernel();
 	if (copy_to_user(info, &out_info, sizeof(out_info)))
 		return -EFAULT;
 	return 0;
@@ -1570,16 +1564,11 @@ static int __devinit isicom_probe(struct pci_dev *pdev,
 	dev_info(&pdev->dev, "ISI PCI Card(Device ID 0x%x)\n", ent->device);
 
 	/* allot the first empty slot in the array */
-	for (index = 0; index < BOARD_COUNT; index++) {
+	for (index = 0; index < BOARD_COUNT; index++)
 		if (isi_card[index].base == 0) {
 			board = &isi_card[index];
 			break;
 		}
-	}
-	if (index == BOARD_COUNT) {
-		retval = -ENODEV;
-		goto err_disable;
-	}
 
 	board->index = index;
 	board->base = pci_resource_start(pdev, 3);
@@ -1626,7 +1615,6 @@ errunrr:
 errdec:
 	board->base = 0;
 	card_count--;
-err_disable:
 	pci_disable_device(pdev);
 err:
 	return retval;
@@ -1693,13 +1681,13 @@ static int __init isicom_init(void)
 
 	retval = tty_register_driver(isicom_normal);
 	if (retval) {
-		pr_debug("Couldn't register the dialin driver\n");
+		pr_dbg("Couldn't register the dialin driver\n");
 		goto err_puttty;
 	}
 
 	retval = pci_register_driver(&isicom_driver);
 	if (retval < 0) {
-		pr_err("Unable to register pci driver.\n");
+		printk(KERN_ERR "ISICOM: Unable to register pci driver.\n");
 		goto err_unrtty;
 	}
 
@@ -1729,8 +1717,3 @@ module_exit(isicom_exit);
 MODULE_AUTHOR("MultiTech");
 MODULE_DESCRIPTION("Driver for the ISI series of cards by MultiTech");
 MODULE_LICENSE("GPL");
-MODULE_FIRMWARE("isi608.bin");
-MODULE_FIRMWARE("isi608em.bin");
-MODULE_FIRMWARE("isi616em.bin");
-MODULE_FIRMWARE("isi4608.bin");
-MODULE_FIRMWARE("isi4616.bin");

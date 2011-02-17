@@ -23,7 +23,6 @@
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>

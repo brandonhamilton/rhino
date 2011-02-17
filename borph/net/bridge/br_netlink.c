@@ -11,7 +11,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <net/rtnetlink.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
@@ -42,8 +41,8 @@ static int br_fill_ifinfo(struct sk_buff *skb, const struct net_bridge_port *por
 	struct nlmsghdr *nlh;
 	u8 operstate = netif_running(dev) ? dev->operstate : IF_OPER_DOWN;
 
-	br_debug(br, "br_fill_info event %d port %s master %s\n",
-		     event, dev->name, br->dev->name);
+	pr_debug("br_fill_info event %d port %s master %s\n",
+		 event, dev->name, br->dev->name);
 
 	nlh = nlmsg_put(skb, pid, seq, event, sizeof(*hdr), flags);
 	if (nlh == NULL)
@@ -87,9 +86,7 @@ void br_ifinfo_notify(int event, struct net_bridge_port *port)
 	struct sk_buff *skb;
 	int err = -ENOBUFS;
 
-	br_debug(port->br, "port %u(%s) event %d\n",
-		 (unsigned)port->port_no, port->dev->name, event);
-
+	pr_debug("bridge notify event=%d\n", event);
 	skb = nlmsg_new(br_nlmsg_size(), GFP_ATOMIC);
 	if (skb == NULL)
 		goto errout;
@@ -120,11 +117,10 @@ static int br_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 	idx = 0;
 	for_each_netdev(net, dev) {
 		/* not a bridge port */
-		if (!br_port_exists(dev) || idx < cb->args[0])
+		if (dev->br_port == NULL || idx < cb->args[0])
 			goto skip;
 
-		if (br_fill_ifinfo(skb, br_port_get(dev),
-				   NETLINK_CB(cb->skb).pid,
+		if (br_fill_ifinfo(skb, dev->br_port, NETLINK_CB(cb->skb).pid,
 				   cb->nlh->nlmsg_seq, RTM_NEWLINK,
 				   NLM_F_MULTI) < 0)
 			break;
@@ -169,9 +165,9 @@ static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 	if (!dev)
 		return -ENODEV;
 
-	if (!br_port_exists(dev))
+	p = dev->br_port;
+	if (!p)
 		return -EINVAL;
-	p = br_port_get(dev);
 
 	/* if kernel STP is running, don't allow changes */
 	if (p->br->stp_enabled == BR_KERNEL_STP)

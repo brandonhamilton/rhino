@@ -32,13 +32,6 @@
 
 #ifdef __KERNEL__
 
-enum {
-	INET6_IFADDR_STATE_DAD,
-	INET6_IFADDR_STATE_POSTDAD,
-	INET6_IFADDR_STATE_UP,
-	INET6_IFADDR_STATE_DEAD,
-};
-
 struct inet6_ifaddr {
 	struct in6_addr		addr;
 	__u32			prefix_len;
@@ -47,9 +40,6 @@ struct inet6_ifaddr {
 	__u32			prefered_lft;
 	atomic_t		refcnt;
 	spinlock_t		lock;
-	spinlock_t		state_lock;
-
-	int			state;
 
 	__u8			probes;
 	__u8			flags;
@@ -64,15 +54,16 @@ struct inet6_ifaddr {
 	struct inet6_dev	*idev;
 	struct rt6_info		*rt;
 
-	struct hlist_node	addr_lst;
-	struct list_head	if_list;
+	struct inet6_ifaddr	*lst_next;      /* next addr in addr_lst */
+	struct inet6_ifaddr	*if_next;       /* next addr in inet6_dev */
 
 #ifdef CONFIG_IPV6_PRIVACY
-	struct list_head	tmp_list;
+	struct inet6_ifaddr	*tmp_next;	/* next addr in tempaddr_lst */
 	struct inet6_ifaddr	*ifpub;
 	int			regen_count;
 #endif
-	struct rcu_head		rcu;
+
+	int			dead;
 };
 
 struct ip6_sf_socklist {
@@ -160,13 +151,13 @@ struct ipv6_devstat {
 };
 
 struct inet6_dev {
-	struct net_device	*dev;
+	struct net_device		*dev;
 
-	struct list_head	addr_list;
+	struct inet6_ifaddr	*addr_list;
 
 	struct ifmcaddr6	*mc_list;
 	struct ifmcaddr6	*mc_tomb;
-	spinlock_t		mc_lock;
+	rwlock_t		mc_lock;
 	unsigned char		mc_qrv;
 	unsigned char		mc_gq_running;
 	unsigned char		mc_ifc_count;
@@ -184,7 +175,7 @@ struct inet6_dev {
 #ifdef CONFIG_IPV6_PRIVACY
 	u8			rndid[8];
 	struct timer_list	regen_timer;
-	struct list_head	tempaddr_list;
+	struct inet6_ifaddr	*tempaddr_list;
 #endif
 
 	struct neigh_parms	*nd_parms;

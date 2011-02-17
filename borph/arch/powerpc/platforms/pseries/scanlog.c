@@ -26,7 +26,6 @@
 #include <linux/proc_fs.h>
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <asm/rtas.h>
 #include <asm/prom.h>
@@ -170,7 +169,6 @@ const struct file_operations scanlog_fops = {
 	.write		= scanlog_write,
 	.open		= scanlog_open,
 	.release	= scanlog_release,
-	.llseek		= noop_llseek,
 };
 
 static int __init scanlog_init(void)

@@ -34,7 +34,6 @@ struct phonet_device {
 	struct list_head list;
 	struct net_device *netdev;
 	DECLARE_BITMAP(addrs, 64);
-	struct rcu_head	rcu;
 };
 
 int phonet_device_init(void);
@@ -57,6 +56,5 @@ struct net_device *phonet_route_output(struct net *net, u8 daddr);
 #define PN_NO_ADDR	0xff
 
 extern const struct file_operations pn_sock_seq_fops;
-extern const struct file_operations pn_res_seq_fops;
 
 #endif

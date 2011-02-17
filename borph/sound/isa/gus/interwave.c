@@ -26,6 +26,7 @@
 #include <linux/err.h>
 #include <linux/isa.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/pnp.h>
 #include <linux/moduleparam.h>
 #include <asm/dma.h>

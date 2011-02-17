@@ -15,7 +15,6 @@
 #include <asm/coldfire.h>
 #include <asm/mcfcache.h>
 #include <asm/mcfsim.h>
-#include <asm/thread_info.h>
 
 /*****************************************************************************/
 

@@ -10,7 +10,6 @@
  */
 #include <linux/if_arp.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <net/x25.h>
 
 LIST_HEAD(x25_forward_list);

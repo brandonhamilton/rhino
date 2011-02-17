@@ -608,13 +608,16 @@ int rt_ioctl_siwap(struct net_device *dev,
 	/* Prevent to connect AP again in STAMlmePeriodicExec */
 	pAdapter->MlmeAux.AutoReconnectSsidLen = 32;
 
+	memset(Bssid, 0, MAC_ADDR_LEN);
 	memcpy(Bssid, ap_addr->sa_data, MAC_ADDR_LEN);
 	MlmeEnqueue(pAdapter,
 		    MLME_CNTL_STATE_MACHINE,
 		    OID_802_11_BSSID,
 		    sizeof(NDIS_802_11_MAC_ADDRESS), (void *) & Bssid);
 
-	DBGPRINT(RT_DEBUG_TRACE, ("IOCTL::SIOCSIWAP %pM\n", Bssid));
+	DBGPRINT(RT_DEBUG_TRACE,
+		 ("IOCTL::SIOCSIWAP %02x:%02x:%02x:%02x:%02x:%02x\n", Bssid[0],
+		  Bssid[1], Bssid[2], Bssid[3], Bssid[4], Bssid[5]));
 
 	return 0;
 }
@@ -972,7 +975,10 @@ int rt_ioctl_giwscan(struct net_device *dev,
 		/*================================ */
 		memset(&iwe, 0, sizeof(iwe));
 		iwe.cmd = SIOCGIWFREQ;
-		iwe.u.freq.m = pAdapter->ScanTab.BssEntry[i].Channel;
+		if (INFRA_ON(pAdapter) || ADHOC_ON(pAdapter))
+			iwe.u.freq.m = pAdapter->ScanTab.BssEntry[i].Channel;
+		else
+			iwe.u.freq.m = pAdapter->ScanTab.BssEntry[i].Channel;
 		iwe.u.freq.e = 0;
 		iwe.u.freq.i = 0;
 
@@ -1044,7 +1050,8 @@ int rt_ioctl_giwscan(struct net_device *dev,
 			if (tmpRate == 0x6c
 			    && pAdapter->ScanTab.BssEntry[i].HtCapabilityLen >
 			    0) {
-				int rate_count = ARRAY_SIZE(ralinkrate);
+				int rate_count =
+				    sizeof(ralinkrate) / sizeof(__s32);
 				struct rt_ht_cap_info capInfo =
 				    pAdapter->ScanTab.BssEntry[i].HtCapability.
 				    HtCapInfo;
@@ -1057,11 +1064,10 @@ int rt_ioctl_giwscan(struct net_device *dev,
 				int rate_index =
 				    12 + ((u8)capInfo.ChannelWidth * 24) +
 				    ((u8)shortGI * 48) + ((u8)maxMCS);
-
 				if (rate_index < 0)
 					rate_index = 0;
-				if (rate_index >= rate_count)
-					rate_index = rate_count - 1;
+				if (rate_index > rate_count)
+					rate_index = rate_count;
 				iwe.u.bitrate.value =
 				    ralinkrate[rate_index] * 500000;
 			}
@@ -1511,8 +1517,11 @@ void getBaInfo(struct rt_rtmp_adapter *pAd, char *pOutBuf)
 		if (((pEntry->ValidAsCLI || pEntry->ValidAsApCli)
 		     && (pEntry->Sst == SST_ASSOC))
 		    || (pEntry->ValidAsWDS) || (pEntry->ValidAsMesh)) {
-			sprintf(pOutBuf + strlen(pOutBuf), "\n%pM (Aid = %d) "
-				"(AP) -\n", pEntry->Addr, pEntry->Aid);
+			sprintf(pOutBuf + strlen(pOutBuf),
+				"\n%02X:%02X:%02X:%02X:%02X:%02X (Aid = %d) (AP) -\n",
+				pEntry->Addr[0], pEntry->Addr[1],
+				pEntry->Addr[2], pEntry->Addr[3],
+				pEntry->Addr[4], pEntry->Addr[5], pEntry->Aid);
 
 			sprintf(pOutBuf, "%s[Recipient]\n", pOutBuf);
 			for (j = 0; j < NUM_OF_TID; j++) {
@@ -2332,7 +2341,7 @@ int rt_ioctl_giwrate(struct net_device *dev,
 */
 	GET_PAD_FROM_NET_DEV(pAd, dev);
 
-	rate_count = ARRAY_SIZE(ralinkrate);
+	rate_count = sizeof(ralinkrate) / sizeof(__s32);
 	/*check if the interface is down */
 	if (!RTMP_TEST_FLAG(pAd, fRTMP_ADAPTER_INTERRUPT_IN_USE)) {
 		DBGPRINT(RT_DEBUG_TRACE, ("INFO::Network is down!\n"));
@@ -2363,8 +2372,8 @@ int rt_ioctl_giwrate(struct net_device *dev,
 	if (rate_index < 0)
 		rate_index = 0;
 
-	if (rate_index >= rate_count)
-		rate_index = rate_count - 1;
+	if (rate_index > rate_count)
+		rate_index = rate_count;
 
 	wrqu->bitrate.value = ralinkrate[rate_index] * 500000;
 	wrqu->bitrate.disabled = 0;
@@ -2517,8 +2526,6 @@ int rt28xx_sta_ioctl(IN struct net_device *net_dev,
 			Status =
 			    copy_to_user(erq->pointer, pAd->nickname,
 					 erq->length);
-			if (Status)
-				Status = -EFAULT;
 			break;
 		}
 	case SIOCGIWRATE:	/*get default bit rate (bps) */

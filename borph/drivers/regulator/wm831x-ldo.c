@@ -19,7 +19,6 @@
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
-#include <linux/slab.h>
 
 #include <linux/mfd/wm831x/core.h>
 #include <linux/mfd/wm831x/regulator.h>
@@ -215,7 +214,8 @@ static int wm831x_gp_ldo_set_mode(struct regulator_dev *rdev,
 
 	case REGULATOR_MODE_IDLE:
 		ret = wm831x_set_bits(wm831x, ctrl_reg,
-				      WM831X_LDO1_LP_MODE, 0);
+				      WM831X_LDO1_LP_MODE,
+				      WM831X_LDO1_LP_MODE);
 		if (ret < 0)
 			return ret;
 
@@ -224,12 +224,10 @@ static int wm831x_gp_ldo_set_mode(struct regulator_dev *rdev,
 				      WM831X_LDO1_ON_MODE);
 		if (ret < 0)
 			return ret;
-		break;
 
 	case REGULATOR_MODE_STANDBY:
 		ret = wm831x_set_bits(wm831x, ctrl_reg,
-				      WM831X_LDO1_LP_MODE,
-				      WM831X_LDO1_LP_MODE);
+				      WM831X_LDO1_LP_MODE, 0);
 		if (ret < 0)
 			return ret;
 
@@ -373,8 +371,6 @@ static __devexit int wm831x_gp_ldo_remove(struct platform_device *pdev)
 	struct wm831x_ldo *ldo = platform_get_drvdata(pdev);
 	struct wm831x *wm831x = ldo->wm831x;
 
-	platform_set_drvdata(pdev, NULL);
-
 	wm831x_free_irq(wm831x, platform_get_irq_byname(pdev, "UV"), ldo);
 	regulator_unregister(ldo->regulator);
 	kfree(ldo);
@@ -387,7 +383,6 @@ static struct platform_driver wm831x_gp_ldo_driver = {
 	.remove = __devexit_p(wm831x_gp_ldo_remove),
 	.driver		= {
 		.name	= "wm831x-ldo",
-		.owner	= THIS_MODULE,
 	},
 };
 
@@ -475,7 +470,7 @@ static unsigned int wm831x_aldo_get_mode(struct regulator_dev *rdev)
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
 	int on_reg = ldo->base + WM831X_LDO_ON_CONTROL;
-	int ret;
+	unsigned int ret;
 
 	ret = wm831x_reg_read(wm831x, on_reg);
 	if (ret < 0)
@@ -645,7 +640,6 @@ static struct platform_driver wm831x_aldo_driver = {
 	.remove = __devexit_p(wm831x_aldo_remove),
 	.driver		= {
 		.name	= "wm831x-aldo",
-		.owner	= THIS_MODULE,
 	},
 };
 
@@ -817,7 +811,6 @@ static struct platform_driver wm831x_alive_ldo_driver = {
 	.remove = __devexit_p(wm831x_alive_ldo_remove),
 	.driver		= {
 		.name	= "wm831x-alive-ldo",
-		.owner	= THIS_MODULE,
 	},
 };
 

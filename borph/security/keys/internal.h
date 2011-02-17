@@ -15,6 +15,11 @@
 #include <linux/sched.h>
 #include <linux/key-type.h>
 
+static inline __attribute__((format(printf, 1, 2)))
+void no_printk(const char *fmt, ...)
+{
+}
+
 #ifdef __KDEBUG
 #define kenter(FMT, ...) \
 	printk(KERN_DEBUG "==> %s("FMT")\n", __func__, ##__VA_ARGS__)
@@ -82,16 +87,7 @@ extern wait_queue_head_t request_key_conswq;
 extern struct key_type *key_type_lookup(const char *type);
 extern void key_type_put(struct key_type *ktype);
 
-extern int __key_link_begin(struct key *keyring,
-			    const struct key_type *type,
-			    const char *description,
-			    struct keyring_list **_prealloc);
-extern int __key_link_check_live_key(struct key *keyring, struct key *key);
-extern void __key_link(struct key *keyring, struct key *key,
-		       struct keyring_list **_prealloc);
-extern void __key_link_end(struct key *keyring,
-			   struct key_type *type,
-			   struct keyring_list *prealloc);
+extern int __key_link(struct key *keyring, struct key *key);
 
 extern key_ref_t __keyring_search_one(key_ref_t keyring_ref,
 				      const struct key_type *type,
@@ -109,10 +105,6 @@ extern key_ref_t keyring_search_aux(key_ref_t keyring_ref,
 				    const void *description,
 				    key_match_func_t match);
 
-extern key_ref_t search_my_process_keyrings(struct key_type *type,
-					    const void *description,
-					    key_match_func_t match,
-					    const struct cred *cred);
 extern key_ref_t search_process_keyrings(struct key_type *type,
 					 const void *description,
 					 key_match_func_t match,
@@ -123,7 +115,6 @@ extern struct key *find_keyring_by_name(const char *name, bool skip_perm_check);
 extern int install_user_keyrings(void);
 extern int install_thread_keyring_to_cred(struct cred *);
 extern int install_process_keyring_to_cred(struct cred *);
-extern int install_session_keyring_to_cred(struct cred *, struct key *);
 
 extern struct key *request_key_and_link(struct key_type *type,
 					const char *description,
@@ -133,7 +124,6 @@ extern struct key *request_key_and_link(struct key_type *type,
 					struct key *dest_keyring,
 					unsigned long flags);
 
-extern int lookup_user_key_possessed(const struct key *key, const void *target);
 extern key_ref_t lookup_user_key(key_serial_t id, unsigned long flags,
 				 key_perm_t perm);
 #define KEY_LOOKUP_CREATE	0x01

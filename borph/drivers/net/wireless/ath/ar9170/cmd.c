@@ -48,7 +48,8 @@ int ar9170_write_mem(struct ar9170 *ar, const __le32 *data, size_t len)
 
 	err = ar->exec_cmd(ar, AR9170_CMD_WMEM, len, (u8 *) data, 0, NULL);
 	if (err)
-		wiphy_debug(ar->hw->wiphy, "writing memory failed\n");
+		printk(KERN_DEBUG "%s: writing memory failed\n",
+		       wiphy_name(ar->hw->wiphy));
 	return err;
 }
 
@@ -66,8 +67,8 @@ int ar9170_write_reg(struct ar9170 *ar, const u32 reg, const u32 val)
 	err = ar->exec_cmd(ar, AR9170_CMD_WREG, sizeof(buf),
 			   (u8 *) buf, 0, NULL);
 	if (err)
-		wiphy_debug(ar->hw->wiphy, "writing reg %#x (val %#x) failed\n",
-			    reg, val);
+		printk(KERN_DEBUG "%s: writing reg %#x (val %#x) failed\n",
+		       wiphy_name(ar->hw->wiphy), reg, val);
 	return err;
 }
 

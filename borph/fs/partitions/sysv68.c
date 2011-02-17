@@ -46,7 +46,7 @@ struct slice {
 };
 
 
-int sysv68_partition(struct parsed_partitions *state)
+int sysv68_partition(struct parsed_partitions *state, struct block_device *bdev)
 {
 	int i, slices;
 	int slot = 1;
@@ -54,9 +54,8 @@ int sysv68_partition(struct parsed_partitions *state)
 	unsigned char *data;
 	struct dkblk0 *b;
 	struct slice *slice;
-	char tmp[64];
 
-	data = read_part_sector(state, 0, &sect);
+	data = read_dev_sector(bdev, 0, &sect);
 	if (!data)
 		return -1;
 
@@ -69,13 +68,12 @@ int sysv68_partition(struct parsed_partitions *state)
 	i = be32_to_cpu(b->dk_ios.ios_slcblk);
 	put_dev_sector(sect);
 
-	data = read_part_sector(state, i, &sect);
+	data = read_dev_sector(bdev, i, &sect);
 	if (!data)
 		return -1;
 
 	slices -= 1; /* last slice is the whole disk */
-	snprintf(tmp, sizeof(tmp), "sysV68: %s(s%u)", state->name, slices);
-	strlcat(state->pp_buf, tmp, PAGE_SIZE);
+	printk("sysV68: %s(s%u)", state->name, slices);
 	slice = (struct slice *)data;
 	for (i = 0; i < slices; i++, slice++) {
 		if (slot == state->limit)
@@ -84,12 +82,11 @@ int sysv68_partition(struct parsed_partitions *state)
 			put_partition(state, slot,
 				be32_to_cpu(slice->blkoff),
 				be32_to_cpu(slice->nblocks));
-			snprintf(tmp, sizeof(tmp), "(s%u)", i);
-			strlcat(state->pp_buf, tmp, PAGE_SIZE);
+			printk("(s%u)", i);
 		}
 		slot++;
 	}
-	strlcat(state->pp_buf, "\n", PAGE_SIZE);
+	printk("\n");
 	put_dev_sector(sect);
 	return 1;
 }

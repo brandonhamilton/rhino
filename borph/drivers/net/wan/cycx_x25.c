@@ -634,12 +634,11 @@ static netdev_tx_t cycx_netdevice_hard_start_xmit(struct sk_buff *skb,
 	}
 	} else { /* chan->protocol == ETH_P_X25 */
 		switch (skb->data[0]) {
-		case X25_IFACE_DATA:
-			break;
-		case X25_IFACE_CONNECT:
+		case 0: break;
+		case 1: /* Connect request */
 			cycx_x25_chan_connect(dev);
 			goto free_packet;
-		case X25_IFACE_DISCONNECT:
+		case 2: /* Disconnect request */
 			cycx_x25_chan_disconnect(dev);
 			goto free_packet;
 	        default:
@@ -1407,8 +1406,7 @@ static void cycx_x25_set_chan_state(struct net_device *dev, u8 state)
 			reset_timer(dev);
 
 			if (chan->protocol == ETH_P_X25)
-				cycx_x25_chan_send_event(dev,
-					X25_IFACE_CONNECT);
+				cycx_x25_chan_send_event(dev, 1);
 
 			break;
 		case WAN_CONNECTING:
@@ -1426,8 +1424,7 @@ static void cycx_x25_set_chan_state(struct net_device *dev, u8 state)
 			}
 
 			if (chan->protocol == ETH_P_X25)
-				cycx_x25_chan_send_event(dev,
-					X25_IFACE_DISCONNECT);
+				cycx_x25_chan_send_event(dev, 2);
 
 			netif_wake_queue(dev);
 			break;

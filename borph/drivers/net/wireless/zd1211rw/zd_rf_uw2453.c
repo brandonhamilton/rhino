@@ -19,7 +19,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 
 #include "zd_rf.h"
 #include "zd_usb.h"

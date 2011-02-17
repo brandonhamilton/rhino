@@ -15,6 +15,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/rbtree.h>
 #include <linux/crc32.h>
+#include <linux/slab.h>
 #include <linux/pagemap.h>
 #include "nodelist.h"
 
@@ -420,7 +421,7 @@ struct jffs2_inode_cache *jffs2_get_ino_cache(struct jffs2_sb_info *c, uint32_t 
 {
 	struct jffs2_inode_cache *ret;
 
-	ret = c->inocache_list[ino % c->inocache_hashsize];
+	ret = c->inocache_list[ino % INOCACHE_HASHSIZE];
 	while (ret && ret->ino < ino) {
 		ret = ret->next;
 	}
@@ -441,7 +442,7 @@ void jffs2_add_ino_cache (struct jffs2_sb_info *c, struct jffs2_inode_cache *new
 
 	dbg_inocache("add %p (ino #%u)\n", new, new->ino);
 
-	prev = &c->inocache_list[new->ino % c->inocache_hashsize];
+	prev = &c->inocache_list[new->ino % INOCACHE_HASHSIZE];
 
 	while ((*prev) && (*prev)->ino < new->ino) {
 		prev = &(*prev)->next;
@@ -462,7 +463,7 @@ void jffs2_del_ino_cache(struct jffs2_sb_info *c, struct jffs2_inode_cache *old)
 	dbg_inocache("del %p (ino #%u)\n", old, old->ino);
 	spin_lock(&c->inocache_lock);
 
-	prev = &c->inocache_list[old->ino % c->inocache_hashsize];
+	prev = &c->inocache_list[old->ino % INOCACHE_HASHSIZE];
 
 	while ((*prev) && (*prev)->ino < old->ino) {
 		prev = &(*prev)->next;
@@ -487,7 +488,7 @@ void jffs2_free_ino_caches(struct jffs2_sb_info *c)
 	int i;
 	struct jffs2_inode_cache *this, *next;
 
-	for (i=0; i < c->inocache_hashsize; i++) {
+	for (i=0; i<INOCACHE_HASHSIZE; i++) {
 		this = c->inocache_list[i];
 		while (this) {
 			next = this->next;

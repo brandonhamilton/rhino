@@ -18,24 +18,25 @@
 #include <linux/io.h>
 #include <mach-landisk/mach/iodata_landisk.h>
 
-static void disable_landisk_irq(struct irq_data *data)
+static void disable_landisk_irq(unsigned int irq)
 {
-	unsigned char mask = 0xff ^ (0x01 << (data->irq - 5));
+	unsigned char mask = 0xff ^ (0x01 << (irq - 5));
 
-	__raw_writeb(__raw_readb(PA_IMASK) & mask, PA_IMASK);
+	ctrl_outb(ctrl_inb(PA_IMASK) & mask, PA_IMASK);
 }
 
-static void enable_landisk_irq(struct irq_data *data)
+static void enable_landisk_irq(unsigned int irq)
 {
-	unsigned char value = (0x01 << (data->irq - 5));
+	unsigned char value = (0x01 << (irq - 5));
 
-	__raw_writeb(__raw_readb(PA_IMASK) | value, PA_IMASK);
+	ctrl_outb(ctrl_inb(PA_IMASK) | value, PA_IMASK);
 }
 
 static struct irq_chip landisk_irq_chip __read_mostly = {
 	.name		= "LANDISK",
-	.irq_mask	= disable_landisk_irq,
-	.irq_unmask	= enable_landisk_irq,
+	.mask		= disable_landisk_irq,
+	.unmask		= enable_landisk_irq,
+	.mask_ack	= disable_landisk_irq,
 };
 
 /*
@@ -49,7 +50,7 @@ void __init init_landisk_IRQ(void)
 		disable_irq_nosync(i);
 		set_irq_chip_and_handler_name(i, &landisk_irq_chip,
 					      handle_level_irq, "level");
-		enable_landisk_irq(irq_get_irq_data(i));
+		enable_landisk_irq(i);
 	}
-	__raw_writeb(0x00, PA_PWRINT_CLR);
+	ctrl_outb(0x00, PA_PWRINT_CLR);
 }

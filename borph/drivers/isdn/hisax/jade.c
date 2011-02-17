@@ -17,7 +17,6 @@
 #include "jade.h"
 #include "isdnl1.h"
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 
 
 int

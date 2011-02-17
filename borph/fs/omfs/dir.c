@@ -25,10 +25,11 @@ static struct buffer_head *omfs_get_bucket(struct inode *dir,
 		const char *name, int namelen, int *ofs)
 {
 	int nbuckets = (dir->i_size - OMFS_DIR_START)/8;
+	int block = clus_to_blk(OMFS_SB(dir->i_sb), dir->i_ino);
 	int bucket = omfs_hash(name, namelen, nbuckets);
 
 	*ofs = OMFS_DIR_START + bucket * 8;
-	return omfs_bread(dir->i_sb, dir->i_ino);
+	return sb_bread(dir->i_sb, block);
 }
 
 static struct buffer_head *omfs_scan_list(struct inode *dir, u64 block,
@@ -41,7 +42,8 @@ static struct buffer_head *omfs_scan_list(struct inode *dir, u64 block,
 	*prev_block = ~0;
 
 	while (block != ~0) {
-		bh = omfs_bread(dir->i_sb, block);
+		bh = sb_bread(dir->i_sb,
+			clus_to_blk(OMFS_SB(dir->i_sb), block));
 		if (!bh) {
 			err = -EIO;
 			goto err;
@@ -84,10 +86,11 @@ static struct buffer_head *omfs_find_entry(struct inode *dir,
 int omfs_make_empty(struct inode *inode, struct super_block *sb)
 {
 	struct omfs_sb_info *sbi = OMFS_SB(sb);
+	int block = clus_to_blk(sbi, inode->i_ino);
 	struct buffer_head *bh;
 	struct omfs_inode *oi;
 
-	bh = omfs_bread(sb, inode->i_ino);
+	bh = sb_bread(sb, block);
 	if (!bh)
 		return -ENOMEM;
 
@@ -131,7 +134,7 @@ static int omfs_add_link(struct dentry *dentry, struct inode *inode)
 	brelse(bh);
 
 	/* now set the sibling and parent pointers on the new inode */
-	bh = omfs_bread(dir->i_sb, inode->i_ino);
+	bh = sb_bread(dir->i_sb, clus_to_blk(OMFS_SB(dir->i_sb), inode->i_ino));
 	if (!bh)
 		goto out;
 
@@ -187,7 +190,8 @@ static int omfs_delete_entry(struct dentry *dentry)
 	if (prev != ~0) {
 		/* found in middle of list, get list ptr */
 		brelse(bh);
-		bh = omfs_bread(dir->i_sb, prev);
+		bh = sb_bread(dir->i_sb,
+			clus_to_blk(OMFS_SB(dir->i_sb), prev));
 		if (!bh)
 			goto out;
 
@@ -220,7 +224,8 @@ static int omfs_dir_is_empty(struct inode *inode)
 	u64 *ptr;
 	int i;
 
-	bh = omfs_bread(inode->i_sb, inode->i_ino);
+	bh = sb_bread(inode->i_sb, clus_to_blk(OMFS_SB(inode->i_sb),
+			inode->i_ino));
 
 	if (!bh)
 		return 0;
@@ -348,7 +353,8 @@ static int omfs_fill_chain(struct file *filp, void *dirent, filldir_t filldir,
 
 	/* follow chain in this bucket */
 	while (fsblock != ~0) {
-		bh = omfs_bread(dir->i_sb, fsblock);
+		bh = sb_bread(dir->i_sb, clus_to_blk(OMFS_SB(dir->i_sb),
+				fsblock));
 		if (!bh)
 			goto out;
 
@@ -460,7 +466,7 @@ static int omfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	hchain = (filp->f_pos >> 20) - 1;
 	hindex = filp->f_pos & 0xfffff;
 
-	bh = omfs_bread(dir->i_sb, dir->i_ino);
+	bh = sb_bread(dir->i_sb, clus_to_blk(OMFS_SB(dir->i_sb), dir->i_ino));
 	if (!bh)
 		goto out;
 

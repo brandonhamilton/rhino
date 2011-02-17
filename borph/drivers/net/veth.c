@@ -9,7 +9,6 @@
  */
 
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <linux/ethtool.h>
 #include <linux/etherdevice.h>
 
@@ -35,7 +34,7 @@ struct veth_net_stats {
 
 struct veth_priv {
 	struct net_device *peer;
-	struct veth_net_stats __percpu *stats;
+	struct veth_net_stats *stats;
 	unsigned ip_summed;
 };
 
@@ -166,9 +165,7 @@ static netdev_tx_t veth_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (!(rcv->flags & IFF_UP))
 		goto tx_drop;
 
-	/* don't change ip_summed == CHECKSUM_PARTIAL, as that
-	   will cause bad checksum on forwarded packets */
-	if (skb->ip_summed == CHECKSUM_NONE)
+	if (dev->features & NETIF_F_NO_CSUM)
 		skb->ip_summed = rcv_priv->ip_summed;
 
 	length = skb->len + ETH_HLEN;
@@ -189,6 +186,7 @@ tx_drop:
 	return NETDEV_TX_OK;
 
 rx_drop:
+	kfree_skb(skb);
 	rcv_stats->rx_dropped++;
 	return NETDEV_TX_OK;
 }
@@ -252,7 +250,7 @@ static int veth_close(struct net_device *dev)
 
 static int is_valid_veth_mtu(int new_mtu)
 {
-	return new_mtu >= MIN_MTU && new_mtu <= MAX_MTU;
+	return (new_mtu >= MIN_MTU && new_mtu <= MAX_MTU);
 }
 
 static int veth_change_mtu(struct net_device *dev, int new_mtu)
@@ -265,7 +263,7 @@ static int veth_change_mtu(struct net_device *dev, int new_mtu)
 
 static int veth_dev_init(struct net_device *dev)
 {
-	struct veth_net_stats __percpu *stats;
+	struct veth_net_stats *stats;
 	struct veth_priv *priv;
 
 	stats = alloc_percpu(struct veth_net_stats);
@@ -335,17 +333,19 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 	struct veth_priv *priv;
 	char ifname[IFNAMSIZ];
 	struct nlattr *peer_tb[IFLA_MAX + 1], **tbp;
-	struct ifinfomsg *ifmp;
 	struct net *net;
 
 	/*
 	 * create and register peer first
+	 *
+	 * struct ifinfomsg is at the head of VETH_INFO_PEER, but we
+	 * skip it since no info from it is useful yet
 	 */
+
 	if (data != NULL && data[VETH_INFO_PEER] != NULL) {
 		struct nlattr *nla_peer;
 
 		nla_peer = data[VETH_INFO_PEER];
-		ifmp = nla_data(nla_peer);
 		err = nla_parse(peer_tb, IFLA_MAX,
 				nla_data(nla_peer) + sizeof(struct ifinfomsg),
 				nla_len(nla_peer) - sizeof(struct ifinfomsg),
@@ -358,10 +358,8 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 			return err;
 
 		tbp = peer_tb;
-	} else {
-		ifmp = NULL;
+	} else
 		tbp = tb;
-	}
 
 	if (tbp[IFLA_IFNAME])
 		nla_strlcpy(ifname, tbp[IFLA_IFNAME], IFNAMSIZ);
@@ -388,10 +386,6 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 		goto err_register_peer;
 
 	netif_carrier_off(peer);
-
-	err = rtnl_configure_link(peer, ifmp);
-	if (err < 0)
-		goto err_configure_peer;
 
 	/*
 	 * register dev last
@@ -434,7 +428,6 @@ static int veth_newlink(struct net *src_net, struct net_device *dev,
 err_register_dev:
 	/* nothing to do */
 err_alloc_name:
-err_configure_peer:
 	unregister_netdevice(peer);
 	return err;
 

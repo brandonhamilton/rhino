@@ -33,7 +33,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
@@ -333,8 +332,7 @@ static int pdc_common_port_start(struct ata_port *ap)
 	struct pdc_port_priv *pp;
 	int rc;
 
-	/* we use the same prd table as bmdma, allocate it */
-	rc = ata_bmdma_port_start(ap);
+	rc = ata_port_start(ap);
 	if (rc)
 		return rc;
 
@@ -500,7 +498,7 @@ static int pdc_sata_scr_write(struct ata_link *link,
 static void pdc_atapi_pkt(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	dma_addr_t sg_table = ap->bmdma_prd_dma;
+	dma_addr_t sg_table = ap->prd_dma;
 	unsigned int cdb_len = qc->dev->cdb_len;
 	u8 *cdb = qc->cdb;
 	struct pdc_port_priv *pp = ap->private_data;
@@ -588,7 +586,6 @@ static void pdc_atapi_pkt(struct ata_queued_cmd *qc)
 static void pdc_fill_sg(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	struct ata_bmdma_prd *prd = ap->bmdma_prd;
 	struct scatterlist *sg;
 	const u32 SG_COUNT_ASIC_BUG = 41*4;
 	unsigned int si, idx;
@@ -615,8 +612,8 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 			if ((offset + sg_len) > 0x10000)
 				len = 0x10000 - offset;
 
-			prd[idx].addr = cpu_to_le32(addr);
-			prd[idx].flags_len = cpu_to_le32(len & 0xffff);
+			ap->prd[idx].addr = cpu_to_le32(addr);
+			ap->prd[idx].flags_len = cpu_to_le32(len & 0xffff);
 			VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 			idx++;
@@ -625,27 +622,27 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 		}
 	}
 
-	len = le32_to_cpu(prd[idx - 1].flags_len);
+	len = le32_to_cpu(ap->prd[idx - 1].flags_len);
 
 	if (len > SG_COUNT_ASIC_BUG) {
 		u32 addr;
 
 		VPRINTK("Splitting last PRD.\n");
 
-		addr = le32_to_cpu(prd[idx - 1].addr);
-		prd[idx - 1].flags_len = cpu_to_le32(len - SG_COUNT_ASIC_BUG);
+		addr = le32_to_cpu(ap->prd[idx - 1].addr);
+		ap->prd[idx - 1].flags_len = cpu_to_le32(len - SG_COUNT_ASIC_BUG);
 		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx - 1, addr, SG_COUNT_ASIC_BUG);
 
 		addr = addr + len - SG_COUNT_ASIC_BUG;
 		len = SG_COUNT_ASIC_BUG;
-		prd[idx].addr = cpu_to_le32(addr);
-		prd[idx].flags_len = cpu_to_le32(len);
+		ap->prd[idx].addr = cpu_to_le32(addr);
+		ap->prd[idx].flags_len = cpu_to_le32(len);
 		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 		idx++;
 	}
 
-	prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
+	ap->prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
 }
 
 static void pdc_qc_prep(struct ata_queued_cmd *qc)
@@ -660,7 +657,7 @@ static void pdc_qc_prep(struct ata_queued_cmd *qc)
 		pdc_fill_sg(qc);
 		/*FALLTHROUGH*/
 	case ATA_PROT_NODATA:
-		i = pdc_pkt_header(&qc->tf, qc->ap->bmdma_prd_dma,
+		i = pdc_pkt_header(&qc->tf, qc->ap->prd_dma,
 				   qc->dev->devno, pp->pkt);
 		if (qc->tf.flags & ATA_TFLAG_LBA48)
 			i = pdc_prep_lba48(&qc->tf, pp->pkt, i);
@@ -840,7 +837,7 @@ static void pdc_error_handler(struct ata_port *ap)
 	if (!(ap->pflags & ATA_PFLAG_FROZEN))
 		pdc_reset_port(ap);
 
-	ata_sff_error_handler(ap);
+	ata_std_error_handler(ap);
 }
 
 static void pdc_post_internal_cmd(struct ata_queued_cmd *qc)
@@ -865,7 +862,7 @@ static void pdc_error_intr(struct ata_port *ap, struct ata_queued_cmd *qc,
 	if (port_status & PDC_DRIVE_ERR)
 		ac_err_mask |= AC_ERR_DEV;
 	if (port_status & (PDC_OVERRUN_ERR | PDC_UNDERRUN_ERR))
-		ac_err_mask |= AC_ERR_OTHER;
+		ac_err_mask |= AC_ERR_HSM;
 	if (port_status & (PDC2_ATA_HBA_ERR | PDC2_ATA_DMA_CNT_ERR))
 		ac_err_mask |= AC_ERR_ATA_BUS;
 	if (port_status & (PDC_PH_ERR | PDC_SH_ERR | PDC_DH_ERR | PDC2_HTO_ERR
@@ -986,7 +983,8 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 		/* check for a plug or unplug event */
 		ata_no = pdc_port_no_to_ata_no(i, is_sataii_tx4);
 		tmp = hotplug_status & (0x11 << ata_no);
-		if (tmp) {
+		if (tmp && ap &&
+		    !(ap->flags & ATA_FLAG_DISABLED)) {
 			struct ata_eh_info *ehi = &ap->link.eh_info;
 			ata_ehi_clear_desc(ehi);
 			ata_ehi_hotplugged(ehi);
@@ -998,7 +996,8 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 
 		/* check for a packet interrupt */
 		tmp = mask & (1 << (i + 1));
-		if (tmp) {
+		if (tmp && ap &&
+		    !(ap->flags & ATA_FLAG_DISABLED)) {
 			struct ata_queued_cmd *qc;
 
 			qc = ata_qc_from_tag(ap, ap->link.active_tag);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2010 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2007-2009 B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -20,28 +20,57 @@
  */
 
 #include "main.h"
-#include "bat_sysfs.h"
-#include "bat_debugfs.h"
+#include "proc.h"
+#include "log.h"
 #include "routing.h"
 #include "send.h"
-#include "originator.h"
 #include "soft-interface.h"
-#include "icmp_socket.h"
+#include "device.h"
 #include "translation-table.h"
 #include "hard-interface.h"
 #include "types.h"
 #include "vis.h"
 #include "hash.h"
+#include "compat.h"
 
 struct list_head if_list;
+struct hlist_head forw_bat_list;
+struct hlist_head forw_bcast_list;
+struct hashtable_t *orig_hash;
 
-unsigned char broadcast_addr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+DEFINE_SPINLOCK(orig_hash_lock);
+DEFINE_SPINLOCK(forw_bat_list_lock);
+DEFINE_SPINLOCK(forw_bcast_list_lock);
+
+atomic_t originator_interval;
+atomic_t vis_interval;
+atomic_t aggregation_enabled;
+int16_t num_hna;
+int16_t num_ifs;
+
+struct net_device *soft_device;
+
+static struct task_struct *kthread_task;
+
+unsigned char broadcastAddr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+atomic_t module_state;
 
 struct workqueue_struct *bat_event_workqueue;
 
-static int __init batman_init(void)
+int init_module(void)
 {
+	int retval;
+
 	INIT_LIST_HEAD(&if_list);
+	INIT_HLIST_HEAD(&forw_bat_list);
+	INIT_HLIST_HEAD(&forw_bcast_list);
+
+	atomic_set(&module_state, MODULE_INACTIVE);
+
+	atomic_set(&originator_interval, 1000);
+	atomic_set(&vis_interval, 1000);/* TODO: raise this later, this is only
+					 * for debugging now. */
+	atomic_set(&aggregation_enabled, 1);
 
 	/* the name should not be longer than 10 chars - see
 	 * http://lwn.net/Articles/23634/ */
@@ -50,89 +79,129 @@ static int __init batman_init(void)
 	if (!bat_event_workqueue)
 		return -ENOMEM;
 
-	bat_socket_init();
-	debugfs_init();
+	retval = setup_procfs();
+	if (retval < 0)
+		return retval;
+
+	bat_device_init();
+
+	/* initialize layer 2 interface */
+	soft_device = alloc_netdev(sizeof(struct bat_priv) , "bat%d",
+				   interface_setup);
+
+	if (!soft_device) {
+		debug_log(LOG_TYPE_CRIT, "Unable to allocate the batman interface\n");
+		goto end;
+	}
+
+	retval = register_netdev(soft_device);
+
+	if (retval < 0) {
+		debug_log(LOG_TYPE_CRIT, "Unable to register the batman interface: %i\n", retval);
+		goto free_soft_device;
+	}
 
 	register_netdevice_notifier(&hard_if_notifier);
 
-	pr_info("B.A.T.M.A.N. advanced %s%s (compatibility version %i) "
-		"loaded\n", SOURCE_VERSION, REVISION_VERSION_STR,
-		COMPAT_VERSION);
+	debug_log(LOG_TYPE_CRIT, "B.A.T.M.A.N. advanced %s%s (compatibility version %i) loaded \n",
+	          SOURCE_VERSION, REVISION_VERSION_STR, COMPAT_VERSION);
 
 	return 0;
+
+free_soft_device:
+	free_netdev(soft_device);
+	soft_device = NULL;
+end:
+	return -ENOMEM;
 }
 
-static void __exit batman_exit(void)
+void cleanup_module(void)
 {
-	debugfs_destroy();
-	unregister_netdevice_notifier(&hard_if_notifier);
-	hardif_remove_interfaces();
+	shutdown_module();
 
-	flush_workqueue(bat_event_workqueue);
+	if (soft_device) {
+		unregister_netdev(soft_device);
+		soft_device = NULL;
+	}
+
+	unregister_netdevice_notifier(&hard_if_notifier);
+	cleanup_procfs();
+
 	destroy_workqueue(bat_event_workqueue);
 	bat_event_workqueue = NULL;
-
-	rcu_barrier();
 }
 
-int mesh_init(struct net_device *soft_iface)
+/* activates the module, creates bat device, starts timer ... */
+void activate_module(void)
 {
-	struct bat_priv *bat_priv = netdev_priv(soft_iface);
-
-	spin_lock_init(&bat_priv->orig_hash_lock);
-	spin_lock_init(&bat_priv->forw_bat_list_lock);
-	spin_lock_init(&bat_priv->forw_bcast_list_lock);
-	spin_lock_init(&bat_priv->hna_lhash_lock);
-	spin_lock_init(&bat_priv->hna_ghash_lock);
-	spin_lock_init(&bat_priv->vis_hash_lock);
-	spin_lock_init(&bat_priv->vis_list_lock);
-
-	INIT_HLIST_HEAD(&bat_priv->forw_bat_list);
-	INIT_HLIST_HEAD(&bat_priv->forw_bcast_list);
-
-	if (originator_init(bat_priv) < 1)
+	if (originator_init() < 1)
 		goto err;
 
-	if (hna_local_init(bat_priv) < 1)
+	if (hna_local_init() < 1)
 		goto err;
 
-	if (hna_global_init(bat_priv) < 1)
+	if (hna_global_init() < 1)
 		goto err;
 
-	hna_local_add(soft_iface, soft_iface->dev_addr);
+	hna_local_add(soft_device->dev_addr);
 
-	if (vis_init(bat_priv) < 1)
+	if (bat_device_setup() < 1)
+		goto end;
+
+	if (vis_init() < 1)
 		goto err;
 
-	atomic_set(&bat_priv->mesh_state, MESH_ACTIVE);
+	/* (re)start kernel thread for packet processing */
+	if (!kthread_task) {
+		kthread_task = kthread_run(packet_recv_thread, NULL, "batman-adv");
+
+		if (IS_ERR(kthread_task)) {
+			debug_log(LOG_TYPE_CRIT, "Unable to start packet receive thread\n");
+			kthread_task = NULL;
+		}
+	}
+
+	update_min_mtu();
+	atomic_set(&module_state, MODULE_ACTIVE);
 	goto end;
 
 err:
-	pr_err("Unable to allocate memory for mesh information structures: "
-	       "out of mem ?\n");
-	mesh_free(soft_iface);
-	return -1;
-
+	debug_log(LOG_TYPE_CRIT, "Unable to allocate memory for mesh information structures: out of mem ?\n");
+	shutdown_module();
 end:
-	return 0;
+	return;
 }
 
-void mesh_free(struct net_device *soft_iface)
+/* shuts down the whole module.*/
+void shutdown_module(void)
 {
-	struct bat_priv *bat_priv = netdev_priv(soft_iface);
+	atomic_set(&module_state, MODULE_DEACTIVATING);
 
-	atomic_set(&bat_priv->mesh_state, MESH_DEACTIVATING);
+	purge_outstanding_packets();
+	flush_workqueue(bat_event_workqueue);
 
-	purge_outstanding_packets(bat_priv, NULL);
+	vis_quit();
 
-	vis_quit(bat_priv);
+	/* deactivate kernel thread for packet processing (if running) */
+	if (kthread_task) {
+		atomic_set(&exit_cond, 1);
+		wake_up_interruptible(&thread_wait);
+		kthread_stop(kthread_task);
 
-	originator_free(bat_priv);
+		kthread_task = NULL;
+	}
 
-	hna_local_free(bat_priv);
-	hna_global_free(bat_priv);
+	originator_free();
 
-	atomic_set(&bat_priv->mesh_state, MESH_INACTIVE);
+	hna_local_free();
+	hna_global_free();
+
+	synchronize_net();
+	bat_device_destroy();
+
+	hardif_remove_interfaces();
+	synchronize_rcu();
+	atomic_set(&module_state, MODULE_INACTIVE);
 }
 
 void inc_module_count(void)
@@ -143,6 +212,12 @@ void inc_module_count(void)
 void dec_module_count(void)
 {
 	module_put(THIS_MODULE);
+}
+
+int addr_to_string(char *buff, uint8_t *addr)
+{
+	return sprintf(buff, "%02x:%02x:%02x:%02x:%02x:%02x",
+		       addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 }
 
 /* returns 1 if they are the same originator */
@@ -176,13 +251,10 @@ int choose_orig(void *data, int32_t size)
 int is_my_mac(uint8_t *addr)
 {
 	struct batman_if *batman_if;
-
 	rcu_read_lock();
 	list_for_each_entry_rcu(batman_if, &if_list, list) {
-		if (batman_if->if_status != IF_ACTIVE)
-			continue;
-
-		if (compare_orig(batman_if->net_dev->dev_addr, addr)) {
+		if ((batman_if->net_dev) &&
+		    (compare_orig(batman_if->net_dev->dev_addr, addr))) {
 			rcu_read_unlock();
 			return 1;
 		}
@@ -201,9 +273,6 @@ int is_mcast(uint8_t *addr)
 {
 	return *addr & 0x01;
 }
-
-module_init(batman_init);
-module_exit(batman_exit);
 
 MODULE_LICENSE("GPL");
 

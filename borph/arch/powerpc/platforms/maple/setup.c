@@ -21,6 +21,7 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/tty.h>
 #include <linux/string.h>
@@ -41,7 +42,7 @@
 #include <linux/smp.h>
 #include <linux/bitops.h>
 #include <linux/of_device.h>
-#include <linux/memblock.h>
+#include <linux/lmb.h>
 
 #include <asm/processor.h>
 #include <asm/sections.h>
@@ -358,7 +359,6 @@ static int __init maple_cpc925_edac_setup(void)
 	model = (const unsigned char *)of_get_property(np, "model", NULL);
 	if (!model) {
 		printk(KERN_ERR "%s: Unabel to get model info\n", __func__);
-		of_node_put(np);
 		return -ENODEV;
 	}
 

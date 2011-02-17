@@ -29,16 +29,13 @@
 #include <linux/i2c.h>
 
 #define MAX_CHIPS 10
-#define STUB_FUNC (I2C_FUNC_SMBUS_QUICK | I2C_FUNC_SMBUS_BYTE | \
-		   I2C_FUNC_SMBUS_BYTE_DATA | I2C_FUNC_SMBUS_WORD_DATA | \
-		   I2C_FUNC_SMBUS_I2C_BLOCK)
 
 static unsigned short chip_addr[MAX_CHIPS];
 module_param_array(chip_addr, ushort, NULL, S_IRUGO);
 MODULE_PARM_DESC(chip_addr,
 		 "Chip addresses (up to 10, between 0x03 and 0x77)");
 
-static unsigned long functionality = STUB_FUNC;
+static unsigned long functionality = ~0UL;
 module_param(functionality, ulong, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(functionality, "Override functionality bitfield");
 
@@ -159,7 +156,9 @@ static s32 stub_xfer(struct i2c_adapter * adap, u16 addr, unsigned short flags,
 
 static u32 stub_func(struct i2c_adapter *adapter)
 {
-	return STUB_FUNC & functionality;
+	return (I2C_FUNC_SMBUS_QUICK | I2C_FUNC_SMBUS_BYTE |
+		I2C_FUNC_SMBUS_BYTE_DATA | I2C_FUNC_SMBUS_WORD_DATA |
+		I2C_FUNC_SMBUS_I2C_BLOCK) & functionality;
 }
 
 static const struct i2c_algorithm smbus_algorithm = {

@@ -17,7 +17,6 @@ gconf.glade.h
 #
 conf
 mconf
-nconf
 qconf
 gconf
 kxgettext

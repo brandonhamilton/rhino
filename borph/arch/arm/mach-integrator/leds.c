@@ -27,7 +27,6 @@
 #include <linux/io.h>
 
 #include <mach/hardware.h>
-#include <mach/platform.h>
 #include <asm/leds.h>
 #include <asm/system.h>
 #include <asm/mach-types.h>

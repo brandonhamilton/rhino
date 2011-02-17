@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
@@ -1627,7 +1628,7 @@ static void cmd_complete(struct mesh_state *ms)
  * Called by midlayer with host locked to queue a new
  * request
  */
-static int mesh_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+static int mesh_queue(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct mesh_state *ms;
 
@@ -1647,8 +1648,6 @@ static int mesh_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *
 
 	return 0;
 }
-
-static DEF_SCSI_QCMD(mesh_queue)
 
 /*
  * Called to handle interrupts, either call by the interrupt
@@ -2038,11 +2037,8 @@ MODULE_DEVICE_TABLE (of, mesh_match);
 
 static struct macio_driver mesh_driver = 
 {
-	.driver = {
-		.name 		= "mesh",
-		.owner		= THIS_MODULE,
-		.of_match_table	= mesh_match,
-	},
+	.name 		= "mesh",
+	.match_table	= mesh_match,
 	.probe		= mesh_probe,
 	.remove		= mesh_remove,
 	.shutdown	= mesh_shutdown,

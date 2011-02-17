@@ -20,8 +20,7 @@ cflags-y += -G0 -pipe -mel -mnhwloop -D__SCOREEL__ \
 #
 KBUILD_AFLAGS += $(cflags-y)
 KBUILD_CFLAGS += $(cflags-y)
-KBUILD_AFLAGS_MODULE += -mlong-calls
-KBUILD_CFLAGS_MODULE += -mlong-calls
+MODFLAGS += -mlong-calls
 LDFLAGS += --oformat elf32-littlescore
 LDFLAGS_vmlinux	+= -G0 -static -nostdlib
 

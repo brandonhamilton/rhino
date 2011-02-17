@@ -35,7 +35,6 @@
 #include <linux/delay.h>
 #include <linux/sched.h>	/* signal_pending(), struct timer_list */
 #include <linux/mutex.h>
-#include <linux/workqueue.h>
 
 #if !defined(MODULE)
 	#define MY_NAME	"shpchp"
@@ -47,7 +46,6 @@ extern int shpchp_poll_mode;
 extern int shpchp_poll_time;
 extern int shpchp_debug;
 extern struct workqueue_struct *shpchp_wq;
-extern struct workqueue_struct *shpchp_ordered_wq;
 
 #define dbg(format, arg...)						\
 do {									\
@@ -123,7 +121,7 @@ struct controller {
 #define PCI_DEVICE_ID_AMD_GOLAM_7450	0x7450
 #define PCI_DEVICE_ID_AMD_POGO_7458	0x7458
 
-/* AMD PCI-X bridge registers */
+/* AMD PCIX bridge registers */
 #define PCIX_MEM_BASE_LIMIT_OFFSET	0x1C
 #define PCIX_MISCII_OFFSET		0x48
 #define PCIX_MISC_BRIDGE_ERRORS_OFFSET	0x80
@@ -335,6 +333,8 @@ struct hpc_ops {
 	int (*set_attention_status)(struct slot *slot, u8 status);
 	int (*get_latch_status)(struct slot *slot, u8 *status);
 	int (*get_adapter_status)(struct slot *slot, u8 *status);
+	int (*get_max_bus_speed)(struct slot *slot, enum pci_bus_speed *speed);
+	int (*get_cur_bus_speed)(struct slot *slot, enum pci_bus_speed *speed);
 	int (*get_adapter_speed)(struct slot *slot, enum pci_bus_speed *speed);
 	int (*get_mode1_ECC_cap)(struct slot *slot, u8 *mode);
 	int (*get_prog_int)(struct slot *slot, u8 *prog_int);

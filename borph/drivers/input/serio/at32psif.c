@@ -18,7 +18,6 @@
 #include <linux/io.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 /* PSIF register offsets */
 #define PSIF_CR				0x00
@@ -138,7 +137,7 @@ static int psif_write(struct serio *io, unsigned char val)
 	spin_lock_irqsave(&psif->lock, flags);
 
 	while (!(psif_readl(psif, SR) & PSIF_BIT(TXEMPTY)) && timeout--)
-		udelay(50);
+		msleep(10);
 
 	if (timeout >= 0) {
 		psif_writel(psif, THR, val);
@@ -353,7 +352,6 @@ static struct platform_driver psif_driver = {
 	.remove		= __exit_p(psif_remove),
 	.driver		= {
 		.name	= "atmel_psif",
-		.owner	= THIS_MODULE,
 	},
 	.suspend	= psif_suspend,
 	.resume		= psif_resume,

@@ -11,7 +11,6 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/nfs_fs.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/sunrpc/clnt.h>
 #include <linux/vfs.h>
@@ -115,7 +114,6 @@ static struct vfsmount *try_location(struct nfs_clone_mount *mountdata,
 				     char *page, char *page2,
 				     const struct nfs4_fs_location *location)
 {
-	const size_t addr_bufsize = sizeof(struct sockaddr_storage);
 	struct vfsmount *mnt = ERR_PTR(-ENOENT);
 	char *mnt_path;
 	unsigned int maxbuflen;
@@ -127,12 +125,9 @@ static struct vfsmount *try_location(struct nfs_clone_mount *mountdata,
 	mountdata->mnt_path = mnt_path;
 	maxbuflen = mnt_path - 1 - page2;
 
-	mountdata->addr = kmalloc(addr_bufsize, GFP_KERNEL);
-	if (mountdata->addr == NULL)
-		return ERR_PTR(-ENOMEM);
-
 	for (s = 0; s < location->nservers; s++) {
 		const struct nfs4_string *buf = &location->servers[s];
+		struct sockaddr_storage addr;
 
 		if (buf->len <= 0 || buf->len >= maxbuflen)
 			continue;
@@ -141,10 +136,11 @@ static struct vfsmount *try_location(struct nfs_clone_mount *mountdata,
 			continue;
 
 		mountdata->addrlen = nfs_parse_server_name(buf->data, buf->len,
-				mountdata->addr, addr_bufsize);
+				(struct sockaddr *)&addr, sizeof(addr));
 		if (mountdata->addrlen == 0)
 			continue;
 
+		mountdata->addr = (struct sockaddr *)&addr;
 		rpc_set_port(mountdata->addr, NFS_PORT);
 
 		memcpy(page2, buf->data, buf->len);
@@ -159,7 +155,6 @@ static struct vfsmount *try_location(struct nfs_clone_mount *mountdata,
 		if (!IS_ERR(mnt))
 			break;
 	}
-	kfree(mountdata->addr);
 	return mnt;
 }
 
@@ -225,8 +220,8 @@ out:
 
 /*
  * nfs_do_refmount - handle crossing a referral on server
- * @mnt_parent - mountpoint of referral
  * @dentry - dentry of referral
+ * @nd - nameidata info
  *
  */
 struct vfsmount *nfs_do_refmount(const struct vfsmount *mnt_parent, struct dentry *dentry)

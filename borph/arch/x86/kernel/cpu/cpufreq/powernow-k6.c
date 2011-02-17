@@ -13,6 +13,7 @@
 #include <linux/init.h>
 #include <linux/cpufreq.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/timex.h>
 #include <linux/io.h>
 

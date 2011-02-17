@@ -474,7 +474,7 @@ static void sunsab_stop_rx(struct uart_port *port)
 {
 	struct uart_sunsab_port *up = (struct uart_sunsab_port *) port;
 
-	up->interrupt_mask0 |= SAB82532_IMR0_TCD;
+	up->interrupt_mask0 |= SAB82532_ISR0_TCD;
 	writeb(up->interrupt_mask1, &up->regs->w.imr0);
 }
 
@@ -883,7 +883,7 @@ static int sunsab_console_setup(struct console *con, char *options)
 	printk("Console: ttyS%d (SAB82532)\n",
 	       (sunsab_reg.minor - 64) + con->index);
 
-	sunserial_console_termios(con, up->port.dev->of_node);
+	sunserial_console_termios(con, to_of_device(up->port.dev)->node);
 
 	switch (con->cflag & CBAUD) {
 	case B150: baud = 150; break;
@@ -954,7 +954,7 @@ static inline struct console *SUNSAB_CONSOLE(void)
 #endif
 
 static int __devinit sunsab_init_one(struct uart_sunsab_port *up,
-				     struct platform_device *op,
+				     struct of_device *op,
 				     unsigned long offset,
 				     int line)
 {
@@ -969,7 +969,7 @@ static int __devinit sunsab_init_one(struct uart_sunsab_port *up,
 		return -ENOMEM;
 	up->regs = (union sab82532_async_regs __iomem *) up->port.membase;
 
-	up->port.irq = op->archdata.irqs[0];
+	up->port.irq = op->irqs[0];
 
 	up->port.fifosize = SAB82532_XMIT_FIFO_SIZE;
 	up->port.iotype = UPIO_MEM;
@@ -1006,7 +1006,7 @@ static int __devinit sunsab_init_one(struct uart_sunsab_port *up,
 	return 0;
 }
 
-static int __devinit sab_probe(struct platform_device *op, const struct of_device_id *match)
+static int __devinit sab_probe(struct of_device *op, const struct of_device_id *match)
 {
 	static int inst;
 	struct uart_sunsab_port *up;
@@ -1026,11 +1026,11 @@ static int __devinit sab_probe(struct platform_device *op, const struct of_devic
 	if (err)
 		goto out1;
 
-	sunserial_console_match(SUNSAB_CONSOLE(), op->dev.of_node,
+	sunserial_console_match(SUNSAB_CONSOLE(), op->node,
 				&sunsab_reg, up[0].port.line,
 				false);
 
-	sunserial_console_match(SUNSAB_CONSOLE(), op->dev.of_node,
+	sunserial_console_match(SUNSAB_CONSOLE(), op->node,
 				&sunsab_reg, up[1].port.line,
 				false);
 
@@ -1062,7 +1062,7 @@ out:
 	return err;
 }
 
-static int __devexit sab_remove(struct platform_device *op)
+static int __devexit sab_remove(struct of_device *op)
 {
 	struct uart_sunsab_port *up = dev_get_drvdata(&op->dev);
 
@@ -1093,11 +1093,8 @@ static const struct of_device_id sab_match[] = {
 MODULE_DEVICE_TABLE(of, sab_match);
 
 static struct of_platform_driver sab_driver = {
-	.driver = {
-		.name = "sab",
-		.owner = THIS_MODULE,
-		.of_match_table = sab_match,
-	},
+	.name		= "sab",
+	.match_table	= sab_match,
 	.probe		= sab_probe,
 	.remove		= __devexit_p(sab_remove),
 };
@@ -1130,12 +1127,12 @@ static int __init sunsab_init(void)
 		}
 	}
 
-	return of_register_platform_driver(&sab_driver);
+	return of_register_driver(&sab_driver, &of_bus_type);
 }
 
 static void __exit sunsab_exit(void)
 {
-	of_unregister_platform_driver(&sab_driver);
+	of_unregister_driver(&sab_driver);
 	if (sunsab_reg.nr) {
 		sunserial_unregister_minors(&sunsab_reg, sunsab_reg.nr);
 	}

@@ -19,7 +19,6 @@
 #include <linux/highmem.h>
 #include <linux/bootmem.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <linux/list.h>
@@ -491,7 +490,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 		}
 		read_unlock(&kclist_lock);
 
-		if (&m->list == &kclist_head) {
+		if (m == NULL) {
 			if (clear_user(buffer, tsz))
 				return -EFAULT;
 		} else if (is_vmalloc_or_module_addr((void *)start)) {
@@ -558,7 +557,6 @@ static int open_kcore(struct inode *inode, struct file *filp)
 static const struct file_operations proc_kcore_operations = {
 	.read		= read_kcore,
 	.open		= open_kcore,
-	.llseek		= generic_file_llseek,
 };
 
 #ifdef CONFIG_MEMORY_HOTPLUG
@@ -588,7 +586,7 @@ static struct kcore_list kcore_text;
  */
 static void __init proc_kcore_text_init(void)
 {
-	kclist_add(&kcore_text, _text, _end - _text, KCORE_TEXT);
+	kclist_add(&kcore_text, _stext, _end - _stext, KCORE_TEXT);
 }
 #else
 static void __init proc_kcore_text_init(void)

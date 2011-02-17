@@ -41,7 +41,7 @@ static int node_req(struct firedtv *fdtv, u64 addr, void *data, size_t len,
 	return rcode != RCODE_COMPLETE ? -EIO : 0;
 }
 
-static int node_lock(struct firedtv *fdtv, u64 addr, void *data)
+static int node_lock(struct firedtv *fdtv, u64 addr, __be32 data[])
 {
 	return node_req(fdtv, addr, data, 8, TCODE_LOCK_COMPARE_SWAP);
 }
@@ -194,16 +194,22 @@ static const struct firedtv_backend backend = {
 
 static void handle_fcp(struct fw_card *card, struct fw_request *request,
 		       int tcode, int destination, int source, int generation,
-		       unsigned long long offset, void *payload, size_t length,
-		       void *callback_data)
+		       int speed, unsigned long long offset,
+		       void *payload, size_t length, void *callback_data)
 {
 	struct firedtv *f, *fdtv = NULL;
 	struct fw_device *device;
 	unsigned long flags;
 	int su;
 
-	if (length < 2 || (((u8 *)payload)[0] & 0xf0) != 0)
+	if ((tcode != TCODE_WRITE_QUADLET_REQUEST &&
+	     tcode != TCODE_WRITE_BLOCK_REQUEST) ||
+	    offset != CSR_REGISTER_BASE + CSR_FCP_RESPONSE ||
+	    length == 0 ||
+	    (((u8 *)payload)[0] & 0xf0) != 0) {
+		fw_send_response(card, request, RCODE_TYPE_ERROR);
 		return;
+	}
 
 	su = ((u8 *)payload)[1] & 0x7;
 
@@ -224,8 +230,10 @@ static void handle_fcp(struct fw_card *card, struct fw_request *request,
 	}
 	spin_unlock_irqrestore(&node_list_lock, flags);
 
-	if (fdtv)
+	if (fdtv) {
 		avc_recv(fdtv, payload, length);
+		fw_send_response(card, request, RCODE_COMPLETE);
+	}
 }
 
 static struct fw_address_handler fcp_handler = {
@@ -239,18 +247,47 @@ static const struct fw_address_region fcp_region = {
 };
 
 /* Adjust the template string if models with longer names appear. */
-#define MAX_MODEL_NAME_LEN sizeof("FireDTV ????")
+#define MAX_MODEL_NAME_LEN ((int)DIV_ROUND_UP(sizeof("FireDTV ????"), 4))
+
+static size_t model_name(u32 *directory, __be32 *buffer)
+{
+	struct fw_csr_iterator ci;
+	int i, length, key, value, last_key = 0;
+	u32 *block = NULL;
+
+	fw_csr_iterator_init(&ci, directory);
+	while (fw_csr_iterator_next(&ci, &key, &value)) {
+		if (last_key == CSR_MODEL &&
+		    key == (CSR_DESCRIPTOR | CSR_LEAF))
+			block = ci.p - 1 + value;
+		last_key = key;
+	}
+
+	if (block == NULL)
+		return 0;
+
+	length = min((int)(block[0] >> 16) - 2, MAX_MODEL_NAME_LEN);
+	if (length <= 0)
+		return 0;
+
+	/* fast-forward to text string */
+	block += 3;
+
+	for (i = 0; i < length; i++)
+		buffer[i] = cpu_to_be32(block[i]);
+
+	return length * 4;
+}
 
 static int node_probe(struct device *dev)
 {
 	struct firedtv *fdtv;
-	char name[MAX_MODEL_NAME_LEN];
+	__be32 name[MAX_MODEL_NAME_LEN];
 	int name_len, err;
 
-	name_len = fw_csr_string(fw_unit(dev)->directory, CSR_MODEL,
-				 name, sizeof(name));
+	name_len = model_name(fw_unit(dev)->directory, name);
 
-	fdtv = fdtv_alloc(dev, &backend, name, name_len >= 0 ? name_len : 0);
+	fdtv = fdtv_alloc(dev, &backend, (char *)name, name_len);
 	if (!fdtv)
 		return -ENOMEM;
 

@@ -25,7 +25,6 @@
  */
 
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include <linux/completion.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
@@ -43,7 +42,7 @@ struct pmi_data {
 	struct mutex		msg_mutex;
 	pmi_message_t		msg;
 	struct completion	*completion;
-	struct platform_device	*dev;
+	struct of_device	*dev;
 	int			irq;
 	u8 __iomem		*pmi_reg;
 	struct work_struct	work;
@@ -114,17 +113,17 @@ static void pmi_notify_handlers(struct work_struct *work)
 
 	spin_lock(&data->handler_spinlock);
 	list_for_each_entry(handler, &data->handler, node) {
-		pr_debug("pmi: notifying handler %p\n", handler);
+		pr_debug(KERN_INFO "pmi: notifying handler %p\n", handler);
 		if (handler->type == data->msg.type)
 			handler->handle_pmi_message(data->msg);
 	}
 	spin_unlock(&data->handler_spinlock);
 }
 
-static int pmi_of_probe(struct platform_device *dev,
+static int pmi_of_probe(struct of_device *dev,
 			const struct of_device_id *match)
 {
-	struct device_node *np = dev->dev.of_node;
+	struct device_node *np = dev->node;
 	int rc;
 
 	if (data) {
@@ -185,7 +184,7 @@ out:
 	return rc;
 }
 
-static int pmi_of_remove(struct platform_device *dev)
+static int pmi_of_remove(struct of_device *dev)
 {
 	struct pmi_handler *handler, *tmp;
 
@@ -206,12 +205,11 @@ static int pmi_of_remove(struct platform_device *dev)
 }
 
 static struct of_platform_driver pmi_of_platform_driver = {
+	.match_table	= pmi_match,
 	.probe		= pmi_of_probe,
 	.remove		= pmi_of_remove,
-	.driver = {
-		.name = "pmi",
-		.owner = THIS_MODULE,
-		.of_match_table = pmi_match,
+	.driver		= {
+		.name	= "pmi",
 	},
 };
 

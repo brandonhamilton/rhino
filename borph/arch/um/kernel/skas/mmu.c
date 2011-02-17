@@ -5,7 +5,6 @@
 
 #include "linux/mm.h"
 #include "linux/sched.h"
-#include "linux/slab.h"
 #include "asm/pgalloc.h"
 #include "asm/pgtable.h"
 #include "as-layout.h"

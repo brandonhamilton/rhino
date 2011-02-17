@@ -60,8 +60,6 @@
 #include <linux/linkage.h>
 #include <linux/irqflags.h>
 
-#include <asm/outercache.h>
-
 #define __exception	__attribute__((section(".exception.text")))
 
 struct thread_info;
@@ -75,7 +73,8 @@ extern unsigned int mem_fclk_21285;
 
 struct pt_regs;
 
-void die(const char *msg, struct pt_regs *regs, int err);
+void die(const char *msg, struct pt_regs *regs, int err)
+		__attribute__((noreturn));
 
 struct siginfo;
 void arm_notify_die(const char *str, struct pt_regs *regs, struct siginfo *info,
@@ -83,11 +82,7 @@ void arm_notify_die(const char *str, struct pt_regs *regs, struct siginfo *info,
 
 void hook_fault_code(int nr, int (*fn)(unsigned long, unsigned int,
 				       struct pt_regs *),
-		     int sig, int code, const char *name);
-
-void hook_ifault_code(int nr, int (*fn)(unsigned long, unsigned int,
-				       struct pt_regs *),
-		     int sig, int code, const char *name);
+		     int sig, const char *name);
 
 #define xchg(ptr,x) \
 	((__typeof__(*(ptr)))__xchg((unsigned long)(x),(ptr),sizeof(*(ptr))))
@@ -143,14 +138,11 @@ extern unsigned int user_debug;
 #define dmb() __asm__ __volatile__ ("" : : : "memory")
 #endif
 
-#ifdef CONFIG_ARCH_HAS_BARRIERS
-#include <mach/barriers.h>
-#elif defined(CONFIG_ARM_DMA_MEM_BUFFERABLE) || defined(CONFIG_SMP)
-#define mb()		do { dsb(); outer_sync(); } while (0)
+#if __LINUX_ARM_ARCH__ >= 7 || defined(CONFIG_SMP)
+#define mb()		dmb()
 #define rmb()		dmb()
-#define wmb()		mb()
+#define wmb()		dmb()
 #else
-#include <asm/memory.h>
 #define mb()	do { if (arch_is_coherent()) dmb(); else barrier(); } while (0)
 #define rmb()	do { if (arch_is_coherent()) dmb(); else barrier(); } while (0)
 #define wmb()	do { if (arch_is_coherent()) dmb(); else barrier(); } while (0)
@@ -161,9 +153,9 @@ extern unsigned int user_debug;
 #define smp_rmb()	barrier()
 #define smp_wmb()	barrier()
 #else
-#define smp_mb()	dmb()
-#define smp_rmb()	dmb()
-#define smp_wmb()	dmb()
+#define smp_mb()	mb()
+#define smp_rmb()	rmb()
+#define smp_wmb()	wmb()
 #endif
 
 #define read_barrier_depends()		do { } while(0)
@@ -329,8 +321,6 @@ static inline unsigned long __xchg(unsigned long x, volatile void *ptr, int size
 
 extern void disable_hlt(void);
 extern void enable_hlt(void);
-
-void cpu_idle_wait(void);
 
 #include <asm-generic/cmpxchg-local.h>
 

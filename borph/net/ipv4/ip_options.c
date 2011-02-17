@@ -11,7 +11,6 @@
 
 #include <linux/capability.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <asm/uaccess.h>
 #include <linux/skbuff.h>
@@ -238,6 +237,7 @@ void ip_options_fragment(struct sk_buff * skb)
 	opt->rr_needaddr = 0;
 	opt->ts_needaddr = 0;
 	opt->ts_needtime = 0;
+	return;
 }
 
 /*
@@ -466,7 +466,7 @@ error:
 	}
 	return -EINVAL;
 }
-EXPORT_SYMBOL(ip_options_compile);
+
 
 /*
  *	Undo all the changes done by ip_options_compile().
@@ -600,7 +600,6 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 	unsigned char *optptr = skb_network_header(skb) + opt->srr;
 	struct rtable *rt = skb_rtable(skb);
 	struct rtable *rt2;
-	unsigned long orefdst;
 	int err;
 
 	if (!opt->srr)
@@ -624,16 +623,16 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 		}
 		memcpy(&nexthop, &optptr[srrptr-1], 4);
 
-		orefdst = skb->_skb_refdst;
+		rt = skb_rtable(skb);
 		skb_dst_set(skb, NULL);
 		err = ip_route_input(skb, nexthop, iph->saddr, iph->tos, skb->dev);
 		rt2 = skb_rtable(skb);
 		if (err || (rt2->rt_type != RTN_UNICAST && rt2->rt_type != RTN_LOCAL)) {
-			skb_dst_drop(skb);
-			skb->_skb_refdst = orefdst;
+			ip_rt_put(rt2);
+			skb_dst_set(skb, &rt->u.dst);
 			return -EINVAL;
 		}
-		refdst_drop(orefdst);
+		ip_rt_put(rt);
 		if (rt2->rt_type != RTN_LOCAL)
 			break;
 		/* Superfast 8) loopback forward */
@@ -646,4 +645,3 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ip_options_rcv_srr);

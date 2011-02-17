@@ -18,7 +18,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
@@ -678,7 +677,7 @@ static void sata_fsl_port_stop(struct ata_port *ap)
 	iowrite32(temp, hcr_base + HCONTROL);
 
 	/* Poll for controller to go offline - should happen immediately */
-	ata_wait_register(ap, hcr_base + HSTATUS, ONLINE, ONLINE, 1, 1);
+	ata_wait_register(hcr_base + HSTATUS, ONLINE, ONLINE, 1, 1);
 
 	ap->private_data = NULL;
 	dma_free_coherent(dev, SATA_FSL_PORT_PRIV_DMA_SZ,
@@ -729,8 +728,7 @@ try_offline_again:
 	iowrite32(temp, hcr_base + HCONTROL);
 
 	/* Poll for controller to go offline */
-	temp = ata_wait_register(ap, hcr_base + HSTATUS, ONLINE, ONLINE,
-				 1, 500);
+	temp = ata_wait_register(hcr_base + HSTATUS, ONLINE, ONLINE, 1, 500);
 
 	if (temp & ONLINE) {
 		ata_port_printk(ap, KERN_ERR,
@@ -753,7 +751,7 @@ try_offline_again:
 	/*
 	 * PHY reset should remain asserted for atleast 1ms
 	 */
-	ata_msleep(ap, 1);
+	msleep(1);
 
 	/*
 	 * Now, bring the host controller online again, this can take time
@@ -767,7 +765,7 @@ try_offline_again:
 	temp |= HCONTROL_PMP_ATTACHED;
 	iowrite32(temp, hcr_base + HCONTROL);
 
-	temp = ata_wait_register(ap, hcr_base + HSTATUS, ONLINE, 0, 1, 500);
+	temp = ata_wait_register(hcr_base + HSTATUS, ONLINE, 0, 1, 500);
 
 	if (!(temp & ONLINE)) {
 		ata_port_printk(ap, KERN_ERR,
@@ -785,7 +783,7 @@ try_offline_again:
 	 * presence
 	 */
 
-	temp = ata_wait_register(ap, hcr_base + HSTATUS, 0xFF, 0, 1, 500);
+	temp = ata_wait_register(hcr_base + HSTATUS, 0xFF, 0, 1, 500);
 	if ((!(temp & 0x10)) || ata_link_offline(link)) {
 		ata_port_printk(ap, KERN_WARNING,
 				"No Device OR PHYRDY change,Hstatus = 0x%x\n",
@@ -798,7 +796,7 @@ try_offline_again:
 	 * Wait for the first D2H from device,i.e,signature update notification
 	 */
 	start_jiffies = jiffies;
-	temp = ata_wait_register(ap, hcr_base + HSTATUS, 0xFF, 0x10,
+	temp = ata_wait_register(hcr_base + HSTATUS, 0xFF, 0x10,
 			500, jiffies_to_msecs(deadline - start_jiffies));
 
 	if ((temp & 0xFF) != 0x18) {
@@ -881,7 +879,7 @@ static int sata_fsl_softreset(struct ata_link *link, unsigned int *class,
 		iowrite32(pmp, CQPMP + hcr_base);
 	iowrite32(1, CQ + hcr_base);
 
-	temp = ata_wait_register(ap, CQ + hcr_base, 0x1, 0x1, 1, 5000);
+	temp = ata_wait_register(CQ + hcr_base, 0x1, 0x1, 1, 5000);
 	if (temp & 0x1) {
 		ata_port_printk(ap, KERN_WARNING, "ATA_SRST issue failed\n");
 
@@ -897,7 +895,7 @@ static int sata_fsl_softreset(struct ata_link *link, unsigned int *class,
 		goto err;
 	}
 
-	ata_msleep(ap, 1);
+	msleep(1);
 
 	/*
 	 * SATA device enters reset state after receving a Control register
@@ -916,7 +914,7 @@ static int sata_fsl_softreset(struct ata_link *link, unsigned int *class,
 	if (pmp != SATA_PMP_CTRL_PORT)
 		iowrite32(pmp, CQPMP + hcr_base);
 	iowrite32(1, CQ + hcr_base);
-	ata_msleep(ap, 150);		/* ?? */
+	msleep(150);		/* ?? */
 
 	/*
 	 * The above command would have signalled an interrupt on command
@@ -1097,7 +1095,7 @@ static void sata_fsl_host_intr(struct ata_port *ap)
 {
 	struct sata_fsl_host_priv *host_priv = ap->host->private_data;
 	void __iomem *hcr_base = host_priv->hcr_base;
-	u32 hstatus, done_mask = 0;
+	u32 hstatus, qc_active = 0;
 	struct ata_queued_cmd *qc;
 	u32 SError;
 
@@ -1117,34 +1115,38 @@ static void sata_fsl_host_intr(struct ata_port *ap)
 	}
 
 	/* Read command completed register */
-	done_mask = ioread32(hcr_base + CC);
+	qc_active = ioread32(hcr_base + CC);
 
 	VPRINTK("Status of all queues :\n");
-	VPRINTK("done_mask/CC = 0x%x, CA = 0x%x, CE=0x%x,CQ=0x%x,apqa=0x%x\n",
-		done_mask,
+	VPRINTK("qc_active/CC = 0x%x, CA = 0x%x, CE=0x%x,CQ=0x%x,apqa=0x%x\n",
+		qc_active,
 		ioread32(hcr_base + CA),
 		ioread32(hcr_base + CE),
 		ioread32(hcr_base + CQ),
 		ap->qc_active);
 
-	if (done_mask & ap->qc_active) {
+	if (qc_active & ap->qc_active) {
 		int i;
 		/* clear CC bit, this will also complete the interrupt */
-		iowrite32(done_mask, hcr_base + CC);
+		iowrite32(qc_active, hcr_base + CC);
 
 		DPRINTK("Status of all queues :\n");
-		DPRINTK("done_mask/CC = 0x%x, CA = 0x%x, CE=0x%x\n",
-			done_mask, ioread32(hcr_base + CA),
+		DPRINTK("qc_active/CC = 0x%x, CA = 0x%x, CE=0x%x\n",
+			qc_active, ioread32(hcr_base + CA),
 			ioread32(hcr_base + CE));
 
 		for (i = 0; i < SATA_FSL_QUEUE_DEPTH; i++) {
-			if (done_mask & (1 << i))
+			if (qc_active & (1 << i)) {
+				qc = ata_qc_from_tag(ap, i);
+				if (qc) {
+					ata_qc_complete(qc);
+				}
 				DPRINTK
 				    ("completing ncq cmd,tag=%d,CC=0x%x,CA=0x%x\n",
 				     i, ioread32(hcr_base + CC),
 				     ioread32(hcr_base + CA));
+			}
 		}
-		ata_qc_complete_multiple(ap, ap->qc_active ^ done_mask);
 		return;
 
 	} else if ((ap->qc_active & (1 << ATA_TAG_INTERNAL))) {
@@ -1161,7 +1163,7 @@ static void sata_fsl_host_intr(struct ata_port *ap)
 		/* Spurious Interrupt!! */
 		DPRINTK("spurious interrupt!!, CC = 0x%x\n",
 			ioread32(hcr_base + CC));
-		iowrite32(done_mask, hcr_base + CC);
+		iowrite32(qc_active, hcr_base + CC);
 		return;
 	}
 }
@@ -1293,7 +1295,7 @@ static const struct ata_port_info sata_fsl_port_info[] = {
 	 },
 };
 
-static int sata_fsl_probe(struct platform_device *ofdev,
+static int sata_fsl_probe(struct of_device *ofdev,
 			const struct of_device_id *match)
 {
 	int retval = -ENXIO;
@@ -1310,7 +1312,7 @@ static int sata_fsl_probe(struct platform_device *ofdev,
 	dev_printk(KERN_INFO, &ofdev->dev,
 		   "Sata FSL Platform/CSB Driver init\n");
 
-	hcr_base = of_iomap(ofdev->dev.of_node, 0);
+	hcr_base = of_iomap(ofdev->node, 0);
 	if (!hcr_base)
 		goto error_exit_with_cleanup;
 
@@ -1329,7 +1331,7 @@ static int sata_fsl_probe(struct platform_device *ofdev,
 	host_priv->ssr_base = ssr_base;
 	host_priv->csr_base = csr_base;
 
-	irq = irq_of_parse_and_map(ofdev->dev.of_node, 0);
+	irq = irq_of_parse_and_map(ofdev->node, 0);
 	if (irq < 0) {
 		dev_printk(KERN_ERR, &ofdev->dev, "invalid irq from platform\n");
 		goto error_exit_with_cleanup;
@@ -1367,7 +1369,7 @@ error_exit_with_cleanup:
 	return retval;
 }
 
-static int sata_fsl_remove(struct platform_device *ofdev)
+static int sata_fsl_remove(struct of_device *ofdev)
 {
 	struct ata_host *host = dev_get_drvdata(&ofdev->dev);
 	struct sata_fsl_host_priv *host_priv = host->private_data;
@@ -1384,13 +1386,13 @@ static int sata_fsl_remove(struct platform_device *ofdev)
 }
 
 #ifdef CONFIG_PM
-static int sata_fsl_suspend(struct platform_device *op, pm_message_t state)
+static int sata_fsl_suspend(struct of_device *op, pm_message_t state)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 	return ata_host_suspend(host, state);
 }
 
-static int sata_fsl_resume(struct platform_device *op)
+static int sata_fsl_resume(struct of_device *op)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 	struct sata_fsl_host_priv *host_priv = host->private_data;
@@ -1424,11 +1426,8 @@ static struct of_device_id fsl_sata_match[] = {
 MODULE_DEVICE_TABLE(of, fsl_sata_match);
 
 static struct of_platform_driver fsl_sata_driver = {
-	.driver = {
-		.name = "fsl-sata",
-		.owner = THIS_MODULE,
-		.of_match_table = fsl_sata_match,
-	},
+	.name		= "fsl-sata",
+	.match_table	= fsl_sata_match,
 	.probe		= sata_fsl_probe,
 	.remove		= sata_fsl_remove,
 #ifdef CONFIG_PM

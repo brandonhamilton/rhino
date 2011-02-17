@@ -156,57 +156,55 @@ void user_disable_single_step(struct task_struct *child)
 	singlestep_disable(child);
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	unsigned long tmp;
 	int i, ret = 0;
-	int regno = addr >> 2; /* temporary hack. */
-	unsigned long __user *datap = (unsigned long __user *) data;
 
 	switch (request) {
 	/* read the word at location addr in the USER area. */
 	case PTRACE_PEEKUSR:
 		if (addr & 3)
 			goto out_eio;
+		addr >>= 2;	/* temporary hack. */
 
-		if (regno >= 0 && regno < 19) {
-			tmp = get_reg(child, regno);
-		} else if (regno >= 21 && regno < 49) {
-			tmp = child->thread.fp[regno - 21];
+		if (addr >= 0 && addr < 19) {
+			tmp = get_reg(child, addr);
+		} else if (addr >= 21 && addr < 49) {
+			tmp = child->thread.fp[addr - 21];
 			/* Convert internal fpu reg representation
 			 * into long double format
 			 */
-			if (FPU_IS_EMU && (regno < 45) && !(regno % 3))
+			if (FPU_IS_EMU && (addr < 45) && !(addr % 3))
 				tmp = ((tmp & 0xffff0000) << 15) |
 				      ((tmp & 0x0000ffff) << 16);
 		} else
 			goto out_eio;
-		ret = put_user(tmp, datap);
+		ret = put_user(tmp, (unsigned long *)data);
 		break;
 
-	case PTRACE_POKEUSR:
-	/* write the word at location addr in the USER area */
+	case PTRACE_POKEUSR:	/* write the word at location addr in the USER area */
 		if (addr & 3)
 			goto out_eio;
+		addr >>= 2;	/* temporary hack. */
 
-		if (regno == PT_SR) {
+		if (addr == PT_SR) {
 			data &= SR_MASK;
 			data |= get_reg(child, PT_SR) & ~SR_MASK;
 		}
-		if (regno >= 0 && regno < 19) {
-			if (put_reg(child, regno, data))
+		if (addr >= 0 && addr < 19) {
+			if (put_reg(child, addr, data))
 				goto out_eio;
-		} else if (regno >= 21 && regno < 48) {
+		} else if (addr >= 21 && addr < 48) {
 			/* Convert long double format
 			 * into internal fpu reg representation
 			 */
-			if (FPU_IS_EMU && (regno < 45) && !(regno % 3)) {
-				data <<= 15;
+			if (FPU_IS_EMU && (addr < 45) && !(addr % 3)) {
+				data = (unsigned long)data << 15;
 				data = (data & 0xffff0000) |
 				       ((data & 0x0000ffff) >> 1);
 			}
-			child->thread.fp[regno - 21] = data;
+			child->thread.fp[addr - 21] = data;
 		} else
 			goto out_eio;
 		break;
@@ -214,16 +212,16 @@ long arch_ptrace(struct task_struct *child, long request,
 	case PTRACE_GETREGS:	/* Get all gp regs from the child. */
 		for (i = 0; i < 19; i++) {
 			tmp = get_reg(child, i);
-			ret = put_user(tmp, datap);
+			ret = put_user(tmp, (unsigned long *)data);
 			if (ret)
 				break;
-			datap++;
+			data += sizeof(long);
 		}
 		break;
 
 	case PTRACE_SETREGS:	/* Set all gp regs in the child. */
 		for (i = 0; i < 19; i++) {
-			ret = get_user(tmp, datap);
+			ret = get_user(tmp, (unsigned long *)data);
 			if (ret)
 				break;
 			if (i == PT_SR) {
@@ -231,24 +229,20 @@ long arch_ptrace(struct task_struct *child, long request,
 				tmp |= get_reg(child, PT_SR) & ~SR_MASK;
 			}
 			put_reg(child, i, tmp);
-			datap++;
+			data += sizeof(long);
 		}
 		break;
 
 	case PTRACE_GETFPREGS:	/* Get the child FPU state. */
-		if (copy_to_user(datap, &child->thread.fp,
+		if (copy_to_user((void *)data, &child->thread.fp,
 				 sizeof(struct user_m68kfp_struct)))
 			ret = -EFAULT;
 		break;
 
 	case PTRACE_SETFPREGS:	/* Set the child FPU state. */
-		if (copy_from_user(&child->thread.fp, datap,
+		if (copy_from_user(&child->thread.fp, (void *)data,
 				   sizeof(struct user_m68kfp_struct)))
 			ret = -EFAULT;
-		break;
-
-	case PTRACE_GET_THREAD_AREA:
-		ret = put_user(task_thread_info(child)->tp_value, datap);
 		break;
 
 	default:

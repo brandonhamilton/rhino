@@ -22,17 +22,6 @@
 #include <crypto/rng.h>
 
 #include "internal.h"
-
-#ifdef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
-
-/* a perfect nop */
-int alg_test(const char *driver, const char *alg, u32 type, u32 mask)
-{
-	return 0;
-}
-
-#else
-
 #include "testmgr.h"
 
 /*
@@ -164,21 +153,8 @@ static void testmgr_free_buf(char *buf[XBUFSIZE])
 		free_page((unsigned long)buf[i]);
 }
 
-static int do_one_async_hash_op(struct ahash_request *req,
-				struct tcrypt_result *tr,
-				int ret)
-{
-	if (ret == -EINPROGRESS || ret == -EBUSY) {
-		ret = wait_for_completion_interruptible(&tr->completion);
-		if (!ret)
-			ret = tr->err;
-		INIT_COMPLETION(tr->completion);
-	}
-	return ret;
-}
-
 static int test_hash(struct crypto_ahash *tfm, struct hash_testvec *template,
-		     unsigned int tcount, bool use_digest)
+		     unsigned int tcount)
 {
 	const char *algo = crypto_tfm_alg_driver_name(crypto_ahash_tfm(tfm));
 	unsigned int i, j, k, temp;
@@ -230,36 +206,23 @@ static int test_hash(struct crypto_ahash *tfm, struct hash_testvec *template,
 		}
 
 		ahash_request_set_crypt(req, sg, result, template[i].psize);
-		if (use_digest) {
-			ret = do_one_async_hash_op(req, &tresult,
-						   crypto_ahash_digest(req));
-			if (ret) {
-				pr_err("alg: hash: digest failed on test %d "
-				       "for %s: ret=%d\n", j, algo, -ret);
-				goto out;
+		ret = crypto_ahash_digest(req);
+		switch (ret) {
+		case 0:
+			break;
+		case -EINPROGRESS:
+		case -EBUSY:
+			ret = wait_for_completion_interruptible(
+				&tresult.completion);
+			if (!ret && !(ret = tresult.err)) {
+				INIT_COMPLETION(tresult.completion);
+				break;
 			}
-		} else {
-			ret = do_one_async_hash_op(req, &tresult,
-						   crypto_ahash_init(req));
-			if (ret) {
-				pr_err("alt: hash: init failed on test %d "
-				       "for %s: ret=%d\n", j, algo, -ret);
-				goto out;
-			}
-			ret = do_one_async_hash_op(req, &tresult,
-						   crypto_ahash_update(req));
-			if (ret) {
-				pr_err("alt: hash: update failed on test %d "
-				       "for %s: ret=%d\n", j, algo, -ret);
-				goto out;
-			}
-			ret = do_one_async_hash_op(req, &tresult,
-						   crypto_ahash_final(req));
-			if (ret) {
-				pr_err("alt: hash: final failed on test %d "
-				       "for %s: ret=%d\n", j, algo, -ret);
-				goto out;
-			}
+			/* fall through */
+		default:
+			printk(KERN_ERR "alg: hash: digest failed on test %d "
+			       "for %s: ret=%d\n", j, algo, -ret);
+			goto out;
 		}
 
 		if (memcmp(result, template[i].digest,
@@ -1439,11 +1402,7 @@ static int alg_test_hash(const struct alg_test_desc *desc, const char *driver,
 		return PTR_ERR(tfm);
 	}
 
-	err = test_hash(tfm, desc->suite.hash.vecs,
-			desc->suite.hash.count, true);
-	if (!err)
-		err = test_hash(tfm, desc->suite.hash.vecs,
-				desc->suite.hash.count, false);
+	err = test_hash(tfm, desc->suite.hash.vecs, desc->suite.hash.count);
 
 	crypto_free_ahash(tfm);
 	return err;
@@ -1518,54 +1477,9 @@ static int alg_test_cprng(const struct alg_test_desc *desc, const char *driver,
 	return err;
 }
 
-static int alg_test_null(const struct alg_test_desc *desc,
-			     const char *driver, u32 type, u32 mask)
-{
-	return 0;
-}
-
 /* Please keep this list sorted by algorithm name. */
 static const struct alg_test_desc alg_test_descs[] = {
 	{
-		.alg = "__driver-cbc-aes-aesni",
-		.test = alg_test_null,
-		.suite = {
-			.cipher = {
-				.enc = {
-					.vecs = NULL,
-					.count = 0
-				},
-				.dec = {
-					.vecs = NULL,
-					.count = 0
-				}
-			}
-		}
-	}, {
-		.alg = "__driver-ecb-aes-aesni",
-		.test = alg_test_null,
-		.suite = {
-			.cipher = {
-				.enc = {
-					.vecs = NULL,
-					.count = 0
-				},
-				.dec = {
-					.vecs = NULL,
-					.count = 0
-				}
-			}
-		}
-	}, {
-		.alg = "__ghash-pclmulqdqni",
-		.test = alg_test_null,
-		.suite = {
-			.hash = {
-				.vecs = NULL,
-				.count = 0
-			}
-		}
-	}, {
 		.alg = "ansi_cprng",
 		.test = alg_test_cprng,
 		.fips_allowed = 1,
@@ -1709,30 +1623,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 			}
 		}
 	}, {
-		.alg = "cryptd(__driver-ecb-aes-aesni)",
-		.test = alg_test_null,
-		.suite = {
-			.cipher = {
-				.enc = {
-					.vecs = NULL,
-					.count = 0
-				},
-				.dec = {
-					.vecs = NULL,
-					.count = 0
-				}
-			}
-		}
-	}, {
-		.alg = "cryptd(__ghash-pclmulqdqni)",
-		.test = alg_test_null,
-		.suite = {
-			.hash = {
-				.vecs = NULL,
-				.count = 0
-			}
-		}
-	}, {
 		.alg = "ctr(aes)",
 		.test = alg_test_skcipher,
 		.fips_allowed = 1,
@@ -1775,21 +1665,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.decomp = {
 					.vecs = deflate_decomp_tv_template,
 					.count = DEFLATE_DECOMP_TEST_VECTORS
-				}
-			}
-		}
-	}, {
-		.alg = "ecb(__aes-aesni)",
-		.test = alg_test_null,
-		.suite = {
-			.cipher = {
-				.enc = {
-					.vecs = NULL,
-					.count = 0
-				},
-				.dec = {
-					.vecs = NULL,
-					.count = 0
 				}
 			}
 		}
@@ -2541,7 +2416,4 @@ notest:
 non_fips_alg:
 	return -EINVAL;
 }
-
-#endif /* CONFIG_CRYPTO_MANAGER_DISABLE_TESTS */
-
 EXPORT_SYMBOL_GPL(alg_test);

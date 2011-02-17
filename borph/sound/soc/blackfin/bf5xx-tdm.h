@@ -20,4 +20,6 @@ struct bf5xx_tdm_port {
 	int configured;
 };
 
+extern struct snd_soc_dai bf5xx_tdm_dai;
+
 #endif

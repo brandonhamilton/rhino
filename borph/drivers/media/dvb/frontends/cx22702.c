@@ -54,7 +54,7 @@ MODULE_PARM_DESC(debug, "Enable verbose debug messages");
 #define dprintk	if (debug) printk
 
 /* Register values to initialise the demod */
-static const u8 init_tab[] = {
+static u8 init_tab[] = {
 	0x00, 0x00, /* Stop aquisition */
 	0x0B, 0x06,
 	0x09, 0x01,
@@ -92,56 +92,52 @@ static int cx22702_writereg(struct cx22702_state *state, u8 reg, u8 data)
 
 	ret = i2c_transfer(state->i2c, &msg, 1);
 
-	if (unlikely(ret != 1)) {
+	if (ret != 1)
 		printk(KERN_ERR
 			"%s: error (reg == 0x%02x, val == 0x%02x, ret == %i)\n",
 			__func__, reg, data, ret);
-		return -1;
-	}
 
-	return 0;
+	return (ret != 1) ? -1 : 0;
 }
 
 static u8 cx22702_readreg(struct cx22702_state *state, u8 reg)
 {
 	int ret;
-	u8 data;
+	u8 b0[] = { reg };
+	u8 b1[] = { 0 };
 
 	struct i2c_msg msg[] = {
 		{ .addr = state->config->demod_address, .flags = 0,
-			.buf = &reg, .len = 1 },
+			.buf = b0, .len = 1 },
 		{ .addr = state->config->demod_address, .flags = I2C_M_RD,
-			.buf = &data, .len = 1 } };
+			.buf = b1, .len = 1 } };
 
 	ret = i2c_transfer(state->i2c, msg, 2);
 
-	if (unlikely(ret != 2)) {
-		printk(KERN_ERR "%s: error (reg == 0x%02x, ret == %i)\n",
-			__func__, reg, ret);
-		return 0;
-	}
+	if (ret != 2)
+		printk(KERN_ERR "%s: readreg error (ret == %i)\n",
+			__func__, ret);
 
-	return data;
+	return b1[0];
 }
 
 static int cx22702_set_inversion(struct cx22702_state *state, int inversion)
 {
 	u8 val;
 
-	val = cx22702_readreg(state, 0x0C);
 	switch (inversion) {
 	case INVERSION_AUTO:
 		return -EOPNOTSUPP;
 	case INVERSION_ON:
-		val |= 0x01;
-		break;
+		val = cx22702_readreg(state, 0x0C);
+		return cx22702_writereg(state, 0x0C, val | 0x01);
 	case INVERSION_OFF:
-		val &= 0xfe;
-		break;
+		val = cx22702_readreg(state, 0x0C);
+		return cx22702_writereg(state, 0x0C, val & 0xfe);
 	default:
 		return -EINVAL;
 	}
-	return cx22702_writereg(state, 0x0C, val);
+
 }
 
 /* Retrieve the demod settings */
@@ -248,15 +244,13 @@ static int cx22702_get_tps(struct cx22702_state *state,
 static int cx22702_i2c_gate_ctrl(struct dvb_frontend *fe, int enable)
 {
 	struct cx22702_state *state = fe->demodulator_priv;
-	u8 val;
-
 	dprintk("%s(%d)\n", __func__, enable);
-	val = cx22702_readreg(state, 0x0D);
 	if (enable)
-		val &= 0xfe;
+		return cx22702_writereg(state, 0x0D,
+			cx22702_readreg(state, 0x0D) & 0xfe);
 	else
-		val |= 0x01;
-	return cx22702_writereg(state, 0x0D, val);
+		return cx22702_writereg(state, 0x0D,
+			cx22702_readreg(state, 0x0D) | 1);
 }
 
 /* Talk to the demod, set the FEC, GUARD, QAM settings etc */
@@ -276,21 +270,23 @@ static int cx22702_set_tps(struct dvb_frontend *fe,
 	cx22702_set_inversion(state, p->inversion);
 
 	/* set bandwidth */
-	val = cx22702_readreg(state, 0x0C) & 0xcf;
 	switch (p->u.ofdm.bandwidth) {
 	case BANDWIDTH_6_MHZ:
-		val |= 0x20;
+		cx22702_writereg(state, 0x0C,
+			(cx22702_readreg(state, 0x0C) & 0xcf) | 0x20);
 		break;
 	case BANDWIDTH_7_MHZ:
-		val |= 0x10;
+		cx22702_writereg(state, 0x0C,
+			(cx22702_readreg(state, 0x0C) & 0xcf) | 0x10);
 		break;
 	case BANDWIDTH_8_MHZ:
+		cx22702_writereg(state, 0x0C,
+			cx22702_readreg(state, 0x0C) & 0xcf);
 		break;
 	default:
 		dprintk("%s: invalid bandwidth\n", __func__);
 		return -EINVAL;
 	}
-	cx22702_writereg(state, 0x0C, val);
 
 	p->u.ofdm.code_rate_LP = FEC_AUTO; /* temp hack as manual not working */
 
@@ -316,31 +312,33 @@ static int cx22702_set_tps(struct dvb_frontend *fe,
 	}
 
 	/* manually programmed values */
-	switch (p->u.ofdm.constellation) {		/* mask 0x18 */
+	val = 0;
+	switch (p->u.ofdm.constellation) {
 	case QPSK:
-		val = 0x00;
+		val = (val & 0xe7);
 		break;
 	case QAM_16:
-		val = 0x08;
+		val = (val & 0xe7) | 0x08;
 		break;
 	case QAM_64:
-		val = 0x10;
+		val = (val & 0xe7) | 0x10;
 		break;
 	default:
 		dprintk("%s: invalid constellation\n", __func__);
 		return -EINVAL;
 	}
-	switch (p->u.ofdm.hierarchy_information) {	/* mask 0x07 */
+	switch (p->u.ofdm.hierarchy_information) {
 	case HIERARCHY_NONE:
+		val = (val & 0xf8);
 		break;
 	case HIERARCHY_1:
-		val |= 0x01;
+		val = (val & 0xf8) | 1;
 		break;
 	case HIERARCHY_2:
-		val |= 0x02;
+		val = (val & 0xf8) | 2;
 		break;
 	case HIERARCHY_4:
-		val |= 0x03;
+		val = (val & 0xf8) | 3;
 		break;
 	default:
 		dprintk("%s: invalid hierarchy\n", __func__);
@@ -348,42 +346,44 @@ static int cx22702_set_tps(struct dvb_frontend *fe,
 	}
 	cx22702_writereg(state, 0x06, val);
 
-	switch (p->u.ofdm.code_rate_HP) {		/* mask 0x38 */
+	val = 0;
+	switch (p->u.ofdm.code_rate_HP) {
 	case FEC_NONE:
 	case FEC_1_2:
-		val = 0x00;
+		val = (val & 0xc7);
 		break;
 	case FEC_2_3:
-		val = 0x08;
+		val = (val & 0xc7) | 0x08;
 		break;
 	case FEC_3_4:
-		val = 0x10;
+		val = (val & 0xc7) | 0x10;
 		break;
 	case FEC_5_6:
-		val = 0x18;
+		val = (val & 0xc7) | 0x18;
 		break;
 	case FEC_7_8:
-		val = 0x20;
+		val = (val & 0xc7) | 0x20;
 		break;
 	default:
 		dprintk("%s: invalid code_rate_HP\n", __func__);
 		return -EINVAL;
 	}
-	switch (p->u.ofdm.code_rate_LP) {		/* mask 0x07 */
+	switch (p->u.ofdm.code_rate_LP) {
 	case FEC_NONE:
 	case FEC_1_2:
+		val = (val & 0xf8);
 		break;
 	case FEC_2_3:
-		val |= 0x01;
+		val = (val & 0xf8) | 1;
 		break;
 	case FEC_3_4:
-		val |= 0x02;
+		val = (val & 0xf8) | 2;
 		break;
 	case FEC_5_6:
-		val |= 0x03;
+		val = (val & 0xf8) | 3;
 		break;
 	case FEC_7_8:
-		val |= 0x04;
+		val = (val & 0xf8) | 4;
 		break;
 	default:
 		dprintk("%s: invalid code_rate_LP\n", __func__);
@@ -391,28 +391,30 @@ static int cx22702_set_tps(struct dvb_frontend *fe,
 	}
 	cx22702_writereg(state, 0x07, val);
 
-	switch (p->u.ofdm.guard_interval) {		/* mask 0x0c */
+	val = 0;
+	switch (p->u.ofdm.guard_interval) {
 	case GUARD_INTERVAL_1_32:
-		val = 0x00;
+		val = (val & 0xf3);
 		break;
 	case GUARD_INTERVAL_1_16:
-		val = 0x04;
+		val = (val & 0xf3) | 0x04;
 		break;
 	case GUARD_INTERVAL_1_8:
-		val = 0x08;
+		val = (val & 0xf3) | 0x08;
 		break;
 	case GUARD_INTERVAL_1_4:
-		val = 0x0c;
+		val = (val & 0xf3) | 0x0c;
 		break;
 	default:
 		dprintk("%s: invalid guard_interval\n", __func__);
 		return -EINVAL;
 	}
-	switch (p->u.ofdm.transmission_mode) {		/* mask 0x03 */
+	switch (p->u.ofdm.transmission_mode) {
 	case TRANSMISSION_MODE_2K:
+		val = (val & 0xfc);
 		break;
 	case TRANSMISSION_MODE_8K:
-		val |= 0x1;
+		val = (val & 0xfc) | 1;
 		break;
 	default:
 		dprintk("%s: invalid transmission_mode\n", __func__);
@@ -503,7 +505,7 @@ static int cx22702_read_signal_strength(struct dvb_frontend *fe,
 {
 	struct cx22702_state *state = fe->demodulator_priv;
 
-	u16 rs_ber;
+	u16 rs_ber = 0;
 	rs_ber = cx22702_readreg(state, 0x23);
 	*signal_strength = (rs_ber << 8) | rs_ber;
 
@@ -514,7 +516,7 @@ static int cx22702_read_snr(struct dvb_frontend *fe, u16 *snr)
 {
 	struct cx22702_state *state = fe->demodulator_priv;
 
-	u16 rs_ber;
+	u16 rs_ber = 0;
 	if (cx22702_readreg(state, 0xE4) & 0x02) {
 		/* Realtime statistics */
 		rs_ber = (cx22702_readreg(state, 0xDE) & 0x7F) << 7
@@ -570,7 +572,7 @@ static void cx22702_release(struct dvb_frontend *fe)
 	kfree(state);
 }
 
-static const struct dvb_frontend_ops cx22702_ops;
+static struct dvb_frontend_ops cx22702_ops;
 
 struct dvb_frontend *cx22702_attach(const struct cx22702_config *config,
 	struct i2c_adapter *i2c)
@@ -585,6 +587,7 @@ struct dvb_frontend *cx22702_attach(const struct cx22702_config *config,
 	/* setup the state */
 	state->config = config;
 	state->i2c = i2c;
+	state->prevUCBlocks = 0;
 
 	/* check if the demod is there */
 	if (cx22702_readreg(state, 0x1f) != 0x3)
@@ -602,7 +605,7 @@ error:
 }
 EXPORT_SYMBOL(cx22702_attach);
 
-static const struct dvb_frontend_ops cx22702_ops = {
+static struct dvb_frontend_ops cx22702_ops = {
 
 	.info = {
 		.name			= "Conexant CX22702 DVB-T",

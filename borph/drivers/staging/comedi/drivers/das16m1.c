@@ -198,18 +198,7 @@ struct das16m1_private_struct {
 #define devpriv ((struct das16m1_private_struct *)(dev->private))
 #define thisboard ((const struct das16m1_board *)(dev->board_ptr))
 
-static int __init driver_das16m1_init_module(void)
-{
-	return comedi_driver_register(&driver_das16m1);
-}
-
-static void __exit driver_das16m1_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_das16m1);
-}
-
-module_init(driver_das16m1_init_module);
-module_exit(driver_das16m1_cleanup_module);
+COMEDI_INITCLEANUP(driver_das16m1);
 
 static inline short munge_sample(short data)
 {
@@ -788,7 +777,3 @@ static int das16m1_detach(struct comedi_device *dev)
 
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

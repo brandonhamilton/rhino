@@ -103,7 +103,6 @@
 #include <linux/module.h>
 #include <linux/parport.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/stddef.h>
 #include <linux/types.h>

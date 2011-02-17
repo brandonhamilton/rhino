@@ -27,7 +27,7 @@ int iio_device_unregister_trigger_consumer(struct iio_dev *dev_info);
  * iio_device_register_trigger_consumer() - set up an iio_dev to use triggers
  * @dev_info: iio_dev associated with the device that will consume the trigger
  **/
-static int iio_device_register_trigger_consumer(struct iio_dev *dev_info)
+int iio_device_register_trigger_consumer(struct iio_dev *dev_info)
 {
 	return 0;
 };
@@ -36,7 +36,7 @@ static int iio_device_register_trigger_consumer(struct iio_dev *dev_info)
  * iio_device_unregister_trigger_consumer() - reverse the registration process
  * @dev_info: iio_dev associated with the device that consumed the trigger
  **/
-static int iio_device_unregister_trigger_consumer(struct iio_dev *dev_info)
+int iio_device_unregister_trigger_consumer(struct iio_dev *dev_info)
 {
 	return 0;
 };

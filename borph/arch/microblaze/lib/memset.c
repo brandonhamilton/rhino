@@ -31,38 +31,24 @@
 #include <linux/string.h>
 
 #ifdef __HAVE_ARCH_MEMSET
-#ifndef CONFIG_OPT_LIB_FUNCTION
 void *memset(void *v_src, int c, __kernel_size_t n)
 {
+
 	char *src = v_src;
-
-	/* Truncate c to 8 bits */
-	c = (c & 0xFF);
-
-	/* Simple, byte oriented memset or the rest of count. */
-	while (n--)
-		*src++ = c;
-
-	return v_src;
-}
-#else /* CONFIG_OPT_LIB_FUNCTION */
-void *memset(void *v_src, int c, __kernel_size_t n)
-{
-	char *src = v_src;
+#ifdef CONFIG_OPT_LIB_FUNCTION
 	uint32_t *i_src;
-	uint32_t w32 = 0;
-
+	uint32_t w32;
+#endif
 	/* Truncate c to 8 bits */
 	c = (c & 0xFF);
 
-	if (unlikely(c)) {
-		/* Make a repeating word out of it */
-		w32 = c;
-		w32 |= w32 << 8;
-		w32 |= w32 << 16;
-	}
+#ifdef CONFIG_OPT_LIB_FUNCTION
+	/* Make a repeating word out of it */
+	w32 = c;
+	w32 |= w32 << 8;
+	w32 |= w32 << 16;
 
-	if (likely(n >= 4)) {
+	if (n >= 4) {
 		/* Align the destination to a word boundary */
 		/* This is done in an endian independant manner */
 		switch ((unsigned) src & 3) {
@@ -85,13 +71,12 @@ void *memset(void *v_src, int c, __kernel_size_t n)
 
 		src  = (void *)i_src;
 	}
-
+#endif
 	/* Simple, byte oriented memset or the rest of count. */
 	while (n--)
 		*src++ = c;
 
 	return v_src;
 }
-#endif /* CONFIG_OPT_LIB_FUNCTION */
 EXPORT_SYMBOL(memset);
 #endif /* __HAVE_ARCH_MEMSET */

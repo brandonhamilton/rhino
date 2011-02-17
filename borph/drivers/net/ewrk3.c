@@ -757,7 +757,7 @@ static void ewrk3_timeout(struct net_device *dev)
 		 */
 		ENABLE_IRQs;
 
-		dev->trans_start = jiffies; /* prevent tx timeout */
+		dev->trans_start = jiffies;
 		netif_wake_queue(dev);
 	}
 }
@@ -862,6 +862,7 @@ static netdev_tx_t ewrk3_queue_pkt(struct sk_buff *skb, struct net_device *dev)
 	spin_unlock_irq (&lp->hw_lock);
 
 	dev->stats.tx_bytes += skb->len;
+	dev->trans_start = jiffies;
 	dev_kfree_skb (skb);
 
 	/* Check for free resources: stop Tx queue if there are none */
@@ -1168,7 +1169,7 @@ static void set_multicast_list(struct net_device *dev)
 static void SetMulticastFilter(struct net_device *dev)
 {
 	struct ewrk3_private *lp = netdev_priv(dev);
-	struct netdev_hw_addr *ha;
+	struct dev_mc_list *dmi = dev->mc_list;
 	u_long iobase = dev->base_addr;
 	int i;
 	char *addrs, bit, byte;
@@ -1212,8 +1213,9 @@ static void SetMulticastFilter(struct net_device *dev)
 		}
 
 		/* Update table */
-		netdev_for_each_mc_addr(ha, dev) {
-			addrs = ha->addr;
+		for (i = 0; i < dev->mc_count; i++) {	/* for each address in the list */
+			addrs = dmi->dmi_addr;
+			dmi = dmi->next;
 			if ((*addrs & 0x01) == 1) {	/* multicast address? */
 				crc = ether_crc_le(ETH_ALEN, addrs);
 				hashcode = crc & ((1 << 9) - 1);	/* hashcode is 9 LSb of CRC */
@@ -1369,6 +1371,8 @@ static void __init EthwrkSignature(char *name, char *eeprom_image)
 		name[EWRK3_STRLEN] = '\0';
 	} else
 		name[0] = '\0';
+
+	return;
 }
 
 /*
@@ -1773,7 +1777,8 @@ static int ewrk3_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		break;
 	case EWRK3_SET_MCA:	/* Set a multicast address */
 		if (capable(CAP_NET_ADMIN)) {
-			if (ioc->len > HASH_TABLE_LEN) {
+			if (ioc->len > 1024)
+			{
 				status = -EINVAL;
 				break;
 			}

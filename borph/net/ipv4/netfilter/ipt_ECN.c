@@ -6,7 +6,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
 */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/in.h>
 #include <linux/module.h>
 #include <linux/skbuff.h>
@@ -77,7 +77,7 @@ set_ect_tcp(struct sk_buff *skb, const struct ipt_ECN_info *einfo)
 }
 
 static unsigned int
-ecn_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ecn_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	const struct ipt_ECN_info *einfo = par->targinfo;
 
@@ -93,25 +93,28 @@ ecn_tg(struct sk_buff *skb, const struct xt_action_param *par)
 	return XT_CONTINUE;
 }
 
-static int ecn_tg_check(const struct xt_tgchk_param *par)
+static bool ecn_tg_check(const struct xt_tgchk_param *par)
 {
 	const struct ipt_ECN_info *einfo = par->targinfo;
 	const struct ipt_entry *e = par->entryinfo;
 
 	if (einfo->operation & IPT_ECN_OP_MASK) {
-		pr_info("unsupported ECN operation %x\n", einfo->operation);
-		return -EINVAL;
+		printk(KERN_WARNING "ECN: unsupported ECN operation %x\n",
+			einfo->operation);
+		return false;
 	}
 	if (einfo->ip_ect & ~IPT_ECN_IP_MASK) {
-		pr_info("new ECT codepoint %x out of mask\n", einfo->ip_ect);
-		return -EINVAL;
+		printk(KERN_WARNING "ECN: new ECT codepoint %x out of mask\n",
+			einfo->ip_ect);
+		return false;
 	}
 	if ((einfo->operation & (IPT_ECN_OP_SET_ECE|IPT_ECN_OP_SET_CWR)) &&
 	    (e->ip.proto != IPPROTO_TCP || (e->ip.invflags & XT_INV_PROTO))) {
-		pr_info("cannot use TCP operations on a non-tcp rule\n");
-		return -EINVAL;
+		printk(KERN_WARNING "ECN: cannot use TCP operations on a "
+		       "non-tcp rule\n");
+		return false;
 	}
-	return 0;
+	return true;
 }
 
 static struct xt_target ecn_tg_reg __read_mostly = {

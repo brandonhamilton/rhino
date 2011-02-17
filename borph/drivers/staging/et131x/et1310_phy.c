@@ -66,6 +66,7 @@
 
 #include <linux/sched.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -84,14 +85,17 @@
 #include <linux/random.h>
 
 #include "et1310_phy.h"
+#include "et1310_pm.h"
+#include "et1310_jagcore.h"
 
 #include "et131x_adapter.h"
+#include "et131x_netdev.h"
+#include "et131x_initpci.h"
 
 #include "et1310_address_map.h"
 #include "et1310_tx.h"
 #include "et1310_rx.h"
-
-#include "et131x.h"
+#include "et1310_mac.h"
 
 /* Prototypes for functions with local scope */
 static void et131x_xcvr_init(struct et131x_adapter *etdev);
@@ -344,7 +348,7 @@ static void ET1310_PhyDuplexMode(struct et131x_adapter *etdev, u16 duplex)
 static void ET1310_PhySpeedSelect(struct et131x_adapter *etdev, u16 speed)
 {
 	u16 data;
-	static const u16 bits[3] = {0x0000, 0x2000, 0x0040};
+	static const u16 bits[3]={0x0000, 0x2000, 0x0040};
 
 	/* Read the PHY control register */
 	MiRead(etdev, PHY_CONTROL, &data);
@@ -760,8 +764,7 @@ void et131x_Mii_check(struct et131x_adapter *etdev,
 			if (etdev->linkspeed == TRUEPHY_SPEED_10MBPS) {
 				/* NOTE - Is there a way to query this without
 				 * TruePHY?
-				 * && TRU_QueryCoreType(etdev->hTruePhy, 0) ==
-				 * EMI_TRUEPHY_A13O) {
+				 * && TRU_QueryCoreType(etdev->hTruePhy, 0) == EMI_TRUEPHY_A13O) {
 				 */
 				u16 Register18;
 
@@ -779,7 +782,7 @@ void et131x_Mii_check(struct et131x_adapter *etdev,
 			 * in the LinkDetectionDPC).
 			 */
 			if (!(etdev->Flags & fMP_ADAPTER_LINK_DETECTION) ||
-			 (etdev->MediaState == NETIF_STATUS_MEDIA_DISCONNECT)) {
+			  (etdev->MediaState == NETIF_STATUS_MEDIA_DISCONNECT)) {
 				spin_lock_irqsave(&etdev->Lock, flags);
 				etdev->MediaState =
 				    NETIF_STATUS_MEDIA_DISCONNECT;
@@ -837,8 +840,7 @@ void et131x_Mii_check(struct et131x_adapter *etdev,
 				/*
 				 * NOTE - Is there a way to query this without
 				 * TruePHY?
-				 * && TRU_QueryCoreType(etdev->hTruePhy, 0)==
-				 * EMI_TRUEPHY_A13O) {
+				 * && TRU_QueryCoreType(etdev->hTruePhy, 0)== EMI_TRUEPHY_A13O) {
 				 */
 				u16 Register18;
 

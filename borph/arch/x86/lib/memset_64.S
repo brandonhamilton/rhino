@@ -12,8 +12,9 @@
  * 
  * rax   original destination
  */	
-	.section .altinstr_replacement, "ax", @progbits
-.Lmemset_c:
+	ALIGN
+memset_c:
+	CFI_STARTPROC
 	movq %rdi,%r9
 	movl %edx,%r8d
 	andl $7,%r8d
@@ -28,8 +29,8 @@
 	rep stosb
 	movq %r9,%rax
 	ret
-.Lmemset_e:
-	.previous
+	CFI_ENDPROC
+ENDPROC(memset_c)
 
 ENTRY(memset)
 ENTRY(__memset)
@@ -117,11 +118,16 @@ ENDPROC(__memset)
 
 #include <asm/cpufeature.h>
 
+	.section .altinstr_replacement,"ax"
+1:	.byte 0xeb				/* jmp <disp8> */
+	.byte (memset_c - memset) - (2f - 1b)	/* offset */
+2:
+	.previous
 	.section .altinstructions,"a"
 	.align 8
 	.quad memset
-	.quad .Lmemset_c
-	.word X86_FEATURE_REP_GOOD
+	.quad 1b
+	.byte X86_FEATURE_REP_GOOD
 	.byte .Lfinal - memset
-	.byte .Lmemset_e - .Lmemset_c
+	.byte 2b - 1b
 	.previous

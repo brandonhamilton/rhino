@@ -44,7 +44,6 @@
 #include <linux/serial_core.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 struct uart_pxa_port {
 	struct uart_port        port;

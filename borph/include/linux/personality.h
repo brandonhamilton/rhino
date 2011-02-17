@@ -12,7 +12,7 @@ struct pt_regs;
 
 extern int		register_exec_domain(struct exec_domain *);
 extern int		unregister_exec_domain(struct exec_domain *);
-extern int		__set_personality(unsigned int);
+extern int		__set_personality(unsigned long);
 
 #endif /* __KERNEL__ */
 

@@ -83,7 +83,7 @@ static void smp_iSeries_message_pass(int target, int msg)
 
 static int smp_iSeries_probe(void)
 {
-	return cpumask_weight(cpu_possible_mask);
+	return cpus_weight(cpu_possible_map);
 }
 
 static void smp_iSeries_kick_cpu(int nr)
@@ -91,7 +91,7 @@ static void smp_iSeries_kick_cpu(int nr)
 	BUG_ON((nr < 0) || (nr >= NR_CPUS));
 
 	/* Verify that our partition has a processor nr */
-	if (lppaca_of(nr).dyn_proc_status >= 2)
+	if (lppaca[nr].dyn_proc_status >= 2)
 		return;
 
 	/* The processor is currently spinning, waiting

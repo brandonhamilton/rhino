@@ -617,6 +617,7 @@ rtsc_min(struct runtime_sc *rtsc, struct internal_sc *isc, u64 x, u64 y)
 	rtsc->y = y;
 	rtsc->dx = dx;
 	rtsc->dy = dy;
+	return;
 }
 
 static void
@@ -761,8 +762,8 @@ init_vf(struct hfsc_class *cl, unsigned int len)
 		if (f != cl->cl_f) {
 			cl->cl_f = f;
 			cftree_update(cl);
+			update_cfmin(cl->cl_parent);
 		}
-		update_cfmin(cl->cl_parent);
 	}
 }
 
@@ -1088,7 +1089,7 @@ hfsc_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	cl->refcnt    = 1;
 	cl->sched     = q;
 	cl->cl_parent = parent;
-	cl->qdisc = qdisc_create_dflt(sch->dev_queue,
+	cl->qdisc = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
 				      &pfifo_qdisc_ops, classid);
 	if (cl->qdisc == NULL)
 		cl->qdisc = &noop_qdisc;
@@ -1154,7 +1155,7 @@ static struct hfsc_class *
 hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 {
 	struct hfsc_sched *q = qdisc_priv(sch);
-	struct hfsc_class *head, *cl;
+	struct hfsc_class *cl;
 	struct tcf_result res;
 	struct tcf_proto *tcf;
 	int result;
@@ -1165,7 +1166,6 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 			return cl;
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
-	head = &q->root;
 	tcf = q->root.filter_list;
 	while (tcf && (result = tc_classify(skb, tcf, &res)) >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
@@ -1180,8 +1180,6 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 		if ((cl = (struct hfsc_class *)res.class) == NULL) {
 			if ((cl = hfsc_find_class(res.classid, sch)) == NULL)
 				break; /* filter selected invalid classid */
-			if (cl->level >= head->level)
-				break; /* filter may only point downwards */
 		}
 
 		if (cl->level == 0)
@@ -1189,7 +1187,6 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 
 		/* apply inner filter chain */
 		tcf = cl->filter_list;
-		head = cl;
 	}
 
 	/* classification failed, try default class */
@@ -1209,7 +1206,8 @@ hfsc_graft_class(struct Qdisc *sch, unsigned long arg, struct Qdisc *new,
 	if (cl->level > 0)
 		return -EINVAL;
 	if (new == NULL) {
-		new = qdisc_create_dflt(sch->dev_queue, &pfifo_qdisc_ops,
+		new = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
+					&pfifo_qdisc_ops,
 					cl->cl_common.classid);
 		if (new == NULL)
 			new = &noop_qdisc;
@@ -1451,7 +1449,8 @@ hfsc_init_qdisc(struct Qdisc *sch, struct nlattr *opt)
 	q->root.cl_common.classid = sch->handle;
 	q->root.refcnt  = 1;
 	q->root.sched   = q;
-	q->root.qdisc = qdisc_create_dflt(sch->dev_queue, &pfifo_qdisc_ops,
+	q->root.qdisc = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
+					  &pfifo_qdisc_ops,
 					  sch->handle);
 	if (q->root.qdisc == NULL)
 		q->root.qdisc = &noop_qdisc;

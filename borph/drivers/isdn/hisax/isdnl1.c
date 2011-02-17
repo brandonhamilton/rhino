@@ -19,7 +19,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include "hisax.h"
 #include "isdnl1.h"
 

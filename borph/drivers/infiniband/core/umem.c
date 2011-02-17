@@ -37,7 +37,6 @@
 #include <linux/sched.h>
 #include <linux/hugetlb.h>
 #include <linux/dma-attrs.h>
-#include <linux/slab.h>
 
 #include "uverbs.h"
 
@@ -137,7 +136,7 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
 	down_write(&current->mm->mmap_sem);
 
 	locked     = npages + current->mm->locked_vm;
-	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+	lock_limit = current->signal->rlim[RLIMIT_MEMLOCK].rlim_cur >> PAGE_SHIFT;
 
 	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK)) {
 		ret = -ENOMEM;

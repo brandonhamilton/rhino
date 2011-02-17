@@ -12,9 +12,7 @@
 #include <linux/time.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
-#include <linux/mm.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/mount.h>
 #include <linux/init.h>
 #include <linux/idr.h>
@@ -259,22 +257,17 @@ static int proc_notify_change(struct dentry *dentry, struct iattr *iattr)
 
 	error = inode_change_ok(inode, iattr);
 	if (error)
-		return error;
+		goto out;
 
-	if ((iattr->ia_valid & ATTR_SIZE) &&
-	    iattr->ia_size != i_size_read(inode)) {
-		error = vmtruncate(inode, iattr->ia_size);
-		if (error)
-			return error;
-	}
-
-	setattr_copy(inode, iattr);
-	mark_inode_dirty(inode);
+	error = inode_setattr(inode, iattr);
+	if (error)
+		goto out;
 	
 	de->uid = inode->i_uid;
 	de->gid = inode->i_gid;
 	de->mode = inode->i_mode;
-	return 0;
+out:
+	return error;
 }
 
 static int proc_getattr(struct vfsmount *mnt, struct dentry *dentry,
@@ -298,17 +291,19 @@ static const struct inode_operations proc_file_inode_operations = {
  * returns the struct proc_dir_entry for "/proc/tty/driver", and
  * returns "serial" in residual.
  */
-static int __xlate_proc_name(const char *name, struct proc_dir_entry **ret,
-			     const char **residual)
+static int xlate_proc_name(const char *name,
+			   struct proc_dir_entry **ret, const char **residual)
 {
 	const char     		*cp = name, *next;
 	struct proc_dir_entry	*de;
 	int			len;
+	int 			rtn = 0;
 
 	de = *ret;
 	if (!de)
 		de = &proc_root;
 
+	spin_lock(&proc_subdir_lock);
 	while (1) {
 		next = strchr(cp, '/');
 		if (!next)
@@ -320,25 +315,16 @@ static int __xlate_proc_name(const char *name, struct proc_dir_entry **ret,
 				break;
 		}
 		if (!de) {
-			WARN(1, "name '%s'\n", name);
-			return -ENOENT;
+			rtn = -ENOENT;
+			goto out;
 		}
 		cp += len + 1;
 	}
 	*residual = cp;
 	*ret = de;
-	return 0;
-}
-
-static int xlate_proc_name(const char *name, struct proc_dir_entry **ret,
-			   const char **residual)
-{
-	int rv;
-
-	spin_lock(&proc_subdir_lock);
-	rv = __xlate_proc_name(name, ret, residual);
+out:
 	spin_unlock(&proc_subdir_lock);
-	return rv;
+	return rtn;
 }
 
 static DEFINE_IDA(proc_inum_ida);
@@ -349,6 +335,21 @@ static DEFINE_SPINLOCK(proc_inum_lock); /* protects the above */
 /*
  * Return an inode number between PROC_DYNAMIC_FIRST and
  * 0xffffffff, or zero on failure.
+ *
+ * Current inode allocations in the proc-fs (hex-numbers):
+ *
+ * 00000000		reserved
+ * 00000001-00000fff	static entries	(goners)
+ *      001		root-ino
+ *
+ * 00001000-00001fff	unused
+ * 0001xxxx-7fffxxxx	pid-dir entries for pid 1-7fff
+ * 80000000-efffffff	unused
+ * f0000000-ffffffff	dynamic entries
+ *
+ * Goal:
+ *	Once we split the thing into several virtual filesystems,
+ *	we will get rid of magical ranges (and this comment, BTW).
  */
 static unsigned int get_inode_number(void)
 {
@@ -428,7 +429,7 @@ struct dentry *proc_lookup_de(struct proc_dir_entry *de, struct inode *dir,
 			unsigned int ino;
 
 			ino = de->low_ino;
-			pde_get(de);
+			de_get(de);
 			spin_unlock(&proc_subdir_lock);
 			error = -EINVAL;
 			inode = proc_get_inode(dir->i_sb, ino, de);
@@ -444,7 +445,7 @@ out_unlock:
 		return NULL;
 	}
 	if (de)
-		pde_put(de);
+		de_put(de);
 	return ERR_PTR(error);
 }
 
@@ -508,17 +509,17 @@ int proc_readdir_de(struct proc_dir_entry *de, struct file *filp, void *dirent,
 				struct proc_dir_entry *next;
 
 				/* filldir passes info to user space */
-				pde_get(de);
+				de_get(de);
 				spin_unlock(&proc_subdir_lock);
 				if (filldir(dirent, de->name, de->namelen, filp->f_pos,
 					    de->low_ino, de->mode >> 12) < 0) {
-					pde_put(de);
+					de_put(de);
 					goto out;
 				}
 				spin_lock(&proc_subdir_lock);
 				filp->f_pos++;
 				next = de->next;
-				pde_put(de);
+				de_put(de);
 				de = next;
 			} while (de);
 			spin_unlock(&proc_subdir_lock);
@@ -661,7 +662,6 @@ struct proc_dir_entry *proc_symlink(const char *name,
 	}
 	return ent;
 }
-EXPORT_SYMBOL(proc_symlink);
 
 struct proc_dir_entry *proc_mkdir_mode(const char *name, mode_t mode,
 		struct proc_dir_entry *parent)
@@ -700,7 +700,6 @@ struct proc_dir_entry *proc_mkdir(const char *name,
 {
 	return proc_mkdir_mode(name, S_IRUGO | S_IXUGO, parent);
 }
-EXPORT_SYMBOL(proc_mkdir);
 
 struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode,
 					 struct proc_dir_entry *parent)
@@ -729,7 +728,6 @@ struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode,
 	}
 	return ent;
 }
-EXPORT_SYMBOL(create_proc_entry);
 
 struct proc_dir_entry *proc_create_data(const char *name, mode_t mode,
 					struct proc_dir_entry *parent,
@@ -764,9 +762,8 @@ out_free:
 out:
 	return NULL;
 }
-EXPORT_SYMBOL(proc_create_data);
 
-static void free_proc_entry(struct proc_dir_entry *de)
+void free_proc_entry(struct proc_dir_entry *de)
 {
 	unsigned int ino = de->low_ino;
 
@@ -780,12 +777,6 @@ static void free_proc_entry(struct proc_dir_entry *de)
 	kfree(de);
 }
 
-void pde_put(struct proc_dir_entry *pde)
-{
-	if (atomic_dec_and_test(&pde->count))
-		free_proc_entry(pde);
-}
-
 /*
  * Remove a /proc entry and free it if it's not currently in use.
  */
@@ -796,13 +787,11 @@ void remove_proc_entry(const char *name, struct proc_dir_entry *parent)
 	const char *fn = name;
 	int len;
 
-	spin_lock(&proc_subdir_lock);
-	if (__xlate_proc_name(name, &parent, &fn) != 0) {
-		spin_unlock(&proc_subdir_lock);
+	if (xlate_proc_name(name, &parent, &fn) != 0)
 		return;
-	}
 	len = strlen(fn);
 
+	spin_lock(&proc_subdir_lock);
 	for (p = &parent->subdir; *p; p=&(*p)->next ) {
 		if (proc_match(len, fn, *p)) {
 			de = *p;
@@ -812,10 +801,8 @@ void remove_proc_entry(const char *name, struct proc_dir_entry *parent)
 		}
 	}
 	spin_unlock(&proc_subdir_lock);
-	if (!de) {
-		WARN(1, "name '%s'\n", name);
+	if (!de)
 		return;
-	}
 
 	spin_lock(&de->pde_unload_lock);
 	/*
@@ -858,6 +845,6 @@ continue_removing:
 	WARN(de->subdir, KERN_WARNING "%s: removing non-empty directory "
 			"'%s/%s', leaking at least '%s'\n", __func__,
 			de->parent->name, de->name, de->subdir->name);
-	pde_put(de);
+	if (atomic_dec_and_test(&de->count))
+		free_proc_entry(de);
 }
-EXPORT_SYMBOL(remove_proc_entry);

@@ -40,9 +40,7 @@ static void arch_detect_cpu(void)
 	cpuid &= S3C2410_GSTATUS1_IDMASK;
 
 	if (is_arm926() || cpuid == S3C2410_GSTATUS1_2440 ||
-	    cpuid == S3C2410_GSTATUS1_2442 ||
-	    cpuid == S3C2410_GSTATUS1_2416 ||
-	    cpuid == S3C2410_GSTATUS1_2450) {
+	    cpuid == S3C2410_GSTATUS1_2442) {
 		fifo_mask = S3C2440_UFSTAT_TXMASK;
 		fifo_max = 63 << S3C2440_UFSTAT_TXSHIFT;
 	} else {

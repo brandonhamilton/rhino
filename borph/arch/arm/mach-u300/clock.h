@@ -45,6 +45,9 @@ struct clk {
 	void (*disable) (struct clk *);
 };
 
-int u300_clock_init(void);
+void u300_clock_primecells(void);
+void u300_unclock_primecells(void);
+void u300_enable_intcon_clock(void);
+void u300_enable_timer_clock(void);
 
 #endif

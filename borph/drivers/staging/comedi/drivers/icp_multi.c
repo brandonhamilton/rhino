@@ -185,18 +185,7 @@ board_name : &boardtypes[0].name,
 offset : sizeof(struct boardtype),
 };
 
-static int __init driver_icp_multi_init_module(void)
-{
-	return comedi_driver_register(&driver_icp_multi);
-}
-
-static void __exit driver_icp_multi_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_icp_multi);
-}
-
-module_init(driver_icp_multi_init_module);
-module_exit(driver_icp_multi_cleanup_module);
+COMEDI_INITCLEANUP(driver_icp_multi);
 
 struct icp_multi_private {
 	struct pcilst_struct *card;	/*  pointer to card */
@@ -1136,7 +1125,3 @@ static int icp_multi_detach(struct comedi_device *dev)
 
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

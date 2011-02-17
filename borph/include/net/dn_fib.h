@@ -50,6 +50,10 @@ struct dn_fib_info {
 	__le16			fib_prefsrc;
 	__u32			fib_priority;
 	__u32			fib_metrics[RTAX_MAX];
+#define dn_fib_mtu  fib_metrics[RTAX_MTU-1]
+#define dn_fib_window fib_metrics[RTAX_WINDOW-1]
+#define dn_fib_rtt fib_metrics[RTAX_RTT-1]
+#define dn_fib_advmss fib_metrics[RTAX_ADVMSS-1]
 	int			fib_nhs;
 	int			fib_power;
 	struct dn_fib_nh	fib_nh[0];

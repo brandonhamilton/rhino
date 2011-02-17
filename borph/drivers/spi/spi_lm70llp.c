@@ -174,7 +174,8 @@ static inline int getmiso(struct spi_device *s)
 }
 /*--------------------------------------------------------------------*/
 
-#include "spi_bitbang_txrx.h"
+#define EXPAND_BITBANG_TXRX 1
+#include <linux/spi/spi_bitbang.h>
 
 static void lm70_chipselect(struct spi_device *spi, int value)
 {
@@ -191,7 +192,7 @@ static void lm70_chipselect(struct spi_device *spi, int value)
  */
 static u32 lm70_txrx(struct spi_device *spi, unsigned nsecs, u32 word, u8 bits)
 {
-	return bitbang_txrx_be_cpha0(spi, nsecs, 0, 0, word, bits);
+	return bitbang_txrx_be_cpha0(spi, nsecs, 0, word, bits);
 }
 
 static void spi_lm70llp_attach(struct parport *p)

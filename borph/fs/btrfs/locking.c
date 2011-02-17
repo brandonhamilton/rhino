@@ -16,6 +16,7 @@
  * Boston, MA 021110-1307, USA.
  */
 #include <linux/sched.h>
+#include <linux/gfp.h>
 #include <linux/pagemap.h>
 #include <linux/spinlock.h>
 #include <linux/page-flags.h>

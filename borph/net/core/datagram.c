@@ -48,7 +48,6 @@
 #include <linux/poll.h>
 #include <linux/highmem.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 
 #include <net/protocol.h>
 #include <linux/skbuff.h>
@@ -86,7 +85,7 @@ static int wait_for_packet(struct sock *sk, int *err, long *timeo_p)
 	int error;
 	DEFINE_WAIT_FUNC(wait, receiver_wake_function);
 
-	prepare_to_wait_exclusive(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+	prepare_to_wait_exclusive(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 
 	/* Socket errors? */
 	error = sock_error(sk);
@@ -115,7 +114,7 @@ static int wait_for_packet(struct sock *sk, int *err, long *timeo_p)
 	error = 0;
 	*timeo_p = schedule_timeout(*timeo_p);
 out:
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 	return error;
 interrupted:
 	error = sock_intr_errno(*timeo_p);
@@ -219,7 +218,6 @@ struct sk_buff *skb_recv_datagram(struct sock *sk, unsigned flags,
 	return __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
 				   &peeked, err);
 }
-EXPORT_SYMBOL(skb_recv_datagram);
 
 void skb_free_datagram(struct sock *sk, struct sk_buff *skb)
 {
@@ -230,21 +228,9 @@ EXPORT_SYMBOL(skb_free_datagram);
 
 void skb_free_datagram_locked(struct sock *sk, struct sk_buff *skb)
 {
-	bool slow;
-
-	if (likely(atomic_read(&skb->users) == 1))
-		smp_rmb();
-	else if (likely(!atomic_dec_and_test(&skb->users)))
-		return;
-
-	slow = lock_sock_fast(sk);
-	skb_orphan(skb);
-	sk_mem_reclaim_partial(sk);
-	unlock_sock_fast(sk, slow);
-
-	/* skb is now orphaned, can be freed outside of locked section */
-	trace_kfree_skb(skb, skb_free_datagram_locked);
-	__kfree_skb(skb);
+	lock_sock(sk);
+	skb_free_datagram(sk, skb);
+	release_sock(sk);
 }
 EXPORT_SYMBOL(skb_free_datagram_locked);
 
@@ -290,6 +276,7 @@ int skb_kill_datagram(struct sock *sk, struct sk_buff *skb, unsigned int flags)
 
 	return err;
 }
+
 EXPORT_SYMBOL(skb_kill_datagram);
 
 /**
@@ -374,7 +361,6 @@ int skb_copy_datagram_iovec(const struct sk_buff *skb, int offset,
 fault:
 	return -EFAULT;
 }
-EXPORT_SYMBOL(skb_copy_datagram_iovec);
 
 /**
  *	skb_copy_datagram_const_iovec - Copy a datagram to an iovec.
@@ -718,7 +704,6 @@ csum_error:
 fault:
 	return -EFAULT;
 }
-EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec);
 
 /**
  * 	datagram_poll - generic datagram poll
@@ -740,19 +725,20 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 	struct sock *sk = sock->sk;
 	unsigned int mask;
 
-	sock_poll_wait(file, sk_sleep(sk), wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	/* exceptional events? */
 	if (sk->sk_err || !skb_queue_empty(&sk->sk_error_queue))
 		mask |= POLLERR;
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
-		mask |= POLLRDHUP | POLLIN | POLLRDNORM;
+		mask |= POLLRDHUP;
 	if (sk->sk_shutdown == SHUTDOWN_MASK)
 		mask |= POLLHUP;
 
 	/* readable? */
-	if (!skb_queue_empty(&sk->sk_receive_queue))
+	if (!skb_queue_empty(&sk->sk_receive_queue) ||
+	    (sk->sk_shutdown & RCV_SHUTDOWN))
 		mask |= POLLIN | POLLRDNORM;
 
 	/* Connection-based need to check for termination and startup */
@@ -772,4 +758,8 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 
 	return mask;
 }
+
 EXPORT_SYMBOL(datagram_poll);
+EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec);
+EXPORT_SYMBOL(skb_copy_datagram_iovec);
+EXPORT_SYMBOL(skb_recv_datagram);

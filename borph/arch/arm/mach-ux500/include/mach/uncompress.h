@@ -30,22 +30,22 @@
 static void putc(const char c)
 {
 	/* Do nothing if the UART is not enabled. */
-	if (!(__raw_readb(U8500_UART_CR) & 0x1))
+	if (!(readb(U8500_UART_CR) & 0x1))
 		return;
 
 	if (c == '\n')
 		putc('\r');
 
-	while (__raw_readb(U8500_UART_FR) & (1 << 5))
+	while (readb(U8500_UART_FR) & (1 << 5))
 		barrier();
-	__raw_writeb(c, U8500_UART_DR);
+	writeb(c, U8500_UART_DR);
 }
 
 static void flush(void)
 {
-	if (!(__raw_readb(U8500_UART_CR) & 0x1))
+	if (!(readb(U8500_UART_CR) & 0x1))
 		return;
-	while (__raw_readb(U8500_UART_FR) & (1 << 3))
+	while (readb(U8500_UART_FR) & (1 << 3))
 		barrier();
 }
 

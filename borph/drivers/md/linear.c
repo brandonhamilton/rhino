@@ -19,7 +19,6 @@
 #include <linux/blkdev.h>
 #include <linux/raid/md_u.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 #include "md.h"
 #include "linear.h"
 
@@ -159,8 +158,7 @@ static linear_conf_t *linear_conf(mddev_t *mddev, int raid_disks)
 		sector_t sectors;
 
 		if (j < 0 || j >= raid_disks || disk->rdev) {
-			printk(KERN_ERR "md/linear:%s: disk numbering problem. Aborting!\n",
-			       mdname(mddev));
+			printk("linear: disk numbering problem. Aborting!\n");
 			goto out;
 		}
 
@@ -174,22 +172,19 @@ static linear_conf_t *linear_conf(mddev_t *mddev, int raid_disks)
 		disk_stack_limits(mddev->gendisk, rdev->bdev,
 				  rdev->data_offset << 9);
 		/* as we don't honour merge_bvec_fn, we must never risk
-		 * violating it, so limit max_segments to 1 lying within
-		 * a single page.
+		 * violating it, so limit ->max_sector to one PAGE, as
+		 * a one page request is never in violation.
 		 */
-		if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_segments(mddev->queue, 1);
-			blk_queue_segment_boundary(mddev->queue,
-						   PAGE_CACHE_SIZE - 1);
-		}
+		if (rdev->bdev->bd_disk->queue->merge_bvec_fn &&
+		    queue_max_sectors(mddev->queue) > (PAGE_SIZE>>9))
+			blk_queue_max_sectors(mddev->queue, PAGE_SIZE>>9);
 
 		conf->array_sectors += rdev->sectors;
 		cnt++;
 
 	}
 	if (cnt != raid_disks) {
-		printk(KERN_ERR "md/linear:%s: not enough drives present. Aborting!\n",
-		       mdname(mddev));
+		printk("linear: not enough drives present. Aborting!\n");
 		goto out;
 	}
 
@@ -284,20 +279,28 @@ static int linear_stop (mddev_t *mddev)
 	rcu_barrier();
 	blk_sync_queue(mddev->queue); /* the unplug fn references 'conf'*/
 	kfree(conf);
-	mddev->private = NULL;
 
 	return 0;
 }
 
-static int linear_make_request (mddev_t *mddev, struct bio *bio)
+static int linear_make_request (struct request_queue *q, struct bio *bio)
 {
+	const int rw = bio_data_dir(bio);
+	mddev_t *mddev = q->queuedata;
 	dev_info_t *tmp_dev;
 	sector_t start_sector;
+	int cpu;
 
-	if (unlikely(bio->bi_rw & REQ_FLUSH)) {
-		md_flush_request(mddev, bio);
+	if (unlikely(bio_rw_flagged(bio, BIO_RW_BARRIER))) {
+		md_barrier_request(mddev, bio);
 		return 0;
 	}
+
+	cpu = part_stat_lock();
+	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
+	part_stat_add(cpu, &mddev->gendisk->part0, sectors[rw],
+		      bio_sectors(bio));
+	part_stat_unlock();
 
 	rcu_read_lock();
 	tmp_dev = which_dev(mddev, bio->bi_sector);
@@ -308,14 +311,12 @@ static int linear_make_request (mddev_t *mddev, struct bio *bio)
 		     || (bio->bi_sector < start_sector))) {
 		char b[BDEVNAME_SIZE];
 
-		printk(KERN_ERR
-		       "md/linear:%s: make_request: Sector %llu out of bounds on "
-		       "dev %s: %llu sectors, offset %llu\n",
-		       mdname(mddev),
-		       (unsigned long long)bio->bi_sector,
-		       bdevname(tmp_dev->rdev->bdev, b),
-		       (unsigned long long)tmp_dev->rdev->sectors,
-		       (unsigned long long)start_sector);
+		printk("linear_make_request: Sector %llu out of bounds on "
+			"dev %s: %llu sectors, offset %llu\n",
+			(unsigned long long)bio->bi_sector,
+			bdevname(tmp_dev->rdev->bdev, b),
+			(unsigned long long)tmp_dev->rdev->sectors,
+			(unsigned long long)start_sector);
 		rcu_read_unlock();
 		bio_io_error(bio);
 		return 0;
@@ -332,9 +333,9 @@ static int linear_make_request (mddev_t *mddev, struct bio *bio)
 
 		bp = bio_split(bio, end_sector - bio->bi_sector);
 
-		if (linear_make_request(mddev, &bp->bio1))
+		if (linear_make_request(q, &bp->bio1))
 			generic_make_request(&bp->bio1);
-		if (linear_make_request(mddev, &bp->bio2))
+		if (linear_make_request(q, &bp->bio2))
 			generic_make_request(&bp->bio2);
 		bio_pair_release(bp);
 		return 0;

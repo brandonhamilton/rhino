@@ -8,7 +8,6 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/time.h>
-#include <asm/local.h>
 
 struct rb_page {
 	u64		ts;
@@ -81,7 +80,7 @@ static enum event_status read_event(int cpu)
 	int *entry;
 	u64 ts;
 
-	event = ring_buffer_consume(buffer, cpu, &ts, NULL);
+	event = ring_buffer_consume(buffer, cpu, &ts);
 	if (!event)
 		return EVENT_DROPPED;
 
@@ -113,8 +112,7 @@ static enum event_status read_page(int cpu)
 	ret = ring_buffer_read_page(buffer, &bpage, PAGE_SIZE, cpu, 1);
 	if (ret >= 0) {
 		rpage = bpage;
-		/* The commit may have missed event flags set, clear them */
-		commit = local_read(&rpage->commit) & 0xfffff;
+		commit = local_read(&rpage->commit);
 		for (i = 0; i < commit && !kill_test; i += inc) {
 
 			if (i >= (PAGE_SIZE - offsetof(struct rb_page, data))) {

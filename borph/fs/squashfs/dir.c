@@ -30,6 +30,7 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/slab.h>
+#include <linux/zlib.h>
 
 #include "squashfs_fs.h"
 #include "squashfs_fs_sb.h"
@@ -230,6 +231,5 @@ failed_read:
 
 const struct file_operations squashfs_dir_ops = {
 	.read = generic_read_dir,
-	.readdir = squashfs_readdir,
-	.llseek = default_llseek,
+	.readdir = squashfs_readdir
 };

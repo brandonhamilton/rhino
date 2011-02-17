@@ -8,7 +8,6 @@
 
 #include <linux/compiler.h>
 #include <linux/netdevice.h>
-#include <linux/gfp.h>
 #include <linux/skbuff.h>
 #include <linux/types.h>
 #include <linux/pagemap.h>

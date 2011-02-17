@@ -16,11 +16,15 @@
  *		heavily optimized ring buffer access function.
  */
 
+#include <linux/interrupt.h>
+#include <linux/gpio.h>
+#include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/spi/spi.h>
 #include <linux/sysfs.h>
-#include <linux/slab.h>
+#include <linux/rtc.h>
+#include <linux/delay.h>
 
 #include "../iio.h"
 #include "../sysfs.h"
@@ -46,10 +50,8 @@
 #define KXSD9_READ(a) (0x80 | (a))
 #define KXSD9_WRITE(a) (a)
 
-#define KXSD9_SCALE_2G "0.011978"
-#define KXSD9_SCALE_4G "0.023927"
-#define KXSD9_SCALE_6G "0.035934"
-#define KXSD9_SCALE_8G "0.047853"
+#define IIO_DEV_ATTR_ACCEL_SET_RANGE(_mode, _show, _store)	\
+	IIO_DEVICE_ATTR(accel_range, _mode, _show, _store, 0)
 
 #define KXSD9_STATE_RX_SIZE 2
 #define KXSD9_STATE_TX_SIZE 4
@@ -70,9 +72,9 @@ struct kxsd9_state {
 };
 
 /* This may want to move to mili g to allow for non integer ranges */
-static ssize_t kxsd9_read_scale(struct device *dev,
-				struct device_attribute *attr,
-				char *buf)
+static ssize_t kxsd9_read_accel_range(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
 {
 	int ret;
 	ssize_t len = 0;
@@ -98,16 +100,16 @@ static ssize_t kxsd9_read_scale(struct device *dev,
 
 	switch (st->rx[1] & KXSD9_FS_MASK) {
 	case KXSD9_FS_8:
-		len += sprintf(buf, "%s\n", KXSD9_SCALE_8G);
+		len += sprintf(buf, "8\n");
 		break;
 	case KXSD9_FS_6:
-		len += sprintf(buf, "%s\n", KXSD9_SCALE_6G);
+		len += sprintf(buf, "6\n");
 		break;
 	case KXSD9_FS_4:
-		len += sprintf(buf, "%s\n", KXSD9_SCALE_4G);
+		len += sprintf(buf, "4\n");
 		break;
 	case KXSD9_FS_2:
-		len += sprintf(buf, "%s\n", KXSD9_SCALE_2G);
+		len += sprintf(buf, "2\n");
 		break;
 	}
 
@@ -116,12 +118,12 @@ error_ret:
 
 	return ret ? ret : len;
 }
-static ssize_t kxsd9_write_scale(struct device *dev,
-				 struct device_attribute *attr,
-				 const char *buf,
-				 size_t len)
+static ssize_t kxsd9_write_accel_range(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t len)
 {
-
+	long readin;
 	struct spi_message msg;
 	int ret;
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
@@ -142,25 +144,25 @@ static ssize_t kxsd9_write_scale(struct device *dev,
 		},
 	};
 
-	if (!strncmp(buf, KXSD9_SCALE_8G,
-		     strlen(buf) < strlen(KXSD9_SCALE_8G)
-		     ? strlen(buf) : strlen(KXSD9_SCALE_8G)))
+	ret = strict_strtol(buf, 10, &readin);
+	if (ret)
+		return ret;
+	switch (readin) {
+	case 8:
 		val = KXSD9_FS_8;
-	else if (!strncmp(buf, KXSD9_SCALE_6G,
-			  strlen(buf) < strlen(KXSD9_SCALE_6G)
-			  ? strlen(buf) : strlen(KXSD9_SCALE_6G)))
+		break;
+	case 6:
 		val = KXSD9_FS_6;
-	else if (!strncmp(buf, KXSD9_SCALE_4G,
-			  strlen(buf) < strlen(KXSD9_SCALE_4G)
-			  ? strlen(buf) : strlen(KXSD9_SCALE_4G)))
+		break;
+	case 4:
 		val = KXSD9_FS_4;
-	else if (!strncmp(buf, KXSD9_SCALE_2G,
-			  strlen(buf) < strlen(KXSD9_SCALE_2G)
-			  ? strlen(buf) : strlen(KXSD9_SCALE_2G)))
+		break;
+	case 2:
 		val = KXSD9_FS_2;
-	else
+		break;
+	default:
 		return -EINVAL;
-
+	}
 	mutex_lock(&st->buf_lock);
 	st->tx[0] = KXSD9_READ(KXSD9_REG_CTRL_C);
 	st->tx[1] = 0;
@@ -179,7 +181,6 @@ error_ret:
 	mutex_unlock(&st->buf_lock);
 	return ret ? ret : len;
 }
-
 static ssize_t kxsd9_read_accel(struct device *dev,
 				struct device_attribute *attr,
 				char *buf)
@@ -225,27 +226,17 @@ error_ret:
 static IIO_DEV_ATTR_ACCEL_X(kxsd9_read_accel, KXSD9_REG_X);
 static IIO_DEV_ATTR_ACCEL_Y(kxsd9_read_accel, KXSD9_REG_Y);
 static IIO_DEV_ATTR_ACCEL_Z(kxsd9_read_accel, KXSD9_REG_Z);
-static IIO_DEV_ATTR_IN_RAW(0, kxsd9_read_accel, KXSD9_REG_AUX);
-
-static IIO_DEVICE_ATTR(accel_scale,
-		S_IRUGO | S_IWUSR,
-		kxsd9_read_scale,
-		kxsd9_write_scale,
-		0);
-
-static IIO_CONST_ATTR(accel_scale_available,
-		KXSD9_SCALE_2G " "
-		KXSD9_SCALE_4G " "
-		KXSD9_SCALE_6G " "
-		KXSD9_SCALE_8G);
+static IIO_DEV_ATTR_ADC(0, kxsd9_read_accel, KXSD9_REG_AUX);
+static IIO_DEV_ATTR_ACCEL_SET_RANGE(S_IRUGO | S_IWUSR,
+				    kxsd9_read_accel_range,
+				    kxsd9_write_accel_range);
 
 static struct attribute *kxsd9_attributes[] = {
-	&iio_dev_attr_accel_x_raw.dev_attr.attr,
-	&iio_dev_attr_accel_y_raw.dev_attr.attr,
-	&iio_dev_attr_accel_z_raw.dev_attr.attr,
-	&iio_dev_attr_in0_raw.dev_attr.attr,
-	&iio_dev_attr_accel_scale.dev_attr.attr,
-	&iio_const_attr_accel_scale_available.dev_attr.attr,
+	&iio_dev_attr_accel_x.dev_attr.attr,
+	&iio_dev_attr_accel_y.dev_attr.attr,
+	&iio_dev_attr_accel_z.dev_attr.attr,
+	&iio_dev_attr_adc_0.dev_attr.attr,
+	&iio_dev_attr_accel_range.dev_attr.attr,
 	NULL,
 };
 

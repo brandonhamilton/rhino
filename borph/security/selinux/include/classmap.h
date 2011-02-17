@@ -2,8 +2,7 @@
     "getattr", "setattr", "lock", "relabelfrom", "relabelto", "append"
 
 #define COMMON_FILE_PERMS COMMON_FILE_SOCK_PERMS, "unlink", "link", \
-    "rename", "execute", "swapon", "quotaon", "mounton", "audit_access", \
-    "open", "execmod"
+    "rename", "execute", "swapon", "quotaon", "mounton"
 
 #define COMMON_SOCK_PERMS COMMON_FILE_SOCK_PERMS, "bind", "connect", \
     "listen", "accept", "getopt", "setopt", "shutdown", "recvfrom",  \
@@ -17,7 +16,7 @@ struct security_class_mapping secclass_map[] = {
 	  { "compute_av", "compute_create", "compute_member",
 	    "check_context", "load_policy", "compute_relabel",
 	    "compute_user", "setenforce", "setbool", "setsecparam",
-	    "setcheckreqprot", "read_policy", NULL } },
+	    "setcheckreqprot", NULL } },
 	{ "process",
 	  { "fork", "transition", "sigchld", "sigkill",
 	    "sigstop", "signull", "signal", "ptrace", "getsched", "setsched",
@@ -44,21 +43,22 @@ struct security_class_mapping secclass_map[] = {
 	    "quotaget", NULL } },
 	{ "file",
 	  { COMMON_FILE_PERMS,
-	    "execute_no_trans", "entrypoint", NULL } },
+	    "execute_no_trans", "entrypoint", "execmod", "open", NULL } },
 	{ "dir",
 	  { COMMON_FILE_PERMS, "add_name", "remove_name",
-	    "reparent", "search", "rmdir", NULL } },
+	    "reparent", "search", "rmdir", "open", NULL } },
 	{ "fd", { "use", NULL } },
 	{ "lnk_file",
 	  { COMMON_FILE_PERMS, NULL } },
 	{ "chr_file",
-	  { COMMON_FILE_PERMS, NULL } },
+	  { COMMON_FILE_PERMS,
+	    "execute_no_trans", "entrypoint", "execmod", "open", NULL } },
 	{ "blk_file",
-	  { COMMON_FILE_PERMS, NULL } },
+	  { COMMON_FILE_PERMS, "open", NULL } },
 	{ "sock_file",
-	  { COMMON_FILE_PERMS, NULL } },
+	  { COMMON_FILE_PERMS, "open", NULL } },
 	{ "fifo_file",
-	  { COMMON_FILE_PERMS, NULL } },
+	  { COMMON_FILE_PERMS, "open", NULL } },
 	{ "socket",
 	  { COMMON_SOCK_PERMS, NULL } },
 	{ "tcp_socket",

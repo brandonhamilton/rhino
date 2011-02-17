@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/mcp.h>
 

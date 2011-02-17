@@ -177,9 +177,6 @@ struct fuse_out {
 	/** Zero partially or not copied pages */
 	unsigned page_zeroing:1;
 
-	/** Pages may be replaced with new ones */
-	unsigned page_replace:1;
-
 	/** Number or arguments */
 	unsigned numargs;
 
@@ -272,7 +269,6 @@ struct fuse_req {
 			struct fuse_write_in in;
 			struct fuse_write_out out;
 		} write;
-		struct fuse_notify_retrieve_in retrieve_in;
 		struct fuse_lk_in lk_in;
 	} misc;
 
@@ -572,7 +568,8 @@ void fuse_release_common(struct file *file, int opcode);
 /**
  * Send FSYNC or FSYNCDIR request
  */
-int fuse_fsync_common(struct file *file, int datasync, int isdir);
+int fuse_fsync_common(struct file *file, struct dentry *de, int datasync,
+		      int isdir);
 
 /**
  * Notify poll wakeup
@@ -748,7 +745,5 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 		   unsigned int flags);
 unsigned fuse_file_poll(struct file *file, poll_table *wait);
 int fuse_dev_release(struct inode *inode, struct file *file);
-
-void fuse_write_update_size(struct inode *inode, loff_t pos);
 
 #endif /* _FS_FUSE_I_H */

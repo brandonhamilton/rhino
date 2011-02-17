@@ -1,13 +1,14 @@
 /*
  * linux/drivers/s390/cio/thinint_qdio.c
  *
- * Copyright 2000,2009 IBM Corp.
+ * thin interrupt support for qdio
+ *
+ * Copyright 2000-2008 IBM Corp.
  * Author(s): Utz Bacher <utz.bacher@de.ibm.com>
  *	      Cornelia Huck <cornelia.huck@de.ibm.com>
  *	      Jan Glauber <jang@linux.vnet.ibm.com>
  */
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <asm/atomic.h>
 #include <asm/debug.h>
 #include <asm/qdio.h>
@@ -18,6 +19,7 @@
 #include "ioasm.h"
 #include "qdio.h"
 #include "qdio_debug.h"
+#include "qdio_perf.h"
 
 /*
  * Restriction: only 63 iqdio subchannels would have its own indicator,
@@ -25,19 +27,23 @@
  */
 #define TIQDIO_NR_NONSHARED_IND		63
 #define TIQDIO_NR_INDICATORS		(TIQDIO_NR_NONSHARED_IND + 1)
+#define TIQDIO_SHARED_IND		63
 
 /* list of thin interrupt input queues */
 static LIST_HEAD(tiq_list);
 DEFINE_MUTEX(tiq_list_lock);
 
 /* adapter local summary indicator */
-static u8 *tiqdio_alsi;
+static unsigned char *tiqdio_alsi;
 
-struct indicator_t *q_indicators;
+/* device state change indicators */
+struct indicator_t {
+	u32 ind;	/* u32 because of compare-and-swap performance */
+	atomic_t count; /* use count, 0 or 1 for non-shared indicators */
+};
+static struct indicator_t *q_indicators;
 
 static int css_qdio_omit_svs;
-
-static u64 last_ai_time;
 
 static inline unsigned long do_clear_global_summary(void)
 {
@@ -91,7 +97,7 @@ void tiqdio_add_input_queues(struct qdio_irq *irq_ptr)
 	for_each_input_queue(irq_ptr, q, i)
 		list_add_rcu(&q->entry, &tiq_list);
 	mutex_unlock(&tiq_list_lock);
-	xchg(irq_ptr->dsci, 1 << 7);
+	xchg(irq_ptr->dsci, 1);
 }
 
 void tiqdio_remove_input_queues(struct qdio_irq *irq_ptr)
@@ -112,78 +118,65 @@ void tiqdio_remove_input_queues(struct qdio_irq *irq_ptr)
 	}
 }
 
-static inline int shared_ind_used(void)
+static inline int shared_ind(struct qdio_irq *irq_ptr)
 {
-	return atomic_read(&q_indicators[TIQDIO_SHARED_IND].count);
+	return irq_ptr->dsci == &q_indicators[TIQDIO_SHARED_IND].ind;
 }
 
 /**
  * tiqdio_thinint_handler - thin interrupt handler for qdio
- * @alsi: pointer to adapter local summary indicator
- * @data: NULL
+ * @ind: pointer to adapter local summary indicator
+ * @drv_data: NULL
  */
-static void tiqdio_thinint_handler(void *alsi, void *data)
+static void tiqdio_thinint_handler(void *ind, void *drv_data)
 {
 	struct qdio_q *q;
 
-	last_ai_time = S390_lowcore.int_clock;
+	qdio_perf_stat_inc(&perf_stats.thin_int);
 
 	/*
 	 * SVS only when needed: issue SVS to benefit from iqdio interrupt
-	 * avoidance (SVS clears adapter interrupt suppression overwrite).
+	 * avoidance (SVS clears adapter interrupt suppression overwrite)
 	 */
 	if (!css_qdio_omit_svs)
 		do_clear_global_summary();
 
-	/* reset local summary indicator */
-	if (shared_ind_used())
-		xchg(tiqdio_alsi, 0);
+	/*
+	 * reset local summary indicator (tiqdio_alsi) to stop adapter
+	 * interrupts for now
+	 */
+	xchg((u8 *)ind, 0);
 
 	/* protect tiq_list entries, only changed in activate or shutdown */
 	rcu_read_lock();
 
 	/* check for work on all inbound thinint queues */
-	list_for_each_entry_rcu(q, &tiq_list, entry) {
-
+	list_for_each_entry_rcu(q, &tiq_list, entry)
 		/* only process queues from changed sets */
-		if (!*q->irq_ptr->dsci)
-			continue;
+		if (*q->irq_ptr->dsci) {
 
-		if (q->u.in.queue_start_poll) {
-			/* skip if polling is enabled or already in work */
-			if (test_and_set_bit(QDIO_QUEUE_IRQS_DISABLED,
-					     &q->u.in.queue_irq_state)) {
-				qperf_inc(q, int_discarded);
-				continue;
-			}
-
-			/* avoid dsci clear here, done after processing */
-			q->u.in.queue_start_poll(q->irq_ptr->cdev, q->nr,
-						 q->irq_ptr->int_parm);
-		} else {
 			/* only clear it if the indicator is non-shared */
 			if (!shared_ind(q->irq_ptr))
 				xchg(q->irq_ptr->dsci, 0);
 			/*
-			 * Call inbound processing but not directly
-			 * since that could starve other thinint queues.
+			 * don't call inbound processing directly since
+			 * that could starve other thinint queues
 			 */
 			tasklet_schedule(&q->tasklet);
 		}
-		qperf_inc(q, adapter_int);
-	}
+
 	rcu_read_unlock();
 
 	/*
-	 * If the shared indicator was used clear it now after all queues
-	 * were processed.
+	 * if we used the shared indicator clear it now after all queues
+	 * were processed
 	 */
-	if (shared_ind_used()) {
+	if (atomic_read(&q_indicators[TIQDIO_SHARED_IND].count)) {
 		xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 0);
 
 		/* prevent racing */
 		if (*tiqdio_alsi)
-			xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 1 << 7);
+			xchg(&q_indicators[TIQDIO_SHARED_IND].ind, 1);
 	}
 }
 
@@ -209,8 +202,8 @@ static int set_subchannel_ind(struct qdio_irq *irq_ptr, int reset)
 		.code	= 0x0021,
 	};
 	scssc_area->operation_code = 0;
-	scssc_area->ks = PAGE_DEFAULT_KEY >> 4;
-	scssc_area->kc = PAGE_DEFAULT_KEY >> 4;
+	scssc_area->ks = PAGE_DEFAULT_KEY;
+	scssc_area->kc = PAGE_DEFAULT_KEY;
 	scssc_area->isc = QDIO_AIRQ_ISC;
 	scssc_area->schid = irq_ptr->schid;
 
@@ -292,8 +285,8 @@ void qdio_shutdown_thinint(struct qdio_irq *irq_ptr)
 		return;
 
 	/* reset adapter interrupt indicators */
-	set_subchannel_ind(irq_ptr, 1);
 	put_indicator(irq_ptr->dsci);
+	set_subchannel_ind(irq_ptr, 1);
 }
 
 void __exit tiqdio_unregister_thinints(void)

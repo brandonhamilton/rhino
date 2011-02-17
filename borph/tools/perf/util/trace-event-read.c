@@ -18,7 +18,7 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
-#define _FILE_OFFSET_BITS 64
+#define _LARGEFILE64_SOURCE
 
 #include <dirent.h>
 #include <stdio.h>
@@ -50,59 +50,15 @@ static int long_size;
 
 static unsigned long	page_size;
 
-static ssize_t calc_data_size;
-static bool repipe;
-
-static int do_read(int fd, void *buf, int size)
-{
-	int rsize = size;
-
-	while (size) {
-		int ret = read(fd, buf, size);
-
-		if (ret <= 0)
-			return -1;
-
-		if (repipe) {
-			int retw = write(STDOUT_FILENO, buf, ret);
-
-			if (retw <= 0 || retw != ret)
-				die("repiping input file");
-		}
-
-		size -= ret;
-		buf += ret;
-	}
-
-	return rsize;
-}
-
 static int read_or_die(void *data, int size)
 {
 	int r;
 
-	r = do_read(input_fd, data, size);
-	if (r <= 0)
+	r = read(input_fd, data, size);
+	if (r != size)
 		die("reading input file (size expected=%d received=%d)",
 		    size, r);
-
-	if (calc_data_size)
-		calc_data_size += r;
-
 	return r;
-}
-
-/* If it fails, the next read will report it */
-static void skip(int size)
-{
-	char buf[BUFSIZ];
-	int r;
-
-	while (size) {
-		r = size > BUFSIZ ? BUFSIZ : size;
-		read_or_die(buf, r);
-		size -= r;
-	};
 }
 
 static unsigned int read4(void)
@@ -126,35 +82,56 @@ static char *read_string(void)
 	char buf[BUFSIZ];
 	char *str = NULL;
 	int size = 0;
-	off_t r;
-	char c;
+	int i;
+	int r;
 
 	for (;;) {
-		r = read(input_fd, &c, 1);
+		r = read(input_fd, buf, BUFSIZ);
 		if (r < 0)
 			die("reading input file");
 
 		if (!r)
 			die("no data");
 
-		if (repipe) {
-			int retw = write(STDOUT_FILENO, &c, 1);
-
-			if (retw <= 0 || retw != r)
-				die("repiping input file string");
+		for (i = 0; i < r; i++) {
+			if (!buf[i])
+				break;
 		}
-
-		buf[size++] = c;
-
-		if (!c)
+		if (i < r)
 			break;
+
+		if (str) {
+			size += BUFSIZ;
+			str = realloc(str, size);
+			if (!str)
+				die("malloc of size %d", size);
+			memcpy(str + (size - BUFSIZ), buf, BUFSIZ);
+		} else {
+			size = BUFSIZ;
+			str = malloc_or_die(size);
+			memcpy(str, buf, size);
+		}
 	}
 
-	if (calc_data_size)
-		calc_data_size += size;
+	/* trailing \0: */
+	i++;
 
-	str = malloc_or_die(size);
-	memcpy(str, buf, size);
+	/* move the file descriptor to the end of the string */
+	r = lseek(input_fd, -(r - i), SEEK_CUR);
+	if (r < 0)
+		die("lseek");
+
+	if (str) {
+		size += i;
+		str = realloc(str, size);
+		if (!str)
+			die("malloc of size %d", size);
+		memcpy(str + (size - i), buf, i);
+	} else {
+		size = i;
+		str = malloc_or_die(i);
+		memcpy(str, buf, i);
+	}
 
 	return str;
 }
@@ -197,6 +174,7 @@ static void read_ftrace_printk(void)
 static void read_header_files(void)
 {
 	unsigned long long size;
+	char *header_page;
 	char *header_event;
 	char buf[BUFSIZ];
 
@@ -206,7 +184,10 @@ static void read_header_files(void)
 		die("did not read header page");
 
 	size = read8();
-	skip(size);
+	header_page = malloc_or_die(size);
+	read_or_die(header_page, size);
+	parse_header_page(header_page, size);
+	free(header_page);
 
 	/*
 	 * The size field in the page is of type long,
@@ -301,8 +282,8 @@ static void update_cpu_data_index(int cpu)
 
 static void get_next_page(int cpu)
 {
-	off_t save_seek;
-	off_t ret;
+	off64_t save_seek;
+	off64_t ret;
 
 	if (!cpu_data[cpu].page)
 		return;
@@ -317,17 +298,17 @@ static void get_next_page(int cpu)
 		update_cpu_data_index(cpu);
 
 		/* other parts of the code may expect the pointer to not move */
-		save_seek = lseek(input_fd, 0, SEEK_CUR);
+		save_seek = lseek64(input_fd, 0, SEEK_CUR);
 
-		ret = lseek(input_fd, cpu_data[cpu].offset, SEEK_SET);
-		if (ret == (off_t)-1)
+		ret = lseek64(input_fd, cpu_data[cpu].offset, SEEK_SET);
+		if (ret < 0)
 			die("failed to lseek");
 		ret = read(input_fd, cpu_data[cpu].page, page_size);
 		if (ret < 0)
 			die("failed to read page");
 
 		/* reset the file pointer back */
-		lseek(input_fd, save_seek, SEEK_SET);
+		lseek64(input_fd, save_seek, SEEK_SET);
 
 		return;
 	}
@@ -478,7 +459,7 @@ struct record *trace_read_data(int cpu)
 	return data;
 }
 
-ssize_t trace_report(int fd, bool __repipe)
+void trace_report(int fd)
 {
 	char buf[BUFSIZ];
 	char test[] = { 23, 8, 68 };
@@ -486,10 +467,6 @@ ssize_t trace_report(int fd, bool __repipe)
 	int show_version = 0;
 	int show_funcs = 0;
 	int show_printk = 0;
-	ssize_t size;
-
-	calc_data_size = 1;
-	repipe = __repipe;
 
 	input_fd = fd;
 
@@ -522,18 +499,14 @@ ssize_t trace_report(int fd, bool __repipe)
 	read_proc_kallsyms();
 	read_ftrace_printk();
 
-	size = calc_data_size - 1;
-	calc_data_size = 0;
-	repipe = false;
-
 	if (show_funcs) {
 		print_funcs();
-		return size;
+		return;
 	}
 	if (show_printk) {
 		print_printk();
-		return size;
+		return;
 	}
 
-	return size;
+	return;
 }

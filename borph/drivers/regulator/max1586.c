@@ -22,7 +22,6 @@
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
-#include <linux/slab.h>
 #include <linux/regulator/max1586.h>
 
 #define MAX1586_V3_MAX_VSEL 31
@@ -121,14 +120,14 @@ static int max1586_v6_set(struct regulator_dev *rdev, int min_uV, int max_uV)
 	if (max_uV < MAX1586_V6_MIN_UV || max_uV > MAX1586_V6_MAX_UV)
 		return -EINVAL;
 
+	if (min_uV >= 3000000)
+		selector = 3;
+	if (min_uV < 3000000)
+		selector = 2;
+	if (min_uV < 2500000)
+		selector = 1;
 	if (min_uV < 1800000)
 		selector = 0;
-	else if (min_uV < 2500000)
-		selector = 1;
-	else if (min_uV < 3000000)
-		selector = 2;
-	else if (min_uV >= 3000000)
-		selector = 3;
 
 	if (max1586_v6_calc_voltage(selector) > max_uV)
 		return -EINVAL;
@@ -180,8 +179,8 @@ static struct regulator_desc max1586_reg[] = {
 	},
 };
 
-static int __devinit max1586_pmic_probe(struct i2c_client *client,
-					const struct i2c_device_id *i2c_id)
+static int max1586_pmic_probe(struct i2c_client *client,
+			      const struct i2c_device_id *i2c_id)
 {
 	struct regulator_dev **rdev;
 	struct max1586_platform_data *pdata = client->dev.platform_data;
@@ -223,7 +222,7 @@ static int __devinit max1586_pmic_probe(struct i2c_client *client,
 		}
 	}
 
-	i2c_set_clientdata(client, max1586);
+	i2c_set_clientdata(client, rdev);
 	dev_info(&client->dev, "Maxim 1586 regulator driver loaded\n");
 	return 0;
 
@@ -236,15 +235,16 @@ out:
 	return ret;
 }
 
-static int __devexit max1586_pmic_remove(struct i2c_client *client)
+static int max1586_pmic_remove(struct i2c_client *client)
 {
-	struct max1586_data *max1586 = i2c_get_clientdata(client);
+	struct regulator_dev **rdev = i2c_get_clientdata(client);
 	int i;
 
 	for (i = 0; i <= MAX1586_V6; i++)
-		if (max1586->rdev[i])
-			regulator_unregister(max1586->rdev[i]);
-	kfree(max1586);
+		if (rdev[i])
+			regulator_unregister(rdev[i]);
+	kfree(rdev);
+	i2c_set_clientdata(client, NULL);
 
 	return 0;
 }
@@ -257,10 +257,9 @@ MODULE_DEVICE_TABLE(i2c, max1586_id);
 
 static struct i2c_driver max1586_pmic_driver = {
 	.probe = max1586_pmic_probe,
-	.remove = __devexit_p(max1586_pmic_remove),
+	.remove = max1586_pmic_remove,
 	.driver		= {
 		.name	= "max1586",
-		.owner	= THIS_MODULE,
 	},
 	.id_table	= max1586_id,
 };

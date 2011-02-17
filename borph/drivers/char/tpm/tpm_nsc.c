@@ -20,7 +20,6 @@
  */
 
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include "tpm.h"
 
 /* National definitions */

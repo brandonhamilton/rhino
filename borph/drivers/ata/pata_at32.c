@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 #include <scsi/scsi_host.h>
 #include <linux/ata.h>
 #include <linux/libata.h>

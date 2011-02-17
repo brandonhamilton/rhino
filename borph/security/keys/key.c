@@ -355,7 +355,7 @@ EXPORT_SYMBOL(key_alloc);
  */
 int key_payload_reserve(struct key *key, size_t datalen)
 {
-	int delta = (int)datalen - key->datalen;
+	int delta = (int) datalen - key->datalen;
 	int ret = 0;
 
 	key_check(key);
@@ -398,8 +398,7 @@ static int __key_instantiate_and_link(struct key *key,
 				      const void *data,
 				      size_t datalen,
 				      struct key *keyring,
-				      struct key *authkey,
-				      struct keyring_list **_prealloc)
+				      struct key *authkey)
 {
 	int ret, awaken;
 
@@ -426,7 +425,7 @@ static int __key_instantiate_and_link(struct key *key,
 
 			/* and link it into the destination keyring */
 			if (keyring)
-				__key_link(keyring, key, _prealloc);
+				ret = __key_link(keyring, key);
 
 			/* disable the authorisation key */
 			if (authkey)
@@ -454,21 +453,15 @@ int key_instantiate_and_link(struct key *key,
 			     struct key *keyring,
 			     struct key *authkey)
 {
-	struct keyring_list *prealloc;
 	int ret;
 
-	if (keyring) {
-		ret = __key_link_begin(keyring, key->type, key->description,
-				       &prealloc);
-		if (ret < 0)
-			return ret;
-	}
+	if (keyring)
+		down_write(&keyring->sem);
 
-	ret = __key_instantiate_and_link(key, data, datalen, keyring, authkey,
-					 &prealloc);
+	ret = __key_instantiate_and_link(key, data, datalen, keyring, authkey);
 
 	if (keyring)
-		__key_link_end(keyring, key->type, prealloc);
+		up_write(&keyring->sem);
 
 	return ret;
 
@@ -485,9 +478,8 @@ int key_negate_and_link(struct key *key,
 			struct key *keyring,
 			struct key *authkey)
 {
-	struct keyring_list *prealloc;
 	struct timespec now;
-	int ret, awaken, link_ret = 0;
+	int ret, awaken;
 
 	key_check(key);
 	key_check(keyring);
@@ -496,8 +488,7 @@ int key_negate_and_link(struct key *key,
 	ret = -EBUSY;
 
 	if (keyring)
-		link_ret = __key_link_begin(keyring, key->type,
-					    key->description, &prealloc);
+		down_write(&keyring->sem);
 
 	mutex_lock(&key_construction_mutex);
 
@@ -517,8 +508,8 @@ int key_negate_and_link(struct key *key,
 		ret = 0;
 
 		/* and link it into the destination keyring */
-		if (keyring && link_ret == 0)
-			__key_link(keyring, key, &prealloc);
+		if (keyring)
+			ret = __key_link(keyring, key);
 
 		/* disable the authorisation key */
 		if (authkey)
@@ -528,13 +519,13 @@ int key_negate_and_link(struct key *key,
 	mutex_unlock(&key_construction_mutex);
 
 	if (keyring)
-		__key_link_end(keyring, key->type, prealloc);
+		up_write(&keyring->sem);
 
 	/* wake up anyone waiting for a key to be constructed */
 	if (awaken)
 		wake_up_bit(&key->flags, KEY_FLAG_USER_CONSTRUCT);
 
-	return ret == 0 ? link_ret : ret;
+	return ret;
 
 } /* end key_negate_and_link() */
 
@@ -758,7 +749,6 @@ key_ref_t key_create_or_update(key_ref_t keyring_ref,
 			       key_perm_t perm,
 			       unsigned long flags)
 {
-	struct keyring_list *prealloc;
 	const struct cred *cred = current_cred();
 	struct key_type *ktype;
 	struct key *keyring, *key = NULL;
@@ -785,9 +775,7 @@ key_ref_t key_create_or_update(key_ref_t keyring_ref,
 	if (keyring->type != &key_type_keyring)
 		goto error_2;
 
-	ret = __key_link_begin(keyring, ktype, description, &prealloc);
-	if (ret < 0)
-		goto error_2;
+	down_write(&keyring->sem);
 
 	/* if we're going to allocate a new key, we're going to have
 	 * to modify the keyring */
@@ -829,8 +817,7 @@ key_ref_t key_create_or_update(key_ref_t keyring_ref,
 	}
 
 	/* instantiate it and link it into the target keyring */
-	ret = __key_instantiate_and_link(key, payload, plen, keyring, NULL,
-					 &prealloc);
+	ret = __key_instantiate_and_link(key, payload, plen, keyring, NULL);
 	if (ret < 0) {
 		key_put(key);
 		key_ref = ERR_PTR(ret);
@@ -840,7 +827,7 @@ key_ref_t key_create_or_update(key_ref_t keyring_ref,
 	key_ref = make_key_ref(key, is_key_possessed(keyring_ref));
 
  error_3:
-	__key_link_end(keyring, ktype, prealloc);
+	up_write(&keyring->sem);
  error_2:
 	key_type_put(ktype);
  error:
@@ -850,7 +837,7 @@ key_ref_t key_create_or_update(key_ref_t keyring_ref,
 	/* we found a matching key, so we're going to try to update it
 	 * - we can drop the locks first as we have the key pinned
 	 */
-	__key_link_end(keyring, ktype, prealloc);
+	up_write(&keyring->sem);
 	key_type_put(ktype);
 
 	key_ref = __key_update(key_ref, payload, plen);

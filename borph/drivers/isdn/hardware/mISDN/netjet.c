@@ -24,7 +24,6 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/mISDNhw.h>
-#include <linux/slab.h>
 #include "ipac.h"
 #include "iohelper.h"
 #include "netjet.h"
@@ -320,12 +319,12 @@ inittiger(struct tiger_hw *card)
 		return -ENOMEM;
 	}
 	for (i = 0; i < 2; i++) {
-		card->bc[i].hsbuf = kmalloc(NJ_DMA_TXSIZE, GFP_ATOMIC);
+		card->bc[i].hsbuf = kmalloc(NJ_DMA_TXSIZE, GFP_KERNEL);
 		if (!card->bc[i].hsbuf) {
 			pr_info("%s: no B%d send buffer\n", card->name, i + 1);
 			return -ENOMEM;
 		}
-		card->bc[i].hrbuf = kmalloc(NJ_DMA_RXSIZE, GFP_ATOMIC);
+		card->bc[i].hrbuf = kmalloc(NJ_DMA_RXSIZE, GFP_KERNEL);
 		if (!card->bc[i].hrbuf) {
 			pr_info("%s: no B%d recv buffer\n", card->name, i + 1);
 			return -ENOMEM;

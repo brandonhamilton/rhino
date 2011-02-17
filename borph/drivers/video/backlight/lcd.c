@@ -13,7 +13,6 @@
 #include <linux/ctype.h>
 #include <linux/err.h>
 #include <linux/fb.h>
-#include <linux/slab.h>
 
 #if defined(CONFIG_FB) || (defined(CONFIG_FB_MODULE) && \
 			   defined(CONFIG_LCD_CLASS_DEVICE_MODULE))

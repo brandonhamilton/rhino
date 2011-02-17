@@ -19,15 +19,12 @@
 
 #include <linux/poll.h>
 #include <linux/vmalloc.h>
-#include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mISDNif.h>
-#include <linux/mutex.h>
 #include "core.h"
 
-static DEFINE_MUTEX(mISDN_mutex);
 static u_int	*debug;
 
 
@@ -99,6 +96,8 @@ mISDN_read(struct file *filep, char __user *buf, size_t count, loff_t *off)
 	if (*debug & DEBUG_TIMER)
 		printk(KERN_DEBUG "%s(%p, %p, %d, %p)\n", __func__,
 			filep, buf, (int)count, off);
+	if (*off != filep->f_pos)
+		return -ESPIPE;
 
 	if (list_empty(&dev->expired) && (dev->work == 0)) {
 		if (filep->f_flags & O_NONBLOCK)
@@ -215,8 +214,9 @@ unlock:
 	return ret;
 }
 
-static long
-mISDN_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+static int
+mISDN_ioctl(struct inode *inode, struct file *filep, unsigned int cmd,
+    unsigned long arg)
 {
 	struct mISDNtimerdev	*dev = filep->private_data;
 	int			id, tout, ret = 0;
@@ -225,7 +225,6 @@ mISDN_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (*debug & DEBUG_TIMER)
 		printk(KERN_DEBUG "%s(%p, %x, %lx)\n", __func__,
 		    filep, cmd, arg);
-	mutex_lock(&mISDN_mutex);
 	switch (cmd) {
 	case IMADDTIMER:
 		if (get_user(tout, (int __user *)arg)) {
@@ -257,17 +256,15 @@ mISDN_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	default:
 		ret = -EINVAL;
 	}
-	mutex_unlock(&mISDN_mutex);
 	return ret;
 }
 
 static const struct file_operations mISDN_fops = {
 	.read		= mISDN_read,
 	.poll		= mISDN_poll,
-	.unlocked_ioctl	= mISDN_ioctl,
+	.ioctl		= mISDN_ioctl,
 	.open		= mISDN_open,
 	.release	= mISDN_close,
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice mISDNtimer = {

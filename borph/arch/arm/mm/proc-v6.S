@@ -30,20 +30,26 @@
 #define TTB_RGN_WT	(2 << 3)
 #define TTB_RGN_WB	(3 << 3)
 
-#define TTB_FLAGS_UP	TTB_RGN_WBWA
-#define PMD_FLAGS_UP	PMD_SECT_WB
-#define TTB_FLAGS_SMP	TTB_RGN_WBWA|TTB_S
-#define PMD_FLAGS_SMP	PMD_SECT_WBWA|PMD_SECT_S
+#ifndef CONFIG_SMP
+#define TTB_FLAGS	TTB_RGN_WBWA
+#define PMD_FLAGS	PMD_SECT_WB
+#else
+#define TTB_FLAGS	TTB_RGN_WBWA|TTB_S
+#define PMD_FLAGS	PMD_SECT_WBWA|PMD_SECT_S
+#endif
 
 ENTRY(cpu_v6_proc_init)
 	mov	pc, lr
 
 ENTRY(cpu_v6_proc_fin)
+	stmfd	sp!, {lr}
+	cpsid	if				@ disable interrupts
+	bl	v6_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x0006			@ .............ca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  *	cpu_v6_reset(loc)
@@ -53,6 +59,8 @@ ENTRY(cpu_v6_proc_fin)
  *	to what would be the reset vector.
  *
  *	- loc   - location to jump to for soft reset
+ *
+ *	It is assumed that:
  */
 	.align	5
 ENTRY(cpu_v6_reset)
@@ -94,8 +102,7 @@ ENTRY(cpu_v6_switch_mm)
 #ifdef CONFIG_MMU
 	mov	r2, #0
 	ldr	r1, [r1, #MM_CONTEXT_ID]	@ get mm->context.id
-	ALT_SMP(orr	r0, r0, #TTB_FLAGS_SMP)
-	ALT_UP(orr	r0, r0, #TTB_FLAGS_UP)
+	orr	r0, r0, #TTB_FLAGS
 	mcr	p15, 0, r2, c7, c5, 6		@ flush BTAC/BTB
 	mcr	p15, 0, r2, c7, c10, 4		@ drain write buffer
 	mcr	p15, 0, r0, c2, c0, 0		@ set TTB 0
@@ -135,7 +142,7 @@ cpu_pj4_name:
 
 	.align
 
-	__CPUINIT
+	__INIT
 
 /*
  *	__v6_setup
@@ -154,11 +161,9 @@ cpu_pj4_name:
  */
 __v6_setup:
 #ifdef CONFIG_SMP
-	ALT_SMP(mrc	p15, 0, r0, c1, c0, 1)	@ Enable SMP/nAMP mode
-	ALT_UP(nop)
+	mrc	p15, 0, r0, c1, c0, 1		@ Enable SMP/nAMP mode
 	orr	r0, r0, #0x20
-	ALT_SMP(mcr	p15, 0, r0, c1, c0, 1)
-	ALT_UP(nop)
+	mcr	p15, 0, r0, c1, c0, 1
 #endif
 
 	mov	r0, #0
@@ -169,8 +174,7 @@ __v6_setup:
 #ifdef CONFIG_MMU
 	mcr	p15, 0, r0, c8, c7, 0		@ invalidate I + D TLBs
 	mcr	p15, 0, r0, c2, c0, 2		@ TTB control register
-	ALT_SMP(orr	r4, r4, #TTB_FLAGS_SMP)
-	ALT_UP(orr	r4, r4, #TTB_FLAGS_UP)
+	orr	r4, r4, #TTB_FLAGS
 	mcr	p15, 0, r4, c2, c0, 1		@ load TTB1
 #endif /* CONFIG_MMU */
 	adr	r5, v6_crval
@@ -193,8 +197,6 @@ __v6_setup:
 v6_crval:
 	crval	clear=0x01e0fb7f, mmuset=0x00c0387d, ucset=0x00c0187c
 
-	__INITDATA
-
 	.type	v6_processor_functions, #object
 ENTRY(v6_processor_functions)
 	.word	v6_early_abort
@@ -207,8 +209,6 @@ ENTRY(v6_processor_functions)
 	.word	cpu_v6_switch_mm
 	.word	cpu_v6_set_pte_ext
 	.size	v6_processor_functions, . - v6_processor_functions
-
-	.section ".rodata"
 
 	.type	cpu_arch_name, #object
 cpu_arch_name:
@@ -230,16 +230,10 @@ cpu_elf_name:
 __v6_proc_info:
 	.long	0x0007b000
 	.long	0x0007f000
-	ALT_SMP(.long \
-		PMD_TYPE_SECT | \
+	.long   PMD_TYPE_SECT | \
 		PMD_SECT_AP_WRITE | \
 		PMD_SECT_AP_READ | \
-		PMD_FLAGS_SMP)
-	ALT_UP(.long \
-		PMD_TYPE_SECT | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ | \
-		PMD_FLAGS_UP)
+		PMD_FLAGS
 	.long   PMD_TYPE_SECT | \
 		PMD_SECT_XN | \
 		PMD_SECT_AP_WRITE | \
@@ -247,8 +241,7 @@ __v6_proc_info:
 	b	__v6_setup
 	.long	cpu_arch_name
 	.long	cpu_elf_name
-	/* See also feat_v6_fixup() for HWCAP_TLS */
-	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_JAVA|HWCAP_TLS
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_JAVA
 	.long	cpu_v6_name
 	.long	v6_processor_functions
 	.long	v6wbi_tlb_fns
@@ -260,16 +253,11 @@ __v6_proc_info:
 __pj4_v6_proc_info:
 	.long	0x560f5810
 	.long	0xff0ffff0
-	ALT_SMP(.long \
-		PMD_TYPE_SECT | \
+	.long   PMD_TYPE_SECT | \
+		PMD_SECT_BUFFERABLE | \
+		PMD_SECT_CACHEABLE | \
 		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ | \
-		PMD_FLAGS_SMP)
-	ALT_UP(.long \
-		PMD_TYPE_SECT | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ | \
-		PMD_FLAGS_UP)
+		PMD_SECT_AP_READ
 	.long   PMD_TYPE_SECT | \
 		PMD_SECT_XN | \
 		PMD_SECT_AP_WRITE | \
@@ -277,7 +265,7 @@ __pj4_v6_proc_info:
 	b	__v6_setup
 	.long	cpu_arch_name
 	.long	cpu_elf_name
-	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_TLS
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
 	.long	cpu_pj4_name
 	.long	v6_processor_functions
 	.long	v6wbi_tlb_fns

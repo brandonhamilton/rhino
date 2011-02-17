@@ -12,7 +12,6 @@
  * See the GNU General Public License for more details.
  */
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <net/net_namespace.h>
 #include <net/llc.h>
 #include <net/llc_pdu.h>

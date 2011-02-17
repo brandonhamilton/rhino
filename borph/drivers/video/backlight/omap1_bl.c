@@ -24,7 +24,6 @@
 #include <linux/platform_device.h>
 #include <linux/fb.h>
 #include <linux/backlight.h>
-#include <linux/slab.h>
 
 #include <mach/hardware.h>
 #include <plat/board.h>
@@ -126,14 +125,13 @@ static int omapbl_get_intensity(struct backlight_device *dev)
 	return bl->current_intensity;
 }
 
-static const struct backlight_ops omapbl_ops = {
+static struct backlight_ops omapbl_ops = {
 	.get_brightness = omapbl_get_intensity,
 	.update_status  = omapbl_update_status,
 };
 
 static int omapbl_probe(struct platform_device *pdev)
 {
-	struct backlight_properties props;
 	struct backlight_device *dev;
 	struct omap_backlight *bl;
 	struct omap_backlight_config *pdata = pdev->dev.platform_data;
@@ -141,14 +139,13 @@ static int omapbl_probe(struct platform_device *pdev)
 	if (!pdata)
 		return -ENXIO;
 
+	omapbl_ops.check_fb = pdata->check_fb;
+
 	bl = kzalloc(sizeof(struct omap_backlight), GFP_KERNEL);
 	if (unlikely(!bl))
 		return -ENOMEM;
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.max_brightness = OMAPBL_MAX_INTENSITY;
-	dev = backlight_device_register("omap-bl", &pdev->dev, bl, &omapbl_ops,
-					&props);
+	dev = backlight_device_register("omap-bl", &pdev->dev, bl, &omapbl_ops);
 	if (IS_ERR(dev)) {
 		kfree(bl);
 		return PTR_ERR(dev);
@@ -165,6 +162,7 @@ static int omapbl_probe(struct platform_device *pdev)
 	omap_cfg_reg(PWL);	/* Conflicts with UART3 */
 
 	dev->props.fb_blank = FB_BLANK_UNBLANK;
+	dev->props.max_brightness = OMAPBL_MAX_INTENSITY;
 	dev->props.brightness = pdata->default_intensity;
 	omapbl_update_status(dev);
 

@@ -54,6 +54,9 @@ void (*mach_reset)(void);
 void (*mach_halt)(void);
 void (*mach_power_off)(void);
 
+#ifdef CONFIG_M68000
+	#define CPU "MC68000"
+#endif
 #ifdef CONFIG_M68328
 	#define CPU "MC68328"
 #endif
