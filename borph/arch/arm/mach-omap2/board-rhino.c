@@ -287,7 +287,7 @@ static struct omap_dss_device rhino_dvi_device = {
 };
 
 static struct omap_dss_device *rhino_dss_devices[] = {
-	//&rhino_tv_device,
+	&rhino_tv_device,
 	&rhino_dvi_device,
 };
 
@@ -298,11 +298,12 @@ static struct omap_dss_board_info rhino_dss_data = {
 };
 
 static struct platform_device rhino_dss_device = {
+
 		.name		= "omapdss",
 		.id		= -1,
 		.dev		= {
-		.platform_data	= &rhino_dss_data,
-	},
+			.platform_data	= &rhino_dss_data,
+		},
 };
 
 /* TPS65023 specific initialization */
@@ -439,8 +440,11 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 
 static int __init rhino_i2c_init(void)
 {
+	/* I2C 1 - Power Management */
 	omap_register_i2c_bus(1, 400, rhino_i2c1_boardinfo, ARRAY_SIZE(rhino_i2c1_boardinfo));
-	omap_register_i2c_bus(2, 400, NULL, 0);//rhino_i2c2_boardinfo,	ARRAY_SIZE(rhino_i2c2_boardinfo));
+	/* I2C 2 - DDC Bus on HDMI connector */
+	omap_register_i2c_bus(2, 400, NULL, 0); //rhino_i2c2_boardinfo, ARRAY_SIZE(rhino_i2c2_boardinfo));
+	/* I2C 3 - FMC connectors */
 	omap_register_i2c_bus(3, 400, NULL, 0);
 	return 0;
 }
@@ -469,14 +473,12 @@ static struct am3517_hsmmc_info mmc[] = {
 	{
 		.mmc            = 1,
 		.wires          = 4,
-		/*TODO: Need to change*/
 		.gpio_cd        = 127,
 		.gpio_wp        = 126,
 	},
 	{
 		.mmc            = 2,
 		.wires          = 4,
-		/*TODO: Need to change*/
 		.gpio_cd        = 128,
 		.gpio_wp        = 129,
 	},
@@ -502,7 +504,9 @@ static const struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
 	/* USB OTG DRVVBUS offset = 0x212 */
-	OMAP3_MUX(SAD2D_MCAD23, OMAP_MUX_MODE0 | OMAP_PIN_INPUT_PULLDOWN),
+	OMAP3_MUX(CHASSIS_DMAREQ3, OMAP_MUX_MODE0 | OMAP_PIN_INPUT_PULLDOWN),
+	OMAP3_MUX(MCBSP_CLKS, OMAP_MUX_MODE4 | OMAP_PIN_INPUT_PULLUP),
+	OMAP3_MUX(GPMC_NCS4, OMAP_MUX_MODE4 | OMAP_PIN_INPUT_PULLDOWN),
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 #else
@@ -515,13 +519,13 @@ static void am3517_hecc_plat_init(void)
 {
 	int r;
 
-        r = gpio_request(CAN_STB, "can_stb");
-        if (r) {
-                printk(KERN_ERR "failed to get can_stb \n");
+    r = gpio_request(CAN_STB, "can_stb");
+    if (r) {
+        printk(KERN_ERR "failed to get can_stb \n");
 		return;
-        }
+    }
 
-        gpio_direction_output(CAN_STB, 0);
+   gpio_direction_output(CAN_STB, 0);
 }
 
 static struct resource am3517_hecc_resources[] = {
