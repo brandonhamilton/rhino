@@ -25,7 +25,9 @@
 #define TI_PSP_ENTRY		"ti-psp-version"
 #define TI_PSP_VERSION		"03.00.01.06"
 
-#if defined (CONFIG_MACH_OMAP3EVM)
+#if defined(CONFIG_MACH_RHINO)
+#define TI_PSP_PLATFORM		"RHINO"
+#elif defined(CONFIG_MACH_OMAP3EVM)
 #define TI_PSP_PLATFORM		"OMAP3EVM"
 #elif defined(CONFIG_MACH_OMAP3517EVM)
 #define TI_PSP_PLATFORM		"AM3517EVM"

@@ -96,36 +96,38 @@ static struct snd_soc_ops rhino_ops = {
 };
 
 /* rhino machine dapm widgets */
-static const struct snd_soc_dapm_widget tlv320aic23_dapm_widgets[] = {
-	//SND_SOC_DAPM_HP("Line Out", NULL),
-	//SND_SOC_DAPM_LINE("Line In", NULL),
-	//SND_SOC_DAPM_MIC("Mic In", NULL),
+static const struct snd_soc_dapm_widget tlv320aic23_dapm_widgets[] = {	
+	SND_SOC_DAPM_HP("Headphone Jack", NULL),
+	SND_SOC_DAPM_HP("Line Out", NULL),
+	SND_SOC_DAPM_LINE("Line In", NULL),
 };
 
 static const struct snd_soc_dapm_route audio_map[] = {
 	/* Line Out connected to LLOUT, RLOUT */
-	//{"Line Out", NULL, "LOUT"},
-	//{"Line Out", NULL, "ROUT"},
+	//
+	{"Headphone Jack", NULL, "LHPOUT"},
+	{"Headphone Jack", NULL, "RHPOUT"},
 
-	//{"LLINEIN", NULL, "Line In"},
-	//{"RLINEIN", NULL, "Line In"},
+	{"Line Out", NULL, "LOUT"},
+	{"Line Out", NULL, "ROUT"},
 
-	//{"MICIN", NULL, "Mic In"},
+	{"LLINEIN", NULL, "Line In"},
+	{"RLINEIN", NULL, "Line In"},
 };
 
 static int rhino_aic23_init(struct snd_soc_codec *codec)
 {
 	/* Add rhino specific widgets */
-//	snd_soc_dapm_new_controls(codec, tlv320aic23_dapm_widgets,
-//				  ARRAY_SIZE(tlv320aic23_dapm_widgets));
+	snd_soc_dapm_new_controls(codec, tlv320aic23_dapm_widgets,  ARRAY_SIZE(tlv320aic23_dapm_widgets));
 
 	/* Set up davinci-evm specific audio path audio_map */
-//	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
 	/* always connected */
-	//snd_soc_dapm_enable_pin(codec, "Line Out");
-	//snd_soc_dapm_enable_pin(codec, "Line In");
-	//snd_soc_dapm_enable_pin(codec, "Mic In");
+	snd_soc_dapm_enable_pin(codec, "Headphone Jack");
+	snd_soc_dapm_enable_pin(codec, "Line Out");
+	snd_soc_dapm_enable_pin(codec, "Line In");
+
 
 	snd_soc_dapm_sync(codec);
 
@@ -166,7 +168,7 @@ static int __init rhino_soc_init(void)
 		pr_err("Not RHINO!\n");
 		return -ENODEV;
 	}
-	pr_info("RHINO SoC init\n");
+	pr_info("RHINO Audio SoC init\n");
 
 	rhino_snd_device = platform_device_alloc("soc-audio", -1);
 	if (!rhino_snd_device) {
