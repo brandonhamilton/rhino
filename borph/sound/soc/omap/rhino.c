@@ -36,6 +36,18 @@
 
 #define CODEC_CLOCK 	12000000
 
+static struct clk *tlv320aic23_mclk;
+
+static int rhino_startup(struct snd_pcm_substream *substream)
+{
+	return clk_enable(tlv320aic23_mclk);
+}
+
+static void rhino_shutdown(struct snd_pcm_substream *substream)
+{
+	clk_disable(tlv320aic23_mclk);
+}
+
 static int rhino_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
 {
@@ -92,7 +104,9 @@ static int rhino_hw_params(struct snd_pcm_substream *substream,
 }
 
 static struct snd_soc_ops rhino_ops = {
+	.startup   = rhino_startup,
 	.hw_params = rhino_hw_params,
+	.shutdown  = rhino_shutdown,
 };
 
 /* rhino machine dapm widgets */
@@ -188,6 +202,8 @@ static int __init rhino_soc_init(void)
 
 err1:
 	printk(KERN_ERR "Unable to add platform device\n");
+	clk_put(tlv320aic23_mclk);
+	platform_device_del(rhino_snd_device);
 	platform_device_put(rhino_snd_device);
 
 	return ret;

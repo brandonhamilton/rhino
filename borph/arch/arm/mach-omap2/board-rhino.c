@@ -438,12 +438,19 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 	},
 };
 
+static struct i2c_board_info __initdata rhino_i2c2_boardinfo[] = {
+	{
+		I2C_BOARD_INFO("tlv320aic23", 0x1A),
+	},
+};
+
+
 static int __init rhino_i2c_init(void)
 {
 	/* I2C 1 - Power Management */
 	omap_register_i2c_bus(1, 400, rhino_i2c1_boardinfo, ARRAY_SIZE(rhino_i2c1_boardinfo));
 	/* I2C 2 - DDC Bus on HDMI connector */
-	omap_register_i2c_bus(2, 400, NULL, 0); //rhino_i2c2_boardinfo, ARRAY_SIZE(rhino_i2c2_boardinfo));
+	omap_register_i2c_bus(2, 400, rhino_i2c2_boardinfo, ARRAY_SIZE(rhino_i2c2_boardinfo));
 	/* I2C 3 - FMC connectors */
 	omap_register_i2c_bus(3, 400, NULL, 0);
 	return 0;
