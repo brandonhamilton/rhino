@@ -55,6 +55,7 @@
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
+#include <linux/borph.h>
 #include "cred-internals.h"
 
 static void exit_mm(struct task_struct * tsk);
@@ -957,6 +958,10 @@ NORET_TYPE void do_exit(long code)
 
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
+
+#ifdef CONFIG_BORPH
+	borph_exit_fpga(tsk);
+#endif
 
 	exit_mm(tsk);
 

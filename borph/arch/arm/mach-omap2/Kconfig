@@ -101,6 +101,30 @@ config MACH_RHINO
 	depends on ARCH_OMAP3 && ARCH_OMAP34XX
 	select OMAP_PACKAGE_CBB
 
+config BORPH
+	bool "BORPH"
+	depends on MACH_RHINO
+	select HWR_RHINO
+	select BKEXECD
+	select BINFMT_BOF
+	help
+	  BORPH is an kernel extension designed for FPGA-based 
+	  reconfigurable computers. Reconfigurable hardware, such 
+	  as FPGAs, are treated as computational resources within
+	  the operating system.
+
+config HWR_RHINO
+	bool
+	depends on BORPH
+
+config BKEXECD
+	bool
+	depends on BORPH
+
+config BINFMT_BOF
+	bool
+	depends on BORPH
+
 config PMIC_TPS65023
 	bool "TPS65023 Power Module"
 	default y

@@ -81,6 +81,10 @@
 #include <asm/smp.h>
 #endif
 
+#ifdef CONFIG_BORPH
+extern void borph_init(void);
+#endif
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -683,6 +687,9 @@ asmlinkage void __init start_kernel(void)
 
 	ftrace_init();
 
+#ifdef CONFIG_BORPH
+	borph_init();
+#endif
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 }

@@ -85,6 +85,51 @@ struct dentry *proc_lookup_de(struct proc_dir_entry *de, struct inode *ino,
 int proc_readdir_de(struct proc_dir_entry *de, struct file *filp, void *dirent,
 		filldir_t filldir);
 
+/* NOTE:
+ *	Implementing inode permission operations in /proc is almost
+ *	certainly an error.  Permission checks need to happen during
+ *	each system call not at open time.  The reason is that most of
+ *	what we wish to check for permissions in /proc varies at runtime.
+ *
+ *	The classic example of a problem is opening file descriptors
+ *	in /proc for a task before it execs a suid executable.
+ */
+
+struct pid_entry {
+	char *name;
+	int len;
+	mode_t mode;
+	const struct inode_operations *iop;
+	const struct file_operations *fop;
+	union proc_op op;
+};
+
+#define NOD(NAME, MODE, IOP, FOP, OP) {			\
+	.name = (NAME),					\
+	.len  = sizeof(NAME) - 1,			\
+	.mode = MODE,					\
+	.iop  = IOP,					\
+	.fop  = FOP,					\
+	.op   = OP,					\
+}
+
+#define DIR(NAME, MODE, iops, fops)	\
+	NOD(NAME, (S_IFDIR|(MODE)), &iops, &fops, {} )
+#define LNK(NAME, get_link)					\
+	NOD(NAME, (S_IFLNK|S_IRWXUGO),				\
+		&proc_pid_link_inode_operations, NULL,		\
+		{ .proc_get_link = get_link } )
+#define REG(NAME, MODE, fops)				\
+	NOD(NAME, (S_IFREG|(MODE)), NULL, &fops, {})
+#define INF(NAME, MODE, read)				\
+	NOD(NAME, (S_IFREG|(MODE)), 			\
+		NULL, &proc_info_file_operations,	\
+		{ .proc_read = read } )
+#define ONE(NAME, MODE, show)				\
+	NOD(NAME, (S_IFREG|(MODE)), 			\
+		NULL, &proc_single_file_operations,	\
+		{ .proc_show = show } )
+
 struct pde_opener {
 	struct inode *inode;
 	struct file *file;

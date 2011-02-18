@@ -94,6 +94,10 @@ struct sched_param {
 
 #include <asm/processor.h>
 
+#ifdef CONFIG_BORPH
+struct borph_info;
+#endif
+
 struct exec_domain;
 struct futex_pi_state;
 struct robust_list_head;
@@ -1513,6 +1517,10 @@ struct task_struct {
 #ifdef CONFIG_LATENCYTOP
 	int latency_record_count;
 	struct latency_record latency_record[LT_SAVECOUNT];
+#endif
+#ifdef CONFIG_BORPH
+	/* BORPH specific fpga region info */
+	struct borph_info *borph_info;
 #endif
 	/*
 	 * time slack values; these are used to round up poll() and

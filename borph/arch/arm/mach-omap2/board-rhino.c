@@ -456,6 +456,16 @@ static int __init rhino_i2c_init(void)
 	return 0;
 }
 
+
+static struct spi_board_info rhino_spi_board_info[] __initdata = {
+	{
+		.modalias	= "rtc-ds1390",
+		.max_speed_hz	= 4000000,
+		.chip_select	= 0,
+		//.irq			= OMAP_GPIO_IRQ(RHINO_TS_GPIO),
+	},
+};
+
 /*
  * Board initialization
  */
@@ -574,6 +584,8 @@ static void rhino_hecc_init(struct ti_hecc_platform_data *pdata)
 static void __init rhino_init(void)
 {
 	rhino_i2c_init();
+
+	spi_register_board_info(rhino_spi_board_info, ARRAY_SIZE(rhino_spi_board_info));
 
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	platform_add_devices(rhino_devices,

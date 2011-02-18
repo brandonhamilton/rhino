@@ -269,6 +269,7 @@ struct proc_inode {
 	struct ctl_table_header *sysctl;
 	struct ctl_table *sysctl_entry;
 	struct inode vfs_inode;
+	void* data;
 };
 
 static inline struct proc_inode *PROC_I(const struct inode *inode)

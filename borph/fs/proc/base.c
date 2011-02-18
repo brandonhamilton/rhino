@@ -80,53 +80,16 @@
 #include <linux/oom.h>
 #include <linux/elf.h>
 #include <linux/pid_namespace.h>
+#ifdef CONFIG_BORPH
+#define HDEBUG
+// #undef HDEBUG
+#define HDBG_LVL mkd_info->dbg_lvl
+#define HDBG_NAME "proc"
+#include <linux/hdebug.h>
+#include <linux/borph.h>
+#endif
 #include <linux/fs_struct.h>
 #include "internal.h"
-
-/* NOTE:
- *	Implementing inode permission operations in /proc is almost
- *	certainly an error.  Permission checks need to happen during
- *	each system call not at open time.  The reason is that most of
- *	what we wish to check for permissions in /proc varies at runtime.
- *
- *	The classic example of a problem is opening file descriptors
- *	in /proc for a task before it execs a suid executable.
- */
-
-struct pid_entry {
-	char *name;
-	int len;
-	mode_t mode;
-	const struct inode_operations *iop;
-	const struct file_operations *fop;
-	union proc_op op;
-};
-
-#define NOD(NAME, MODE, IOP, FOP, OP) {			\
-	.name = (NAME),					\
-	.len  = sizeof(NAME) - 1,			\
-	.mode = MODE,					\
-	.iop  = IOP,					\
-	.fop  = FOP,					\
-	.op   = OP,					\
-}
-
-#define DIR(NAME, MODE, iops, fops)	\
-	NOD(NAME, (S_IFDIR|(MODE)), &iops, &fops, {} )
-#define LNK(NAME, get_link)					\
-	NOD(NAME, (S_IFLNK|S_IRWXUGO),				\
-		&proc_pid_link_inode_operations, NULL,		\
-		{ .proc_get_link = get_link } )
-#define REG(NAME, MODE, fops)				\
-	NOD(NAME, (S_IFREG|(MODE)), NULL, &fops, {})
-#define INF(NAME, MODE, read)				\
-	NOD(NAME, (S_IFREG|(MODE)), 			\
-		NULL, &proc_info_file_operations,	\
-		{ .proc_read = read } )
-#define ONE(NAME, MODE, show)				\
-	NOD(NAME, (S_IFREG|(MODE)), 			\
-		NULL, &proc_single_file_operations,	\
-		{ .proc_show = show } )
 
 /*
  * Count the number of hardlinks for the pid_entry table, excluding the .
@@ -702,7 +665,7 @@ static const struct file_operations proc_mountstats_operations = {
 
 #define PROC_BLOCK_SIZE	(3*1024)		/* 4K page size but our output routines use some slack for overruns */
 
-static ssize_t proc_info_read(struct file * file, char __user * buf,
+ssize_t proc_info_read(struct file * file, char __user * buf,
 			  size_t count, loff_t *ppos)
 {
 	struct inode * inode = file->f_path.dentry->d_inode;
@@ -732,7 +695,7 @@ out_no_task:
 	return length;
 }
 
-static const struct file_operations proc_info_file_operations = {
+const struct file_operations proc_info_file_operations = {
 	.read		= proc_info_read,
 };
 
@@ -1493,7 +1456,7 @@ static int task_dumpable(struct task_struct *task)
 }
 
 
-static struct inode *proc_pid_make_inode(struct super_block * sb, struct task_struct *task)
+struct inode *proc_pid_make_inode(struct super_block * sb, struct task_struct *task)
 {
 	struct inode * inode;
 	struct proc_inode *ei;
@@ -1575,7 +1538,7 @@ static int pid_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat
  * made this apply to all per process world readable and executable
  * directories.
  */
-static int pid_revalidate(struct dentry *dentry, struct nameidata *nd)
+int pid_revalidate(struct dentry *dentry, struct nameidata *nd)
 {
 	struct inode *inode = dentry->d_inode;
 	struct task_struct *task = get_proc_task(inode);
@@ -1611,7 +1574,7 @@ static int pid_delete_dentry(struct dentry * dentry)
 	return !proc_pid(dentry->d_inode)->tasks[PIDTYPE_PID].first;
 }
 
-static const struct dentry_operations pid_dentry_operations =
+const struct dentry_operations pid_dentry_operations =
 {
 	.d_revalidate	= pid_revalidate,
 	.d_delete	= pid_delete_dentry,
@@ -1634,7 +1597,7 @@ typedef struct dentry *instantiate_t(struct inode *, struct dentry *,
  * reported by readdir in sync with the inode numbers reported
  * by stat.
  */
-static int proc_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
+int proc_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 	char *name, int len,
 	instantiate_t instantiate, struct task_struct *task, const void *ptr)
 {
@@ -2060,7 +2023,7 @@ out:
 	return error;
 }
 
-static struct dentry *proc_pident_lookup(struct inode *dir, 
+struct dentry *proc_pident_lookup(struct inode *dir, 
 					 struct dentry *dentry,
 					 const struct pid_entry *ents,
 					 unsigned int nents)
@@ -2102,7 +2065,7 @@ static int proc_pident_fill_cache(struct file *filp, void *dirent,
 				proc_pident_instantiate, task, p);
 }
 
-static int proc_pident_readdir(struct file *filp,
+int proc_pident_readdir(struct file *filp,
 		void *dirent, filldir_t filldir,
 		const struct pid_entry *ents, unsigned int nents)
 {
@@ -2555,6 +2518,11 @@ static int proc_pid_personality(struct seq_file *m, struct pid_namespace *ns,
 static const struct file_operations proc_task_operations;
 static const struct inode_operations proc_task_inode_operations;
 
+#ifdef CONFIG_BORPH
+extern const struct inode_operations proc_bphhw_inode_operations;
+extern const struct file_operations proc_bphhw_operations;
+#endif
+
 static const struct pid_entry tgid_base_stuff[] = {
 	DIR("task",       S_IRUGO|S_IXUGO, proc_task_inode_operations, proc_task_operations),
 	DIR("fd",         S_IRUSR|S_IXUSR, proc_fd_inode_operations, proc_fd_operations),
@@ -2628,6 +2596,9 @@ static const struct pid_entry tgid_base_stuff[] = {
 #endif
 #ifdef CONFIG_TASK_IO_ACCOUNTING
 	INF("io",	S_IRUGO, proc_tgid_io_accounting),
+#endif
+#ifdef CONFIG_BORPH
+	DIR("hw",        S_IRUGO|S_IXUGO|S_IWUSR, proc_bphhw_inode_operations, proc_bphhw_operations),
 #endif
 };
 
