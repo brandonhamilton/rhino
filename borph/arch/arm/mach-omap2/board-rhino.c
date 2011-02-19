@@ -259,8 +259,8 @@ static void rhino_disable_tv(struct omap_dss_device *dssdev)
 }
 
 static struct omap_dss_device rhino_tv_device = {
-	.type 			= OMAP_DISPLAY_TYPE_VENC,
-	.name 			= "tv",
+	.type 				= OMAP_DISPLAY_TYPE_VENC,
+	.name 				= "tv",
 	.driver_name		= "venc",
 	.phy.venc.type		= OMAP_DSS_VENC_TYPE_SVIDEO,
 	.platform_enable	= rhino_enable_tv,
@@ -278,8 +278,8 @@ static void rhino_disable_dvi(struct omap_dss_device *dssdev)
 }
 
 static struct omap_dss_device rhino_dvi_device = {
-	.type			= OMAP_DISPLAY_TYPE_DPI,
-	.name			= "dvi",
+	.type				= OMAP_DISPLAY_TYPE_DPI,
+	.name				= "dvi",
 	.driver_name		= "generic_panel",
 	.phy.dpi.data_lines	= 24,
 	.platform_enable	= rhino_enable_dvi,
@@ -436,21 +436,18 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 		.flags = I2C_CLIENT_WAKE,
 		.platform_data = &rhino_regulator_data[0],
 	},
-};
-
-static struct i2c_board_info __initdata rhino_i2c2_boardinfo[] = {
 	{
-		I2C_BOARD_INFO("tlv320aic23", 0x1A),
+		I2C_BOARD_INFO("tlv320aic23", 0xA1),
+		.type		= "tlv320aic23",
 	},
 };
-
 
 static int __init rhino_i2c_init(void)
 {
 	/* I2C 1 - Power Management */
 	omap_register_i2c_bus(1, 400, rhino_i2c1_boardinfo, ARRAY_SIZE(rhino_i2c1_boardinfo));
 	/* I2C 2 - DDC Bus on HDMI connector */
-	omap_register_i2c_bus(2, 400, rhino_i2c2_boardinfo, ARRAY_SIZE(rhino_i2c2_boardinfo));
+	omap_register_i2c_bus(2, 400, NULL, 0);
 	/* I2C 3 - FMC connectors */
 	omap_register_i2c_bus(3, 400, NULL, 0);
 	return 0;
@@ -458,11 +455,19 @@ static int __init rhino_i2c_init(void)
 
 
 static struct spi_board_info rhino_spi_board_info[] __initdata = {
-	{
+	[0] = {
 		.modalias	= "rtc-ds1390",
 		.max_speed_hz	= 4000000,
 		.chip_select	= 0,
-		//.irq			= OMAP_GPIO_IRQ(RHINO_TS_GPIO),
+		.bus_num 		= 1,
+		.mode = SPI_MODE_1,
+	},
+	[1] = {
+		.modalias	= "tlv320aic23",
+		.max_speed_hz	= 4000000,
+		.chip_select	= 1,
+		.bus_num 		= 1,
+		.mode 			= SPI_MODE_1,
 	},
 };
 
@@ -586,7 +591,6 @@ static void __init rhino_init(void)
 	rhino_i2c_init();
 
 	spi_register_board_info(rhino_spi_board_info, ARRAY_SIZE(rhino_spi_board_info));
-
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	platform_add_devices(rhino_devices,
 				ARRAY_SIZE(rhino_devices));
