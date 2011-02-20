@@ -13,6 +13,9 @@
 #include <linux/init.h>
 #include <asm/uaccess.h>   /* copy_from_user */
 #include <linux/ioport.h>  /* request_mem_region */
+#include <linux/spi/spi.h>
+
+#include <mach/gpio.h>
 
 #include <linux/bof.h>
 #include <linux/borph.h>
@@ -21,6 +24,8 @@
 #define HDBG_LVL 9
 #include <linux/hdebug.h>
 
+
+
 /*
  * A static buffer for data transfer.  It should be expanded to a 
  * kmem_cache when higher performance is needed.  (Right now, there
@@ -28,9 +33,19 @@
  */
 static buf_t* rhino_page;
 static struct hwr_iobuf* iobuf;
+static struct spi_device *rhino_spi;
 
 /* Mutex Semaphore to ensure proper access to page buffer */
 static DECLARE_MUTEX(rhino_mutex);
+
+/* FPGA configuration pins definitions */
+#define PROG_B 126
+#define INIT_B 127
+#define INIT_B_DIR 129
+#define DONE 128
+
+#define CFG_INITB_WAIT 100000
+#define CFG_DONE_WAIT  100000
 
 /*****************************************************************
  * functions definitions
@@ -71,7 +86,11 @@ static ssize_t rhino_put_iobuf (struct hwr_iobuf* iobuf)
 
 static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t offset, uint32_t len)
 {
+	int i;
+	int count;
 	int retval = -EIO;
+	struct spi_message msg;
+	struct spi_transfer transfer;
 
 	PDEBUG(9, "Configuring RHINO HWR %u from (offset %u, len %u) of %s\n", addr->addr, offset, len, file->f_dentry->d_name.name);
 
@@ -81,13 +100,131 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	}
 
 	if (down_interruptible(&rhino_mutex)) {
-	        /* signal received, semaphore not acquired ... */
+	    /* signal received, semaphore not acquired ... */
 		goto out;
 	}
 
+	/*************************************************
+	 * Setup GPIO				                     *
+	 *************************************************/
+
+	if (gpio_request(INIT_B_DIR, "init_b_dir_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d", INIT_B_DIR);
+		retval = -ENODEV;
+		goto out_free_mutex;
+	}
+
+	if (gpio_request(PROG_B, "prog_b_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d", PROG_B);
+		retval = -ENODEV;
+		goto out_freegpio1;
+	}
+
+	if (gpio_request(INIT_B, "init_b_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d", PROG_B);
+		retval = -ENODEV;
+		goto out_freegpio2;
+	}
+
+	if (gpio_request(DONE, "done_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d", PROG_B);
+		retval = -ENODEV;
+		goto out_freegpio3;
+	}
+
+	gpio_direction_output(INIT_B_DIR, 0);
+	gpio_direction_output(PROG_B, 1);
+
+	/*************************************************
+	 * Clear Configuration Memory                    *
+	 *************************************************/
+
+	/* Start to clear configuration memory */
+	gpio_set_value(PROG_B, 0);
+
+
+	/* Wait for FPGA initialization */
+	gpio_direction_input(INIT_B);
+	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
+		if (!(gpio_get_value(INIT_B))) {
+			break;
+		}
+		if (i == CFG_INITB_WAIT) {
+			PDEBUG(9, "FPGA configuration error: Could not initialize FPGA\n");
+			goto out_freegpio4;
+		}
+	}
+
+	/* Clear configuration memory */
+	gpio_set_value(PROG_B, 1);
+
+	/*************************************************
+	 * Bitstream Loading                             *
+	 *************************************************/
+
+	/* Load Configuration Data Frames */
+	spi_message_init(&msg);
+	spi_message_add_tail(&transfer, &msg);
+	transfer.rx_buf = 0;
+
+	count = 0;
+	while (len > 0) {
+		count = min(PAGE_SIZE, len);
+		retval = kernel_read(file, offset, rhino_page, count);
+		if (retval < 0) {
+			goto out_freegpio4;
+		}
+		if (retval != count) {
+			PDEBUG(9, "kernel_read returns less than requested...\n");
+			count = retval;
+		}
+
+		len -= count;
+		offset += count;
+		transfer.tx_buf = rhino_page;
+		transfer.len = count;
+		retval = spi_sync(rhino_spi, &msg);
+		if (retval) {
+			PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed\n");
+			goto out_freegpio4;
+		}
+	}
+		
+	/* CRC Check */
+	if(!(gpio_get_value(INIT_B)))
+	{
+		PDEBUG(9, "FPGA configuration error: CRC check failed\n");
+		goto out_freegpio4;
+	}
+
+	/*************************************************
+	 * Startup sequence                              *
+	 *************************************************/
+	gpio_direction_input(DONE);
+	for (i=0; i <= CFG_DONE_WAIT; i++) {
+		if(gpio_get_value(DONE)) {
+			break;
+		}
+		else {
+			PDEBUG(9, "FPGA configuration error: Error in startup sequence, DONE pin not asserted\n");
+			goto out_freegpio4;
+    	}
+    }
+
+	/*spi_xfer(spi, 0, NULL, NULL, SPI_XFER_END);  //send spi transfer end flags
+	spi_release_bus(spi);
+*/
 	PDEBUG(9, "RHINO HWR %u configuration completed successfully\n", addr->addr);
 	retval = 0;
 
+out_freegpio4:
+	gpio_free(DONE);
+out_freegpio3:
+	gpio_free(INIT_B);
+out_freegpio2:
+	gpio_free(PROG_B);
+out_freegpio1:
+	gpio_free(INIT_B_DIR);
 out_free_mutex:
 	up(&rhino_mutex);
 out:
@@ -158,10 +295,35 @@ static struct hwrtype hwrtype_rhino = {
 	hwr_ops: &rhino_hwr_operations,
 };
 
+static int __devinit fpga_probe(struct spi_device *spi)
+{
+	printk("RHINO Spartan-6 FPGA interface driver");
+	spi->mode = SPI_MODE_0;
+	spi->bits_per_word = 16;
+	spi_setup(spi);
+	rhino_spi = spi;
+	return 0;
+}
+
+static int __devexit fpga_remove(struct spi_device *spi)
+{
+	return 0;
+}
+
+
+static struct spi_driver rhino_spartan6_driver = {
+	.driver = {
+		.name	= "rhino-spartan6",
+		.owner	= THIS_MODULE,
+	},
+	.probe	= fpga_probe,
+	.remove = __devexit_p(fpga_remove),
+};
+
+
 static int __init hwrtype_rhino_init(void)
 {
 	int retval = 0;
-	int i;
 
 	if ((retval = register_hwrtype(&hwrtype_rhino)) < 0) {
 		printk("Error registering RHINO HWR\n");
@@ -184,6 +346,8 @@ static int __init hwrtype_rhino_init(void)
 		retval = -ENOMEM;
 		goto out;
 	}
+
+	spi_register_driver(&rhino_spartan6_driver);
 out:
 	return retval;
 }
@@ -198,6 +362,8 @@ static void __exit hwrtype_rhino_exit(void)
 	if (rhino_page) {
 		free_page((unsigned long) rhino_page);
 	}
+
+	spi_unregister_driver(&rhino_spartan6_driver);
 
 	if (unregister_hwrtype(&hwrtype_rhino)) {
 		printk("Error unregistering RHINO HWR\n");

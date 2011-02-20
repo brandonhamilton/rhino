@@ -442,12 +442,18 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 	},
 };
 
+static struct i2c_board_info __initdata rhino_dvi_i2c_eeprom[] = {
+	{
+		I2C_BOARD_INFO("eeprom", 0x50),
+	},
+};
+
 static int __init rhino_i2c_init(void)
 {
 	/* I2C 1 - Power Management */
 	omap_register_i2c_bus(1, 400, rhino_i2c1_boardinfo, ARRAY_SIZE(rhino_i2c1_boardinfo));
 	/* I2C 2 - DDC Bus on HDMI connector */
-	omap_register_i2c_bus(2, 400, NULL, 0);
+	omap_register_i2c_bus(2, 100, rhino_dvi_i2c_eeprom, ARRAY_SIZE(rhino_dvi_i2c_eeprom));
 	/* I2C 3 - FMC connectors */
 	omap_register_i2c_bus(3, 400, NULL, 0);
 	return 0;
@@ -460,16 +466,33 @@ static struct spi_board_info rhino_spi_board_info[] __initdata = {
 		.max_speed_hz	= 4000000,
 		.chip_select	= 0,
 		.bus_num 		= 1,
-		.mode = SPI_MODE_1,
+		.mode 			= SPI_MODE_1,
 	},
-	[1] = {
-		.modalias	= "tlv320aic23",
+/*	[1] = {
+		.modalias		= "tlv320aic23",
 		.max_speed_hz	= 4000000,
 		.chip_select	= 1,
 		.bus_num 		= 1,
 		.mode 			= SPI_MODE_1,
+	},*/
+};
+
+static struct spi_board_info rhino_spi2_board_info[] __initdata = {
+	[0] = {
+		.modalias		= "rhino-spartan6",
+		.max_speed_hz	= 4000000,
+		.chip_select	= 0,
+		.bus_num 		= 2,
+		.mode 			= SPI_MODE_1,
 	},
 };
+
+static int __init rhino_spi_init(void)
+{
+	spi_register_board_info(rhino_spi_board_info, ARRAY_SIZE(rhino_spi_board_info));
+	spi_register_board_info(rhino_spi2_board_info, ARRAY_SIZE(rhino_spi2_board_info));
+	return 0;
+}
 
 /*
  * Board initialization
@@ -589,8 +612,8 @@ static void rhino_hecc_init(struct ti_hecc_platform_data *pdata)
 static void __init rhino_init(void)
 {
 	rhino_i2c_init();
+	rhino_spi_init();
 
-	spi_register_board_info(rhino_spi_board_info, ARRAY_SIZE(rhino_spi_board_info));
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	platform_add_devices(rhino_devices,
 				ARRAY_SIZE(rhino_devices));
