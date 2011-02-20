@@ -748,22 +748,29 @@ static void omap2_mcspi_cleanup(struct spi_device *spi)
 	struct omap2_mcspi_dma	*mcspi_dma;
 	struct omap2_mcspi_cs	*cs;
 
-	mcspi = spi_master_get_devdata(spi->master);
-	mcspi_dma = &mcspi->dma_channels[spi->chip_select];
+	if (spi->controller_state) {
+		/* Unlink controller state from context save list */
+		cs = spi->controller_state;
+		list_del(&cs->node);
 
-	/* Unlink controller state from context save list */
-	cs = spi->controller_state;
-	list_del(&cs->node);
-
-	kfree(spi->controller_state);
-
-	if (mcspi_dma->dma_rx_channel != -1) {
-		omap_free_dma(mcspi_dma->dma_rx_channel);
-		mcspi_dma->dma_rx_channel = -1;
+		/* Unlink controller state from context save list */
+		cs = spi->controller_state;
+		list_del(&cs->node);
+		kfree(spi->controller_state);
 	}
-	if (mcspi_dma->dma_tx_channel != -1) {
-		omap_free_dma(mcspi_dma->dma_tx_channel);
-		mcspi_dma->dma_tx_channel = -1;
+
+	if (spi->chip_select < spi->master->num_chipselect) {
+		mcspi = spi_master_get_devdata(spi->master);
+		mcspi_dma = &mcspi->dma_channels[spi->chip_select];
+
+		if (mcspi_dma->dma_rx_channel != -1) {
+			omap_free_dma(mcspi_dma->dma_rx_channel);
+			mcspi_dma->dma_rx_channel = -1;
+		}
+		if (mcspi_dma->dma_tx_channel != -1) {
+			omap_free_dma(mcspi_dma->dma_tx_channel);
+			mcspi_dma->dma_tx_channel = -1;
+		}
 	}
 }
 
