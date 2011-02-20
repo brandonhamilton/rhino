@@ -25,11 +25,7 @@
 #include <linux/binfmts.h>
 #include <linux/gfp.h>
 
-#ifdef CONFIG_RHINO
 #define HAC_TYPE HAC_RHINO
-#else
-#define HAC_TYPE HAC_BEE2FPGA
-#endif
 
 #define HDEBUG
 #define HDBG_NAME "bkexecd"
@@ -126,7 +122,9 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 	memset(bi, 0, sizeof(struct borph_info));
 	INIT_LIST_HEAD(&bi->hw_region);
 	INIT_LIST_HEAD(&bi->ioreg);
-	bi->ioreg_mode = 1;  // default change to 1 on 2006/08/19 HS 
+	
+	// Set binary as default mode
+	bi->ioreg_mode = 1;
 
 	execq_item->task->borph_info = bi;
 

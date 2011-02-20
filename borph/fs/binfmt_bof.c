@@ -49,15 +49,11 @@ static int load_bof_binary(struct linux_binprm *bprm, struct  pt_regs *regs)
 	       bhdr.b_machine, bhdr.b_elfmachine, bhdr.b_version);
 
 	// check machine
-#ifdef CONFIG_RHINO
 	current_b_machine  = BM_RHINO;
 	current_elfmachine = EM_ARM;
-#else
-	current_b_machine = BM_BEE2;
-        current_elfmachine = EM_PPC;
-#endif
+
 	if ( bhdr.b_machine != current_b_machine || bhdr.b_elfmachine != current_elfmachine ) {
-		PDEBUG(9, "Wrong b_machine (expecting %x) or b_elfmachine (expecting %x)!\n", current_b_machine, current_elfmachine);
+		PDEBUG(9, "Wrong b_machine (expecting 0x%x) or b_elfmachine (expecting 0x%x)!\n", current_b_machine, current_elfmachine);
 		return -ENOEXEC;
 	}
 
