@@ -511,6 +511,8 @@ static void __init rhino_init_irq(void)
 
 	omap2_init_common_hw(NULL, NULL, NULL, NULL, NULL);
 	omap_init_irq();
+
+	omap_mux_init_gpio(129, OMAP_PIN_OUTPUT);
 	omap_gpio_init();
 }
 

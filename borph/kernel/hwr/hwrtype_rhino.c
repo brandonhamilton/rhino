@@ -24,8 +24,6 @@
 #define HDBG_LVL 9
 #include <linux/hdebug.h>
 
-
-
 /*
  * A static buffer for data transfer.  It should be expanded to a 
  * kmem_cache when higher performance is needed.  (Right now, there
@@ -47,6 +45,13 @@ static DECLARE_MUTEX(rhino_mutex);
 #define CFG_INITB_WAIT 100000
 #define CFG_DONE_WAIT  100000
 
+#define FPGA_CS1_BASE		0x08000000
+#define FPGA_CS2_BASE		0x10000000
+#define FPGA_CS3_BASE		0x18000000
+#define FPGA_CS4_BASE		0x20000000
+#define FPGA_CS5_BASE		0x28000000
+#define FPGA_CS6_BASE		0x38000000
+
 /*****************************************************************
  * functions definitions
  *****************************************************************/
@@ -63,25 +68,19 @@ static ssize_t rhino_recv_iobuf (struct hwr_iobuf* iobuf)
 
 static struct hwr_iobuf* rhino_get_iobuf(void)
 {
-    PDEBUG(9, "Locking IOBUF\n");
-
-	/* If there is different buffer for differ hwr, should
-	 * deferentiate them here using *reg* */
-
 	if (down_interruptible(&rhino_mutex)) {
-	        /* signal received, semaphore not acquired ... */
+	    /* signal received, semaphore not acquired ... */
 		return NULL;
 	}
-
 	iobuf->size = PAGE_SIZE - 12;
-	return iobuf; //HHH
+	return iobuf;
 }
 
 static ssize_t rhino_put_iobuf (struct hwr_iobuf* iobuf)
 {
 	PDEBUG(9, "Unlocking IOBUF\n");
 	up(&rhino_mutex);
-	return 0; //HHH
+	return 0;
 }
 
 static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t offset, uint32_t len)

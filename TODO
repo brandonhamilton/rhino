@@ -4,4 +4,5 @@ TODO
 1.Borph
   1.1 Write tlv320aic23 SPI driver (current driver is I2C only, need to implement driver for SPI - can base it on the tlv320aic26 driver)
   1.2 FMC interface
+  1.3 Data tranfer on FPGA_PROC_BUS (uses GPMC)
   
