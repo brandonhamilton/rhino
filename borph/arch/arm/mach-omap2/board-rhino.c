@@ -511,23 +511,15 @@ static void __init rhino_init_irq(void)
 
 	omap2_init_common_hw(NULL, NULL, NULL, NULL, NULL);
 	omap_init_irq();
-
-	omap_mux_init_gpio(129, OMAP_PIN_OUTPUT);
 	omap_gpio_init();
 }
 
 static struct am3517_hsmmc_info mmc[] = {
 	{
-		.mmc            = 1,
-		.wires          = 4,
-		.gpio_cd        = 127,
-		.gpio_wp        = 126,
-	},
-	{
 		.mmc            = 2,
-		.wires          = 4,
-		.gpio_cd        = 128,
-		.gpio_wp        = 129,
+		.wires          = 8,
+		.gpio_cd        = 137,
+		.gpio_wp        = 136,
 	},
 	{}      /* Terminator */
 };
@@ -551,9 +543,6 @@ static const struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
 	/* USB OTG DRVVBUS offset = 0x212 */
-	OMAP3_MUX(CHASSIS_DMAREQ3, OMAP_MUX_MODE0 | OMAP_PIN_INPUT_PULLDOWN),
-	OMAP3_MUX(MCBSP_CLKS, OMAP_MUX_MODE4 | OMAP_PIN_INPUT_PULLUP),
-	OMAP3_MUX(GPMC_NCS4, OMAP_MUX_MODE4 | OMAP_PIN_INPUT_PULLDOWN),
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 #else
