@@ -44,6 +44,7 @@ static DECLARE_MUTEX(rhino_mutex);
 
 #define CFG_INITB_WAIT 100000
 #define CFG_DONE_WAIT  100000
+                        
 
 #define FPGA_CS1_BASE		0x08000000
 #define FPGA_CS2_BASE		0x10000000
@@ -90,6 +91,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	int retval = -EIO;
 	struct spi_message msg;
 	struct spi_transfer transfer;
+	unsigned short *src;
 
 	PDEBUG(9, "Configuring RHINO HWR %u from (offset %u, len %u) of %s\n", addr->addr, offset, len, file->f_dentry->d_name.name);
 
@@ -106,7 +108,6 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	/*************************************************
 	 * Setup GPIO				                     *
 	 *************************************************/
-
 	if (gpio_request(INIT_B_DIR, "init_b_dir_gpio") != 0) {
 		PDEBUG(9, "Could not request GPIO %d", INIT_B_DIR);
 		retval = -ENODEV;
@@ -180,6 +181,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 
 		len -= count;
 		offset += count;
+		
 		transfer.tx_buf = rhino_page;
 		transfer.len = count;
 		retval = spi_sync(rhino_spi, &msg);

@@ -463,10 +463,10 @@ static int __init rhino_i2c_init(void)
 static struct spi_board_info rhino_spi_board_info[] __initdata = {
 	[0] = {
 		.modalias	= "rtc-ds1390",
-		.max_speed_hz	= 4000000,
+		.max_speed_hz	= 48000000,
 		.chip_select	= 0,
 		.bus_num 		= 1,
-		.mode 			= SPI_MODE_1,
+		.mode 			= SPI_MODE_0,
 	},
 /*	[1] = {
 		.modalias		= "tlv320aic23",
@@ -480,10 +480,10 @@ static struct spi_board_info rhino_spi_board_info[] __initdata = {
 static struct spi_board_info rhino_spi2_board_info[] __initdata = {
 	[0] = {
 		.modalias		= "rhino-spartan6",
-		.max_speed_hz	= 4000000,
+		.max_speed_hz	= 48000000,
 		.chip_select	= 0,
 		.bus_num 		= 2,
-		.mode 			= SPI_MODE_1,
+		.mode 			= SPI_MODE_0,
 	},
 };
 
