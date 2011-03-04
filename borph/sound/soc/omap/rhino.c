@@ -110,7 +110,7 @@ static struct snd_soc_ops rhino_ops = {
 };
 
 /* rhino machine dapm widgets */
-static const struct snd_soc_dapm_widget tlv320aic23_dapm_widgets[] = {	
+static const struct snd_soc_dapm_widget tlv320aic23_spi_dapm_widgets[] = {	
 	SND_SOC_DAPM_HP("Headphone Jack", NULL),
 	SND_SOC_DAPM_HP("Line Out", NULL),
 	SND_SOC_DAPM_LINE("Line In", NULL),
@@ -132,7 +132,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 static int rhino_aic23_init(struct snd_soc_codec *codec)
 {
 	/* Add rhino specific widgets */
-	snd_soc_dapm_new_controls(codec, tlv320aic23_dapm_widgets,  ARRAY_SIZE(tlv320aic23_dapm_widgets));
+	snd_soc_dapm_new_controls(codec, tlv320aic23_spi_dapm_widgets,  ARRAY_SIZE(tlv320aic23_spi_dapm_widgets));
 
 	/* Set up davinci-evm specific audio path audio_map */
 	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
@@ -153,7 +153,7 @@ static struct snd_soc_dai_link rhino_dai = {
 	.name = "TLV320AIC23",
 	.stream_name = "AIC23",
 	.cpu_dai = &omap_mcbsp_dai[0],
-	.codec_dai = &tlv320aic23_dai,
+	.codec_dai = &tlv320aic23_spi_dai,
 	.init = rhino_aic23_init,
 	.ops = &rhino_ops,
 };
@@ -169,7 +169,7 @@ static struct snd_soc_card snd_soc_rhino = {
 /* Audio subsystem */
 static struct snd_soc_device rhino_snd_devdata = {
 	.card = &snd_soc_rhino,
-	.codec_dev = &soc_codec_dev_tlv320aic23,
+	.codec_dev = &soc_codec_dev_tlv320aic23_spi,
 };
 
 static struct platform_device *rhino_snd_device;

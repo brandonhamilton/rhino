@@ -78,9 +78,9 @@ config SND_OMAP_SOC_AM3517EVM
 
 config SND_OMAP_SOC_RHINO
 	tristate "SoC Audio support for RHINO"
-	depends on SND_OMAP_SOC && MACH_RHINO && I2C
+	depends on SND_OMAP_SOC && MACH_RHINO && SPI
 	select SND_OMAP_SOC_MCBSP
-	select SND_SOC_TLV320AIC23
+	select SND_SOC_TLV320AIC23_SPI
 	help
 	  Say Y if you want to add support for SoC audio on the RHINO platform.
 

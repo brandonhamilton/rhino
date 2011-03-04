@@ -436,10 +436,10 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 		.flags = I2C_CLIENT_WAKE,
 		.platform_data = &rhino_regulator_data[0],
 	},
-	{
+	/*{
 		I2C_BOARD_INFO("tlv320aic23", 0xA1),
 		.type		= "tlv320aic23",
-	},
+	},*/
 };
 
 static struct i2c_board_info __initdata rhino_dvi_i2c_eeprom[] = {
@@ -468,13 +468,13 @@ static struct spi_board_info rhino_spi_board_info[] __initdata = {
 		.bus_num 		= 1,
 		.mode 			= SPI_MODE_0,
 	},
-/*	[1] = {
-		.modalias		= "tlv320aic23",
+	[1] = {
+		.modalias		= "tlv320aic23_spi",
 		.max_speed_hz	= 4000000,
 		.chip_select	= 1,
 		.bus_num 		= 1,
 		.mode 			= SPI_MODE_1,
-	},*/
+	},
 };
 
 static struct spi_board_info rhino_spi2_board_info[] __initdata = {

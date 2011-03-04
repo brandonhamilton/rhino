@@ -116,7 +116,12 @@
 #define TLV320AIC23_SIDETONE_12		0x080
 #define TLV320AIC23_SIDETONE_18		0x0c0
 
+#if defined(CONFIG_SND_SOC_TLV320AIC23_SPI)
+extern struct snd_soc_dai tlv320aic23_spi_dai;
+extern struct snd_soc_codec_device soc_codec_dev_tlv320aic23_spi;
+#else
 extern struct snd_soc_dai tlv320aic23_dai;
 extern struct snd_soc_codec_device soc_codec_dev_tlv320aic23;
+#endif
 
 #endif /* _TLV320AIC23_H */
