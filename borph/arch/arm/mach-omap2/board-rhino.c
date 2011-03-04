@@ -473,7 +473,7 @@ static struct spi_board_info rhino_spi_board_info[] __initdata = {
 		.max_speed_hz	= 4000000,
 		.chip_select	= 1,
 		.bus_num 		= 1,
-		.mode 			= SPI_MODE_1,
+		.mode 			= SPI_MODE_0,
 	},
 };
 

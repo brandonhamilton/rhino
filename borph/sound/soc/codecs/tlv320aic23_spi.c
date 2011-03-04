@@ -31,7 +31,7 @@
 
 #define AIC23_VERSION "0.1"
 
-MODULE_DESCRIPTION("ASoC TLV320AIC26 codec driver (SPI)");
+MODULE_DESCRIPTION("ASoC TLV320AIC23 codec driver (SPI)");
 MODULE_AUTHOR("Brandon Hamilton <brandon.hamilton@gmail.com>");
 MODULE_LICENSE("GPL");
 
@@ -88,6 +88,10 @@ static int tlv320aic23_spi_write(struct snd_soc_codec *codec, unsigned int reg,
 	struct aic23 *aic23 = codec->private_data;
 	u8 data[2];
 
+	if (!aic23) {
+		printk(KERN_WARNING "%s Invalid device 0x%x\n", __func__, (int) aic23);
+		return -1;
+	}
 	/* TLV320AIC23 has 7 bit address and 9 bits of data
 	 * so we need to switch one data bit into reg and rest
 	 * of data into val
@@ -688,6 +692,7 @@ struct snd_soc_codec_device soc_codec_dev_tlv320aic23_spi = {
 };
 EXPORT_SYMBOL_GPL(soc_codec_dev_tlv320aic23_spi);
 
+struct aic23* tlv320aic23_spi_aic23 = 0;
 
 /* ---------------------------------------------------------------------
  * SPI portion of driver: probe and release routines
@@ -708,11 +713,11 @@ static int tlv320aic23_spi_device_probe(struct spi_device *spi)
 	aic23->spi = spi;
 	dev_set_drvdata(&spi->dev, aic23);
 
-
 	/* Setup what we can in the codec structure so that the register
 	 * access functions will work as expected.  More will be filled
 	 * out when it is probed by the SoC CODEC part of this driver */
-	aic23->codec.name = "tlv320aic23";
+	aic23->codec.private_data = aic23;
+	aic23->codec.name = "tlv320aic23_spi";
 	aic23->codec.owner = THIS_MODULE;
 	aic23->codec.read = tlv320aic23_spi_read_reg_cache;
 	aic23->codec.write = tlv320aic23_spi_write;
@@ -734,6 +739,8 @@ static int tlv320aic23_spi_device_probe(struct spi_device *spi)
 		kfree(aic23);
 		return ret;
 	}
+
+	tlv320aic23_spi_aic23 = aic23;
 
 	/* Reset codec */
 	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_RESET, 0);
@@ -786,7 +793,7 @@ static int tlv320aic23_spi_device_remove(struct spi_device *spi)
 
 static struct spi_driver tlv320aic23_spi = {
 	.driver = {
-		.name = "tlv320aic23",
+		.name = "tlv320aic23_spi",
 		.owner = THIS_MODULE,
 	},
 	.probe = tlv320aic23_spi_device_probe,

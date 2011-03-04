@@ -191,6 +191,7 @@ static int __init rhino_soc_init(void)
 	}
 
 	platform_set_drvdata(rhino_snd_device, &rhino_snd_devdata);
+	rhino_snd_devdata.codec_data = tlv320aic23_spi_aic23;
 	rhino_snd_devdata.dev = &rhino_snd_device->dev;
 	*(unsigned int *)rhino_dai.cpu_dai->private_data = 0; /* McBSP1 */
 

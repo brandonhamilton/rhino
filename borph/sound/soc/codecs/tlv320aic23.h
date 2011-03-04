@@ -119,6 +119,7 @@
 #if defined(CONFIG_SND_SOC_TLV320AIC23_SPI)
 extern struct snd_soc_dai tlv320aic23_spi_dai;
 extern struct snd_soc_codec_device soc_codec_dev_tlv320aic23_spi;
+extern struct aic23 *tlv320aic23_spi_aic23;
 #else
 extern struct snd_soc_dai tlv320aic23_dai;
 extern struct snd_soc_codec_device soc_codec_dev_tlv320aic23;

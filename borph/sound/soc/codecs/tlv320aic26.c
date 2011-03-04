@@ -112,7 +112,7 @@ static int aic26_reg_write(struct snd_soc_codec *codec, unsigned int reg,
 	buffer[3] = value;
 	rc = spi_write(aic26->spi, buffer, 4);
 	if (rc) {
-		dev_err(&aic26->spi->dev, "AIC26 reg read error\n");
+		dev_err(&aic26->spi->dev, "AIC26 reg write error\n");
 		return -EIO;
 	}
 
