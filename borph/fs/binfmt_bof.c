@@ -45,8 +45,6 @@ static int load_bof_binary(struct linux_binprm *bprm, struct  pt_regs *regs)
 	    bhdr.ident[2] != 'O' || bhdr.ident[3] != 'F') {
 		return -ENOEXEC;
 	}
-	PDEBUG(9, "b_machine=0x%x, b_elfmachine=0x%x, b_version=0x%x\n",
-	       bhdr.b_machine, bhdr.b_elfmachine, bhdr.b_version);
 
 	// check machine
 	current_b_machine  = BM_RHINO;
@@ -66,7 +64,6 @@ static int load_bof_binary(struct linux_binprm *bprm, struct  pt_regs *regs)
 	if (bof_has_fpga(&bhdr)) {    
 		struct execq_item* execq_item;
 		unsigned long flags;
-		PDEBUG(9, "queue this file to bkexecd...\n");
 		// HHH should change to slab
 
 		execq_item = kmalloc(sizeof(struct execq_item), GFP_KERNEL);
@@ -110,9 +107,6 @@ static int load_bof_binary(struct linux_binprm *bprm, struct  pt_regs *regs)
 		return -ENOEXEC;
 	}
 
-	PDEBUG(9, "read elf header at 0x%x [%02x %02x %02x %02x]\n", 
-	       bhdr.b_elfoff,
-	       bprm->buf[0], bprm->buf[1], bprm->buf[2], bprm->buf[3]);
 	return search_binary_handler(bprm,regs);
 }
 

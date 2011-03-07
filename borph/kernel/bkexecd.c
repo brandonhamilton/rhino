@@ -29,7 +29,7 @@
 
 #define HDEBUG
 #define HDBG_NAME "bkexecd"
-#define HDBG_LVL 9
+#define HDBG_LVL 6
 #include <linux/hdebug.h>
 
 struct bkexecd_info bked_info;
@@ -45,7 +45,6 @@ static size_t get_args(char* buf, struct linux_binprm* bprm, size_t size) {
 
 	if (!buf || !bprm || !size) return -EINVAL;
 
-	PDEBUG(9, "bprm: p=%lu, argc=%d, envc=%d\n", bprm->p, bprm->argc, bprm->envc);
 	argc = bprm->argc;
 	p = bprm->p;
 
@@ -76,10 +75,6 @@ static size_t get_args(char* buf, struct linux_binprm* bprm, size_t size) {
 		kunmap(page);
 	}
 
-	/*for (argc = 0, bptr = buf; argc < ret; argc++) {
-		PDEBUG(9, "%.2x ", *bptr++);
-	}
-	printk("\n");*/
 	return ret;
 }
 
@@ -88,8 +83,6 @@ static inline struct phyhwr* bpr_nextfree(struct hwr_addr* a)
 	int i;
 	struct phyhwr* retval;
 
-	PDEBUG(9, "---> Class = %d, HAC_TYPE = %d\n", a->class, HAC_TYPE);
-	
 	if (!a || a->class != HAC_TYPE) return NULL;
 	/* Make sure it never checks control FPGA */
 	
@@ -114,8 +107,7 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 	struct hwrhdr hwrhdr;
 	char task_id[10];
 
-	PDEBUG(9, "configure from file: %s\n", 
-	       execq_item->bprm->filename);
+	PDEBUG(9, "configure from file: %s\n", execq_item->bprm->filename);
 
 	// SHOULD USE SLAB!!!
 	bi = kmalloc(sizeof(struct borph_info), GFP_KERNEL);
@@ -173,7 +165,7 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 		}
 		hwr->task = execq_item->task;
 		
-		PDEBUG(5, "configuring fpga %d\n", hwrhdr.addr.addr);
+		PDEBUG(5, "Configuring FPGA %d\n", hwrhdr.addr.addr);
 		/* strtab */
 		retval = -ENOEXEC;
 		strtab_foff = 
@@ -228,16 +220,12 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 			reg->loc = bof_ioreg.loc;
 			reg->len = bof_ioreg.len;
 			reg->hwraddr = &region->addr;
-			//PDEBUG(5, "got ioreg %s, mode=%x, loc=%x, len=%x\n", reg->name, reg->mode, reg->loc, reg->len);
 			list_add(&(reg->list), &(bi->ioreg));
 		}
-	
-		PDEBUG(9, "getting hwrops from class %d\n", hwrhdr.addr.class);
+
 		hwrops = get_hwrops(&hwrhdr.addr);
 		if (hwrops && hwrops->configure) {
-			PDEBUG(9, "Before we configure, let's clear our bookkeeping first\n");
-
-		retval = hwrops->configure(&(hwrhdr.addr), 
+			retval = hwrops->configure(&(hwrhdr.addr), 
 							   execq_item->bprm->file, 
 							   hwrhdr.pl_off,
 							   hwrhdr.pl_len);
@@ -259,7 +247,7 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 		cur_foff = hwrhdr.next_hwr;
 	}
 	//done
-	PDEBUG(9, "chip load done\n");
+	PDEBUG(5, "FPGA configuration completed\n");
 	return 0;
  out_delregion:
 	borph_exit_fpga(execq_item->task);
@@ -277,7 +265,6 @@ static inline void run_execq(void)
 	while (!list_empty(&bked_info.execq_list)) {
 		struct execq_item* execq_item;
 		struct bofhdr* bhdr;
-		PDEBUG(9, "files list not empty, do something... \n");
 		execq_item = list_entry(bked_info.execq_list.next, 
 					struct execq_item, list);
 		list_del_init(bked_info.execq_list.next);
@@ -341,7 +328,7 @@ static int bkexecd(void *dummy)
 			run_execq();
 		}
 	}
-	PDEBUG(9, "bkexecd thread exit\n");
+	PDEBUG(9, "Shutting down BORPH execution thread\n");
 	return 0;
 }
 

@@ -45,6 +45,7 @@
 #include <plat/display.h>
 #include <plat/gpmc.h>
 #include <plat/nand.h>
+#include <plat/mcspi.h>
 
 #include "mmc-am3517evm.h"
 #include "mux.h"
@@ -459,6 +460,11 @@ static int __init rhino_i2c_init(void)
 	return 0;
 }
 
+static struct omap2_mcspi_device_config rhino_mcspi_config = {
+	.turbo_mode	= 0,
+	.single_channel	= 1,	/* 0: slave, 1: master */
+};
+
 
 static struct spi_board_info rhino_spi_board_info[] __initdata = {
 	[0] = {
@@ -479,11 +485,12 @@ static struct spi_board_info rhino_spi_board_info[] __initdata = {
 
 static struct spi_board_info rhino_spi2_board_info[] __initdata = {
 	[0] = {
-		.modalias		= "rhino-spartan6",
-		.max_speed_hz	= 48000000,
-		.chip_select	= 0,
-		.bus_num 		= 2,
-		.mode 			= SPI_MODE_0,
+		.modalias		  = "rhino-spartan6",
+		.max_speed_hz	  = 48000000,
+		.chip_select	  = 0,
+		.bus_num 	 	  = 2,
+		.mode 			  = SPI_MODE_0,
+		.controller_data  = &rhino_mcspi_config,
 	},
 };
 

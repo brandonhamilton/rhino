@@ -12,11 +12,12 @@
 #include <linux/slab.h>    /* kmalloc/kfree */
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <asm/uaccess.h>   /* copy_from_user */
 #include <linux/ioport.h>  /* request_mem_region */
 #include <linux/spi/spi.h>
 
 #include <mach/gpio.h>
+
+#include <asm/io.h>
 
 #include <linux/bof.h>
 #include <linux/borph.h>
@@ -43,10 +44,10 @@ struct rhino_fpga_device *rhino_fpga;
 static DECLARE_MUTEX(rhino_mutex);
 
 /* FPGA configuration pins definitions */
-#define PROG_B 126
-#define INIT_B 127
+#define PROG_B     126
+#define INIT_B     127
 #define INIT_B_DIR 129
-#define DONE 128
+#define DONE       128
 
 #define CFG_INITB_WAIT 4000000 //100000
 #define CFG_DONE_WAIT  100000
@@ -64,6 +65,20 @@ static DECLARE_MUTEX(rhino_mutex);
  *****************************************************************/
 static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 {	
+	int i;
+	volatile int j;
+	printk("Writing data to FPGA to flash LEDs\n");
+
+	/* Write a "walking" pattern of 1s to the FPGA, to flash the LEDs */
+	writew(0x01, FPGA_CS2_BASE);
+	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
+			j = i;	
+	}
+	writew(0x02, FPGA_CS2_BASE);
+	writew(0x04, FPGA_CS2_BASE);
+	writew(0x08, FPGA_CS2_BASE);
+
+	printk("GPMC test finished.\n");
 	return iobuf->size;
 }
 
@@ -85,20 +100,35 @@ static struct hwr_iobuf* rhino_get_iobuf(void)
 
 static ssize_t rhino_put_iobuf (struct hwr_iobuf* iobuf)
 {
-	PDEBUG(9, "Unlocking IOBUF\n");
 	up(&rhino_mutex);
 	return 0;
 }
 
 static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t offset, uint32_t len)
 {
+	/*
+	 * Xilinx XAPP 502: Using a Microprocessor to Configure Xilinx FPGAs
+	 *   via Slave Serial Mode.
+	 *   _____________                _____________ 
+	 *  |   Assert    |              |  Send bit   |
+	 *  | NOT_PROGRAM |        ----->|  of Data    |<----
+	 *  |_____________|        |     |_____________|    |
+	 *         | > 300ns       |            |           | More
+	 *   ______v______         |      ______v______     | Data
+	 *  |   Deassert  |        |     |  Increment  |    |
+	 *  | NOT_PROGRAM |        |     |   Address   |-----
+	 *  |_____________|        |     |   Counter   | 
+	 *         |<------------  |     |_____________|
+	 *   ______v________ No |  |            |
+	 *  |   Check for   |   |  |      ______v______
+	 *  | NOT_INIT high |----  |     |  Check for  |  
+	 *  |_______________|      |     |  DONE high  |
+	 *         |__________Yes__|     |_____________|
+	 */
 	int i;
 	int count;
 	int retval = -EIO;
-	struct spi_message msg;
-	struct spi_transfer transfer;
-	unsigned short *src;
-
+	u16* src;
 	PDEBUG(9, "Configuring RHINO HWR %u from (offset %u, len %u) of %s\n", addr->addr, offset, len, file->f_dentry->d_name.name);
 
 	if (addr->addr != 0) {
@@ -146,26 +176,25 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 
 	/* Reset the FPGA */
 	gpio_direction_output(PROG_B, 1);
-	udelay(100);
 	
+
 	/*************************************************
 	 * Clear Configuration Memory                    *
 	 *************************************************/
+	PDEBUG(9, "[1] Clear Configuration Memory\n");
 
 	/* Start to clear configuration memory */
 	gpio_set_value(PROG_B, 0);
 
-
 	/* Wait for FPGA initialization */
 	gpio_direction_input(INIT_B);
 	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
-		if (!(gpio_get_value(INIT_B))) {
+		if (!gpio_get_value(INIT_B)) {
 			break;
 		}
-		/*if (i == CFG_INITB_WAIT) {
-			PDEBUG(9, "FPGA configuration error: Could not initialize FPGA\n");
-			goto out_freegpio4;
-		}*/
+		if (i == CFG_INITB_WAIT) {
+			PDEBUG(9, "Warning: INIT_B did not go low during PROG_B pulse\n");
+		}
 	}
 					
 	/* Clear configuration memory */
@@ -175,11 +204,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	 * Bitstream Loading                             *
 	 *************************************************/
 
-	/* Load Configuration Data Frames */
-	spi_message_init(&msg);
-	spi_message_add_tail(&transfer, &msg);
-
-	/* Wait for FPGA to be ready for configuration data */	
+	/* Wait for FPGA to be ready for configuration data */
 	gpio_direction_input(INIT_B);
 	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
 		if (gpio_get_value(INIT_B)) {
@@ -205,25 +230,21 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 
 		len -= count;
 		offset += count;
-		
-		transfer.tx_buf = rhino_page;
-		transfer.len = count;
-		retval = spi_sync(rhino_fpga->spi, &msg);
-		if (retval) {
-			PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed (%d)\n", retval);
-			goto out_freegpio4;
+
+		if (count % 2 != 0) {
+			PDEBUG(9, "Warning: Odd number of bytes in FPGA config data...\n");
 		}
-/*
-		//src = (unsigned short *)(rhino_page);  		
-		//while(count > 0) {
-			retval = spi_write(rhino_spi, src, count);
+ 		
+		src = (u16 *)(rhino_page);
+		while(count > 0) {
+			retval = spi_write(rhino_fpga->spi, src, sizeof(u16));
 			if (retval) {
 				PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed (%d)\n", retval);
 				goto out_freegpio4;
 			}
-			//src++;
-			//count -= 2;
-		//}*/
+			src++;
+			count -= sizeof(u16);
+		}
 	}
 		
 	/* CRC Check */
@@ -247,9 +268,6 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
     	}
     }
 
-	/*spi_xfer(spi, 0, NULL, NULL, SPI_XFER_END);  //send spi transfer end flags
-	spi_release_bus(spi);
-*/
 	PDEBUG(9, "RHINO HWR %u configuration completed successfully\n", addr->addr);
 	retval = 0;
 
@@ -333,14 +351,16 @@ static struct hwrtype hwrtype_rhino = {
 
 static int __devinit fpga_probe(struct spi_device *spi)
 {
-	int retval;
+	int retval = 0;
 	printk("RHINO Spartan-6 FPGA interface driver");
 
-	spi->bits_per_word = 16;
+	/*
 	spi->mode = SPI_MODE_0;
+	spi->max_speed_hz = 48000000;
+	spi->bits_per_word = 8;
 	retval = spi_setup(spi);
 	if (retval < 0)
-		return retval;
+		return retval;*/
 
 	rhino_fpga = kzalloc(sizeof(struct rhino_fpga_device), GFP_KERNEL);
 	if (rhino_fpga == NULL) {
@@ -348,14 +368,8 @@ static int __devinit fpga_probe(struct spi_device *spi)
 		return -ENOMEM;
 	}
 
-
 	rhino_fpga->spi = spi;
 	spi_set_drvdata(spi, rhino_fpga);
-
-	//spi->mode = SPI_MODE_0;
-	//spi->bits_per_word = 16;
-
-	//retval = spi_setup(spi);
 
 	return retval;
 }
@@ -405,6 +419,7 @@ static int __init hwrtype_rhino_init(void)
 	}
 
 	spi_register_driver(&rhino_spartan6_driver);
+
 
 out:
 	return retval;
