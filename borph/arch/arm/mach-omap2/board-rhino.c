@@ -465,6 +465,7 @@ static struct omap2_mcspi_device_config rhino_mcspi_config = {
 	.single_channel	= 1,	/* 0: slave, 1: master */
 };
 
+#define	GPIO_RTCDS1390_IRQ	154
 
 static struct spi_board_info rhino_spi_board_info[] __initdata = {
 	[0] = {
@@ -556,62 +557,10 @@ static struct omap_board_mux board_mux[] __initdata = {
 #define board_mux	NULL
 #endif
 
-
-#define CAN_STB		214
-static void am3517_hecc_plat_init(void)
-{
-	int r;
-
-    r = gpio_request(CAN_STB, "can_stb");
-    if (r) {
-        printk(KERN_ERR "failed to get can_stb \n");
-		return;
-    }
-
-   gpio_direction_output(CAN_STB, 0);
-}
-
-static struct resource am3517_hecc_resources[] = {
-        {
-                .start  = AM35XX_IPSS_HECC_BASE,
-                .end    = AM35XX_IPSS_HECC_BASE + 0x3FFF,
-                .flags  = IORESOURCE_MEM,
-        },
-        {
-                .start  = INT_35XX_HECC0_IRQ,
-                .end    = INT_35XX_HECC0_IRQ,
-                .flags  = IORESOURCE_IRQ,
-        },
-};
-
-static struct platform_device am3517_hecc_device = {
-        .name           = "ti_hecc",
-        .id             = 1,
-        .num_resources  = ARRAY_SIZE(am3517_hecc_resources),
-        .resource       = am3517_hecc_resources,
-};
-
-static struct ti_hecc_platform_data rhino_hecc_pdata = {
-        .scc_hecc_offset        = AM35XX_HECC_SCC_HECC_OFFSET,
-        .scc_ram_offset         = AM35XX_HECC_SCC_RAM_OFFSET,
-        .hecc_ram_offset        = AM35XX_HECC_RAM_OFFSET,
-        .mbx_offset            = AM35XX_HECC_MBOX_OFFSET,
-        .int_line               = AM35XX_HECC_INT_LINE,
-        .version                = AM35XX_HECC_VERSION,
-		.platform_init		= am3517_hecc_plat_init,
-};
-
-static void rhino_hecc_init(struct ti_hecc_platform_data *pdata)
-{
-        am3517_hecc_device.dev.platform_data = pdata;
-        platform_device_register(&am3517_hecc_device);
-}
-
 static void __init rhino_init(void)
 {
 	rhino_i2c_init();
-	rhino_spi_init();
-
+	
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	platform_add_devices(rhino_devices,
 				ARRAY_SIZE(rhino_devices));
@@ -619,12 +568,18 @@ static void __init rhino_init(void)
 	omap_serial_init();
 	rhino_flash_init();
 	rhino_musb_init();
-	/* Configure GPIO for EHCI port */
-	omap_mux_init_gpio(57, OMAP_PIN_OUTPUT);
+
 	usb_ehci_init(&ehci_pdata);
 
-	rhino_hecc_init(&rhino_hecc_pdata);
+	omap_mux_init_gpio(GPIO_RTCDS1390_IRQ, OMAP_PIN_INPUT_PULLDOWN);
+	if (gpio_request(GPIO_RTCDS1390_IRQ, "rtcs35390a-irq") < 0)
+		printk(KERN_WARNING "failed to request GPIO#%d\n", GPIO_RTCDS1390_IRQ);
+	if (gpio_direction_input(GPIO_RTCDS1390_IRQ))
+		printk(KERN_WARNING "GPIO#%d cannot be configured as input\n", GPIO_RTCDS1390_IRQ);
+	rhino_spi_board_info[0].irq = gpio_to_irq(GPIO_RTCDS1390_IRQ);
 	
+	rhino_spi_init();
+		
 	/*Ethernet*/
 	rhino_ethernet_init(&rhino_emac_pdata);
 	
