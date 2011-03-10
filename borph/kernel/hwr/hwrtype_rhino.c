@@ -52,6 +52,9 @@ static DECLARE_MUTEX(rhino_mutex);
 #define CFG_INITB_WAIT 4000000 //100000
 #define CFG_DONE_WAIT  100000
                         
+#define FPGA_VCCINT		99
+#define FPGA_VCCO_AUX	100
+#define FPGA_VCCMGT		101
 
 #define FPGA_CS1_BASE		0x08000000
 #define FPGA_CS2_BASE		0x10000000
@@ -60,6 +63,14 @@ static DECLARE_MUTEX(rhino_mutex);
 #define FPGA_CS5_BASE		0x28000000
 #define FPGA_CS6_BASE		0x38000000
 
+
+static void rhino_set_fpga_psu(int enable)
+{
+	/* Enable power to FPGA */
+    gpio_direction_output(FPGA_VCCINT, enable);
+    gpio_direction_output(FPGA_VCCO_AUX, enable);
+    gpio_direction_output(FPGA_VCCMGT, enable);
+}
 /*****************************************************************
  * functions definitions
  *****************************************************************/
@@ -69,7 +80,7 @@ static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 	volatile int j;
 	printk("Writing data to FPGA to flash LEDs\n");
 
-	/* Write a "walking" pattern of 1s to the FPGA, to flash the LEDs */
+	/* Write a "walking" pattern of 1s to the FPGA, to flash the LEDs *
 	writew(0x01, FPGA_CS2_BASE);
 	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
 			j = i;	
@@ -78,7 +89,7 @@ static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 	writew(0x04, FPGA_CS2_BASE);
 	writew(0x08, FPGA_CS2_BASE);
 
-	printk("GPMC test finished.\n");
+	printk("GPMC test finished.\n");*/
 	return iobuf->size;
 }
 
@@ -136,47 +147,24 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 		goto out; 
 	}
 
+	if (!rhino_fpga) {
+		PDEBUG(9, "FPGA configuration error: Invalid SPI device\n");
+		goto out;
+	}
+
 	if (down_interruptible(&rhino_mutex)) {
 	    /* signal received, semaphore not acquired ... */
 		goto out;
 	}
 
-	if (!rhino_fpga) {
-		PDEBUG(9, "FPGA configuration error: Invalid SPI device\n");
-		goto out;
-	}
 	/*************************************************
-	 * Setup GPIO				                     *
+	 * Initialize the FPGA		                     *
 	 *************************************************/
-	if (gpio_request(INIT_B_DIR, "init_b_dir_gpio") != 0) {
-		PDEBUG(9, "Could not request GPIO %d\n", INIT_B_DIR);
-		retval = -ENODEV;
-		goto out_free_mutex;
-	}
-
-	if (gpio_request(PROG_B, "prog_b_gpio") != 0) {
-		PDEBUG(9, "Could not request GPIO %d\n", PROG_B);
-		retval = -ENODEV;
-		goto out_freegpio1;
-	}
-
-	if (gpio_request(INIT_B, "init_b_gpio") != 0) {
-		PDEBUG(9, "Could not request GPIO %d\n", PROG_B);
-		retval = -ENODEV;
-		goto out_freegpio2;
-	}
-
-	if (gpio_request(DONE, "done_gpio") != 0) {
-		PDEBUG(9, "Could not request GPIO %d\n", PROG_B);
-		retval = -ENODEV;
-		goto out_freegpio3;
-	}
-
-	gpio_direction_output(INIT_B_DIR, 0);
+	/* Turn on FPGA */
+	rhino_set_fpga_psu(1);
 
 	/* Reset the FPGA */
-	gpio_direction_output(PROG_B, 1);
-	
+	gpio_direction_output(PROG_B, 1);	
 
 	/*************************************************
 	 * Clear Configuration Memory                    *
@@ -204,6 +192,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	 * Bitstream Loading                             *
 	 *************************************************/
 
+	PDEBUG(9, "[2] Loading Bitstream\n");
 	/* Wait for FPGA to be ready for configuration data */
 	gpio_direction_input(INIT_B);
 	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
@@ -212,7 +201,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 		}
 		if (i == CFG_INITB_WAIT) {
 			PDEBUG(9, "FPGA configuration error: Could not initialize FPGA for transfer\n");
-			goto out_freegpio4;
+			goto out_free_mutex;
 		}
 	}
 
@@ -221,7 +210,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 		count = min(PAGE_SIZE, len);
 		retval = kernel_read(file, offset, rhino_page, count);
 		if (retval < 0) {
-			goto out_freegpio4;
+			goto out_free_mutex;
 		}
 		if (retval != count) {
 			PDEBUG(9, "kernel_read returns less than requested...\n");
@@ -230,33 +219,31 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 
 		len -= count;
 		offset += count;
-
-		if (count % 2 != 0) {
-			PDEBUG(9, "Warning: Odd number of bytes in FPGA config data...\n");
-		}
- 		
+		
 		src = (u16 *)(rhino_page);
 		while(count > 0) {
 			retval = spi_write(rhino_fpga->spi, src, sizeof(u16));
 			if (retval) {
 				PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed (%d)\n", retval);
-				goto out_freegpio4;
+				goto out_free_mutex;
 			}
 			src++;
 			count -= sizeof(u16);
 		}
 	}
 		
+	PDEBUG(9, "[3] CRC Check\n");
 	/* CRC Check */
 	if(!(gpio_get_value(INIT_B)))
 	{
 		PDEBUG(9, "FPGA configuration error: CRC check failed\n");
-		goto out_freegpio4;
+		goto out_free_mutex;
 	}
 
 	/*************************************************
 	 * Startup sequence                              *
 	 *************************************************/
+	PDEBUG(9, "[4] Checking configuration results\n");
 	gpio_direction_input(DONE);
 	for (i=0; i <= CFG_DONE_WAIT; i++) {
 		if(gpio_get_value(DONE)) {
@@ -264,21 +251,13 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 		}
 		else {
 			PDEBUG(9, "FPGA configuration error: Error in startup sequence, DONE pin not asserted\n");
-			goto out_freegpio4;
+			goto out_free_mutex;
     	}
     }
 
 	PDEBUG(9, "RHINO HWR %u configuration completed successfully\n", addr->addr);
 	retval = 0;
 
-out_freegpio4:
-	gpio_free(DONE);
-out_freegpio3:
-	gpio_free(INIT_B);
-out_freegpio2:
-	gpio_free(PROG_B);
-out_freegpio1:
-	gpio_free(INIT_B_DIR);
 out_free_mutex:
 	up(&rhino_mutex);
 out:
@@ -287,9 +266,12 @@ out:
 
 static int rhino_unconfigure(struct hwr_addr* addr)
 {
+	rhino_set_fpga_psu(0);
 	PDEBUG(9, "Unconfiguring RHINO HWR %u\n", addr->addr);
 	return 0;
 }
+
+
 
 struct phyhwr* rhino_reserve_hwr(struct hwr_addr* a)
 {
@@ -310,6 +292,7 @@ struct phyhwr* rhino_reserve_hwr(struct hwr_addr* a)
 	}
 	/* count is now a usage count */
 	atomic_inc(&ret->count);
+
 	return ret;
 }
 
@@ -354,13 +337,11 @@ static int __devinit fpga_probe(struct spi_device *spi)
 	int retval = 0;
 	printk("RHINO Spartan-6 FPGA interface driver");
 
-	/*
 	spi->mode = SPI_MODE_0;
 	spi->max_speed_hz = 48000000;
-	spi->bits_per_word = 8;
 	retval = spi_setup(spi);
 	if (retval < 0)
-		return retval;*/
+		return retval;
 
 	rhino_fpga = kzalloc(sizeof(struct rhino_fpga_device), GFP_KERNEL);
 	if (rhino_fpga == NULL) {
@@ -389,7 +370,6 @@ static struct spi_driver rhino_spartan6_driver = {
 	.probe	= fpga_probe,
 	.remove = __devexit_p(fpga_remove),
 };
-
 
 static int __init hwrtype_rhino_init(void)
 {
@@ -420,6 +400,34 @@ static int __init hwrtype_rhino_init(void)
 
 	spi_register_driver(&rhino_spartan6_driver);
 
+	/* request FPGA gpio */
+	if (gpio_request(FPGA_VCCINT, "FPGA_VCCINT") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", FPGA_VCCINT);
+	}
+	if (gpio_request(FPGA_VCCO_AUX, "FPGA_VCCO_AUX") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", FPGA_VCCO_AUX);
+	}
+    if (gpio_request(FPGA_VCCMGT, "FPGA_VCCMGT") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", FPGA_VCCMGT);
+	}
+
+    if (gpio_request(INIT_B_DIR, "init_b_dir_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", INIT_B_DIR);
+	}
+
+	if (gpio_request(PROG_B, "prog_b_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", PROG_B);
+	}
+
+	if (gpio_request(INIT_B, "init_b_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", INIT_B);
+	}
+
+	if (gpio_request(DONE, "done_gpio") != 0) {
+		PDEBUG(9, "Could not request GPIO %d\n", DONE);
+	}
+
+	gpio_direction_output(INIT_B_DIR, 0);
 
 out:
 	return retval;
