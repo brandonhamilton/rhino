@@ -299,7 +299,6 @@ static struct omap_dss_board_info rhino_dss_data = {
 };
 
 static struct platform_device rhino_dss_device = {
-
 		.name		= "omapdss",
 		.id		= -1,
 		.dev		= {
@@ -557,9 +556,9 @@ static void __init rhino_init(void)
 	rhino_i2c_init();
 	
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	platform_add_devices(rhino_devices,
-				ARRAY_SIZE(rhino_devices));
-
+	
+	platform_add_devices(rhino_devices, ARRAY_SIZE(rhino_devices));
+		
 	omap_serial_init();
 	rhino_flash_init();
 	rhino_musb_init();
@@ -574,7 +573,7 @@ static void __init rhino_init(void)
 	rhino_spi_board_info[0].irq = gpio_to_irq(GPIO_RTCDS1390_IRQ);
 	
 	rhino_spi_init();
-		
+
 	/*Ethernet*/
 	rhino_ethernet_init(&rhino_emac_pdata);
 	
