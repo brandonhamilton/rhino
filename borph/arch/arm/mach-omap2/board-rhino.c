@@ -66,13 +66,13 @@ static struct mtd_partition rhino_nand_partitions[] = {
 {
        .name           = "uboot-nand",
        .offset         = MTDPART_OFS_APPEND,
-       .size           = 14*(SZ_128K),
+       .size           = 15*(SZ_128K),
        .mask_flags     = MTD_WRITEABLE
 },
 {
        .name           = "params-nand",
        .offset         = MTDPART_OFS_APPEND,
-       .size           = 2*(SZ_128K)
+       .size           = SZ_128K
 },
 {
        .name           = "linux-nand",
@@ -437,10 +437,6 @@ static struct i2c_board_info __initdata rhino_i2c1_boardinfo[] = {
 		.flags = I2C_CLIENT_WAKE,
 		.platform_data = &rhino_regulator_data[0],
 	},
-	/*{
-		I2C_BOARD_INFO("tlv320aic23", 0xA1),
-		.type		= "tlv320aic23",
-	},*/
 };
 
 static struct i2c_board_info __initdata rhino_dvi_i2c_eeprom[] = {
@@ -550,7 +546,6 @@ static const struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
-	/* USB OTG DRVVBUS offset = 0x212 */
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 #else

@@ -78,7 +78,6 @@ static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 {	
 	int i;
 	volatile int j;
-	printk("Writing data to FPGA to flash LEDs\n");
 
 	/* Write a "walking" pattern of 1s to the FPGA, to flash the LEDs *
 	writew(0x01, FPGA_CS2_BASE);
