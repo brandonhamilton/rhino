@@ -1,8 +1,10 @@
 /*
  * linux/fs/proc/proc_borph.c
  *
- * Copyright (C) 2008 Hayden So
- * Author: Hayden Kwok-Hay So, Brandon Hamilton
+ * procfs virtual filesystem for communication with borph HW processes
+ *
+ * Authors: Brandon Hamilton, Hayden So
+ *
  * Description:
  *   proc ioreg functions
  *
@@ -653,6 +655,38 @@ static struct file_operations proc_ioreg_operations = {
 };
 /**** end /proc/<pid>/hw/ioreg directory ****/
 
+static ssize_t proc_status_read(struct task_struct *task, char *buffer)
+{
+	struct borph_info *bi = task->borph_info;
+	if (!bi)
+		return -EINVAL;
+  	snprintf(buffer,5,"%04x",bi->status);
+	buffer[4] = '\n';
+	return 5;
+}
+
+static ssize_t status_read(struct file * file, char __user * buf, size_t count, loff_t *ppos)
+{
+	return proc_info_read(file, buf, count, ppos);
+}
+
+static ssize_t status_write(struct file *filp, const char *buf, size_t fcount, loff_t *fpos)
+{
+	struct dentry *dentry = filp->f_path.dentry;
+	struct inode *inode = dentry->d_inode;
+	struct task_struct *task = get_proc_task(inode);
+	struct borph_info *bi = task->borph_info;
+	int retval;
+
+	if (!bi) 
+		return -EINVAL;
+	return fcount;
+}
+
+static const struct file_operations proc_status_file_operations = {
+	.read		= status_read,
+	.write		= status_write,
+};
 
 /**** begin /proc/<pid>/hw/ content ****/
 // /proc/<pid>/hw/ioreg_mode
@@ -695,6 +729,7 @@ static const struct file_operations proc_ioregmode_file_operations = {
 	.write		= ioregmode_write,
 };
 
+
 // /proc/<pid>/hw/hwregion
 static ssize_t proc_hwregion_read(struct task_struct *task, char *buffer)
 {
@@ -721,6 +756,8 @@ const struct file_operations proc_bphhw_operations;
 
 static const struct pid_entry bphhw_stuff[] = {
 	DIR("ioreg",    S_IRUGO|S_IXUGO, proc_ioreg_inode_operations, proc_ioreg_operations),
+	NOD("status", S_IFREG|S_IRUSR|S_IWUSR, NULL, &proc_status_file_operations,
+		{ .proc_read = &proc_status_read } ),
 	NOD("ioreg_mode", S_IFREG|S_IRUSR|S_IWUSR, 
 	    NULL, &proc_ioregmode_file_operations,
 		{ .proc_read = &proc_ioregmode_read } ),

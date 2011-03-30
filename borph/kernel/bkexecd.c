@@ -117,6 +117,7 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 	
 	// Set binary as default mode
 	bi->ioreg_mode = 1;
+	bi->status = 0;
 
 	execq_item->task->borph_info = bi;
 
@@ -246,6 +247,7 @@ static inline int borph_load_hw(struct execq_item *execq_item)
 		/* prepare for next hardware region */
 		cur_foff = hwrhdr.next_hwr;
 	}
+	bi->status |= 1;
 	//done
 	PDEBUG(5, "FPGA configuration completed\n");
 	return 0;

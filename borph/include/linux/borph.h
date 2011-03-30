@@ -73,6 +73,7 @@ struct borph_info {
 	struct list_head hw_region;
 	struct list_head ioreg;
 	int ioreg_mode; 			 // 0 for ascii, 1 for raw
+	unsigned int status;		 // configuration status
 };
 
 /*******************************************
