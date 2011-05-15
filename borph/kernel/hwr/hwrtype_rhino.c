@@ -38,7 +38,21 @@ struct rhino_fpga_device {
 	struct spi_device *spi;
 };
 
+/* Buffers used for asynchronous configuration data transfers */
+struct config_transfer_part {
+	buf_t* page;
+	struct spi_transfer	transfer;
+	struct spi_message	message;
+	int number;
+	char last;
+	
+};
+static atomic_t config_transfer_parts;
+struct kmem_cache *config_transport_part_cache;
+
 struct rhino_fpga_device *rhino_fpga;
+
+DECLARE_COMPLETION(configuration_data_sent);
 
 /* Mutex Semaphore to ensure proper access to page buffer */
 static DECLARE_MUTEX(rhino_mutex);
@@ -114,6 +128,42 @@ static ssize_t rhino_put_iobuf (struct hwr_iobuf* iobuf)
 	return 0;
 }
 
+static void spi_transfer_completed(void *buf) 
+{
+	struct config_transfer_part *ctp = buf;
+	int status = ctp->message.status;
+	free_page(ctp->page);
+	kmem_cache_free(config_transport_part_cache, ctp);
+	if (status == 0) {
+		/* Transfer succeeded */
+		atomic_dec(&config_transfer_parts);	
+	}
+	else {
+		/* Transfer failed */
+		PDEBUG(9, "SPI transfer failed with status: %d...\n", status);
+		atomic_set(&config_transfer_parts, -1);
+	}
+
+	/* Indicate to configuration function that SPI transfers are done */
+	if (ctp->last || status) {
+		complete(&configuration_data_sent);
+	}
+}
+
+static void setup_config_transport_part(struct config_transfer_part *ctp, int len)
+{
+	/* Setup SPI transfer request */
+	memset(&ctp->transfer, 0, sizeof (struct spi_transfer));
+	ctp->transfer.tx_buf = ctp->page;
+	ctp->transfer.len = len;
+	/* Setup SPI message */
+	spi_message_init(&ctp->message);
+	spi_message_add_tail(&ctp->transfer, &ctp->message);
+	/* Use asynchronous callback method */
+	ctp->message.complete = spi_transfer_completed;
+	ctp->message.context  = ctp;
+}
+
 static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t offset, uint32_t len)
 {
 	/*
@@ -139,6 +189,7 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 	int count;
 	int retval = -EIO;
 	u16* src;
+	int number;
 	PDEBUG(9, "Configuring RHINO HWR %u from (offset %u, len %u) of %s\n", addr->addr, offset, len, file->f_dentry->d_name.name);
 
 	if (addr->addr != 0) {
@@ -204,11 +255,21 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 		}
 	}
 
+	/* Transfer configuration data to FPGA using SPI (DMA) */
+	atomic_set(&config_transfer_parts, 0);
 	count = 0;
+	number = 0;
 	while (len > 0) {
+		/* Setup buffer to hold segment of configuration data */
+		struct config_transfer_part* ctp = kmem_cache_alloc(config_transport_part_cache, GFP_KERNEL);
+		ctp->page = (buf_t*)__get_free_page(GFP_KERNEL | GFP_DMA);
+		ctp->number = ++number;
+		/* Read configuration data into buffer */
 		count = min(PAGE_SIZE, len);
-		retval = kernel_read(file, offset, rhino_page, count);
+		retval = kernel_read(file, offset, ctp->page, count);
 		if (retval < 0) {
+			free_page(ctp->page);
+			kmem_cache_free(config_transport_part_cache, ctp);
 			goto out_free_mutex;
 		}
 		if (retval != count) {
@@ -218,19 +279,22 @@ static int rhino_configure(struct hwr_addr* addr, struct file* file, uint32_t of
 
 		len -= count;
 		offset += count;
-		
-		src = (u16 *)(rhino_page);
-		while(count > 0) {
-			retval = spi_write(rhino_fpga->spi, src, sizeof(u16));
-			if (retval) {
-				PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed (%d)\n", retval);
-				goto out_free_mutex;
-			}
-			src++;
-			count -= sizeof(u16);
+
+		if (atomic_inc_and_test( &config_transfer_parts )) {
+			PDEBUG(9, "FPGA configuration error: Configuration data write over SPI failed (%d)\n", retval);
+			goto out_free_mutex;
 		}
+
+		setup_config_transport_part(ctp, count);
+		ctp->last = count < PAGE_SIZE;
+
+		/* Send configuration data over SPI using DMA */
+		spi_async(rhino_fpga->spi, &ctp->message);
 	}
-		
+
+	/* Wait for signal that all configuration data has been sent */
+	wait_for_completion(&configuration_data_sent);
+
 	PDEBUG(9, "[3] CRC Check\n");
 	/* CRC Check */
 	if(!(gpio_get_value(INIT_B)))
@@ -397,6 +461,8 @@ static int __init hwrtype_rhino_init(void)
 		goto out;
 	}
 
+	config_transport_part_cache = KMEM_CACHE(config_transfer_part, SLAB_HWCACHE_ALIGN);
+
 	spi_register_driver(&rhino_spartan6_driver);
 
 	/* request FPGA gpio */
@@ -441,6 +507,10 @@ static void __exit hwrtype_rhino_exit(void)
 
 	if (rhino_page) {
 		free_page((unsigned long) rhino_page);
+	}
+
+	if (config_transport_part_cache) {
+		kmem_cache_destroy(config_transport_part_cache);
 	}
 
 	spi_unregister_driver(&rhino_spartan6_driver);
