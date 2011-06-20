@@ -765,10 +765,10 @@ void per_clocks_enable(void)
 	MUX_VAL(CP(UART1_RTS),      (IDIS | PTD | DIS | M0)) /*UART1_RTS*/\
 	MUX_VAL(CP(UART1_CTS),      (IEN  | PTU | DIS | M0)) /*UART1_CTS*/\
 	MUX_VAL(CP(UART1_RX),       (IEN  | PTD | DIS | M0)) /*UART1_RX*/\
-    MUX_VAL(CP(UART2_TX),       (IDIS | PTD | DIS | M0)) /*UART2_TX*/\
-    MUX_VAL(CP(UART2_RTS),      (IDIS | PTD | DIS | M0)) /*UART2_RTS*/\
-    MUX_VAL(CP(UART2_CTS),      (IEN  | PTU | DIS | M0)) /*UART2_CTS*/\
-    MUX_VAL(CP(UART2_RX),       (IEN  | PTD | DIS | M0)) /*UART2_RX*/\
+	MUX_VAL(CP(UART2_TX),       (IDIS | PTD | DIS | M0)) /*UART2_TX*/\
+	MUX_VAL(CP(UART2_RTS),      (IDIS | PTD | DIS | M0)) /*UART2_RTS*/\
+	MUX_VAL(CP(UART2_CTS),      (IEN  | PTU | DIS | M0)) /*UART2_CTS*/\
+	MUX_VAL(CP(UART2_RX),       (IEN  | PTD | DIS | M0)) /*UART2_RX*/\
     \
     /*MMC2 for SD card */\
     \
@@ -785,17 +785,17 @@ void per_clocks_enable(void)
     \
     /*Boot pins, system clocks and reset pins*/\
     \
-    MUX_VAL(CP(SYS_BOOT0),      (IEN  | PTD | DIS | M4)) /*GPIO_2 */\
-    MUX_VAL(CP(SYS_BOOT1),      (IEN  | PTD | DIS | M4)) /*GPIO_3 */\
-    MUX_VAL(CP(SYS_BOOT2),      (IEN  | PTD | DIS | M4)) /*GPIO_4 */\
-    MUX_VAL(CP(SYS_BOOT4),      (IEN  | PTD | DIS | M4)) /*GPIO_6 */\
-    MUX_VAL(CP(SYS_BOOT6),      (IEN  | PTD | DIS | M4)) /*GPIO_8 */\
-    MUX_VAL(CP(HDQ_SIO),        (IEN  | PTD | DIS | M1)) /*SYS_ALTCLK*/\
-    MUX_VAL(CP(SYS_CLKREQ),     (IEN  | PTD | DIS | M0)) /*SYS_CLKREQ*/\
+	MUX_VAL(CP(SYS_BOOT0),      (IEN  | PTD | DIS | M4)) /*GPIO_2 */\
+	MUX_VAL(CP(SYS_BOOT1),      (IEN  | PTD | DIS | M4)) /*GPIO_3 */\
+	MUX_VAL(CP(SYS_BOOT2),      (IEN  | PTD | DIS | M4)) /*GPIO_4 */\
+	MUX_VAL(CP(SYS_BOOT4),      (IEN  | PTD | DIS | M4)) /*GPIO_6 */\
+	MUX_VAL(CP(SYS_BOOT6),      (IEN  | PTD | DIS | M4)) /*GPIO_8 */\
+	MUX_VAL(CP(HDQ_SIO),        (IEN  | PTD | DIS | M1)) /*SYS_ALTCLK*/\
+	MUX_VAL(CP(SYS_CLKREQ),     (IEN  | PTD | DIS | M0)) /*SYS_CLKREQ*/\
 	MUX_VAL(CP(SYS_32K),        (IEN  | PTD | DIS | M0)) /*SYS_32K*/\
-    MUX_VAL(CP(SYS_nIRQ),       (IEN  | PTD | DIS | M0)) /*SYS_nIRQ*/\
-    MUX_VAL(CP(CCDC_DATA7),     (IEN  | PTU | EN  | M4)) /*GPIO_106 - PWR_KILL*/\
-    MUX_VAL(CP(SYS_CLKOUT2),    (IEN  | PTD | DIS | M4)) /*GPIO_186 - PWR_FAIL_INT*/\
+	MUX_VAL(CP(SYS_nIRQ),       (IEN  | PTD | DIS | M0)) /*SYS_nIRQ*/\
+	MUX_VAL(CP(CCDC_DATA7),     (IEN  | PTU | EN  | M4)) /*GPIO_106 - PWR_KILL*/\
+	MUX_VAL(CP(SYS_CLKOUT2),    (IEN  | PTD | DIS | M4)) /*GPIO_186 - PWR_FAIL_INT*/\
     \
     /*JTAG*/\
     \

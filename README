@@ -13,7 +13,16 @@ Prerequisites
 This guide assumes that a cross-compilation toolchain is available in the current path.
 The free CodeSourcery G++ LITE toolchain (ARM GNU/Linux 2009q1) can be downloaded from the following URL: http://www.codesourcery.com/sgpp/lite/arm/portal/release858
 
-1. Building u-boot
+1. Building x-loader
+--------------------
+
+$ cd x-loader
+$ make am3517rhino_config
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm
+$ ../utils/sign-gp/signGP x-load.bin
+$ cp x-load.bin.ift MLO
+
+2. Building u-boot
 ------------------
 
 $ cd u-boot
@@ -21,7 +30,9 @@ $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm distclean
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_config
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm
 
-2. Building borph
+Note: when compiling for revision 1.0 boards, the CONFIG_RHINO_REV flag must first be set to "1_0" in /u-boot/include/configs/rhino.h
+
+3. Building borph
 -----------------
 
 $ cd borph

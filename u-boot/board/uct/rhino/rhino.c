@@ -120,20 +120,33 @@ int misc_init_r(void)
 
 #if defined(CONFIG_DRIVER_TI_EMAC)
 
-    /*Set nPWR_KILL high, to ensure power supply stays on*/
-    omap_request_gpio(106);
-    omap_set_gpio_direction(106, 0);
-    omap_set_gpio_dataout(106, 1);
+	/*Set nPWR_KILL high, to ensure power supply stays on*/
+	omap_request_gpio(106);
+	omap_set_gpio_direction(106, 0);
+	omap_set_gpio_dataout(106, 1);
 
-    /*Set PROGRAM_B high, to take FPGA out of reset*/
-    omap_request_gpio(126);
-    omap_set_gpio_direction(126, 0);
-    omap_set_gpio_dataout(126, 1);
+	/*Set PROGRAM_B high, to take FPGA out of reset*/
+	omap_request_gpio(126);
+	omap_set_gpio_direction(126, 0);
+	omap_set_gpio_dataout(126, 1);
+
+	/*On all boards after revision 1.0, FPGA_SUSPEND must be kept low */
+#if CONFIG_RHINO_REV != 1_0
+	omap_request_gpio(61);
+	omap_set_gpio_direction(61, 0);
+	omap_set_gpio_dataout(61, 0);
+#endif
 
 	/*Ensure Ethernet PHY is powered up*/
+#if CONFIG_RHINO_REV == 1_0
 	omap_request_gpio(61);
 	omap_set_gpio_direction(61, 0);
 	omap_set_gpio_dataout(61, 1);
+#else
+	omap_request_gpio(30);
+	omap_set_gpio_direction(30, 0);
+	omap_set_gpio_dataout(30, 1);
+#endif
 
 	/*Now reset the PHY */
 	omap_request_gpio(65);
@@ -153,6 +166,14 @@ int misc_init_r(void)
 		udelay(1000);
 		ctr++;
 		}while (ctr <300);
+
+
+    	/*Enable the boot buffer. Note: this does not work on v1.0 boards*/
+#if CONFIG_RHINO_REV != 1_0
+	omap_request_gpio(11);
+	omap_set_gpio_direction(11, 0);
+	omap_set_gpio_dataout(11, 0);
+#endif
 
 	/*Ensure that the module is out of reset*/
 	reset = readl(AM3517_IP_SW_RESET);
