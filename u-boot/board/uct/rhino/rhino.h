@@ -41,7 +41,7 @@ const omap3_sysinfo sysinfo = {
  * M0   - Mode 0
  * The commented string gives the final mux configuration for that pin
  */
-#if CONFIG_RHINO_REV == 1_0
+#if CONFIG_RHINO_REV == 10
 
 #define MUX_RHINO() \
 	\
@@ -688,5 +688,7 @@ const omap3_sysinfo sysinfo = {
 	MUX_VAL(CP(ETK_D13_ES2),	(IEN  | PTD | DIS | M3)) /*HSUSB2_NXT*/\
 	MUX_VAL(CP(ETK_D14_ES2),	(IEN  | PTD | DIS | M3)) /*HSUSB2_DATA0*/\
 	MUX_VAL(CP(ETK_D15_ES2),	(IEN  | PTD | DIS | M3)) /*HSUSB2_DATA1*/
+
+#endif
 
 #endif

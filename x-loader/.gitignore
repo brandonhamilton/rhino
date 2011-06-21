@@ -32,6 +32,8 @@
 /LOG
 /errlog
 /reloc_off
+/include/config.h
+/include/config.mk
 
 # stgit generated dirs
 patches-*

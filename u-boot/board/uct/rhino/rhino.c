@@ -131,14 +131,14 @@ int misc_init_r(void)
 	omap_set_gpio_dataout(126, 1);
 
 	/*On all boards after revision 1.0, FPGA_SUSPEND must be kept low */
-#if CONFIG_RHINO_REV != 1_0
+#if CONFIG_RHINO_REV > 10
 	omap_request_gpio(61);
 	omap_set_gpio_direction(61, 0);
 	omap_set_gpio_dataout(61, 0);
 #endif
 
 	/*Ensure Ethernet PHY is powered up*/
-#if CONFIG_RHINO_REV == 1_0
+#if CONFIG_RHINO_REV == 10
 	omap_request_gpio(61);
 	omap_set_gpio_direction(61, 0);
 	omap_set_gpio_dataout(61, 1);
@@ -169,7 +169,7 @@ int misc_init_r(void)
 
 
     	/*Enable the boot buffer. Note: this does not work on v1.0 boards*/
-#if CONFIG_RHINO_REV != 1_0
+#if CONFIG_RHINO_REV > 10
 	omap_request_gpio(11);
 	omap_set_gpio_direction(11, 0);
 	omap_set_gpio_dataout(11, 0);

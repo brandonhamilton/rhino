@@ -33,8 +33,8 @@
 #define CONFIG_OMAP		1		/* in a TI OMAP core */
 #define CONFIG_OMAP34XX		1	/* which is a 34XX */
 #define CONFIG_RHINO		1	/* working with AM3517RHINO */
-#define CONFIG_RHINO_REV	1_1	/* Rhino v1.1 is the latest revision */
-/* #define CONFIG_RHINO_REV	1_0 */	/* Use this for version 1.0 boards */
+#define CONFIG_RHINO_REV	11	/* Rhino v1.1 is the latest revision */
+/* #define CONFIG_RHINO_REV	10 */	/* Use this for version 1.0 boards */
 
 #define CONFIG_EMIF4		1	/* The chip has EMIF4 controller */
 #include <asm/arch/cpu.h>		/* get chip and board defs */
