@@ -1,7 +1,7 @@
 TODO
 ====
 
-1. BORPH kernel 
+1. BORPH kernel
   1.1 Driver for the power monitoring subsystem
   	1.1.1 Integration with lm-sensors
   1.2 FMC interface
@@ -11,4 +11,3 @@ TODO
 	2.1 Video (HDMI) subsystem
 	2.2 Audio subsystem
 	2.3 Power management subsystem
-  
