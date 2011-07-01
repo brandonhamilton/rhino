@@ -50,6 +50,24 @@ struct config_transfer_part {
 static atomic_t config_transfer_parts;
 struct kmem_cache *config_transport_part_cache;
 
+/* Bus mapping for GPMC */
+typedef struct fpga_map {
+	resource_size_t cs0_base;
+	void __iomem *cs0_virtual;
+	resource_size_t cs1_base;
+	void __iomem *cs1_virtual;
+	resource_size_t cs2_base;
+	void __iomem *cs2_virtual;
+	resource_size_t cs3_base;
+	void __iomem *cs3_virtual;
+	resource_size_t cs4_base;
+	void __iomem *cs4_virtual;
+	resource_size_t cs5_base;
+	void __iomem *cs5_virtual;
+} rhino_fpga_map_t;
+
+static rhino_fpga_map_t *rhino_fpga_bus;
+
 struct rhino_fpga_device *rhino_fpga;
 
 DECLARE_COMPLETION(configuration_data_sent);
@@ -70,13 +88,12 @@ static DECLARE_MUTEX(rhino_mutex);
 #define FPGA_VCCO_AUX	100
 #define FPGA_VCCMGT		101
 
-#define FPGA_CS1_BASE		0x08000000
-#define FPGA_CS2_BASE		0x10000000
-#define FPGA_CS3_BASE		0x18000000
-#define FPGA_CS4_BASE		0x20000000
-#define FPGA_CS5_BASE		0x28000000
-#define FPGA_CS6_BASE		0x38000000
-
+#define FPGA_CS0_BASE		0x08000000
+#define FPGA_CS1_BASE		0x10000000
+#define FPGA_CS2_BASE		0x18000000
+#define FPGA_CS3_BASE		0x20000000
+#define FPGA_CS4_BASE		0x28000000
+#define FPGA_CS5_BASE		0x38000000
 
 static void rhino_set_fpga_psu(int enable)
 {
@@ -88,28 +105,67 @@ static void rhino_set_fpga_psu(int enable)
 /*****************************************************************
  * functions definitions
  *****************************************************************/
+
+static unsigned int get_mapped_location(unsigned int reg_loc) {
+	unsigned int location = reg_loc;
+	if (reg_loc >= FPGA_CS0_BASE && reg_loc < FPGA_CS0_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs0_virtual + (reg_loc - FPGA_CS0_BASE);
+	} else if (reg_loc >= FPGA_CS1_BASE && reg_loc < FPGA_CS1_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs1_virtual + (reg_loc - FPGA_CS1_BASE);
+	} else if (reg_loc >= FPGA_CS2_BASE && reg_loc < FPGA_CS2_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs2_virtual + (reg_loc - FPGA_CS2_BASE);
+	} else if (reg_loc >= FPGA_CS3_BASE && reg_loc < FPGA_CS3_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs3_virtual + (reg_loc - FPGA_CS3_BASE);
+	} else if (reg_loc >= FPGA_CS4_BASE && reg_loc < FPGA_CS4_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs4_virtual + (reg_loc - FPGA_CS4_BASE);
+	} else if (reg_loc >= FPGA_CS5_BASE && reg_loc < FPGA_CS5_BASE + SZ_128M) {
+		location = rhino_fpga_bus->cs5_virtual + (reg_loc - FPGA_CS5_BASE);
+	}
+	return location;
+}
+
 static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 {	
+	int count;
+	unsigned short *src;
+	unsigned int dst;
 	int i;
-	volatile int j;
 
-	/* Write a "walking" pattern of 1s to the FPGA, to flash the LEDs *
-	writew(0x01, FPGA_CS2_BASE);
-	for (i=0; i < CFG_INITB_WAIT + 1; i++) {
-			j = i;	
+	count = iobuf->size / sizeof(unsigned short);
+	src = (unsigned short *)iobuf->data;	
+	dst = get_mapped_location(iobuf->location) + iobuf->offset;	
+
+	PDEBUG(9, "Writing data to RHINO FPGA Register (%d bytes) at location 0x%x\n", iobuf->size, dst);
+	/* Write 16-bit words to the GPMC bus */
+	for (i = 0; i < count; i++) {
+		__raw_writew(*src, dst);
+		dst += sizeof(unsigned short);
+		src++; 
 	}
-	writew(0x02, FPGA_CS2_BASE);
-	writew(0x04, FPGA_CS2_BASE);
-	writew(0x08, FPGA_CS2_BASE);
 
-	printk("GPMC test finished.\n");*/
-	return iobuf->size;
+	return (count * sizeof(unsigned short));
 }
 
 static ssize_t rhino_recv_iobuf (struct hwr_iobuf* iobuf)
 {
-	
-	return iobuf->size;
+	int count;
+	unsigned short *dst;
+	unsigned int src;
+	int i;
+
+	count = iobuf->size / sizeof(unsigned short);
+	dst = (unsigned short *)iobuf->data;	
+	src = get_mapped_location(iobuf->location) + iobuf->offset;
+
+	PDEBUG(9, "Reading data from RHINO FPGA register (%d bytes) at location 0x%x\n", iobuf->size,  src);
+	/* Read 16-bit words from the GPMC bus */
+	for (i = 0; i < count; i++){
+		*dst = __raw_readw(src);
+		src += sizeof(unsigned short);
+		dst++; 
+	}
+
+	return (count * sizeof(unsigned short));
 }
 
 static struct hwr_iobuf* rhino_get_iobuf(void)
@@ -434,8 +490,58 @@ static struct spi_driver rhino_spartan6_driver = {
 	.remove = __devexit_p(fpga_remove),
 };
 
-static int __init hwrtype_rhino_init(void)
-{
+static void hwrtype_rhino_cleanup(void) {
+
+	/* Release GPMC bus mappings */
+	if (rhino_fpga_bus) {
+#define release_rhino_gmpc(p, q) \
+	if(rhino_fpga_bus->p##_virtual){ \
+		iounmap(rhino_fpga_bus->p##_virtual); \
+		rhino_fpga_bus->p##_virtual = NULL; \
+	} \
+	if(rhino_fpga_bus->p##_base){ \
+		release_mem_region(rhino_fpga_bus->p##_base, SZ_128M); \
+		rhino_fpga_bus->p##_base = 0; \
+	}
+
+	release_rhino_gmpc(cs0, CS0)
+	release_rhino_gmpc(cs1, CS1)
+	release_rhino_gmpc(cs2, CS2)
+	//release_rhino_gmpc(cs3, CS3)
+	//release_rhino_gmpc(cs4, CS4)
+	//release_rhino_gmpc(cs5, CS5)
+#undef release_rhino_gmpc
+
+		kfree(rhino_fpga_bus);
+		rhino_fpga_bus = NULL;
+	}
+
+	/* Free iobuf */
+	if (iobuf) {
+		kfree(iobuf);
+		iobuf = NULL;
+	}
+
+	if (rhino_page) {
+		free_page((unsigned long) rhino_page);
+		rhino_page = NULL;
+	}
+
+	if (config_transport_part_cache) {
+		kmem_cache_destroy(config_transport_part_cache);
+		config_transport_part_cache = NULL;
+	}
+
+	spi_unregister_driver(&rhino_spartan6_driver);
+
+	if (unregister_hwrtype(&hwrtype_rhino)) {
+		printk("Error unregistering RHINO HWR\n");
+	} else {
+		printk("Unregistered RHINO HWR\n");
+	}
+}
+
+static int __init hwrtype_rhino_init(void) {
 	int retval = 0;
 	rhino_fpga = 0;
 
@@ -456,10 +562,59 @@ static int __init hwrtype_rhino_init(void)
 		iobuf->data = rhino_page + 12;
 		iobuf->size = PAGE_SIZE - 12;
 	} else {
-		printk("failed getting memory for RHINO iobuf\n");
+		printk("Failed getting memory for RHINO iobuf\n");
 		retval = -ENOMEM;
 		goto out;
 	}
+
+	/* Map GPMC memory regions */
+	rhino_fpga_bus = kmalloc(sizeof(rhino_fpga_map_t), GFP_KERNEL);
+	if (rhino_fpga_bus == NULL) {
+		printk("Failed getting memory for RHINO FPGA bus mapping\n");
+		free_page((unsigned long) rhino_page);
+		rhino_page = 0;
+		kfree(iobuf);
+		iobuf = 0;
+		retval = -ENOMEM;
+		goto out;	
+	}
+
+	rhino_fpga_bus->cs0_base = 0;
+	rhino_fpga_bus->cs0_virtual = NULL;
+	rhino_fpga_bus->cs1_base = 0;
+	rhino_fpga_bus->cs1_virtual = NULL;
+	rhino_fpga_bus->cs2_base = 0;
+	rhino_fpga_bus->cs2_virtual = NULL;
+	rhino_fpga_bus->cs3_base = 0;
+	rhino_fpga_bus->cs3_virtual = NULL;
+	rhino_fpga_bus->cs4_base = 0;
+	rhino_fpga_bus->cs4_virtual = NULL;
+	rhino_fpga_bus->cs5_base = 0;
+	rhino_fpga_bus->cs5_virtual = NULL;
+
+#define map_rhino_gmpc(p, q)  \
+	if(!request_mem_region(FPGA_##q##_BASE, SZ_128M, "rhino-fpga-" #p)){ \
+		printk("Unable to request memory region 0x%08x for GPMC\n", FPGA_##q##_BASE); \
+		hwrtype_rhino_cleanup(); \
+		return -ENOMEM; \
+	} \
+	rhino_fpga_bus->p##_base = FPGA_##q##_BASE; \
+	rhino_fpga_bus->p##_virtual = ioremap(FPGA_##q##_BASE, SZ_128M); \
+	if(!rhino_fpga_bus->p##_virtual){ \
+		printk("Unable to map memory region 0x%08x for GPMC\n", FPGA_##q##_BASE); \
+		hwrtype_rhino_cleanup(); \
+		return -ENOMEM; \
+	} \
+	PDEBUG(9, "RHINO FPGA: " #p " GPMC at 0x%08x:0x%08x mapped to 0x%08x\n", FPGA_##q##_BASE, FPGA_##q##_BASE + SZ_128M, rhino_fpga_bus->p##_virtual); 
+
+	map_rhino_gmpc(cs0, CS0)
+	map_rhino_gmpc(cs1, CS1)
+	map_rhino_gmpc(cs2, CS2)
+	//map_rhino_gmpc(cs3, CS3)
+	//map_rhino_gmpc(cs4, CS4)
+	//map_rhino_gmpc(cs5, CS5)
+
+#undef map_rhino_gmpc
 
 	config_transport_part_cache = KMEM_CACHE(config_transfer_part, SLAB_HWCACHE_ALIGN);
 
@@ -500,26 +655,7 @@ out:
 
 static void __exit hwrtype_rhino_exit(void)
 {
-	/* Free iobuf */
-	if (iobuf) {
-		kfree(iobuf);
-	}
-
-	if (rhino_page) {
-		free_page((unsigned long) rhino_page);
-	}
-
-	if (config_transport_part_cache) {
-		kmem_cache_destroy(config_transport_part_cache);
-	}
-
-	spi_unregister_driver(&rhino_spartan6_driver);
-
-	if (unregister_hwrtype(&hwrtype_rhino)) {
-		printk("Error unregistering RHINO HWR\n");
-	} else {
-		printk("Unregistered RHINO HWR\n");
-	}
+	hwrtype_rhino_cleanup();
 }
 
 module_init(hwrtype_rhino_init);
