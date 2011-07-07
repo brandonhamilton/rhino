@@ -135,7 +135,10 @@ static ssize_t rhino_send_iobuf (struct hwr_iobuf* iobuf)
 	src = (unsigned short *)iobuf->data;	
 	dst = get_mapped_location(iobuf->location) + iobuf->offset;	
 
-	PDEBUG(9, "Writing data to RHINO FPGA Register (%d bytes) at location 0x%x\n", iobuf->size, dst);
+	/* Uncomment for Debugging
+	 * PDEBUG(9, "Writing data to RHINO FPGA Register (%d bytes) at location 0x%x\n", iobuf->size, dst);
+	 */
+
 	/* Write 16-bit words to the GPMC bus */
 	for (i = 0; i < count; i++) {
 		__raw_writew(*src, dst);
@@ -157,7 +160,10 @@ static ssize_t rhino_recv_iobuf (struct hwr_iobuf* iobuf)
 	dst = (unsigned short *)iobuf->data;	
 	src = get_mapped_location(iobuf->location) + iobuf->offset;
 
-	PDEBUG(9, "Reading data from RHINO FPGA register (%d bytes) at location 0x%x\n", iobuf->size,  src);
+	/* Uncomment for Debugging
+	 * PDEBUG(9, "Reading data from RHINO FPGA register (%d bytes) at location 0x%x\n", iobuf->size,  src);
+	 */
+	 
 	/* Read 16-bit words from the GPMC bus */
 	for (i = 0; i < count; i++){
 		*dst = __raw_readw(src);
@@ -648,6 +654,11 @@ static int __init hwrtype_rhino_init(void) {
 	}
 
 	gpio_direction_output(INIT_B_DIR, 0);
+
+	/* export FPGA GPIOs to userspace */
+	gpio_export(FPGA_VCCINT, 1);
+	gpio_export(FPGA_VCCO_AUX, 1);
+	gpio_export(FPGA_VCCMGT, 1);
 
 out:
 	return retval;
