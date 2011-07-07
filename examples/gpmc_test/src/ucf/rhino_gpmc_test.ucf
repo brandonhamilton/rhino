@@ -1,0 +1,327 @@
+# Set I/O standard for processor interface pins
+CONFIG VCCAUX=3.3;
+
+
+# Set IO standards for gpmc pins
+# gpmc_a[10..1]
+NET "gpmc_a[1]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[2]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[3]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[4]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[5]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[6]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[7]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[8]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[9]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_a[10]" IOSTANDARD = LVCMOS33;
+
+# gpmc_d[15..0]
+NET "gpmc_d[0]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[1]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[2]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[3]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[4]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[5]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[6]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[7]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[8]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[9]"  IOSTANDARD = LVCMOS33;
+NET "gpmc_d[10]" IOSTANDARD = LVCMOS33;
+NET "gpmc_d[11]" IOSTANDARD = LVCMOS33;
+NET "gpmc_d[12]" IOSTANDARD = LVCMOS33;
+NET "gpmc_d[13]" IOSTANDARD = LVCMOS33;
+NET "gpmc_d[14]" IOSTANDARD = LVCMOS33;
+NET "gpmc_d[15]" IOSTANDARD = LVCMOS33;
+
+# gpmc_clk
+NET "gpmc_clk_i" IOSTANDARD = LVCMOS33;
+
+# gpmc_n_cs[6..0] - chip select 1-7
+NET "gpmc_n_cs[0]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[1]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[2]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[3]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[4]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[5]" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_cs[6]" IOSTANDARD = LVCMOS33;
+
+# gpmc bus control
+NET "gpmc_n_we"      IOSTANDARD = LVCMOS33;
+NET "gpmc_n_oe"      IOSTANDARD = LVCMOS33;
+NET "gpmc_n_adv_ale" IOSTANDARD = LVCMOS33;
+NET "gpmc_n_wp"      IOSTANDARD = LVCMOS33;
+NET "gpmc_busy_0"    IOSTANDARD = LVCMOS33;
+NET "gpmc_busy_1"    IOSTANDARD = LVCMOS33;
+
+#Set IO standards for FMC pins
+
+NET "fmc0_clk0_m2c"  IOSTANDARD = LVCMOS33;
+#NET "fmc0_clk1_m2c"  IOSTANDARD = LVCMOS33;
+NET "fmc0_ga0"       IOSTANDARD = LVCMOS33;
+NET "fmc0_ga1"       IOSTANDARD = LVCMOS33;
+#NET "fmc0_zdok_N[0]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_N[1]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_N[2]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_N[3]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_P[0]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_P[1]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_P[2]" IOSTANDARD = BLVDS_25;
+#NET "fmc0_zdok_P[3]" IOSTANDARD = BLVDS_25;
+NET "fmc_i2c_scl"    IOSTANDARD = LVCMOS33;
+NET "fmc_i2c_sda"    IOSTANDARD = LVCMOS33;
+NET "fmc0_prsnt_n"   IOSTANDARD = LVCMOS33;
+
+NET "fmc0_la_o_N[0]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[0]
+NET "fmc0_la_o_N[1]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[1]
+NET "fmc0_la_o_N[2]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[2]
+NET "fmc0_la_o_N[3]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[3]
+NET "fmc0_la_o_N[4]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[4]
+NET "fmc0_la_o_N[5]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[5]
+NET "fmc0_la_o_N[6]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[6]
+NET "fmc0_la_o_N[7]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[7]
+NET "fmc0_la_o_N[8]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[8]
+NET "fmc0_la_o_N[9]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[9]
+NET "fmc0_la_i_N[0]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[10]
+NET "fmc0_la_i_N[1]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[11]
+NET "fmc0_la_i_N[2]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[12]
+NET "fmc0_la_i_N[3]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[13]
+NET "fmc0_la_i_N[4]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[14]
+NET "fmc0_la_i_N[5]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[15]
+NET "fmc0_la_i_N[6]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[16]
+NET "fmc0_la_i_N[7]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[17]
+NET "fmc0_la_i_N[8]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[18]
+NET "fmc0_la_i_N[9]" IOSTANDARD = LVDS_25;    # fmc0_LA_N[19]
+NET "fmc0_la_o_N[10]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[20]
+NET "fmc0_la_o_N[11]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[21]
+NET "fmc0_la_o_N[12]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[22]
+NET "fmc0_la_o_N[13]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[23]
+NET "fmc0_la_i_N[10]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[24]
+NET "fmc0_la_i_N[11]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[25]
+NET "fmc0_la_i_N[12]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[26]
+NET "fmc0_la_i_N[13]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[27]
+NET "fmc0_la_o_N[14]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[28]
+NET "fmc0_la_o_N[15]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[29]
+NET "fmc0_la_i_N[14]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[30]
+NET "fmc0_la_i_N[15]" IOSTANDARD = LVDS_25;   # fmc0_LA_N[31]
+NET "fmc0_la_o_P[0]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[0]
+NET "fmc0_la_o_P[1]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[1]
+NET "fmc0_la_o_P[2]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[2]
+NET "fmc0_la_o_P[3]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[3]
+NET "fmc0_la_o_P[4]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[4]
+NET "fmc0_la_o_P[5]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[5]
+NET "fmc0_la_o_P[6]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[6]
+NET "fmc0_la_o_P[7]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[7]
+NET "fmc0_la_o_P[8]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[8]
+NET "fmc0_la_o_P[9]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[9]
+NET "fmc0_la_i_P[0]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[10]
+NET "fmc0_la_i_P[1]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[11]
+NET "fmc0_la_i_P[2]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[12]
+NET "fmc0_la_i_P[3]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[13]
+NET "fmc0_la_i_P[4]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[14]
+NET "fmc0_la_i_P[5]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[15]
+NET "fmc0_la_i_P[6]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[16]
+NET "fmc0_la_i_P[7]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[17]
+NET "fmc0_la_i_P[8]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[18]
+NET "fmc0_la_i_P[9]" IOSTANDARD = LVDS_25;    # fmc0_LA_P[19]
+NET "fmc0_la_o_P[10]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[20]
+NET "fmc0_la_o_P[11]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[21]
+NET "fmc0_la_o_P[12]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[22]
+NET "fmc0_la_o_P[13]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[23]
+NET "fmc0_la_i_P[10]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[24]
+NET "fmc0_la_i_P[11]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[25]
+NET "fmc0_la_i_P[12]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[26]
+NET "fmc0_la_i_P[13]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[27]
+NET "fmc0_la_o_P[14]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[28]
+NET "fmc0_la_o_P[15]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[29]
+NET "fmc0_la_i_P[14]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[30]
+NET "fmc0_la_i_P[15]" IOSTANDARD = LVDS_25;   # fmc0_LA_P[31]
+
+
+# Set locations of FMC pins
+
+NET "fmc0_clk0_m2c" LOC = W24;
+#NET "fmc0_clk1_m2c" LOC = U26;
+NET "fmc0_ga0" LOC = AA23;
+NET "fmc0_ga1" LOC = AA24;
+NET "fmc0_la_o_N[0]" LOC = AF15;  # fmc0_LA_N[0]
+NET "fmc0_la_o_N[1]" LOC = AC14;  # fmc0_LA_N[1]
+NET "fmc0_la_o_N[2]" LOC = AA22;  # fmc0_LA_N[2]
+NET "fmc0_la_o_N[3]" LOC = Y20;   # fmc0_LA_N[3]
+NET "fmc0_la_o_N[4]" LOC = AC22;  # fmc0_LA_N[4]
+NET "fmc0_la_o_N[5]" LOC = W19;   # fmc0_LA_N[5]
+NET "fmc0_la_o_N[6]" LOC = W18;   # fmc0_LA_N[6]
+NET "fmc0_la_o_N[7]" LOC = AB21;  # fmc0_LA_N[7]
+NET "fmc0_la_o_N[8]" LOC = AA17;  # fmc0_LA_N[8]
+NET "fmc0_la_o_N[9]" LOC = V16;   # fmc0_LA_N[9]
+NET "fmc0_la_i_N[0]" LOC = AB19;  # fmc0_LA_N[10]
+NET "fmc0_la_i_N[1]" LOC = Y16;   # fmc0_LA_N[11]
+NET "fmc0_la_i_N[2]" LOC = AB17;  # fmc0_LA_N[12]
+NET "fmc0_la_i_N[3]" LOC = AA16;  # fmc0_LA_N[13]
+NET "fmc0_la_i_N[4]" LOC = V15;   # fmc0_LA_N[14]
+NET "fmc0_la_i_N[5]" LOC = V13;   # fmc0_LA_N[15]
+NET "fmc0_la_i_N[6]" LOC = AB15;  # fmc0_LA_N[16]
+NET "fmc0_la_i_N[7]" LOC = AF13;  # fmc0_LA_N[17]
+NET "fmc0_la_i_N[8]" LOC = AF14;  # fmc0_LA_N[18]
+NET "fmc0_la_i_N[9]" LOC = AA12;  # fmc0_LA_N[19]
+NET "fmc0_la_o_N[10]" LOC = Y13;  # fmc0_LA_N[20]
+NET "fmc0_la_o_N[11]" LOC = W12;  # fmc0_LA_N[21]
+NET "fmc0_la_o_N[12]" LOC = AA13; # fmc0_LA_N[22]
+NET "fmc0_la_o_N[13]" LOC = AA11; # fmc0_LA_N[23]
+NET "fmc0_la_i_N[10]" LOC = V10;  # fmc0_LA_N[24]
+NET "fmc0_la_i_N[11]" LOC = AB9;  # fmc0_LA_N[25]
+NET "fmc0_la_i_N[12]" LOC = AB11; # fmc0_LA_N[26]
+NET "fmc0_la_i_N[13]" LOC = AF6;  # fmc0_LA_N[27]
+NET "fmc0_la_o_N[14]" LOC = W9;   # fmc0_LA_N[28]
+NET "fmc0_la_o_N[15]" LOC = AF5;  # fmc0_LA_N[29]
+NET "fmc0_la_i_N[14]" LOC = AA8;  # fmc0_LA_N[30]
+NET "fmc0_la_i_N[15]" LOC = AC6;  # fmc0_LA_N[31]
+NET "fmc0_la_o_P[0]" LOC = AE15;  # fmc0_LA_P[0]
+NET "fmc0_la_o_P[1]" LOC = AB14;  # fmc0_LA_P[1]
+NET "fmc0_la_o_P[2]" LOC = Y21;   # fmc0_LA_P[2]
+NET "fmc0_la_o_P[3]" LOC = W20;   # fmc0_LA_P[3]
+NET "fmc0_la_o_P[4]" LOC = AB22;  # fmc0_LA_P[4]
+NET "fmc0_la_o_P[5]" LOC = V18;   # fmc0_LA_P[5]
+NET "fmc0_la_o_P[6]" LOC = W17;   # fmc0_LA_P[6]
+NET "fmc0_la_o_P[7]" LOC = AA21;  # fmc0_LA_P[7]
+NET "fmc0_la_o_P[8]" LOC = Y17;   # fmc0_LA_P[8]
+NET "fmc0_la_o_P[9]" LOC = U15;   # fmc0_LA_P[9]
+NET "fmc0_la_i_P[0]" LOC = AA19;  # fmc0_LA_P[10]
+NET "fmc0_la_i_P[1]" LOC = W16;   # fmc0_LA_P[11]
+NET "fmc0_la_i_P[2]" LOC = AA18;  # fmc0_LA_P[12]
+NET "fmc0_la_i_P[3]" LOC = Y15;   # fmc0_LA_P[13]
+NET "fmc0_la_i_P[4]" LOC = V14;   # fmc0_LA_P[14]
+NET "fmc0_la_i_P[5]" LOC = U13;   # fmc0_LA_P[15]
+NET "fmc0_la_i_P[6]" LOC = AA15;  # fmc0_LA_P[16]
+NET "fmc0_la_i_P[7]" LOC = AE13;  # fmc0_LA_P[17]
+NET "fmc0_la_i_P[8]" LOC = AD14;  # fmc0_LA_P[18]
+NET "fmc0_la_i_P[9]" LOC = Y12;   # fmc0_LA_P[19]
+NET "fmc0_la_o_P[10]" LOC = W14;  # fmc0_LA_P[20]
+NET "fmc0_la_o_P[11]" LOC = V12;  # fmc0_LA_P[21]
+NET "fmc0_la_o_P[12]" LOC = AB13; # fmc0_LA_P[22]
+NET "fmc0_la_o_P[13]" LOC = Y11;  # fmc0_LA_P[23]
+NET "fmc0_la_i_P[10]" LOC = V11;  # fmc0_LA_P[24]
+NET "fmc0_la_i_P[11]" LOC = AA9;  # fmc0_LA_P[25]
+NET "fmc0_la_i_P[12]" LOC = AA10; # fmc0_LA_P[26]
+NET "fmc0_la_i_P[13]" LOC = AD6;  # fmc0_LA_P[27]
+NET "fmc0_la_o_P[14]" LOC = W10;  # fmc0_LA_P[28]
+NET "fmc0_la_o_P[15]" LOC = AE5;  # fmc0_LA_P[29]
+NET "fmc0_la_i_P[14]" LOC = Y9;   # fmc0_LA_P[30]
+NET "fmc0_la_i_P[15]" LOC = AB7;  # fmc0_LA_P[31]
+#NET "fmc0_zdok_N[0]" LOC = P8;
+#NET "fmc0_zdok_N[1]" LOC = N4;
+#NET "fmc0_zdok_N[2]" LOC = AA6;
+#NET "fmc0_zdok_N[3]" LOC = AF4;
+#NET "fmc0_zdok_P[0]" LOC = R9;
+#NET "fmc0_zdok_P[1]" LOC = N5;
+#NET "fmc0_zdok_P[2]" LOC = AA7;
+#NET "fmc0_zdok_P[3]" LOC = AD4;
+
+NET "fmc0_prsnt_n" LOC = V20;
+NET "fmc_i2c_scl" LOC = T20;
+NET "fmc_i2c_sda" LOC = T19; 
+
+# Set location of processor interface pins
+
+NET "gpmc_a[1]" LOC = N17;
+NET "gpmc_a[2]" LOC = N18;
+NET "gpmc_a[3]" LOC = L23;
+NET "gpmc_a[4]" LOC = L24;
+NET "gpmc_a[5]" LOC = N19;
+NET "gpmc_a[6]" LOC = N20;
+NET "gpmc_a[7]" LOC = N21;
+NET "gpmc_a[8]" LOC = N22;
+NET "gpmc_a[9]" LOC = P17;
+NET "gpmc_a[10]" LOC = P19;
+
+NET "gpmc_d[0]" LOC = N23;
+NET "gpmc_d[1]" LOC = N24;
+NET "gpmc_d[2]" LOC = R18;
+NET "gpmc_d[3]" LOC = R19;
+NET "gpmc_d[4]" LOC = P21;
+NET "gpmc_d[5]" LOC = P22;
+NET "gpmc_d[6]" LOC = R20;
+NET "gpmc_d[7]" LOC = R21;
+NET "gpmc_d[8]" LOC = P24;
+NET "gpmc_d[9]" LOC = P26;
+NET "gpmc_d[10]" LOC = R23;
+NET "gpmc_d[11]" LOC = R24;
+NET "gpmc_d[12]" LOC = T22;
+NET "gpmc_d[13]" LOC = T23;
+NET "gpmc_d[14]" LOC = U23;
+NET "gpmc_d[15]" LOC = R25;
+
+NET "gpmc_clk_i" LOC = R26;
+
+NET "gpmc_n_cs[0]" LOC = V23;
+NET "gpmc_n_cs[1]" LOC = U25;
+NET "gpmc_n_cs[2]" LOC = T24;
+NET "gpmc_n_cs[3]" LOC = T26;
+NET "gpmc_n_cs[4]" LOC = V24;
+NET "gpmc_n_cs[5]" LOC = V26;
+NET "gpmc_n_cs[6]" LOC = W25;
+
+NET "gpmc_n_we" LOC = W26;
+NET "gpmc_n_oe" LOC = AA25;
+NET "gpmc_n_adv_ale" LOC = AA26;
+NET "gpmc_n_wp" LOC = AD24;
+NET "gpmc_busy_0" LOC = AD26;
+NET "gpmc_busy_1" LOC = AB24;
+
+# Set location of GPIO pins
+
+NET "gpio[0]" LOC = R8;
+NET "gpio[1]" LOC = T8;
+NET "gpio[2]" LOC = U5;
+NET "gpio[3]" LOC = T4;
+NET "gpio[4]" LOC = R10;
+NET "gpio[5]" LOC = T9;
+NET "gpio[6]" LOC = P3;
+NET "gpio[7]" LOC = P1;
+NET "gpio[8]" LOC = N6;
+NET "gpio[9]" LOC = P6;
+NET "gpio[10]" LOC = P5;
+NET "gpio[11]" LOC = R5;
+NET "gpio[12]" LOC = N8;
+NET "gpio[13]" LOC = N7;
+NET "gpio[14]" LOC = R4;
+NET "gpio[15]" LOC = R3;
+
+NET "gpio[0]" SLEW = FAST;
+NET "gpio[1]" SLEW = FAST;
+NET "gpio[2]" SLEW = FAST;
+NET "gpio[3]" SLEW = FAST;
+
+
+# Set location of LED pins
+
+NET "led[0]" LOC = Y3;
+NET "led[1]" LOC = Y1;
+NET "led[2]" LOC = W2;
+NET "led[3]" LOC = W1;
+NET "led[4]" LOC = V3;
+NET "led[5]" LOC = V1;
+NET "led[6]" LOC = U2;
+NET "led[7]" LOC = U1;
+
+# Define system clock
+NET "sys_clk_N"     LOC = A14;
+NET "sys_clk_P"     LOC = B14;
+
+
+# Clock constraints
+
+NET "gpmc_n_adv_ale" CLOCK_DEDICATED_ROUTE = FALSE;
+
+NET "fmc0_clk0_m2c" TNM_NET = "TM_fmc0_clk0_m2c";
+TIMESPEC "TS_fmc0_clk0_m2c" = PERIOD "TM_fmc0_clk0_m2c"  3.2  ns HIGH 50 %;
+
+NET "sys_clk_P" TNM_NET = "TM_sys_clk";
+NET "sys_clk_N" TNM_NET = "TM_sys_clk";
+TIMESPEC "TS_sys_clk" = PERIOD "TM_sys_clk"  10.0  ns HIGH 50 %;
+
+
+#NET "fmc0_clk0_m2c_slow" TNM_NET = FFS "TM_fmc0_clk0_m2c_slow";
+#OFFSET = IN 0.5 ns VALID 0.5 ns BEFORE "fmc0_clk0_m2c_slow" RISING;
+#OFFSET = OUT 0.5 ns AFTER "fmc0_clk0_m2c_slow" FALLING;
+
+
