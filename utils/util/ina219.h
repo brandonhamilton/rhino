@@ -4,6 +4,7 @@
  * Driver for the INA219 current/power monitor
  * 
  * @author Kenneth Ryerson
+ * @date &copy; 2011 Vermeer Underground Technologies, Inc
  */
 
 #define INA219_CONFIG_REG   0x00        /* Configuration register */
@@ -13,7 +14,7 @@
 #define INA219_CURR_REG     0x04        /* Current register */
 #define INA219_CAL_REG      0x05        /* Calibration register */
 
-#define INA219_CAL_VALUE    0xA000      /* R = 5m; current register LSB = 0.2mA */
+#define INA219_CAL_VALUE    0x2000      /* R = 5m; current register LSB = 1mA */
 
 /**
  * Calibrate the current and power readings.
@@ -39,7 +40,7 @@ int INA219readVoltage(unsigned char i2c_addr, unsigned short *millivolts);
  * @param microamps The current reading in microamps
  * @return Zero on success, non-zero on failure
  */
-int INA219readCurrent(unsigned char i2c_addr, short *microamps);
+int INA219readCurrent(unsigned char i2c_addr, short *milliamps);
 
 /**
  * Read the power register
@@ -48,4 +49,4 @@ int INA219readCurrent(unsigned char i2c_addr, short *microamps);
  * @param microwatts The power reading in microwatts
  * @return Zero on success, non-zero on failure
  */
-int INA219readPower(unsigned char i2c_addr, int *microwatts);
+int INA219readPower(unsigned char i2c_addr, int *milliwatts);

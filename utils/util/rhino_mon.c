@@ -203,8 +203,8 @@ int main(int argc, char **argv)
     {
         char temp;
         unsigned short millivolts;
-        short microamps;
-        int microwatts;
+        short milliamps;
+        int milliwatts;
         char leader[40];
         
         strcpy(leader, "");
@@ -248,8 +248,9 @@ int main(int argc, char **argv)
             {
                 if(channel[i])
                 {
-                    INA219readCurrent(channel_reg[i], &microamps);
-                    fprintf(ofid,"%4d.%01d  mA |",microamps/1000,microamps%1000/100);
+                    INA219readCurrent(channel_reg[i], &milliamps);
+                    double amps = milliamps / 1000.0;
+                    fprintf(ofid,"%8.3lf A |",amps);
                 }
             }
             fprintf(ofid,"\n");
@@ -263,8 +264,9 @@ int main(int argc, char **argv)
             {
                 if(channel[i])
                 {
-                    INA219readPower(channel_reg[i], &microwatts);
-                    fprintf(ofid,"%4d.%03dmW |",microwatts/1000,microwatts%1000);
+                    INA219readPower(channel_reg[i], &milliwatts);
+                    double watts = milliwatts / 1000.0;
+                    fprintf(ofid,"%8.3lf W |",watts);
                 }
             }
             fprintf(ofid,"\n");

@@ -5,7 +5,9 @@
 
 int INA219calibrate(unsigned char i2c_addr)
 {
-    unsigned short reg = INA219_CAL_VALUE;
+    unsigned char reg[2];
+    reg[0] = (INA219_CAL_VALUE >> 8) & 0xFF;
+    reg[1] = (INA219_CAL_VALUE) & 0xFF;
     if(i2c_write(i2c_addr, INA219_CAL_REG, (void*)&reg, 2) == 2)
     {
         return 0;
@@ -28,19 +30,19 @@ int INA219readVoltage(unsigned char i2c_addr, unsigned short *millivolts)
     return 0;
 }
 
-int INA219readCurrent(unsigned char i2c_addr, short *microamps)
+int INA219readCurrent(unsigned char i2c_addr, short *milliamps)
 {
     unsigned char reg[2];
     if(i2c_read(i2c_addr, INA219_CURR_REG, reg, 2) != 2)
     {
-        *microamps = 0;
+        *milliamps = 0;
         return 1;
     }
-    *microamps = (short)((reg[0] << 8) + reg[1]) * 200;
+    *milliamps = (short)((reg[0] << 8) + reg[1]);
     return 0;
 }
 
-int INA219readPower(unsigned char i2c_addr, int *microwatts)
+int INA219readPower(unsigned char i2c_addr, int *milliwatts)
 {
     /* power register precision is only 4 mW per bit */
     /*unsigned char reg[2];
@@ -52,12 +54,12 @@ int INA219readPower(unsigned char i2c_addr, int *microwatts)
     *milliwatts = ((reg[0] << 8) + reg[1])*4;*/
     
     unsigned short millivolts;
-    short microamps;
+    short milliamps;
     
     INA219readVoltage(i2c_addr, &millivolts);
-    INA219readCurrent(i2c_addr, &microamps);
+    INA219readCurrent(i2c_addr, &milliamps);
     
-    *microwatts = ((int)millivolts * (int)microamps) / 1000;
+    *milliwatts = ((int)millivolts * (int)milliamps) / 1000;
     
     return 0;
 }
