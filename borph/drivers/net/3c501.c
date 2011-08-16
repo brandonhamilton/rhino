@@ -117,7 +117,6 @@ static const char version[] =
 #include <linux/fcntl.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/spinlock.h>
@@ -159,8 +158,8 @@ static int mem_start;
 struct net_device * __init el1_probe(int unit)
 {
 	struct net_device *dev = alloc_etherdev(sizeof(struct net_local));
-	static unsigned ports[] = { 0x280, 0x300, 0};
-	unsigned *port;
+	static const unsigned ports[] = { 0x280, 0x300, 0};
+	const unsigned *port;
 	int err = 0;
 
 	if (!dev)
@@ -400,7 +399,7 @@ static void el_timeout(struct net_device *dev)
  * as we may still be attempting to retrieve the last RX packet buffer.
  *
  * When a transmit times out we dump the card into control mode and just
- * start again. It happens enough that it isnt worth logging.
+ * start again. It happens enough that it isn't worth logging.
  *
  * We avoid holding the spin locks when doing the packet load to the board.
  * The device is very slow, and its DMA mode is even slower. If we held the
@@ -481,7 +480,6 @@ static netdev_tx_t el_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			/* fire ... Trigger xmit.  */
 			outb(AX_XMIT, AX_CMD);
 			lp->loading = 0;
-			dev->trans_start = jiffies;
 			if (el_debug > 2)
 				pr_debug(" queued xmit.\n");
 			dev_kfree_skb(skb);
@@ -501,7 +499,7 @@ static netdev_tx_t el_start_xmit(struct sk_buff *skb, struct net_device *dev)
  *
  * Handle the ether interface interrupts. The 3c501 needs a lot more
  * hand holding than most cards. In particular we get a transmit interrupt
- * with a collision error because the board firmware isnt capable of rewinding
+ * with a collision error because the board firmware isn't capable of rewinding
  * its own transmit buffer pointers. It can however count to 16 for us.
  *
  * On the receive side the card is also very dumb. It has no buffering to
@@ -728,14 +726,13 @@ static void el_receive(struct net_device *dev)
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += pkt_len;
 	}
-	return;
 }
 
 /**
  * el_reset: Reset a 3c501 card
  * @dev: The 3c501 card about to get zapped
  *
- * Even resetting a 3c501 isnt simple. When you activate reset it loses all
+ * Even resetting a 3c501 isn't simple. When you activate reset it loses all
  * its configuration. You must hold the lock when doing this. The function
  * cannot take the lock itself as it is callable from the irq handler.
  */
@@ -812,7 +809,7 @@ static void set_multicast_list(struct net_device *dev)
 	if (dev->flags & IFF_PROMISC) {
 		outb(RX_PROM, RX_CMD);
 		inb(RX_STATUS);
-	} else if (dev->mc_list || dev->flags & IFF_ALLMULTI) {
+	} else if (!netdev_mc_empty(dev) || dev->flags & IFF_ALLMULTI) {
 		/* Multicast or all multicast is the same */
 		outb(RX_MULT, RX_CMD);
 		inb(RX_STATUS);		/* Clear status. */

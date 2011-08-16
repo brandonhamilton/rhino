@@ -67,15 +67,6 @@ struct slip {
   int                   xleft;          /* bytes left in XMIT queue     */
 
   /* SLIP interface statistics. */
-  unsigned long		rx_packets;	/* inbound frames counter	*/
-  unsigned long         tx_packets;     /* outbound frames counter      */
-  unsigned long		rx_bytes;	/* inbound byte counte		*/
-  unsigned long         tx_bytes;       /* outbound byte counter	*/
-  unsigned long         rx_errors;      /* Parity, etc. errors          */
-  unsigned long         tx_errors;      /* Planned stuff                */
-  unsigned long         rx_dropped;     /* No memory for skb            */
-  unsigned long         tx_dropped;     /* When MTU change              */
-  unsigned long         rx_over_errors; /* Frame bigger than SLIP buf.  */
 #ifdef SL_INCLUDE_CSLIP
   unsigned long		tx_compressed;
   unsigned long		rx_compressed;
@@ -99,7 +90,6 @@ struct slip {
 
   unsigned char		mode;		/* SLIP mode			*/
   unsigned char		leased;
-  dev_t			line;
   pid_t			pid;
 #define SL_MODE_SLIP	0
 #define SL_MODE_CSLIP	1

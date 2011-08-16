@@ -19,11 +19,11 @@
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/bitops.h>
-#include <linux/smp_lock.h>
 #include <linux/mount.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
 #include <linux/seq_file.h>
+#include <linux/mm.h>
 
 #define HDEBUG
 #define HDBG_NAME "proc_borph"
@@ -39,8 +39,6 @@
  * within base.c.  I need to use them here so they are not 
  * defined "static" anymore
  */
-typedef struct dentry *instantiate_t(struct inode *, struct dentry *,
-				struct task_struct *, const void *);
 
 extern struct dentry *proc_pident_lookup(struct inode *dir, 
 					 struct dentry *dentry,
@@ -54,11 +52,8 @@ extern ssize_t proc_info_read(struct file * file, char __user * buf,
 			      size_t count, loff_t *ppos);
 extern struct file_operations proc_info_file_operations;
 extern struct inode *proc_pid_make_inode(struct super_block * sb, struct task_struct *task);
-extern struct dentry_operations pid_dentry_operations;
 extern int pid_revalidate(struct dentry *dentry, struct nameidata *nd);
-extern int proc_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
-			   char *name, int len,
-			   instantiate_t instantiate, struct task_struct *task, const void *ptr);
+
 // End extern
 
 /**** begin /proc/<pid>/hw/ioreg/ content ****/
@@ -493,10 +488,40 @@ static loff_t ioreg_reg_lseek(struct file *filp, loff_t off, int whence)
 	return newpos;
 }
 
+static int ioreg_reg_mmap(struct file *filp, struct vm_area_struct *vma) {
+
+	struct dentry *dentry = filp->f_path.dentry;
+	struct inode *inode = dentry->d_inode;
+	struct borph_ioreg* reg;
+	struct hwr_operations *hwrops;
+	unsigned long off;
+	unsigned long physical;
+	unsigned long vsize;
+	unsigned long psize;
+
+	reg = (struct borph_ioreg*) PROC_I(inode)->data;
+	if (!reg)
+		return -EINVAL;
+
+	off = vma->vm_pgoff << PAGE_SHIFT;
+	physical = reg->loc + off;
+	vsize = vma->vm_end - vma->vm_start;
+	psize = reg->len - off;
+
+	if (vsize > psize)
+	    return -EINVAL;
+	
+	if (remap_pfn_range(vma, vma->vm_start, physical, vsize, vma->vm_page_prot))
+        return -EAGAIN;
+      
+    return 0;
+}
+
 static const struct file_operations ioreg_reg_fops = {
 	.read		= ioreg_reg_read,
 	.write		= ioreg_reg_write,
 	.llseek		= ioreg_reg_lseek,
+	.mmap		= ioreg_reg_mmap,
 };
 
 /**** end /proc/<pid>/hw/ioreg/ content ****/

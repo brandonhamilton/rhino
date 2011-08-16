@@ -48,9 +48,6 @@ static int sharpsl_pcmcia_hw_init(struct soc_pcmcia_socket *skt)
 {
 	int ret;
 
-	if (platform_scoop_config->pcmcia_init)
-		platform_scoop_config->pcmcia_init();
-
 	/* Register interrupts */
 	if (SCOOP_DEV[skt->nr].cd_irq >= 0) {
 		struct pcmcia_irqs cd_irq;
@@ -237,7 +234,7 @@ static struct pcmcia_low_level sharpsl_pcmcia_ops __initdata = {
 #ifdef CONFIG_SA1100_COLLIE
 #include "sa11xx_base.h"
 
-int __init pcmcia_collie_init(struct device *dev)
+int __devinit pcmcia_collie_init(struct device *dev)
 {
        int ret = -ENODEV;
 

@@ -9,8 +9,10 @@
 #include <linux/pagemap.h>
 
 #ifdef CONFIG_MMU
+#include <linux/swap.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
+#include <asm/mmu_context.h>
 
 /*
  * TLB handling.  This allows us to remove pages from the page
@@ -21,8 +23,6 @@ struct mmu_gather {
 	unsigned int		fullmm;
 	unsigned long		start, end;
 };
-
-DECLARE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 static inline void init_tlb_gather(struct mmu_gather *tlb)
 {
@@ -35,17 +35,13 @@ static inline void init_tlb_gather(struct mmu_gather *tlb)
 	}
 }
 
-static inline struct mmu_gather *
-tlb_gather_mmu(struct mm_struct *mm, unsigned int full_mm_flush)
+static inline void
+tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm, unsigned int full_mm_flush)
 {
-	struct mmu_gather *tlb = &get_cpu_var(mmu_gathers);
-
 	tlb->mm = mm;
 	tlb->fullmm = full_mm_flush;
 
 	init_tlb_gather(tlb);
-
-	return tlb;
 }
 
 static inline void
@@ -56,8 +52,6 @@ tlb_finish_mmu(struct mmu_gather *tlb, unsigned long start, unsigned long end)
 
 	/* keep the page table cache within bounds */
 	check_pgt_cache();
-
-	put_cpu_var(mmu_gathers);
 }
 
 static inline void
@@ -90,12 +84,42 @@ tlb_end_vma(struct mmu_gather *tlb, struct vm_area_struct *vma)
 	}
 }
 
-#define tlb_remove_page(tlb,page)	free_page_and_swap_cache(page)
+static inline void tlb_flush_mmu(struct mmu_gather *tlb)
+{
+}
+
+static inline int __tlb_remove_page(struct mmu_gather *tlb, struct page *page)
+{
+	free_page_and_swap_cache(page);
+	return 1; /* avoid calling tlb_flush_mmu */
+}
+
+static inline void tlb_remove_page(struct mmu_gather *tlb, struct page *page)
+{
+	__tlb_remove_page(tlb, page);
+}
+
 #define pte_free_tlb(tlb, ptep, addr)	pte_free((tlb)->mm, ptep)
 #define pmd_free_tlb(tlb, pmdp, addr)	pmd_free((tlb)->mm, pmdp)
 #define pud_free_tlb(tlb, pudp, addr)	pud_free((tlb)->mm, pudp)
 
 #define tlb_migrate_finish(mm)		do { } while (0)
+
+#if defined(CONFIG_CPU_SH4) || defined(CONFIG_SUPERH64)
+extern void tlb_wire_entry(struct vm_area_struct *, unsigned long, pte_t);
+extern void tlb_unwire_entry(void);
+#else
+static inline void tlb_wire_entry(struct vm_area_struct *vma ,
+				  unsigned long addr, pte_t pte)
+{
+	BUG();
+}
+
+static inline void tlb_unwire_entry(void)
+{
+	BUG();
+}
+#endif
 
 #else /* CONFIG_MMU */
 

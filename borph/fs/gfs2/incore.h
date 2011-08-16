@@ -11,14 +11,16 @@
 #define __INCORE_DOT_H__
 
 #include <linux/fs.h>
+#include <linux/kobject.h>
 #include <linux/workqueue.h>
-#include <linux/slow-work.h>
 #include <linux/dlm.h>
 #include <linux/buffer_head.h>
+#include <linux/rcupdate.h>
+#include <linux/rculist_bl.h>
+#include <linux/completion.h>
 
 #define DIO_WAIT	0x00000010
 #define DIO_METADATA	0x00000020
-#define DIO_ALL		0x00000100
 
 struct gfs2_log_operations;
 struct gfs2_log_element;
@@ -161,7 +163,8 @@ struct gfs2_glock_operations {
 	int (*go_dump)(struct seq_file *seq, const struct gfs2_glock *gl);
 	void (*go_callback) (struct gfs2_glock *gl);
 	const int go_type;
-	const unsigned long go_min_hold_time;
+	const unsigned long go_flags;
+#define GLOF_ASPACE 1
 };
 
 enum {
@@ -195,23 +198,29 @@ enum {
 	GLF_REPLY_PENDING		= 9,
 	GLF_INITIAL			= 10,
 	GLF_FROZEN			= 11,
+	GLF_QUEUED			= 12,
+	GLF_LRU				= 13,
+	GLF_OBJECT			= 14, /* Used only for tracing */
 };
 
 struct gfs2_glock {
-	struct hlist_node gl_list;
+	struct hlist_bl_node gl_list;
 	unsigned long gl_flags;		/* GLF_... */
 	struct lm_lockname gl_name;
 	atomic_t gl_ref;
 
 	spinlock_t gl_spin;
 
-	unsigned int gl_state;
-	unsigned int gl_target;
-	unsigned int gl_reply;
+	/* State fields protected by gl_spin */
+	unsigned int gl_state:2,	/* Current state */
+		     gl_target:2,	/* Target state */
+		     gl_demote_state:2,	/* State requested by remote node */
+		     gl_req:2,		/* State in last dlm request */
+		     gl_reply:8;	/* Last reply from the dlm */
+
 	unsigned int gl_hash;
-	unsigned int gl_req;
-	unsigned int gl_demote_state; /* state requested by remote node */
 	unsigned long gl_demote_time; /* time of first demote request */
+	long gl_hold_time;
 	struct list_head gl_holders;
 
 	const struct gfs2_glock_operations *gl_ops;
@@ -225,11 +234,12 @@ struct gfs2_glock {
 
 	struct gfs2_sbd *gl_sbd;
 
-	struct inode *gl_aspace;
 	struct list_head gl_ail_list;
 	atomic_t gl_ail_count;
+	atomic_t gl_revokes;
 	struct delayed_work gl_work;
 	struct work_struct gl_delete;
+	struct rcu_head gl_rcu;
 };
 
 #define GFS2_MIN_LVB_SIZE 32	/* Min size of LVB that gfs2 supports */
@@ -258,7 +268,6 @@ enum {
 	GIF_INVALID		= 0,
 	GIF_QD_LOCKED		= 1,
 	GIF_SW_PAGED		= 3,
-	GIF_USER                = 4, /* user inode, not metadata addr space */
 };
 
 
@@ -268,7 +277,6 @@ struct gfs2_inode {
 	u64 i_no_formal_ino;
 	u64 i_generation;
 	u64 i_eattr;
-	loff_t i_disksize;
 	unsigned long i_flags;		/* GIF_... */
 	struct gfs2_glock *i_gl; /* Move into i_gh? */
 	struct gfs2_holder i_iopen_gh;
@@ -277,6 +285,7 @@ struct gfs2_inode {
 	u64 i_goal;	/* goal block for allocations */
 	struct rw_semaphore i_rw_mutex;
 	struct list_head i_trunc_list;
+	__be64 *i_hash_cache;
 	u32 i_entries;
 	u32 i_diskflags;
 	u8 i_height;
@@ -312,6 +321,7 @@ enum {
 	QDF_USER		= 0,
 	QDF_CHANGE		= 1,
 	QDF_LOCKED		= 2,
+	QDF_REFRESH		= 3,
 };
 
 struct gfs2_quota_data {
@@ -368,8 +378,6 @@ struct gfs2_ail {
 	unsigned int ai_first;
 	struct list_head ai_ail1_list;
 	struct list_head ai_ail2_list;
-
-	u64 ai_sync_gen;
 };
 
 struct gfs2_journal_extent {
@@ -383,7 +391,7 @@ struct gfs2_journal_extent {
 struct gfs2_jdesc {
 	struct list_head jd_list;
 	struct list_head extent_list;
-	struct slow_work jd_work;
+	struct work_struct jd_work;
 	struct inode *jd_inode;
 	unsigned long jd_flags;
 #define JDF_RECOVERY 1
@@ -417,11 +425,8 @@ struct gfs2_args {
 	char ar_locktable[GFS2_LOCKNAME_LEN];	/* Name of the Lock Table */
 	char ar_hostdata[GFS2_LOCKNAME_LEN];	/* Host specific data */
 	unsigned int ar_spectator:1;		/* Don't get a journal */
-	unsigned int ar_ignore_local_fs:1;	/* Ignore optimisations */
 	unsigned int ar_localflocks:1;		/* Let the VFS do flock|fcntl */
-	unsigned int ar_localcaching:1;		/* Local caching */
 	unsigned int ar_debug:1;		/* Oops on errors */
-	unsigned int ar_upgrade:1;		/* Upgrade ondisk format */
 	unsigned int ar_posix_acl:1;		/* Enable posix acls */
 	unsigned int ar_quota:2;		/* off/account/on */
 	unsigned int ar_suiddir:1;		/* suiddir support */
@@ -439,9 +444,6 @@ struct gfs2_args {
 struct gfs2_tune {
 	spinlock_t gt_spin;
 
-	unsigned int gt_incore_log_blocks;
-	unsigned int gt_log_flush_secs;
-
 	unsigned int gt_logd_secs;
 
 	unsigned int gt_quota_simul_sync; /* Max quotavals to sync at once */
@@ -451,7 +453,6 @@ struct gfs2_tune {
 	unsigned int gt_quota_quantum; /* Secs between syncs to quota file */
 	unsigned int gt_new_files_jdata;
 	unsigned int gt_max_readahead; /* Max bytes to read-ahead from disk */
-	unsigned int gt_stall_secs; /* Detects trouble! */
 	unsigned int gt_complain_secs;
 	unsigned int gt_statfs_quantum;
 	unsigned int gt_statfs_slow;
@@ -463,6 +464,8 @@ enum {
 	SDF_SHUTDOWN		= 2,
 	SDF_NOBARRIERS		= 3,
 	SDF_NORECOVERY		= 4,
+	SDF_DEMOTE		= 5,
+	SDF_NOJOURNALID		= 6,
 };
 
 #define GFS2_FSNAME_LEN		256
@@ -487,7 +490,6 @@ struct gfs2_sb_host {
 
 	char sb_lockproto[GFS2_LOCKNAME_LEN];
 	char sb_locktable[GFS2_LOCKNAME_LEN];
-	u8 sb_uuid[16];
 };
 
 /*
@@ -500,7 +502,7 @@ struct gfs2_sb_host {
  */
 
 struct lm_lockstruct {
-	unsigned int ls_jid;
+	int ls_jid;
 	unsigned int ls_first;
 	unsigned int ls_first_done;
 	unsigned int ls_nodir;
@@ -544,6 +546,9 @@ struct gfs2_sbd {
 	struct gfs2_holder sd_live_gh;
 	struct gfs2_glock *sd_rename_gl;
 	struct gfs2_glock *sd_trans_gl;
+	wait_queue_head_t sd_glock_wait;
+	atomic_t sd_glock_disposal;
+	struct completion sd_locking_init;
 
 	/* Inode Stuff */
 
@@ -573,6 +578,7 @@ struct gfs2_sbd {
 	struct list_head sd_rindex_mru_list;
 	struct gfs2_rgrpd *sd_rindex_forward;
 	unsigned int sd_rgrps;
+	unsigned int sd_max_rg_data;
 
 	/* Journal index stuff */
 
@@ -615,8 +621,9 @@ struct gfs2_sbd {
 	unsigned int sd_log_blks_reserved;
 	unsigned int sd_log_commited_buf;
 	unsigned int sd_log_commited_databuf;
-	unsigned int sd_log_commited_revoke;
+	int sd_log_commited_revoke;
 
+	atomic_t sd_log_pinned;
 	unsigned int sd_log_num_buf;
 	unsigned int sd_log_num_revoke;
 	unsigned int sd_log_num_rg;
@@ -628,15 +635,17 @@ struct gfs2_sbd {
 	struct list_head sd_log_le_databuf;
 	struct list_head sd_log_le_ordered;
 
+	atomic_t sd_log_thresh1;
+	atomic_t sd_log_thresh2;
 	atomic_t sd_log_blks_free;
-	struct mutex sd_log_reserve_mutex;
+	wait_queue_head_t sd_log_waitq;
+	wait_queue_head_t sd_logd_waitq;
 
 	u64 sd_log_sequence;
 	unsigned int sd_log_head;
 	unsigned int sd_log_tail;
 	int sd_log_idle;
 
-	unsigned long sd_log_flush_time;
 	struct rw_semaphore sd_log_flush_lock;
 	atomic_t sd_log_in_flight;
 	wait_queue_head_t sd_log_flush_wait;
@@ -644,9 +653,9 @@ struct gfs2_sbd {
 	unsigned int sd_log_flush_head;
 	u64 sd_log_flush_wrapped;
 
+	spinlock_t sd_ail_lock;
 	struct list_head sd_ail1_list;
 	struct list_head sd_ail2_list;
-	u64 sd_ail_sync_gen;
 
 	/* Replay stuff */
 

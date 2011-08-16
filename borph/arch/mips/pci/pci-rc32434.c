@@ -118,7 +118,7 @@ static int __init rc32434_pcibridge_init(void)
 	if (!((pcicvalue == PCIM_H_EA) ||
 	      (pcicvalue == PCIM_H_IA_FIX) ||
 	      (pcicvalue == PCIM_H_IA_RR))) {
-		pr_err(KERN_ERR "PCI init error!!!\n");
+		pr_err("PCI init error!!!\n");
 		/* Not in Host Mode, return ERROR */
 		return -1;
 	}
@@ -215,7 +215,7 @@ static int __init rc32434_pci_init(void)
 	rc32434_pcibridge_init();
 
 	io_map_base = ioremap(rc32434_res_pci_io1.start,
-		rc32434_res_pci_io1.end - rc32434_res_pci_io1.start + 1);
+			      resource_size(&rcrc32434_res_pci_io1));
 
 	if (!io_map_base)
 		return -ENOMEM;

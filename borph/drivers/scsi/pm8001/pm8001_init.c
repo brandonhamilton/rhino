@@ -38,6 +38,7 @@
  *
  */
 
+#include <linux/slab.h>
 #include "pm8001_sas.h"
 #include "pm8001_chips.h"
 
@@ -49,6 +50,8 @@ static const struct pm8001_chip_info pm8001_chips[] = {
 static int pm8001_id;
 
 LIST_HEAD(hba_list);
+
+struct workqueue_struct *pm8001_wq;
 
 /**
  * The main structure which LLDD must register for scsi core.
@@ -133,7 +136,6 @@ static void __devinit pm8001_phy_init(struct pm8001_hba_info *pm8001_ha,
 static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 {
 	int i;
-	struct pm8001_wq *wq;
 
 	if (!pm8001_ha)
 		return;
@@ -149,8 +151,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 	PM8001_CHIP_DISP->chip_iounmap(pm8001_ha);
 	if (pm8001_ha->shost)
 		scsi_host_put(pm8001_ha->shost);
-	list_for_each_entry(wq, &pm8001_ha->wq_list, entry)
-		cancel_delayed_work(&wq->work_q);
+	flush_workqueue(pm8001_wq);
 	kfree(pm8001_ha->tags);
 	kfree(pm8001_ha);
 }
@@ -159,7 +160,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 static void pm8001_tasklet(unsigned long opaque)
 {
 	struct pm8001_hba_info *pm8001_ha;
-	pm8001_ha = (struct pm8001_hba_info *)opaque;;
+	pm8001_ha = (struct pm8001_hba_info *)opaque;
 	if (unlikely(!pm8001_ha))
 		BUG_ON(1);
 	PM8001_CHIP_DISP->isr(pm8001_ha);
@@ -200,8 +201,13 @@ static int __devinit pm8001_alloc(struct pm8001_hba_info *pm8001_ha)
 {
 	int i;
 	spin_lock_init(&pm8001_ha->lock);
-	for (i = 0; i < pm8001_ha->chip->n_phy; i++)
+	for (i = 0; i < pm8001_ha->chip->n_phy; i++) {
 		pm8001_phy_init(pm8001_ha, i);
+		pm8001_ha->port[i].wide_port_phymap = 0;
+		pm8001_ha->port[i].port_attached = 0;
+		pm8001_ha->port[i].port_state = 0;
+		INIT_LIST_HEAD(&pm8001_ha->port[i].list);
+	}
 
 	pm8001_ha->tags = kzalloc(PM8001_MAX_CCB, GFP_KERNEL);
 	if (!pm8001_ha->tags)
@@ -375,7 +381,6 @@ pm8001_pci_alloc(struct pci_dev *pdev, u32 chip_id, struct Scsi_Host *shost)
 	pm8001_ha->sas = sha;
 	pm8001_ha->shost = shost;
 	pm8001_ha->id = pm8001_id++;
-	INIT_LIST_HEAD(&pm8001_ha->wq_list);
 	pm8001_ha->logging_level = 0x01;
 	sprintf(pm8001_ha->name, "%s%d", DRV_NAME, pm8001_ha->id);
 #ifdef PM8001_USE_TASKLET
@@ -511,19 +516,23 @@ static void pm8001_init_sas_add(struct pm8001_hba_info *pm8001_ha)
 	u8 i;
 #ifdef PM8001_READ_VPD
 	DECLARE_COMPLETION_ONSTACK(completion);
+	struct pm8001_ioctl_payload payload;
 	pm8001_ha->nvmd_completion = &completion;
-	PM8001_CHIP_DISP->get_nvmd_req(pm8001_ha, 0, 0);
+	payload.minor_function = 0;
+	payload.length = 128;
+	payload.func_specific = kzalloc(128, GFP_KERNEL);
+	PM8001_CHIP_DISP->get_nvmd_req(pm8001_ha, &payload);
 	wait_for_completion(&completion);
 	for (i = 0; i < pm8001_ha->chip->n_phy; i++) {
 		memcpy(&pm8001_ha->phy[i].dev_sas_addr, pm8001_ha->sas_addr,
 			SAS_ADDR_SIZE);
 		PM8001_INIT_DBG(pm8001_ha,
-			pm8001_printk("phy %d sas_addr = %x \n", i,
-			(u64)pm8001_ha->phy[i].dev_sas_addr));
+			pm8001_printk("phy %d sas_addr = %016llx \n", i,
+			pm8001_ha->phy[i].dev_sas_addr));
 	}
 #else
 	for (i = 0; i < pm8001_ha->chip->n_phy; i++) {
-		pm8001_ha->phy[i].dev_sas_addr = 0x500e004010000004ULL;
+		pm8001_ha->phy[i].dev_sas_addr = 0x50010c600047f9d0ULL;
 		pm8001_ha->phy[i].dev_sas_addr =
 			cpu_to_be64((u64)
 				(*(u64 *)&pm8001_ha->phy[i].dev_sas_addr));
@@ -593,7 +602,7 @@ static u32 pm8001_request_irq(struct pm8001_hba_info *pm8001_ha)
 #endif
 
 intx:
-	/* intialize the INT-X interrupt */
+	/* initialize the INT-X interrupt */
 	rc = request_irq(pdev->irq, irq_handler, IRQF_SHARED, DRV_NAME,
 		SHOST_TO_SAS_HA(pm8001_ha->shost));
 	return rc;
@@ -645,7 +654,7 @@ static int __devinit pm8001_pci_probe(struct pci_dev *pdev,
 	}
 	chip = &pm8001_chips[ent->driver_data];
 	SHOST_TO_SAS_HA(shost) =
-		kcalloc(1, sizeof(struct sas_ha_struct), GFP_KERNEL);
+		kzalloc(sizeof(struct sas_ha_struct), GFP_KERNEL);
 	if (!SHOST_TO_SAS_HA(shost)) {
 		rc = -ENOMEM;
 		goto err_out_free_host;
@@ -748,7 +757,7 @@ static int pm8001_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	int i , pos;
 	u32 device_state;
 	pm8001_ha = sha->lldd_ha;
-	flush_scheduled_work();
+	flush_workqueue(pm8001_wq);
 	scsi_block_requests(pm8001_ha->shost);
 	pos = pci_find_capability(pdev, PCI_CAP_ID_PM);
 	if (pos == 0) {
@@ -860,17 +869,26 @@ static struct pci_driver pm8001_pci_driver = {
  */
 static int __init pm8001_init(void)
 {
-	int rc;
+	int rc = -ENOMEM;
+
+	pm8001_wq = alloc_workqueue("pm8001", 0, 0);
+	if (!pm8001_wq)
+		goto err;
+
 	pm8001_id = 0;
 	pm8001_stt = sas_domain_attach_transport(&pm8001_transport_ops);
 	if (!pm8001_stt)
-		return -ENOMEM;
+		goto err_wq;
 	rc = pci_register_driver(&pm8001_pci_driver);
 	if (rc)
-		goto err_out;
+		goto err_tp;
 	return 0;
-err_out:
+
+err_tp:
 	sas_release_transport(pm8001_stt);
+err_wq:
+	destroy_workqueue(pm8001_wq);
+err:
 	return rc;
 }
 
@@ -878,6 +896,7 @@ static void __exit pm8001_exit(void)
 {
 	pci_unregister_driver(&pm8001_pci_driver);
 	sas_release_transport(pm8001_stt);
+	destroy_workqueue(pm8001_wq);
 }
 
 module_init(pm8001_init);

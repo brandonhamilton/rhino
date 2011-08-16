@@ -47,6 +47,7 @@ static const char *version = "tc35815.c:v" DRV_VERSION "\n";
 #include <linux/phy.h>
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
+#include <linux/prefetch.h>
 #include <asm/io.h>
 #include <asm/byteorder.h>
 
@@ -65,7 +66,7 @@ static const struct {
 	{ "TOSHIBA TC35815/TX4939" },
 };
 
-static const struct pci_device_id tc35815_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(tc35815_pci_tbl) = {
 	{PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA_2, PCI_DEVICE_ID_TOSHIBA_TC35815CF), .driver_data = TC35815CF },
 	{PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA_2, PCI_DEVICE_ID_TOSHIBA_TC35815_NWU), .driver_data = TC35815_NWU },
 	{PCI_DEVICE(PCI_VENDOR_ID_TOSHIBA_2, PCI_DEVICE_ID_TOSHIBA_TC35815_TX4939), .driver_data = TC35815_TX4939 },
@@ -119,13 +120,13 @@ struct tc35815_regs {
 /*
  * Bit assignments
  */
-/* DMA_Ctl bit asign ------------------------------------------------------- */
+/* DMA_Ctl bit assign ------------------------------------------------------- */
 #define DMA_RxAlign	       0x00c00000 /* 1:Reception Alignment	     */
 #define DMA_RxAlign_1	       0x00400000
 #define DMA_RxAlign_2	       0x00800000
 #define DMA_RxAlign_3	       0x00c00000
 #define DMA_M66EnStat	       0x00080000 /* 1:66MHz Enable State	     */
-#define DMA_IntMask	       0x00040000 /* 1:Interupt mask		     */
+#define DMA_IntMask	       0x00040000 /* 1:Interrupt mask		     */
 #define DMA_SWIntReq	       0x00020000 /* 1:Software Interrupt request    */
 #define DMA_TxWakeUp	       0x00010000 /* 1:Transmit Wake Up		     */
 #define DMA_RxBigE	       0x00008000 /* 1:Receive Big Endian	     */
@@ -134,11 +135,11 @@ struct tc35815_regs {
 #define DMA_PowrMgmnt	       0x00001000 /* 1:Power Management		     */
 #define DMA_DmBurst_Mask       0x000001fc /* DMA Burst size		     */
 
-/* RxFragSize bit asign ---------------------------------------------------- */
+/* RxFragSize bit assign ---------------------------------------------------- */
 #define RxFrag_EnPack	       0x00008000 /* 1:Enable Packing		     */
 #define RxFrag_MinFragMask     0x00000ffc /* Minimum Fragment		     */
 
-/* MAC_Ctl bit asign ------------------------------------------------------- */
+/* MAC_Ctl bit assign ------------------------------------------------------- */
 #define MAC_Link10	       0x00008000 /* 1:Link Status 10Mbits	     */
 #define MAC_EnMissRoll	       0x00002000 /* 1:Enable Missed Roll	     */
 #define MAC_MissRoll	       0x00000400 /* 1:Missed Roll		     */
@@ -152,7 +153,7 @@ struct tc35815_regs {
 #define MAC_HaltImm	       0x00000002 /* 1:Halt Immediate		     */
 #define MAC_HaltReq	       0x00000001 /* 1:Halt request		     */
 
-/* PROM_Ctl bit asign ------------------------------------------------------ */
+/* PROM_Ctl bit assign ------------------------------------------------------ */
 #define PROM_Busy	       0x00008000 /* 1:Busy (Start Operation)	     */
 #define PROM_Read	       0x00004000 /*10:Read operation		     */
 #define PROM_Write	       0x00002000 /*01:Write operation		     */
@@ -162,7 +163,7 @@ struct tc35815_regs {
 #define PROM_Addr_Ena	       0x00000030 /*11xxxx:PROM Write enable	     */
 					  /*00xxxx:	      disable	     */
 
-/* CAM_Ctl bit asign ------------------------------------------------------- */
+/* CAM_Ctl bit assign ------------------------------------------------------- */
 #define CAM_CompEn	       0x00000010 /* 1:CAM Compare Enable	     */
 #define CAM_NegCAM	       0x00000008 /* 1:Reject packets CAM recognizes,*/
 					  /*			accept other */
@@ -170,7 +171,7 @@ struct tc35815_regs {
 #define CAM_GroupAcc	       0x00000002 /* 1:Multicast assept		     */
 #define CAM_StationAcc	       0x00000001 /* 1:unicast accept		     */
 
-/* CAM_Ena bit asign ------------------------------------------------------- */
+/* CAM_Ena bit assign ------------------------------------------------------- */
 #define CAM_ENTRY_MAX		       21   /* CAM Data entry max count	     */
 #define CAM_Ena_Mask ((1<<CAM_ENTRY_MAX)-1) /* CAM Enable bits (Max 21bits)  */
 #define CAM_Ena_Bit(index)	(1 << (index))
@@ -178,7 +179,7 @@ struct tc35815_regs {
 #define CAM_ENTRY_SOURCE	1
 #define CAM_ENTRY_MACCTL	20
 
-/* Tx_Ctl bit asign -------------------------------------------------------- */
+/* Tx_Ctl bit assign -------------------------------------------------------- */
 #define Tx_En		       0x00000001 /* 1:Transmit enable		     */
 #define Tx_TxHalt	       0x00000002 /* 1:Transmit Halt Request	     */
 #define Tx_NoPad	       0x00000004 /* 1:Suppress Padding		     */
@@ -192,7 +193,7 @@ struct tc35815_regs {
 #define Tx_EnTxPar	       0x00002000 /* 1:Enable Transmit Parity	     */
 #define Tx_EnComp	       0x00004000 /* 1:Enable Completion	     */
 
-/* Tx_Stat bit asign ------------------------------------------------------- */
+/* Tx_Stat bit assign ------------------------------------------------------- */
 #define Tx_TxColl_MASK	       0x0000000F /* Tx Collision Count		     */
 #define Tx_ExColl	       0x00000010 /* Excessive Collision	     */
 #define Tx_TXDefer	       0x00000020 /* Transmit Defered		     */
@@ -208,7 +209,7 @@ struct tc35815_regs {
 #define Tx_Halted	       0x00008000 /* Tx Halted			     */
 #define Tx_SQErr	       0x00010000 /* Signal Quality Error(SQE)	     */
 
-/* Rx_Ctl bit asign -------------------------------------------------------- */
+/* Rx_Ctl bit assign -------------------------------------------------------- */
 #define Rx_EnGood	       0x00004000 /* 1:Enable Good		     */
 #define Rx_EnRxPar	       0x00002000 /* 1:Enable Receive Parity	     */
 #define Rx_EnLongErr	       0x00000800 /* 1:Enable Long Error	     */
@@ -222,7 +223,7 @@ struct tc35815_regs {
 #define Rx_RxHalt	       0x00000002 /* 1:Receive Halt Request	     */
 #define Rx_RxEn		       0x00000001 /* 1:Receive Intrrupt Enable	     */
 
-/* Rx_Stat bit asign ------------------------------------------------------- */
+/* Rx_Stat bit assign ------------------------------------------------------- */
 #define Rx_Halted	       0x00008000 /* Rx Halted			     */
 #define Rx_Good		       0x00004000 /* Rx Good			     */
 #define Rx_RxPar	       0x00002000 /* Rx Parity Error		     */
@@ -238,7 +239,7 @@ struct tc35815_regs {
 
 #define Rx_Stat_Mask	       0x0000FFF0 /* Rx All Status Mask		     */
 
-/* Int_En bit asign -------------------------------------------------------- */
+/* Int_En bit assign -------------------------------------------------------- */
 #define Int_NRAbtEn	       0x00000800 /* 1:Non-recoverable Abort Enable  */
 #define Int_TxCtlCmpEn	       0x00000400 /* 1:Transmit Ctl Complete Enable  */
 #define Int_DmParErrEn	       0x00000200 /* 1:DMA Parity Error Enable	     */
@@ -253,7 +254,7 @@ struct tc35815_regs {
 #define Int_FDAExEn	       0x00000001 /* 1:Free Descriptor Area	     */
 					  /*		   Exhausted Enable  */
 
-/* Int_Src bit asign ------------------------------------------------------- */
+/* Int_Src bit assign ------------------------------------------------------- */
 #define Int_NRabt	       0x00004000 /* 1:Non Recoverable error	     */
 #define Int_DmParErrStat       0x00002000 /* 1:DMA Parity Error & Clear	     */
 #define Int_BLEx	       0x00001000 /* 1:Buffer List Empty & Clear     */
@@ -270,8 +271,8 @@ struct tc35815_regs {
 #define Int_IntMacRx	       0x00000002 /* 1:Rx controller & Clear	     */
 #define Int_IntMacTx	       0x00000001 /* 1:Tx controller & Clear	     */
 
-/* MD_CA bit asign --------------------------------------------------------- */
-#define MD_CA_PreSup	       0x00001000 /* 1:Preamble Supress		     */
+/* MD_CA bit assign --------------------------------------------------------- */
+#define MD_CA_PreSup	       0x00001000 /* 1:Preamble Suppress		     */
 #define MD_CA_Busy	       0x00000800 /* 1:Busy (Start Operation)	     */
 #define MD_CA_Wr	       0x00000400 /* 1:Write 0:Read		     */
 
@@ -296,7 +297,7 @@ struct BDesc {
 
 #define FD_ALIGN	16
 
-/* Frame Descripter bit asign ---------------------------------------------- */
+/* Frame Descripter bit assign ---------------------------------------------- */
 #define FD_FDLength_MASK       0x0000FFFF /* Length MASK		     */
 #define FD_BDCnt_MASK	       0x001F0000 /* BD count MASK in FD	     */
 #define FD_FrmOpt_MASK	       0x7C000000 /* Frame option MASK		     */
@@ -309,8 +310,8 @@ struct BDesc {
 #define FD_Next_EOL	       0x00000001 /* FD EOL indicator		     */
 #define FD_BDCnt_SHIFT	       16
 
-/* Buffer Descripter bit asign --------------------------------------------- */
-#define BD_BuffLength_MASK     0x0000FFFF /* Recieve Data Size		     */
+/* Buffer Descripter bit assign --------------------------------------------- */
+#define BD_BuffLength_MASK     0x0000FFFF /* Receive Data Size		     */
 #define BD_RxBDID_MASK	       0x00FF0000 /* BD ID Number MASK		     */
 #define BD_RxBDSeqN_MASK       0x7F000000 /* Rx BD Sequence Number	     */
 #define BD_CownsBD	       0x80000000 /* BD Controller owner bit	     */
@@ -339,7 +340,7 @@ struct BDesc {
 #define TX_THRESHOLD	1024
 /* used threshold with packet max byte for low pci transfer ability.*/
 #define TX_THRESHOLD_MAX 1536
-/* setting threshold max value when overrun error occured this count. */
+/* setting threshold max value when overrun error occurred this count. */
 #define TX_THRESHOLD_KEEP_LIMIT 10
 
 /* 16 + RX_BUF_NUM * 8 + RX_FD_NUM * 16 + TX_FD_NUM * 32 <= PAGE_SIZE*FD_PAGE_NUM */
@@ -402,6 +403,7 @@ struct tc35815_local {
 	 * by this lock as well.
 	 */
 	spinlock_t lock;
+	spinlock_t rx_lock;
 
 	struct mii_bus *mii_bus;
 	struct phy_device *phy_dev;
@@ -835,6 +837,7 @@ static int __devinit tc35815_init_one(struct pci_dev *pdev,
 
 	INIT_WORK(&lp->restart_work, tc35815_restart_work);
 	spin_lock_init(&lp->lock);
+	spin_lock_init(&lp->rx_lock);
 	lp->pci_dev = pdev;
 	lp->chiptype = ent->driver_data;
 
@@ -1165,7 +1168,7 @@ static void print_eth(const u8 *add)
 static int tc35815_tx_full(struct net_device *dev)
 {
 	struct tc35815_local *lp = netdev_priv(dev);
-	return ((lp->tfd_start + 1) % TX_FD_NUM == lp->tfd_end);
+	return (lp->tfd_start + 1) % TX_FD_NUM == lp->tfd_end;
 }
 
 static void tc35815_restart(struct net_device *dev)
@@ -1186,6 +1189,7 @@ static void tc35815_restart(struct net_device *dev)
 			printk(KERN_ERR "%s: BMCR reset failed.\n", dev->name);
 	}
 
+	spin_lock_bh(&lp->rx_lock);
 	spin_lock_irq(&lp->lock);
 	tc35815_chip_reset(dev);
 	tc35815_clear_queues(dev);
@@ -1193,6 +1197,7 @@ static void tc35815_restart(struct net_device *dev)
 	/* Reconfigure CAM again since tc35815_chip_init() initialize it. */
 	tc35815_set_multicast_list(dev);
 	spin_unlock_irq(&lp->lock);
+	spin_unlock_bh(&lp->rx_lock);
 
 	netif_wake_queue(dev);
 }
@@ -1211,11 +1216,14 @@ static void tc35815_schedule_restart(struct net_device *dev)
 	struct tc35815_local *lp = netdev_priv(dev);
 	struct tc35815_regs __iomem *tr =
 		(struct tc35815_regs __iomem *)dev->base_addr;
+	unsigned long flags;
 
 	/* disable interrupts */
+	spin_lock_irqsave(&lp->lock, flags);
 	tc_writel(0, &tr->Int_En);
 	tc_writel(tc_readl(&tr->DMA_Ctl) | DMA_IntMask, &tr->DMA_Ctl);
 	schedule_work(&lp->restart_work);
+	spin_unlock_irqrestore(&lp->lock, flags);
 }
 
 static void tc35815_tx_timeout(struct net_device *dev)
@@ -1350,8 +1358,6 @@ static int tc35815_send_packet(struct sk_buff *skb, struct net_device *dev)
 	}
 	lp->tfd_start = (lp->tfd_start + 1) % TX_FD_NUM;
 
-	dev->trans_start = jiffies;
-
 	/* If we just used up the very last entry in the
 	 * TX ring on this device, tell the queueing
 	 * layer to send no more.
@@ -1436,8 +1442,9 @@ static int tc35815_do_interrupt(struct net_device *dev, u32 status, int limit)
 	if (status & Int_IntMacTx) {
 		/* Transmit complete. */
 		lp->lstats.tx_ints++;
+		spin_lock_irq(&lp->lock);
 		tc35815_txdone(dev);
-		netif_wake_queue(dev);
+		spin_unlock_irq(&lp->lock);
 		if (ret < 0)
 			ret = 0;
 	}
@@ -1650,7 +1657,7 @@ static int tc35815_poll(struct napi_struct *napi, int budget)
 	int received = 0, handled;
 	u32 status;
 
-	spin_lock(&lp->lock);
+	spin_lock(&lp->rx_lock);
 	status = tc_readl(&tr->Int_Src);
 	do {
 		/* BLEx, FDAEx will be cleared later */
@@ -1668,7 +1675,7 @@ static int tc35815_poll(struct napi_struct *napi, int budget)
 		}
 		status = tc_readl(&tr->Int_Src);
 	} while (status);
-	spin_unlock(&lp->lock);
+	spin_unlock(&lp->rx_lock);
 
 	if (received < budget) {
 		napi_complete(napi);
@@ -1941,23 +1948,23 @@ tc35815_set_multicast_list(struct net_device *dev)
 		/* Enable promiscuous mode */
 		tc_writel(CAM_CompEn | CAM_BroadAcc | CAM_GroupAcc | CAM_StationAcc, &tr->CAM_Ctl);
 	} else if ((dev->flags & IFF_ALLMULTI) ||
-		  dev->mc_count > CAM_ENTRY_MAX - 3) {
+		  netdev_mc_count(dev) > CAM_ENTRY_MAX - 3) {
 		/* CAM 0, 1, 20 are reserved. */
 		/* Disable promiscuous mode, use normal mode. */
 		tc_writel(CAM_CompEn | CAM_BroadAcc | CAM_GroupAcc, &tr->CAM_Ctl);
-	} else if (dev->mc_count) {
-		struct dev_mc_list *cur_addr = dev->mc_list;
+	} else if (!netdev_mc_empty(dev)) {
+		struct netdev_hw_addr *ha;
 		int i;
 		int ena_bits = CAM_Ena_Bit(CAM_ENTRY_SOURCE);
 
 		tc_writel(0, &tr->CAM_Ctl);
 		/* Walk the address list, and load the filter */
-		for (i = 0; i < dev->mc_count; i++, cur_addr = cur_addr->next) {
-			if (!cur_addr)
-				break;
+		i = 0;
+		netdev_for_each_mc_addr(ha, dev) {
 			/* entry 0,1 is reserved. */
-			tc35815_set_cam_entry(dev, i + 2, cur_addr->dmi_addr);
+			tc35815_set_cam_entry(dev, i + 2, ha->addr);
 			ena_bits |= CAM_Ena_Bit(i + 2);
+			i++;
 		}
 		tc_writel(ena_bits, &tr->CAM_Ena);
 		tc_writel(CAM_CompEn | CAM_BroadAcc, &tr->CAM_Ctl);
@@ -2060,7 +2067,7 @@ static int tc35815_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		return -EINVAL;
 	if (!lp->phy_dev)
 		return -ENODEV;
-	return phy_mii_ioctl(lp->phy_dev, if_mii(rq), cmd);
+	return phy_mii_ioctl(lp->phy_dev, rq, cmd);
 }
 
 static void tc35815_chip_reset(struct net_device *dev)

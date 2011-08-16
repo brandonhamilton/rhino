@@ -17,6 +17,7 @@
  */
 #include <linux/errno.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -410,7 +411,7 @@ int fnic_rq_cmpl_handler(struct fnic *fnic, int rq_work_to_do)
 			err = vnic_rq_fill(&fnic->rq[i], fnic_alloc_rq_frame);
 			if (err)
 				shost_printk(KERN_ERR, fnic->lport->host,
-					     "fnic_alloc_rq_frame cant alloc"
+					     "fnic_alloc_rq_frame can't alloc"
 					     " frame\n");
 		}
 		tot_rq_work_done += cur_work_done;
@@ -616,7 +617,7 @@ void fnic_flush_tx(struct fnic *fnic)
 	struct sk_buff *skb;
 	struct fc_frame *fp;
 
-	while ((skb = skb_dequeue(&fnic->frame_queue))) {
+	while ((skb = skb_dequeue(&fnic->tx_queue))) {
 		fp = (struct fc_frame *)skb;
 		fnic_send_frame(fnic, fp);
 	}

@@ -28,11 +28,10 @@
 
 static inline void get_cpu_id(struct cpuid *ptr)
 {
-	asm volatile("stidp 0(%1)" : "=m" (*ptr) : "a" (ptr));
+	asm volatile("stidp %0" : "=Q" (*ptr));
 }
 
 extern void s390_adjust_jiffies(void);
-extern void print_cpu_info(void);
 extern int get_cpu_capability(unsigned int *);
 
 /*
@@ -81,11 +80,12 @@ struct thread_struct {
 	mm_segment_t mm_segment;
         unsigned long prot_addr;        /* address of protection-excep.     */
         unsigned int trap_no;
-        per_struct per_info;
-	/* Used to give failing instruction back to user for ieee exceptions */
-	unsigned long ieee_instruction_pointer; 
+	unsigned long gmap_addr;	/* address of last gmap fault. */
+	struct per_regs per_user;	/* User specified PER registers */
+	struct per_event per_event;	/* Cause of the last PER trap */
         /* pfault_wait is used to block the process on a pfault event */
 	unsigned long pfault_wait;
+	struct list_head list;
 };
 
 typedef struct thread_struct thread_struct;
@@ -119,14 +119,12 @@ struct stack_frame {
  * Do necessary setup to start up a new thread.
  */
 #define start_thread(regs, new_psw, new_stackp) do {		\
-	set_fs(USER_DS);					\
 	regs->psw.mask	= psw_user_bits;			\
 	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;		\
 	regs->gprs[15]	= new_stackp;				\
 } while (0)
 
 #define start_thread31(regs, new_psw, new_stackp) do {		\
-	set_fs(USER_DS);					\
 	regs->psw.mask	= psw_user32_bits;			\
 	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;		\
 	regs->gprs[15]	= new_stackp;				\
@@ -149,11 +147,6 @@ extern int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags);
  * Return saved PC of a blocked thread.
  */
 extern unsigned long thread_saved_pc(struct task_struct *t);
-
-/*
- * Print register of task into buffer. Used in fs/proc/array.c.
- */
-extern void task_show_regs(struct seq_file *m, struct task_struct *task);
 
 extern void show_code(struct pt_regs *regs);
 
@@ -184,9 +177,9 @@ static inline void psw_set_key(unsigned int key)
 static inline void __load_psw(psw_t psw)
 {
 #ifndef __s390x__
-	asm volatile("lpsw  0(%0)" : : "a" (&psw), "m" (psw) : "cc");
+	asm volatile("lpsw  %0" : : "Q" (psw) : "cc");
 #else
-	asm volatile("lpswe 0(%0)" : : "a" (&psw), "m" (psw) : "cc");
+	asm volatile("lpswe %0" : : "Q" (psw) : "cc");
 #endif
 }
 
@@ -206,17 +199,17 @@ static inline void __load_psw_mask (unsigned long mask)
 	asm volatile(
 		"	basr	%0,0\n"
 		"0:	ahi	%0,1f-0b\n"
-		"	st	%0,4(%1)\n"
-		"	lpsw	0(%1)\n"
+		"	st	%0,%O1+4(%R1)\n"
+		"	lpsw	%1\n"
 		"1:"
-		: "=&d" (addr) : "a" (&psw), "m" (psw) : "memory", "cc");
+		: "=&d" (addr), "=Q" (psw) : "Q" (psw) : "memory", "cc");
 #else /* __s390x__ */
 	asm volatile(
 		"	larl	%0,1f\n"
-		"	stg	%0,8(%1)\n"
-		"	lpswe	0(%1)\n"
+		"	stg	%0,%O1+8(%R1)\n"
+		"	lpswe	%1\n"
 		"1:"
-		: "=&d" (addr) : "a" (&psw), "m" (psw) : "memory", "cc");
+		: "=&d" (addr), "=Q" (psw) : "Q" (psw) : "memory", "cc");
 #endif /* __s390x__ */
 }
  

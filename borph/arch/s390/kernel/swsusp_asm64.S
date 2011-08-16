@@ -7,6 +7,7 @@
  *	      Michael Holzheu <holzheu@linux.vnet.ibm.com>
  */
 
+#include <linux/linkage.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include <asm/thread_info.h>
@@ -22,9 +23,7 @@
  * This function runs with disabled interrupts.
  */
 	.section .text
-	.align	4
-	.globl swsusp_arch_suspend
-swsusp_arch_suspend:
+ENTRY(swsusp_arch_suspend)
 	stmg	%r6,%r15,__SF_GPRS(%r15)
 	lgr	%r1,%r15
 	aghi	%r15,-STACK_FRAME_OVERHEAD
@@ -112,8 +111,7 @@ swsusp_arch_suspend:
  * Then we return to the function that called swsusp_arch_suspend().
  * swsusp_arch_resume() runs with disabled interrupts.
  */
-	.globl swsusp_arch_resume
-swsusp_arch_resume:
+ENTRY(swsusp_arch_resume)
 	stmg	%r6,%r15,__SF_GPRS(%r15)
 	lgr	%r1,%r15
 	aghi	%r15,-STACK_FRAME_OVERHEAD
@@ -176,7 +174,7 @@ pgm_check_entry:
 	cgr	%r1,%r2
 	je	restore_registers		/* r1 = r2 -> nothing to do */
 	larl	%r4,.Lrestart_suspend_psw	/* Set new restart PSW */
-	mvc	__LC_RESTART_PSW(16,%r0),0(%r4)
+	mvc	__LC_RST_NEW_PSW(16,%r0),0(%r4)
 3:
 	sigp	%r9,%r1,__SIGP_INITIAL_CPU_RESET
 	brc	8,4f	/* accepted */
@@ -256,12 +254,15 @@ restore_registers:
 	lghi	%r2,0
 	brasl	%r14,arch_set_page_states
 
+	/* Reinitialize the channel subsystem */
+	brasl	%r14,channel_subsystem_reinit
+
 	/* Return 0 */
 	lmg	%r6,%r15,STACK_FRAME_OVERHEAD + __SF_GPRS(%r15)
 	lghi	%r2,0
 	br	%r14
 
-	.section .data.nosave,"aw",@progbits
+	.section .data..nosave,"aw",@progbits
 	.align	8
 .Ldisabled_wait_31:
 	.long  0x000a0000,0x00000000

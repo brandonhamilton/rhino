@@ -28,11 +28,11 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/bootmem.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <asm/io.h>
 #include <linux/arcdevice.h>
 

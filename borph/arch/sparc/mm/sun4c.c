@@ -12,11 +12,13 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/bootmem.h>
 #include <linux/highmem.h>
 #include <linux/fs.h>
 #include <linux/seq_file.h>
 #include <linux/scatterlist.h>
+#include <linux/bitmap.h>
 
 #include <asm/sections.h>
 #include <asm/page.h>
@@ -316,7 +318,7 @@ void __init sun4c_probe_vac(void)
 		prom_printf("probe_vac: Didn't expect vac-linesize of %d, halting\n",
 			    sun4c_vacinfo.linesize);
 		prom_halt();
-	};
+	}
 
 	sun4c_flush_all();
 	sun4c_enable_vac();
@@ -362,7 +364,7 @@ static void __init patch_kernel_fault_handler(void)
 			prom_printf("Unhandled number of segmaps: %d\n",
 				    num_segmaps);
 			prom_halt();
-	};
+	}
 	switch (num_contexts) {
 		case 8:
 			/* Default, nothing to do. */
@@ -375,7 +377,7 @@ static void __init patch_kernel_fault_handler(void)
 			prom_printf("Unhandled number of contexts: %d\n",
 				    num_contexts);
 			prom_halt();
-	};
+	}
 
 	if (sun4c_vacinfo.do_hwflushes != 0) {
 		PATCH_INSN(vac_hwflush_patch1_on, vac_hwflush_patch1);
@@ -392,7 +394,7 @@ static void __init patch_kernel_fault_handler(void)
 			prom_printf("Impossible VAC linesize %d, halting...\n",
 				    sun4c_vacinfo.linesize);
 			prom_halt();
-		};
+		}
 	}
 }
 
@@ -418,7 +420,7 @@ volatile unsigned long __iomem *sun4c_memerr_reg = NULL;
 
 void __init sun4c_probe_memerr_reg(void)
 {
-	int node;
+	phandle node;
 	struct linux_prom_registers regs[1];
 
 	node = prom_getchild(prom_root_node);
@@ -433,16 +435,14 @@ void __init sun4c_probe_memerr_reg(void)
 
 static inline void sun4c_init_ss2_cache_bug(void)
 {
-	extern unsigned long start;
-
 	if ((idprom->id_machtype == (SM_SUN4C | SM_4C_SS2)) ||
 	    (idprom->id_machtype == (SM_SUN4C | SM_4C_IPX)) ||
 	    (idprom->id_machtype == (SM_SUN4C | SM_4C_ELC))) {
 		/* Whee.. */
 		printk("SS2 cache bug detected, uncaching trap table page\n");
-		sun4c_flush_page((unsigned int) &start);
-		sun4c_put_pte(((unsigned long) &start),
-			(sun4c_get_pte((unsigned long) &start) | _SUN4C_PAGE_NOCACHE));
+		sun4c_flush_page((unsigned int) &_start);
+		sun4c_put_pte(((unsigned long) &_start),
+			(sun4c_get_pte((unsigned long) &_start) | _SUN4C_PAGE_NOCACHE));
 	}
 }
 
@@ -922,7 +922,7 @@ static inline void garbage_collect(int entry)
 	free_locked_segment(BUCKET_ADDR(entry));
 }
 
-static struct thread_info *sun4c_alloc_thread_info(void)
+static struct thread_info *sun4c_alloc_thread_info_node(int node)
 {
 	unsigned long addr, pages;
 	int entry;
@@ -1021,20 +1021,12 @@ static char *sun4c_lockarea(char *vaddr, unsigned long size)
 	npages = (((unsigned long)vaddr & ~PAGE_MASK) +
 		  size + (PAGE_SIZE-1)) >> PAGE_SHIFT;
 
-	scan = 0;
 	local_irq_save(flags);
-	for (;;) {
-		scan = find_next_zero_bit(sun4c_iobuffer_map,
-					  iobuffer_map_size, scan);
-		if ((base = scan) + npages > iobuffer_map_size) goto abend;
-		for (;;) {
-			if (scan >= base + npages) goto found;
-			if (test_bit(scan, sun4c_iobuffer_map)) break;
-			scan++;
-		}
-	}
+	base = bitmap_find_next_zero_area(sun4c_iobuffer_map, iobuffer_map_size,
+						0, npages, 0);
+	if (base >= iobuffer_map_size)
+		goto abend;
 
-found:
 	high = ((base + npages) << PAGE_SHIFT) + sun4c_iobuffer_start;
 	high = SUN4C_REAL_PGDIR_ALIGN(high);
 	while (high > sun4c_iobuffer_high) {
@@ -1894,7 +1886,7 @@ static void sun4c_check_pgt_cache(int low, int high)
 /* An experiment, turn off by default for now... -DaveM */
 #define SUN4C_PRELOAD_PSEG
 
-void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t pte)
+void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *ptep)
 {
 	unsigned long flags;
 	int pseg;
@@ -1936,7 +1928,7 @@ void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, p
 			start += PAGE_SIZE;
 		}
 #ifndef SUN4C_PRELOAD_PSEG
-		sun4c_put_pte(address, pte_val(pte));
+		sun4c_put_pte(address, pte_val(*ptep));
 #endif
 		local_irq_restore(flags);
 		return;
@@ -1947,7 +1939,7 @@ void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, p
 		add_lru(entry);
 	}
 
-	sun4c_put_pte(address, pte_val(pte));
+	sun4c_put_pte(address, pte_val(*ptep));
 	local_irq_restore(flags);
 }
 
@@ -2093,9 +2085,6 @@ void __init ld_mmu_sun4c(void)
 
 	BTFIXUPSET_CALL(set_pte, sun4c_set_pte, BTFIXUPCALL_STO1O0);
 
-	/* The 2.4.18 code does not set this on sun4c, how does it work? XXX */
-	/* BTFIXUPSET_SETHI(none_mask, 0x00000000); */	/* Defaults to zero? */
-
 	BTFIXUPSET_CALL(pte_pfn, sun4c_pte_pfn, BTFIXUPCALL_NORM);
 #if 0 /* PAGE_SHIFT <= 12 */ /* Eek. Investigate. XXX */
 	BTFIXUPSET_CALL(pmd_page, sun4c_pmd_page, BTFIXUPCALL_ANDNINT(PAGE_SIZE - 1));
@@ -2166,7 +2155,7 @@ void __init ld_mmu_sun4c(void)
 	BTFIXUPSET_CALL(__swp_offset, sun4c_swp_offset, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(__swp_entry, sun4c_swp_entry, BTFIXUPCALL_NORM);
 
-	BTFIXUPSET_CALL(alloc_thread_info, sun4c_alloc_thread_info, BTFIXUPCALL_NORM);
+	BTFIXUPSET_CALL(alloc_thread_info_node, sun4c_alloc_thread_info_node, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(free_thread_info, sun4c_free_thread_info, BTFIXUPCALL_NORM);
 
 	BTFIXUPSET_CALL(mmu_info, sun4c_mmu_info, BTFIXUPCALL_NORM);

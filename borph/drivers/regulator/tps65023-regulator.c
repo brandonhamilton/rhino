@@ -24,6 +24,8 @@
 #include <linux/regulator/machine.h>
 #include <linux/i2c.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
+#include <linux/regmap.h>
 
 /* Register definitions */
 #define	TPS65023_REG_VERSION		0
@@ -124,93 +126,35 @@ struct tps_pmic {
 	struct i2c_client *client;
 	struct regulator_dev *rdev[TPS65023_NUM_REGULATOR];
 	const struct tps_info *info[TPS65023_NUM_REGULATOR];
-	struct mutex io_lock;
+	struct regmap *regmap;
 };
-
-static inline int tps_65023_read(struct tps_pmic *tps, u8 reg)
-{
-	return i2c_smbus_read_byte_data(tps->client, reg);
-}
-
-static inline int tps_65023_write(struct tps_pmic *tps, u8 reg, u8 val)
-{
-	return i2c_smbus_write_byte_data(tps->client, reg, val);
-}
 
 static int tps_65023_set_bits(struct tps_pmic *tps, u8 reg, u8 mask)
 {
-	int err, data;
-
-	mutex_lock(&tps->io_lock);
-
-	data = tps_65023_read(tps, reg);
-	if (data < 0) {
-		dev_err(&tps->client->dev, "Read from reg 0x%x failed\n", reg);
-		err = data;
-		goto out;
-	}
-
-	data |= mask;
-	err = tps_65023_write(tps, reg, data);
-	if (err)
-		dev_err(&tps->client->dev, "Write for reg 0x%x failed\n", reg);
-
-out:
-	mutex_unlock(&tps->io_lock);
-	return err;
+	return regmap_update_bits(tps->regmap, reg, mask, mask);
 }
 
 static int tps_65023_clear_bits(struct tps_pmic *tps, u8 reg, u8 mask)
 {
-	int err, data;
-
-	mutex_lock(&tps->io_lock);
-
-	data = tps_65023_read(tps, reg);
-	if (data < 0) {
-		dev_err(&tps->client->dev, "Read from reg 0x%x failed\n", reg);
-		err = data;
-		goto out;
-	}
-
-	data &= ~mask;
-
-	err = tps_65023_write(tps, reg, data);
-	if (err)
-		dev_err(&tps->client->dev, "Write for reg 0x%x failed\n", reg);
-
-out:
-	mutex_unlock(&tps->io_lock);
-	return err;
-
+	return regmap_update_bits(tps->regmap, reg, mask, 0);
 }
 
 static int tps_65023_reg_read(struct tps_pmic *tps, u8 reg)
 {
-	int data;
+	unsigned int val;
+	int ret;
 
-	mutex_lock(&tps->io_lock);
+	ret = regmap_read(tps->regmap, reg, &val);
 
-	data = tps_65023_read(tps, reg);
-	if (data < 0)
-		dev_err(&tps->client->dev, "Read from reg 0x%x failed\n", reg);
-
-	mutex_unlock(&tps->io_lock);
-	return data;
+	if (ret != 0)
+		return ret;
+	else
+		return val;
 }
 
 static int tps_65023_reg_write(struct tps_pmic *tps, u8 reg, u8 val)
 {
-	int err;
-
-	mutex_lock(&tps->io_lock);
-
-	err = tps_65023_write(tps, reg, val);
-	if (err < 0)
-		dev_err(&tps->client->dev, "Write for reg 0x%x failed\n", reg);
-
-	mutex_unlock(&tps->io_lock);
-	return err;
+	return regmap_write(tps->regmap, reg, val);
 }
 
 static int tps65023_dcdc_is_enabled(struct regulator_dev *dev)
@@ -320,7 +264,8 @@ static int tps65023_dcdc_get_voltage(struct regulator_dev *dev)
 }
 
 static int tps65023_dcdc_set_voltage(struct regulator_dev *dev,
-				int min_uV, int max_uV)
+				     int min_uV, int max_uV,
+				     unsigned *selector)
 {
 	struct tps_pmic *tps = rdev_get_drvdata(dev);
 	int dcdc = rdev_get_id(dev);
@@ -344,6 +289,8 @@ static int tps65023_dcdc_set_voltage(struct regulator_dev *dev,
 		if (min_uV <= uV && uV <= max_uV)
 			break;
 	}
+
+	*selector = vsel;
 
 	/* write to the register in case we found a match */
 	if (vsel == tps->info[dcdc]->table_len)
@@ -370,7 +317,7 @@ static int tps65023_ldo_get_voltage(struct regulator_dev *dev)
 }
 
 static int tps65023_ldo_set_voltage(struct regulator_dev *dev,
-				int min_uV, int max_uV)
+				    int min_uV, int max_uV, unsigned *selector)
 {
 	struct tps_pmic *tps = rdev_get_drvdata(dev);
 	int data, vsel, ldo = rdev_get_id(dev);
@@ -394,6 +341,8 @@ static int tps65023_ldo_set_voltage(struct regulator_dev *dev,
 
 	if (vsel == tps->info[ldo]->table_len)
 		return -EINVAL;
+
+	*selector = vsel;
 
 	data = tps_65023_reg_read(tps, TPS65023_REG_LDO_CTRL);
 	if (data < 0)
@@ -457,15 +406,20 @@ static struct regulator_ops tps65023_ldo_ops = {
 	.list_voltage = tps65023_ldo_list_voltage,
 };
 
-static
-int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
+static struct regmap_config tps65023_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+};
+
+static int __devinit tps_65023_probe(struct i2c_client *client,
+				     const struct i2c_device_id *id)
 {
-	static int desc_id;
 	const struct tps_info *info = (void *)id->driver_data;
 	struct regulator_init_data *init_data;
 	struct regulator_dev *rdev;
 	struct tps_pmic *tps;
 	int i;
+	int error;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
@@ -475,7 +429,6 @@ int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	 * coming from the board-evm file.
 	 */
 	init_data = client->dev.platform_data;
-
 	if (!init_data)
 		return -EIO;
 
@@ -483,7 +436,13 @@ int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (!tps)
 		return -ENOMEM;
 
-	mutex_init(&tps->io_lock);
+	tps->regmap = regmap_init_i2c(client, &tps65023_regmap_config);
+	if (IS_ERR(tps->regmap)) {
+		error = PTR_ERR(tps->regmap);
+		dev_err(&client->dev, "Failed to allocate register map: %d\n",
+			error);
+		goto fail_alloc;
+	}
 
 	/* common for all regulators */
 	tps->client = client;
@@ -493,7 +452,7 @@ int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		tps->info[i] = info;
 
 		tps->desc[i].name = info->name;
-		tps->desc[i].id = desc_id++;
+		tps->desc[i].id = i;
 		tps->desc[i].n_voltages = num_voltages[i];
 		tps->desc[i].ops = (i > TPS65023_DCDC_3 ?
 					&tps65023_ldo_ops : &tps65023_dcdc_ops);
@@ -502,21 +461,12 @@ int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 		/* Register the regulators */
 		rdev = regulator_register(&tps->desc[i], &client->dev,
-								init_data, tps);
+					  init_data, tps);
 		if (IS_ERR(rdev)) {
 			dev_err(&client->dev, "failed to register %s\n",
 				id->name);
-
-			/* Unregister */
-			while (i)
-				regulator_unregister(tps->rdev[--i]);
-
-			tps->client = NULL;
-
-			/* clear the client data in i2c */
-			i2c_set_clientdata(client, NULL);
-			kfree(tps);
-			return PTR_ERR(rdev);
+			error = PTR_ERR(rdev);
+			goto fail;
 		}
 
 		/* Save regulator for cleanup */
@@ -526,6 +476,15 @@ int tps_65023_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	i2c_set_clientdata(client, tps);
 
 	return 0;
+
+ fail:
+	while (--i >= 0)
+		regulator_unregister(tps->rdev[i]);
+
+	regmap_exit(tps->regmap);
+ fail_alloc:
+	kfree(tps);
+	return error;
 }
 
 /**
@@ -542,10 +501,7 @@ static int __devexit tps_65023_remove(struct i2c_client *client)
 	for (i = 0; i < TPS65023_NUM_REGULATOR; i++)
 		regulator_unregister(tps->rdev[i]);
 
-	tps->client = NULL;
-
-	/* clear the client data in i2c */
-	i2c_set_clientdata(client, NULL);
+	regmap_exit(tps->regmap);
 	kfree(tps);
 
 	return 0;
@@ -589,6 +545,8 @@ static const struct tps_info tps65023_regs[] = {
 
 static const struct i2c_device_id tps_65023_id[] = {
 	{.name = "tps65023",
+	.driver_data = (unsigned long) tps65023_regs,},
+	{.name = "tps65021",
 	.driver_data = (unsigned long) tps65023_regs,},
 	{ },
 };

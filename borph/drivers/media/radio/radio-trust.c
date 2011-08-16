@@ -19,7 +19,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/videodev2.h>
 #include <linux/io.h>
 #include <media/v4l2-device.h>
@@ -28,6 +27,7 @@
 MODULE_AUTHOR("Eric Lammerts, Russell Kroll, Quay Lu, Donald Song, Jason Lewis, Scott McGrath, William McGrath");
 MODULE_DESCRIPTION("A driver for the Trust FM Radio card.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 /* acceptable ports: 0x350 (JP3 shorted), 0x358 (JP3 open) */
 
@@ -41,8 +41,6 @@ static int radio_nr = -1;
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the Trust FM Radio card (0x350 or 0x358)");
 module_param(radio_nr, int, 0);
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 struct trust {
 	struct v4l2_device v4l2_dev;
@@ -196,7 +194,6 @@ static int vidioc_querycap(struct file *file, void *priv,
 	strlcpy(v->driver, "radio-trust", sizeof(v->driver));
 	strlcpy(v->card, "Trust FM Radio", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -239,6 +236,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct trust *tr = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	tr_setfreq(tr, f->frequency);
 	return 0;
 }
@@ -248,6 +247,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct trust *tr = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = tr->curfreq;
 	return 0;
@@ -340,7 +341,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations trust_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops trust_ioctl_ops = {
@@ -392,14 +393,6 @@ static int __init trust_init(void)
 	tr->vdev.release = video_device_release_empty;
 	video_set_drvdata(&tr->vdev, tr);
 
-	if (video_register_device(&tr->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
-		v4l2_device_unregister(v4l2_dev);
-		release_region(tr->io, 2);
-		return -EINVAL;
-	}
-
-	v4l2_info(v4l2_dev, "Trust FM Radio card driver v1.0.\n");
-
 	write_i2c(tr, 2, TDA7318_ADDR, 0x80);	/* speaker att. LF = 0 dB */
 	write_i2c(tr, 2, TDA7318_ADDR, 0xa0);	/* speaker att. RF = 0 dB */
 	write_i2c(tr, 2, TDA7318_ADDR, 0xc0);	/* speaker att. LR = 0 dB */
@@ -413,6 +406,14 @@ static int __init trust_init(void)
 
 	/* mute card - prevents noisy bootups */
 	tr_setmute(tr, 1);
+
+	if (video_register_device(&tr->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
+		v4l2_device_unregister(v4l2_dev);
+		release_region(tr->io, 2);
+		return -EINVAL;
+	}
+
+	v4l2_info(v4l2_dev, "Trust FM Radio card driver v1.0.\n");
 
 	return 0;
 }

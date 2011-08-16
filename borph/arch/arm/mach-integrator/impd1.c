@@ -21,10 +21,10 @@
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
 #include <linux/io.h>
+#include <linux/slab.h>
+#include <linux/clkdev.h>
 
-#include <asm/clkdev.h>
-#include <mach/clkdev.h>
-#include <asm/hardware/icst525.h>
+#include <asm/hardware/icst.h>
 #include <mach/lm.h>
 #include <mach/impd1.h>
 #include <asm/sizes.h>
@@ -40,32 +40,25 @@ struct impd1_module {
 	struct clk_lookup *clks[3];
 };
 
-static const struct icst525_params impd1_vco_params = {
-	.ref		= 24000,	/* 24 MHz */
-	.vco_max	= 200000,	/* 200 MHz */
+static const struct icst_params impd1_vco_params = {
+	.ref		= 24000000,	/* 24 MHz */
+	.vco_max	= ICST525_VCO_MAX_3V,
+	.vco_min	= ICST525_VCO_MIN,
 	.vd_min		= 12,
 	.vd_max		= 519,
 	.rd_min		= 3,
 	.rd_max		= 120,
+	.s2div		= icst525_s2div,
+	.idx2s		= icst525_idx2s,
 };
 
-static void impd1_setvco(struct clk *clk, struct icst525_vco vco)
+static void impd1_setvco(struct clk *clk, struct icst_vco vco)
 {
 	struct impd1_module *impd1 = clk->data;
-	int vconr = clk - impd1->vcos;
-	u32 val;
-
-	val = vco.v | (vco.r << 9) | (vco.s << 16);
+	u32 val = vco.v | (vco.r << 9) | (vco.s << 16);
 
 	writel(0xa05f, impd1->base + IMPD1_LOCK);
-	switch (vconr) {
-	case 0:
-		writel(val, impd1->base + IMPD1_OSC1);
-		break;
-	case 1:
-		writel(val, impd1->base + IMPD1_OSC2);
-		break;
-	}
+	writel(val, clk->vcoreg);
 	writel(0, impd1->base + IMPD1_LOCK);
 
 #ifdef DEBUG
@@ -73,10 +66,16 @@ static void impd1_setvco(struct clk *clk, struct icst525_vco vco)
 	vco.r = (val >> 9) & 0x7f;
 	vco.s = (val >> 16) & 7;
 
-	pr_debug("IM-PD1: VCO%d clock is %ld kHz\n",
-		 vconr, icst525_khz(&impd1_vco_params, vco));
+	pr_debug("IM-PD1: VCO%d clock is %ld Hz\n",
+		 vconr, icst525_hz(&impd1_vco_params, vco));
 #endif
 }
+
+static const struct clk_ops impd1_clk_ops = {
+	.round	= icst_clk_round,
+	.set	= icst_clk_set,
+	.setvco	= impd1_setvco,
+};
 
 void impd1_tweak_control(struct device *dev, u32 mask, u32 val)
 {
@@ -122,6 +121,7 @@ static struct clcd_panel vga = {
 	.height		= -1,
 	.tim2		= TIM2_BCD | TIM2_IPC,
 	.cntl		= CNTL_LCDTFT | CNTL_LCDVCOMP(1),
+	.caps		= CLCD_CAP_5551,
 	.connector	= IMPD1_CTRL_DISP_VGA,
 	.bpp		= 16,
 	.grayscale	= 0,
@@ -150,6 +150,7 @@ static struct clcd_panel svga = {
 	.tim2		= TIM2_BCD,
 	.cntl		= CNTL_LCDTFT | CNTL_LCDVCOMP(1),
 	.connector	= IMPD1_CTRL_DISP_VGA,
+	.caps		= CLCD_CAP_5551,
 	.bpp		= 16,
 	.grayscale	= 0,
 };
@@ -176,6 +177,7 @@ static struct clcd_panel prospector = {
 	.height		= -1,
 	.tim2		= TIM2_BCD,
 	.cntl		= CNTL_LCDTFT | CNTL_LCDVCOMP(1),
+	.caps		= CLCD_CAP_5551,
 	.fixedtimings	= 1,
 	.connector	= IMPD1_CTRL_DISP_LCD,
 	.bpp		= 16,
@@ -207,6 +209,7 @@ static struct clcd_panel ltm10c209 = {
 	.height		= -1,
 	.tim2		= TIM2_BCD,
 	.cntl		= CNTL_LCDTFT | CNTL_LCDVCOMP(1),
+	.caps		= CLCD_CAP_5551,
 	.fixedtimings	= 1,
 	.connector	= IMPD1_CTRL_DISP_LCD,
 	.bpp		= 16,
@@ -280,6 +283,7 @@ static void impd1fb_clcd_remove(struct clcd_fb *fb)
 
 static struct clcd_board impd1_clcd_data = {
 	.name		= "IM-PD/1",
+	.caps		= CLCD_CAP_5551 | CLCD_CAP_888,
 	.check		= clcdfb_check,
 	.decode		= clcdfb_decode,
 	.disable	= impd1fb_clcd_disable,
@@ -373,11 +377,13 @@ static int impd1_probe(struct lm_device *dev)
 		(unsigned long)dev->resource.start);
 
 	for (i = 0; i < ARRAY_SIZE(impd1->vcos); i++) {
+		impd1->vcos[i].ops = &impd1_clk_ops,
 		impd1->vcos[i].owner = THIS_MODULE,
 		impd1->vcos[i].params = &impd1_vco_params,
-		impd1->vcos[i].data = impd1,
-		impd1->vcos[i].setvco = impd1_setvco;
+		impd1->vcos[i].data = impd1;
 	}
+	impd1->vcos[0].vcoreg = impd1->base + IMPD1_OSC1;
+	impd1->vcos[1].vcoreg = impd1->base + IMPD1_OSC2;
 
 	impd1->clks[0] = clkdev_alloc(&impd1->vcos[0], NULL, "lm%x:01000",
 					dev->id);

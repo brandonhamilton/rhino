@@ -30,6 +30,7 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/usb/otg.h>
+#include <linux/slab.h>
 
 struct nop_usb_xceiv {
 	struct otg_transceiver	otg;
@@ -130,6 +131,8 @@ static int __devinit nop_usb_xceiv_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, nop);
+
+	ATOMIC_INIT_NOTIFIER_HEAD(&nop->otg.notifier);
 
 	return 0;
 exit:

@@ -73,7 +73,7 @@ static struct list_head ftdi_static_list;
 */
 #include "usb_u132.h"
 #include <asm/io.h>
-#include "../core/hcd.h"
+#include <linux/usb/hcd.h>
 
 	/* FIXME ohci.h is ONLY for internal use by the OHCI driver.
 	 * If you're going to try stuff like this, you need to split
@@ -86,7 +86,7 @@ static struct list_head ftdi_static_list;
 #define USB_FTDI_ELAN_VENDOR_ID 0x0403
 #define USB_FTDI_ELAN_PRODUCT_ID 0xd6ea
 /* table of devices that work with this driver*/
-static struct usb_device_id ftdi_elan_table[] = {
+static const struct usb_device_id ftdi_elan_table[] = {
         {USB_DEVICE(USB_FTDI_ELAN_VENDOR_ID, USB_FTDI_ELAN_PRODUCT_ID)},
         { /* Terminating entry */ }
 };
@@ -187,7 +187,7 @@ struct usb_ftdi {
         u32 controlreg;
         u8 response[4 + 1024];
         int expected;
-        int recieved;
+        int received;
         int ed_found;
 };
 #define kref_to_usb_ftdi(d) container_of(d, struct usb_ftdi, kref)
@@ -353,7 +353,7 @@ static void ftdi_elan_abandon_targets(struct usb_ftdi *ftdi)
                         mutex_lock(&ftdi->u132_lock);
                 }
         }
-        ftdi->recieved = 0;
+        ftdi->received = 0;
         ftdi->expected = 4;
         ftdi->ed_found = 0;
         mutex_unlock(&ftdi->u132_lock);
@@ -411,7 +411,7 @@ static void ftdi_elan_flush_targets(struct usb_ftdi *ftdi)
                         }
                 }
         }
-        ftdi->recieved = 0;
+        ftdi->received = 0;
         ftdi->expected = 4;
         ftdi->ed_found = 0;
         mutex_unlock(&ftdi->u132_lock);
@@ -447,7 +447,7 @@ static void ftdi_elan_cancel_targets(struct usb_ftdi *ftdi)
                         }
                 }
         }
-        ftdi->recieved = 0;
+        ftdi->received = 0;
         ftdi->expected = 4;
         ftdi->ed_found = 0;
         mutex_unlock(&ftdi->u132_lock);
@@ -456,7 +456,6 @@ static void ftdi_elan_cancel_targets(struct usb_ftdi *ftdi)
 static void ftdi_elan_kick_command_queue(struct usb_ftdi *ftdi)
 {
         ftdi_command_queue_work(ftdi, 0);
-        return;
 }
 
 static void ftdi_elan_command_work(struct work_struct *work)
@@ -483,7 +482,6 @@ static void ftdi_elan_command_work(struct work_struct *work)
 static void ftdi_elan_kick_respond_queue(struct usb_ftdi *ftdi)
 {
         ftdi_respond_queue_work(ftdi, 0);
-        return;
 }
 
 static void ftdi_elan_respond_work(struct work_struct *work)
@@ -623,9 +621,12 @@ static void ftdi_elan_status_work(struct work_struct *work)
 */
 static int ftdi_elan_open(struct inode *inode, struct file *file)
 {
-        int subminor = iminor(inode);
-        struct usb_interface *interface = usb_find_interface(&ftdi_elan_driver,
-                subminor);
+	int subminor;
+	struct usb_interface *interface;
+
+        subminor = iminor(inode);
+        interface = usb_find_interface(&ftdi_elan_driver, subminor);
+
         if (!interface) {
                 printk(KERN_ERR "can't find device for minor %d\n", subminor);
                 return -ENODEV;
@@ -647,7 +648,7 @@ static int ftdi_elan_open(struct inode *inode, struct file *file)
 
 static int ftdi_elan_release(struct inode *inode, struct file *file)
 {
-        struct usb_ftdi *ftdi = (struct usb_ftdi *)file->private_data;
+        struct usb_ftdi *ftdi = file->private_data;
         if (ftdi == NULL)
                 return -ENODEV;
         up(&ftdi->sw_lock);        /* decrement the count on our device */
@@ -670,7 +671,7 @@ static ssize_t ftdi_elan_read(struct file *file, char __user *buffer,
         int bytes_read = 0;
         int retry_on_empty = 10;
         int retry_on_timeout = 5;
-        struct usb_ftdi *ftdi = (struct usb_ftdi *)file->private_data;
+        struct usb_ftdi *ftdi = file->private_data;
         if (ftdi->disconnected > 0) {
                 return -ENODEV;
         }
@@ -731,7 +732,7 @@ static void ftdi_elan_write_bulk_callback(struct urb *urb)
                 dev_err(&ftdi->udev->dev, "urb=%p write bulk status received: %"
                         "d\n", urb, status);
         }
-        usb_buffer_free(urb->dev, urb->transfer_buffer_length,
+        usb_free_coherent(urb->dev, urb->transfer_buffer_length,
                 urb->transfer_buffer, urb->transfer_dma);
 }
 
@@ -792,7 +793,7 @@ static int ftdi_elan_command_engine(struct usb_ftdi *ftdi)
                         total_size);
                 return -ENOMEM;
         }
-        buf = usb_buffer_alloc(ftdi->udev, total_size, GFP_KERNEL,
+        buf = usb_alloc_coherent(ftdi->udev, total_size, GFP_KERNEL,
                 &urb->transfer_dma);
         if (!buf) {
                 dev_err(&ftdi->udev->dev, "could not get a buffer to write %d c"
@@ -826,7 +827,7 @@ static int ftdi_elan_command_engine(struct usb_ftdi *ftdi)
                 dev_err(&ftdi->udev->dev, "failed %d to submit urb %p to write "
                         "%d commands totaling %d bytes to the Uxxx\n", retval,
                         urb, command_size, total_size);
-                usb_buffer_free(ftdi->udev, total_size, buf, urb->transfer_dma);
+                usb_free_coherent(ftdi->udev, total_size, buf, urb->transfer_dma);
                 usb_free_urb(urb);
                 return retval;
         }
@@ -873,7 +874,7 @@ static char *have_ed_set_response(struct usb_ftdi *ftdi,
                         mutex_unlock(&ftdi->u132_lock);
                         ftdi_elan_do_callback(ftdi, target, 4 + ftdi->response,
                                 payload);
-                        ftdi->recieved = 0;
+                        ftdi->received = 0;
                         ftdi->expected = 4;
                         ftdi->ed_found = 0;
                         return ftdi->response;
@@ -889,7 +890,7 @@ static char *have_ed_set_response(struct usb_ftdi *ftdi,
                         mutex_unlock(&ftdi->u132_lock);
                         ftdi_elan_do_callback(ftdi, target, 4 + ftdi->response,
                                 payload);
-                        ftdi->recieved = 0;
+                        ftdi->received = 0;
                         ftdi->expected = 4;
                         ftdi->ed_found = 0;
                         return ftdi->response;
@@ -904,7 +905,7 @@ static char *have_ed_set_response(struct usb_ftdi *ftdi,
                 mutex_unlock(&ftdi->u132_lock);
                 ftdi_elan_do_callback(ftdi, target, 4 + ftdi->response,
                         payload);
-                ftdi->recieved = 0;
+                ftdi->received = 0;
                 ftdi->expected = 4;
                 ftdi->ed_found = 0;
                 return ftdi->response;
@@ -913,7 +914,7 @@ static char *have_ed_set_response(struct usb_ftdi *ftdi,
                 mutex_unlock(&ftdi->u132_lock);
                 ftdi_elan_do_callback(ftdi, target, 4 + ftdi->response,
                         payload);
-                ftdi->recieved = 0;
+                ftdi->received = 0;
                 ftdi->expected = 4;
                 ftdi->ed_found = 0;
                 return ftdi->response;
@@ -933,7 +934,7 @@ static char *have_ed_get_response(struct usb_ftdi *ftdi,
         if (target->active)
                 ftdi_elan_do_callback(ftdi, target, NULL, 0);
         target->abandoning = 0;
-        ftdi->recieved = 0;
+        ftdi->received = 0;
         ftdi->expected = 4;
         ftdi->ed_found = 0;
         return ftdi->response;
@@ -950,7 +951,7 @@ static char *have_ed_get_response(struct usb_ftdi *ftdi,
 */
 static int ftdi_elan_respond_engine(struct usb_ftdi *ftdi)
 {
-        u8 *b = ftdi->response + ftdi->recieved;
+        u8 *b = ftdi->response + ftdi->received;
         int bytes_read = 0;
         int retry_on_empty = 1;
         int retry_on_timeout = 3;
@@ -1042,11 +1043,11 @@ static int ftdi_elan_respond_engine(struct usb_ftdi *ftdi)
                 u8 c = ftdi->bulk_in_buffer[++ftdi->bulk_in_last];
                 bytes_read += 1;
                 ftdi->bulk_in_left -= 1;
-                if (ftdi->recieved == 0 && c == 0xFF) {
+                if (ftdi->received == 0 && c == 0xFF) {
                         goto have;
                 } else
                         *b++ = c;
-                if (++ftdi->recieved < ftdi->expected) {
+                if (++ftdi->received < ftdi->expected) {
                         goto have;
                 } else if (ftdi->ed_found) {
                         int ed_number = (ftdi->response[0] >> 5) & 0x03;
@@ -1068,7 +1069,7 @@ static int ftdi_elan_respond_engine(struct usb_ftdi *ftdi)
                         }
                         ftdi_elan_do_callback(ftdi, target, 4 + ftdi->response,
                                 payload);
-                        ftdi->recieved = 0;
+                        ftdi->received = 0;
                         ftdi->expected = 4;
                         ftdi->ed_found = 0;
                         b = ftdi->response;
@@ -1088,7 +1089,7 @@ static int ftdi_elan_respond_engine(struct usb_ftdi *ftdi)
                         *respond->value = data;
                         *respond->result = 0;
                         complete(&respond->wait_completion);
-                        ftdi->recieved = 0;
+                        ftdi->received = 0;
                         ftdi->expected = 4;
                         ftdi->ed_found = 0;
                         b = ftdi->response;
@@ -1164,7 +1165,7 @@ static ssize_t ftdi_elan_write(struct file *file,
                 retval = -ENOMEM;
                 goto error_1;
         }
-        buf = usb_buffer_alloc(ftdi->udev, count, GFP_KERNEL,
+        buf = usb_alloc_coherent(ftdi->udev, count, GFP_KERNEL,
                 &urb->transfer_dma);
         if (!buf) {
                 retval = -ENOMEM;
@@ -1189,7 +1190,7 @@ static ssize_t ftdi_elan_write(struct file *file,
 exit:
         return count;
 error_3:
-	usb_buffer_free(ftdi->udev, count, buf, urb->transfer_dma);
+	usb_free_coherent(ftdi->udev, count, buf, urb->transfer_dma);
 error_2:
 	usb_free_urb(urb);
 error_1:
@@ -1965,7 +1966,7 @@ static int ftdi_elan_synchronize_flush(struct usb_ftdi *ftdi)
                         "ence\n");
                 return -ENOMEM;
         }
-        buf = usb_buffer_alloc(ftdi->udev, I, GFP_KERNEL, &urb->transfer_dma);
+        buf = usb_alloc_coherent(ftdi->udev, I, GFP_KERNEL, &urb->transfer_dma);
         if (!buf) {
                 dev_err(&ftdi->udev->dev, "could not get a buffer for flush seq"
                         "uence\n");
@@ -1982,7 +1983,7 @@ static int ftdi_elan_synchronize_flush(struct usb_ftdi *ftdi)
         if (retval) {
                 dev_err(&ftdi->udev->dev, "failed to submit urb containing the "
                         "flush sequence\n");
-                usb_buffer_free(ftdi->udev, i, buf, urb->transfer_dma);
+                usb_free_coherent(ftdi->udev, i, buf, urb->transfer_dma);
                 usb_free_urb(urb);
                 return -ENOMEM;
         }
@@ -2008,7 +2009,7 @@ static int ftdi_elan_synchronize_reset(struct usb_ftdi *ftdi)
                         "quence\n");
                 return -ENOMEM;
         }
-        buf = usb_buffer_alloc(ftdi->udev, I, GFP_KERNEL, &urb->transfer_dma);
+        buf = usb_alloc_coherent(ftdi->udev, I, GFP_KERNEL, &urb->transfer_dma);
         if (!buf) {
                 dev_err(&ftdi->udev->dev, "could not get a buffer for the reset"
                         " sequence\n");
@@ -2027,7 +2028,7 @@ static int ftdi_elan_synchronize_reset(struct usb_ftdi *ftdi)
         if (retval) {
                 dev_err(&ftdi->udev->dev, "failed to submit urb containing the "
                         "reset sequence\n");
-                usb_buffer_free(ftdi->udev, i, buf, urb->transfer_dma);
+                usb_free_coherent(ftdi->udev, i, buf, urb->transfer_dma);
                 usb_free_urb(urb);
                 return -ENOMEM;
         }
@@ -2766,7 +2767,7 @@ static int ftdi_elan_probe(struct usb_interface *interface,
         ftdi->sequence_num = ++ftdi_instances;
         mutex_unlock(&ftdi_module_lock);
         ftdi_elan_init_kref(ftdi);
-        init_MUTEX(&ftdi->sw_lock);
+	sema_init(&ftdi->sw_lock, 1);
         ftdi->udev = usb_get_dev(interface_to_usbdev(interface));
         ftdi->interface = interface;
         mutex_init(&ftdi->u132_lock);
@@ -2888,8 +2889,7 @@ static struct usb_driver ftdi_elan_driver = {
 static int __init ftdi_elan_init(void)
 {
         int result;
-        printk(KERN_INFO "driver %s built at %s on %s\n", ftdi_elan_driver.name,
-	       __TIME__, __DATE__);
+        printk(KERN_INFO "driver %s\n", ftdi_elan_driver.name);
         mutex_init(&ftdi_module_lock);
         INIT_LIST_HEAD(&ftdi_static_list);
         status_queue = create_singlethread_workqueue("ftdi-status-control");

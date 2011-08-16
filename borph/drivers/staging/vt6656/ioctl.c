@@ -48,9 +48,7 @@
 //static int          msglevel                =MSG_LEVEL_DEBUG;
 static int          msglevel                =MSG_LEVEL_INFO;
 
-#ifdef WPA_SM_Transtatus
     SWPAResult wpa_Result;
-#endif
 
 /*---------------------  Static Functions  --------------------------*/
 
@@ -72,16 +70,16 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     SNodeList           sNodeList;
     PSBSSIDList         pList;
     PSNodeList          pNodeList;
-    UINT                cbListCount;
+    unsigned int                cbListCount;
     PKnownBSS           pBSS;
     PKnownNodeDB        pNode;
-    UINT                ii, jj;
+    unsigned int                ii, jj;
     SCmdLinkStatus      sLinkStatus;
     BYTE                abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
     BYTE                abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     DWORD               dwKeyIndex= 0;
     BYTE                abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    LONG                ldBm;
+    signed long                ldBm;
 
     pReq->wResult = 0;
 
@@ -92,7 +90,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sScanCmd, pReq->data, sizeof(SCmdScan))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
         pItemSSID = (PWLAN_IE_SSID)sScanCmd.ssid;
         if (pItemSSID->len != 0) {
@@ -100,16 +98,21 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             memcpy(abyScanSSID, pItemSSID, pItemSSID->len + WLAN_IEHDR_LEN);
         }
         spin_lock_irq(&pDevice->lock);
-        if (memcmp(pMgmt->abyCurrBSSID, &abyNullAddr[0], 6) == 0)
-            BSSvClearBSSList((HANDLE)pDevice, FALSE);
-        else
-            BSSvClearBSSList((HANDLE)pDevice, pDevice->bLinkPass);
-        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WLAN_CMD_BSS_SCAN..begin \n");
 
-        if (pItemSSID->len != 0)
-            bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, abyScanSSID);
-        else
-            bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, NULL);
+	if (memcmp(pMgmt->abyCurrBSSID, &abyNullAddr[0], 6) == 0)
+		BSSvClearBSSList((void *) pDevice, FALSE);
+	else
+		BSSvClearBSSList((void *) pDevice, pDevice->bLinkPass);
+
+	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WLAN_CMD_BSS_SCAN..begin\n");
+
+	if (pItemSSID->len != 0)
+		bScheduleCommand((void *) pDevice,
+				 WLAN_CMD_BSSID_SCAN,
+				 abyScanSSID);
+	else
+		bScheduleCommand((void *) pDevice, WLAN_CMD_BSSID_SCAN, NULL);
+
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -121,7 +124,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sZoneTypeCmd, pReq->data, sizeof(SCmdZoneTypeSet))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
           if(sZoneTypeCmd.bWrite==TRUE) {
 	  //////write zonetype
@@ -160,7 +163,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 	   if (copy_to_user(pReq->data, &sZoneTypeCmd, sizeof(SCmdZoneTypeSet))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 	}
 
 	     break;
@@ -170,7 +173,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sJoinCmd, pReq->data, sizeof(SCmdBSSJoin))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
         pItemSSID = (PWLAN_IE_SSID)sJoinCmd.ssid;
         memset(pMgmt->abyDesireSSID, 0, WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1);
@@ -207,8 +210,10 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         netif_stop_queue(pDevice->dev);
         spin_lock_irq(&pDevice->lock);
         pMgmt->eCurrState = WMAC_STATE_IDLE;
-        bScheduleCommand((HANDLE) pDevice, WLAN_CMD_BSSID_SCAN, pMgmt->abyDesireSSID);
-        bScheduleCommand((HANDLE) pDevice, WLAN_CMD_SSID, NULL);
+	bScheduleCommand((void *) pDevice,
+			 WLAN_CMD_BSSID_SCAN,
+			 pMgmt->abyDesireSSID);
+	bScheduleCommand((void *) pDevice, WLAN_CMD_SSID, NULL);
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -218,17 +223,17 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sWEPCmd, pReq->data, sizeof(SCmdSetWEP))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 	    if (sWEPCmd.bEnableWep != TRUE) {
 	        int uu;
 
             pDevice->bEncryptionEnable = FALSE;
             pDevice->eEncryptionStatus = Ndis802_11EncryptionDisabled;
             spin_lock_irq(&pDevice->lock);
-            for(uu=0;uu<MAX_KEY_TABLE;uu++)
-                MACvDisableKeyEntry(pDevice,uu);
+	    for (uu = 0; uu < MAX_KEY_TABLE; uu++)
+		MACvDisableKeyEntry(pDevice, uu);
             spin_unlock_irq(&pDevice->lock);
-            DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WEP function disable. \n");
+	    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "WEP function disable.\n");
             break;
         }
 
@@ -290,7 +295,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_to_user(pReq->data, &sLinkStatus, sizeof(SCmdLinkStatus))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
         break;
 
@@ -302,12 +307,12 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             if (!pBSS->bActive)
                 continue;
             cbListCount++;
-        };
+        }
         sList.uItem = cbListCount;
         if (copy_to_user(pReq->data, &sList, sizeof(SBSSIDList))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         pReq->wResult = 0;
         break;
 
@@ -315,7 +320,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sList, pReq->data, sizeof(SBSSIDList))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         pList = (PSBSSIDList)kmalloc(sizeof(SBSSIDList) + (sList.uItem * sizeof(SBSSIDItem)), (int)GFP_ATOMIC);
         if (pList == NULL) {
             result = -ENOMEM;
@@ -330,7 +335,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pList->sBSSIDList[ii].wBeaconInterval = pBSS->wBeaconInterval;
     		    pList->sBSSIDList[ii].wCapInfo = pBSS->wCapInfo;
     		    RFvRSSITodBm(pDevice, (BYTE)(pBSS->uRSSI), &ldBm);
-    		    pList->sBSSIDList[ii].uRSSI = (UINT)ldBm;
+		    pList->sBSSIDList[ii].uRSSI = (unsigned int) ldBm;
 //    		    pList->sBSSIDList[ii].uRSSI = pBSS->uRSSI;
     		    memcpy(pList->sBSSIDList[ii].abyBSSID, pBSS->abyBSSID, WLAN_BSSID_LEN);
     		    pItemSSID = (PWLAN_IE_SSID)pBSS->abySSID;
@@ -357,7 +362,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_to_user(pReq->data, pList, sizeof(SBSSIDList) + (sList.uItem * sizeof(SBSSIDItem)))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         kfree(pList);
         pReq->wResult = 0;
         break;
@@ -366,14 +371,14 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_to_user(pReq->data, &(pDevice->s802_11Counter), sizeof(SDot11MIBCount))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         break;
 
     case WLAN_CMD_GET_STAT:
         if (copy_to_user(pReq->data, &(pDevice->scStatistic), sizeof(SStatCounter))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         break;
     case WLAN_CMD_STOP_MAC:
 
@@ -410,9 +415,9 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sValue, pReq->data, sizeof(SCmdValue))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 		if (sValue.dwValue == 1) {
-            if (hostap_set_hostapd(pDevice, 1, 1) == 0){
+            if (vt6656_hostap_set_hostapd(pDevice, 1, 1) == 0){
                 DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Enable HOSTAP\n");
             }
             else {
@@ -421,7 +426,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 			}
         }
         else {
-            hostap_set_hostapd(pDevice, 0, 1);
+            vt6656_hostap_set_hostapd(pDevice, 0, 1);
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Disable HOSTAP\n");
         }
 
@@ -438,7 +443,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sValue, pReq->data, sizeof(SCmdValue))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
 		if (sValue.dwValue == 1) {
             pDevice->bEnable8021x = TRUE;
@@ -458,7 +463,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sValue, pReq->data, sizeof(SCmdValue))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
 		if (sValue.dwValue == 1) {
             pDevice->bEnableHostWEP = TRUE;
@@ -477,10 +482,12 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sValue, pReq->data, sizeof(SCmdValue))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 		if (sValue.dwValue == 1) {
                      DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "up wpadev\n");
-		   memcpy(pDevice->wpadev->dev_addr, pDevice->dev->dev_addr, U_ETHER_ADDR_LEN);
+		   memcpy(pDevice->wpadev->dev_addr,
+			  pDevice->dev->dev_addr,
+			  ETH_ALEN);
 		   pDevice->bWPADEVUp = TRUE;
         }
         else {
@@ -500,7 +507,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sStartAPCmd, pReq->data, sizeof(SCmdStartAP))) {
 			result = -EFAULT;
 			break;
-		};
+		}
 
 	    if (sStartAPCmd.wBSSType == AP) {
 	        pMgmt->eConfigMode = WMAC_CONFIG_AP;
@@ -574,7 +581,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
 
         netif_stop_queue(pDevice->dev);
         spin_lock_irq(&pDevice->lock);
-        bScheduleCommand((HANDLE)pDevice, WLAN_CMD_RUN_AP, NULL);
+	bScheduleCommand((void *) pDevice, WLAN_CMD_RUN_AP, NULL);
         spin_unlock_irq(&pDevice->lock);
         break;
 
@@ -587,13 +594,13 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             if (!pNode->bActive)
                 continue;
             cbListCount++;
-        };
+        }
 
         sNodeList.uItem = cbListCount;
         if (copy_to_user(pReq->data, &sNodeList, sizeof(SNodeList))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         pReq->wResult = 0;
         break;
 
@@ -602,7 +609,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
         if (copy_from_user(&sNodeList, pReq->data, sizeof(SNodeList))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         pNodeList = (PSNodeList)kmalloc(sizeof(SNodeList) + (sNodeList.uItem * sizeof(SNodeItem)), (int)GFP_ATOMIC);
         if (pNodeList == NULL) {
             result = -ENOMEM;
@@ -638,16 +645,15 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    if (jj >= pNodeList->uItem)
     		        break;
     		}
-		};
+		}
         if (copy_to_user(pReq->data, pNodeList, sizeof(SNodeList) + (sNodeList.uItem * sizeof(SNodeItem)))) {
 			result = -EFAULT;
 			break;
-		};
+		}
         kfree(pNodeList);
         pReq->wResult = 0;
         break;
 
-#ifdef WPA_SM_Transtatus
     case 0xFF:
         memset(wpa_Result.ifname,0,sizeof(wpa_Result.ifname));
 	    wpa_Result.proto = 0;
@@ -664,10 +670,9 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
       pMgmt->Cisco_cckm =1;
     else
     pMgmt->Cisco_cckm =0;
-//DavidWang
+
 
 if(wpa_Result.authenticated==TRUE) {
-   #ifdef SndEvt_ToAPI
    {
      union iwreq_data      wrqu;
 
@@ -678,7 +683,6 @@ if(wpa_Result.authenticated==TRUE) {
      wrqu.data.length =pItemSSID->len;
      wireless_send_event(pDevice->dev, IWEVCUSTOM, &wrqu, pItemSSID->abySSID);
    }
-   #endif
          pDevice->fWPA_Authened = TRUE;           //is successful peer to wpa_Result.authenticated?
 }
 
@@ -691,7 +695,6 @@ if(wpa_Result.authenticated==TRUE) {
 
 	pReq->wResult = 0;
         break;
-#endif
 
     default:
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Private command not support..\n");

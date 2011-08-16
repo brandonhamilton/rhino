@@ -11,8 +11,8 @@
  */
 
 #include <linux/init.h>
+#include <linux/gfp.h>
 #include <linux/usb.h>
-#include <linux/slab.h>
 #include <linux/netdevice.h>
 #include <linux/bitrev.h>
 #include "st5481.h"
@@ -124,7 +124,7 @@ static void usb_b_out(struct st5481_bcs *bcs,int buf_nr)
 }
 
 /*
- * Start transfering (flags or data) on the B channel, since
+ * Start transferring (flags or data) on the B channel, since
  * FIFO counters has been set to a non-zero value.
  */
 static void st5481B_start_xfer(void *context)

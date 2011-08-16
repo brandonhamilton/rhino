@@ -108,7 +108,7 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	Node *fmt;
 	struct file * interp_file = NULL;
 	char iname[BINPRM_BUF_SIZE];
-	char *iname_addr = iname;
+	const char *iname_addr = iname;
 	int retval;
 	int fd_binary = -1;
 
@@ -149,8 +149,7 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 
 		/* if the binary is not readable than enforce mm->dumpable=0
 		   regardless of the interpreter's permissions */
-		if (file_permission(bprm->file, MAY_READ))
-			bprm->interp_flags |= BINPRM_FLAGS_ENFORCE_NONDUMP;
+		would_dump(bprm, bprm->file);
 
 		allow_write_access(bprm->file);
 		bprm->file = NULL;
@@ -495,6 +494,7 @@ static struct inode *bm_get_inode(struct super_block *sb, int mode)
 	struct inode * inode = new_inode(sb);
 
 	if (inode) {
+		inode->i_ino = get_next_ino();
 		inode->i_mode = mode;
 		inode->i_atime = inode->i_mtime = inode->i_ctime =
 			current_fs_time(inode->i_sb);
@@ -502,8 +502,9 @@ static struct inode *bm_get_inode(struct super_block *sb, int mode)
 	return inode;
 }
 
-static void bm_clear_inode(struct inode *inode)
+static void bm_evict_inode(struct inode *inode)
 {
+	end_writeback(inode);
 	kfree(inode->i_private);
 }
 
@@ -575,6 +576,7 @@ static ssize_t bm_entry_write(struct file *file, const char __user *buffer,
 static const struct file_operations bm_entry_operations = {
 	.read		= bm_entry_read,
 	.write		= bm_entry_write,
+	.llseek		= default_llseek,
 };
 
 /* /register */
@@ -642,6 +644,7 @@ out:
 
 static const struct file_operations bm_register_operations = {
 	.write		= bm_register_write,
+	.llseek		= noop_llseek,
 };
 
 /* /status */
@@ -679,13 +682,14 @@ static ssize_t bm_status_write(struct file * file, const char __user * buffer,
 static const struct file_operations bm_status_operations = {
 	.read		= bm_status_read,
 	.write		= bm_status_write,
+	.llseek		= default_llseek,
 };
 
 /* Superblock handling */
 
 static const struct super_operations s_ops = {
 	.statfs		= simple_statfs,
-	.clear_inode	= bm_clear_inode,
+	.evict_inode	= bm_evict_inode,
 };
 
 static int bm_fill_super(struct super_block * sb, void * data, int silent)
@@ -701,10 +705,10 @@ static int bm_fill_super(struct super_block * sb, void * data, int silent)
 	return err;
 }
 
-static int bm_get_sb(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *bm_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
-	return get_sb_single(fs_type, flags, data, bm_fill_super, mnt);
+	return mount_single(fs_type, flags, data, bm_fill_super);
 }
 
 static struct linux_binfmt misc_format = {
@@ -715,7 +719,7 @@ static struct linux_binfmt misc_format = {
 static struct file_system_type bm_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "binfmt_misc",
-	.get_sb		= bm_get_sb,
+	.mount		= bm_mount,
 	.kill_sb	= kill_litter_super,
 };
 
@@ -723,7 +727,7 @@ static int __init init_misc_binfmt(void)
 {
 	int err = register_filesystem(&bm_fs_type);
 	if (!err) {
-		err = register_binfmt(&misc_format);
+		err = insert_binfmt(&misc_format);
 		if (err)
 			unregister_filesystem(&bm_fs_type);
 	}

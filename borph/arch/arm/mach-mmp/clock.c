@@ -89,10 +89,17 @@ unsigned long clk_get_rate(struct clk *clk)
 }
 EXPORT_SYMBOL(clk_get_rate);
 
-void clks_register(struct clk_lookup *clks, size_t num)
+int clk_set_rate(struct clk *clk, unsigned long rate)
 {
-	int i;
+	unsigned long flags;
+	int ret = -EINVAL;
 
-	for (i = 0; i < num; i++)
-		clkdev_add(&clks[i]);
+	if (clk->ops->setrate) {
+		spin_lock_irqsave(&clocks_lock, flags);
+		ret = clk->ops->setrate(clk, rate);
+		spin_unlock_irqrestore(&clocks_lock, flags);
+	}
+
+	return ret;
 }
+EXPORT_SYMBOL(clk_set_rate);

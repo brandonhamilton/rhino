@@ -169,9 +169,11 @@ static int p970_marked_instr_event(u64 event)
 	switch (unit) {
 	case PM_VPU:
 		mask = 0x4c;		/* byte 0 bits 2,3,6 */
+		break;
 	case PM_LSU0:
 		/* byte 2 bits 0,2,3,4,6; all of byte 1 */
 		mask = 0x085dff00;
+		break;
 	case PM_LSU1L:
 		mask = 0x50 << 24;	/* byte 3 bits 4,6 */
 		break;
@@ -465,6 +467,11 @@ static int ppc970_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
 		[C(OP_WRITE)] = {	-1,		-1	},
 		[C(OP_PREFETCH)] = {	-1,		-1	},
 	},
+	[C(NODE)] = {		/* 	RESULT_ACCESS	RESULT_MISS */
+		[C(OP_READ)] = {	-1,		-1	},
+		[C(OP_WRITE)] = {	-1,		-1	},
+		[C(OP_PREFETCH)] = {	-1,		-1	},
+	},
 };
 
 static struct power_pmu ppc970_pmu = {
@@ -482,7 +489,7 @@ static struct power_pmu ppc970_pmu = {
 	.cache_events		= &ppc970_cache_events,
 };
 
-static int init_ppc970_pmu(void)
+static int __init init_ppc970_pmu(void)
 {
 	if (!cur_cpu_spec->oprofile_cpu_type ||
 	    (strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/970")
@@ -492,4 +499,4 @@ static int init_ppc970_pmu(void)
 	return register_power_pmu(&ppc970_pmu);
 }
 
-arch_initcall(init_ppc970_pmu);
+early_initcall(init_ppc970_pmu);

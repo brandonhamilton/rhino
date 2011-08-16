@@ -8,6 +8,8 @@
  *  Copyright (C) 1998 Jakub Jelinek (jj@sunsite.mff.cuni.cz)
  */
 
+#include <linux/const.h>
+
 #ifndef __ASSEMBLY__
 #include <asm-generic/4level-fixup.h>
 
@@ -142,13 +144,12 @@ BTFIXUPDEF_CALL_CONST(unsigned long, pgd_page_vaddr, pgd_t)
 #define pmd_page(pmd) BTFIXUP_CALL(pmd_page)(pmd)
 #define pgd_page_vaddr(pgd) BTFIXUP_CALL(pgd_page_vaddr)(pgd)
 
-BTFIXUPDEF_SETHI(none_mask)
 BTFIXUPDEF_CALL_CONST(int, pte_present, pte_t)
 BTFIXUPDEF_CALL(void, pte_clear, pte_t *)
 
 static inline int pte_none(pte_t pte)
 {
-	return !(pte_val(pte) & ~BTFIXUP_SETHI(none_mask));
+	return !pte_val(pte);
 }
 
 #define pte_present(pte) BTFIXUP_CALL(pte_present)(pte)
@@ -160,7 +161,7 @@ BTFIXUPDEF_CALL(void, pmd_clear, pmd_t *)
 
 static inline int pmd_none(pmd_t pmd)
 {
-	return !(pmd_val(pmd) & ~BTFIXUP_SETHI(none_mask));
+	return !pmd_val(pmd);
 }
 
 #define pmd_bad(pmd) BTFIXUP_CALL(pmd_bad)(pmd)
@@ -305,10 +306,7 @@ BTFIXUPDEF_CALL(pte_t *, pte_offset_kernel, pmd_t *, unsigned long)
  * and sun4c is guaranteed to have no highmem anyway.
  */
 #define pte_offset_map(d, a)		pte_offset_kernel(d,a)
-#define pte_offset_map_nested(d, a)	pte_offset_kernel(d,a)
-
 #define pte_unmap(pte)		do{}while(0)
-#define pte_unmap_nested(pte)	do{}while(0)
 
 /* Certain architectures need to do special things when pte's
  * within a page table are directly modified.  Thus, the following
@@ -330,9 +328,9 @@ BTFIXUPDEF_CALL(void, mmu_info, struct seq_file *)
 #define FAULT_CODE_WRITE    0x2
 #define FAULT_CODE_USER     0x4
 
-BTFIXUPDEF_CALL(void, update_mmu_cache, struct vm_area_struct *, unsigned long, pte_t)
+BTFIXUPDEF_CALL(void, update_mmu_cache, struct vm_area_struct *, unsigned long, pte_t *)
 
-#define update_mmu_cache(vma,addr,pte) BTFIXUP_CALL(update_mmu_cache)(vma,addr,pte)
+#define update_mmu_cache(vma,addr,ptep) BTFIXUP_CALL(update_mmu_cache)(vma,addr,ptep)
 
 BTFIXUPDEF_CALL(void, sparc_mapiorange, unsigned int, unsigned long,
     unsigned long, unsigned int)
@@ -460,9 +458,9 @@ extern int io_remap_pfn_range(struct vm_area_struct *vma,
 
 #endif /* !(__ASSEMBLY__) */
 
-#define VMALLOC_START           0xfe600000
+#define VMALLOC_START           _AC(0xfe600000,UL)
 /* XXX Alter this when I get around to fixing sun4c - Anton */
-#define VMALLOC_END             0xffc00000
+#define VMALLOC_END             _AC(0xffc00000,UL)
 
 
 /* We provide our own get_unmapped_area to cope with VA holes for userland */

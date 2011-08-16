@@ -340,7 +340,7 @@ static int usbat_check_status(struct us_data *us)
 }
 
 /*
- * Stores critical information in internal registers in prepartion for the execution
+ * Stores critical information in internal registers in preparation for the execution
  * of a conditional usbat_read_blocks or usbat_write_blocks call.
  */
 static int usbat_set_shuttle_features(struct us_data *us,
@@ -1628,10 +1628,10 @@ static int usbat_hp8200e_transport(struct scsi_cmnd *srb, struct us_data *us)
 		return USB_STOR_TRANSPORT_ERROR;
 	}
 
-	if ( (result = usbat_multiple_write(us, 
-			registers, data, 7)) != USB_STOR_TRANSPORT_GOOD) {
+	result = usbat_multiple_write(us, registers, data, 7);
+
+	if (result != USB_STOR_TRANSPORT_GOOD)
 		return result;
-	}
 
 	/*
 	 * Write the 12-byte command header.
@@ -1643,12 +1643,11 @@ static int usbat_hp8200e_transport(struct scsi_cmnd *srb, struct us_data *us)
 	 * AT SPEED 4 IS UNRELIABLE!!!
 	 */
 
-	if ((result = usbat_write_block(us,
-			USBAT_ATA, srb->cmnd, 12,
-				(srb->cmnd[0]==GPCMD_BLANK ? 75 : 10), 0) !=
-			     USB_STOR_TRANSPORT_GOOD)) {
+	result = usbat_write_block(us, USBAT_ATA, srb->cmnd, 12,
+				   srb->cmnd[0] == GPCMD_BLANK ? 75 : 10, 0);
+
+	if (result != USB_STOR_TRANSPORT_GOOD)
 		return result;
-	}
 
 	/* If there is response data to be read in then do it here. */
 

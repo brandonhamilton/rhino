@@ -51,15 +51,11 @@ ENTRY(cpu_mohawk_proc_init)
  * cpu_mohawk_proc_fin()
  */
 ENTRY(cpu_mohawk_proc_fin)
-	stmfd	sp!, {lr}
-	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
-	msr	cpsr_c, ip
-	bl	mohawk_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1800			@ ...iz...........
 	bic	r0, r0, #0x0006			@ .............ca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	ldmfd	sp!, {pc}
+	mov	pc, lr
 
 /*
  * cpu_mohawk_reset(loc)
@@ -95,6 +91,17 @@ ENTRY(cpu_mohawk_do_idle)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain write buffer
 	mcr	p15, 0, r0, c7, c0, 4		@ wait for interrupt
 	mov	pc, lr
+
+/*
+ *	flush_icache_all()
+ *
+ *	Unconditionally clean and invalidate the entire icache.
+ */
+ENTRY(mohawk_flush_icache_all)
+	mov	r0, #0
+	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
+	mov	pc, lr
+ENDPROC(mohawk_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -186,15 +193,16 @@ ENTRY(mohawk_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_page(void *page)
+ *	flush_kern_dcache_area(void *addr, size_t size)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- page aligned address
+ *	- addr	- kernel address
+ *	- size	- region size
  */
-ENTRY(mohawk_flush_kern_dcache_page)
-	add	r1, r0, #PAGE_SZ
+ENTRY(mohawk_flush_kern_dcache_area)
+	add	r1, r0, r1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -217,7 +225,7 @@ ENTRY(mohawk_flush_kern_dcache_page)
  *
  * (same as v4wb)
  */
-ENTRY(mohawk_dma_inv_range)
+mohawk_dma_inv_range:
 	tst	r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
 	tst	r1, #CACHE_DLINESIZE - 1
@@ -240,7 +248,7 @@ ENTRY(mohawk_dma_inv_range)
  *
  * (same as v4wb)
  */
-ENTRY(mohawk_dma_clean_range)
+mohawk_dma_clean_range:
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -267,16 +275,32 @@ ENTRY(mohawk_dma_flush_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-ENTRY(mohawk_cache_fns)
-	.long	mohawk_flush_kern_cache_all
-	.long	mohawk_flush_user_cache_all
-	.long	mohawk_flush_user_cache_range
-	.long	mohawk_coherent_kern_range
-	.long	mohawk_coherent_user_range
-	.long	mohawk_flush_kern_dcache_page
-	.long	mohawk_dma_inv_range
-	.long	mohawk_dma_clean_range
-	.long	mohawk_dma_flush_range
+/*
+ *	dma_map_area(start, size, dir)
+ *	- start	- kernel virtual start address
+ *	- size	- size of region
+ *	- dir	- DMA direction
+ */
+ENTRY(mohawk_dma_map_area)
+	add	r1, r1, r0
+	cmp	r2, #DMA_TO_DEVICE
+	beq	mohawk_dma_clean_range
+	bcs	mohawk_dma_inv_range
+	b	mohawk_dma_flush_range
+ENDPROC(mohawk_dma_map_area)
+
+/*
+ *	dma_unmap_area(start, size, dir)
+ *	- start	- kernel virtual start address
+ *	- size	- size of region
+ *	- dir	- DMA direction
+ */
+ENTRY(mohawk_dma_unmap_area)
+	mov	pc, lr
+ENDPROC(mohawk_dma_unmap_area)
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions mohawk
 
 ENTRY(cpu_mohawk_dcache_clean_area)
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -317,7 +341,7 @@ ENTRY(cpu_mohawk_set_pte_ext)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-	__INIT
+	__CPUINIT
 
 	.type	__mohawk_setup, #function
 __mohawk_setup:
@@ -352,39 +376,14 @@ mohawk_crval:
 
 	__INITDATA
 
-/*
- * Purpose : Function pointers used to access above functions - all calls
- *	     come through these
- */
-	.type	mohawk_processor_functions, #object
-mohawk_processor_functions:
-	.word	v5t_early_abort
-	.word	legacy_pabort
-	.word	cpu_mohawk_proc_init
-	.word	cpu_mohawk_proc_fin
-	.word	cpu_mohawk_reset
-	.word	cpu_mohawk_do_idle
-	.word	cpu_mohawk_dcache_clean_area
-	.word	cpu_mohawk_switch_mm
-	.word	cpu_mohawk_set_pte_ext
-	.size	mohawk_processor_functions, . - mohawk_processor_functions
+	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
+	define_processor_functions mohawk, dabort=v5t_early_abort, pabort=legacy_pabort
 
 	.section ".rodata"
 
-	.type	cpu_arch_name, #object
-cpu_arch_name:
-	.asciz	"armv5te"
-	.size	cpu_arch_name, . - cpu_arch_name
-
-	.type	cpu_elf_name, #object
-cpu_elf_name:
-	.asciz	"v5"
-	.size	cpu_elf_name, . - cpu_elf_name
-
-	.type	cpu_mohawk_name, #object
-cpu_mohawk_name:
-	.asciz	"Marvell 88SV331x"
-	.size	cpu_mohawk_name, . - cpu_mohawk_name
+	string	cpu_arch_name, "armv5te"
+	string	cpu_elf_name, "v5"
+	string	cpu_mohawk_name, "Marvell 88SV331x"
 
 	.align
 

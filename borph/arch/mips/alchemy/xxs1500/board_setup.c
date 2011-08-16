@@ -25,31 +25,37 @@
 
 #include <linux/gpio.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/delay.h>
+#include <linux/pm.h>
 
+#include <asm/reboot.h>
 #include <asm/mach-au1x00/au1000.h>
 
 #include <prom.h>
 
-void board_reset(void)
+static void xxs1500_reset(char *c)
 {
-	/* Hit BCSR.SYSTEM_CONTROL[SW_RST] */
-	au_writel(0x00000000, 0xAE00001C);
+	/* Jump to the reset vector */
+	__asm__ __volatile__("jr\t%0"::"r"(0xbfc00000));
+}
+
+static void xxs1500_power_off(void)
+{
+	while (1)
+		asm volatile (
+		"	.set	mips32					\n"
+		"	wait						\n"
+		"	.set	mips0					\n");
 }
 
 void __init board_setup(void)
 {
 	u32 pin_func;
 
-#ifdef CONFIG_SERIAL_8250_CONSOLE
-	char *argptr;
-	argptr = prom_getcmdline();
-	argptr = strstr(argptr, "console=");
-	if (argptr == NULL) {
-		argptr = prom_getcmdline();
-		strcat(argptr, " console=ttyS0,115200");
-	}
-#endif
+	pm_power_off = xxs1500_power_off;
+	_machine_halt = xxs1500_power_off;
+	_machine_restart = xxs1500_reset;
 
 	alchemy_gpio1_input_enable();
 	alchemy_gpio2_enable();
@@ -60,29 +66,10 @@ void __init board_setup(void)
 	au_writel(pin_func, SYS_PINFUNC);
 
 	/* Enable UART */
-	au_writel(0x01, UART3_ADDR + UART_MOD_CNTRL); /* clock enable (CE) */
-	mdelay(10);
-	au_writel(0x03, UART3_ADDR + UART_MOD_CNTRL); /* CE and "enable" */
-	mdelay(10);
-
-	/* Enable DTR = USB power up */
-	au_writel(0x01, UART3_ADDR + UART_MCR); /* UART_MCR_DTR is 0x01??? */
-
-#ifdef CONFIG_PCMCIA_XXS1500
-	/* GPIO 0, 1, and 4 are inputs */
-	alchemy_gpio_direction_input(0);
-	alchemy_gpio_direction_input(1);
-	alchemy_gpio_direction_input(4);
-
-	/* GPIO2 208/9/10/11 are inputs */
-	alchemy_gpio_direction_input(208);
-	alchemy_gpio_direction_input(209);
-	alchemy_gpio_direction_input(210);
-	alchemy_gpio_direction_input(211);
-
-	/* Turn off power */
-	alchemy_gpio_direction_output(214, 0);
-#endif
+	alchemy_uart_enable(AU1000_UART3_PHYS_ADDR);
+	/* Enable DTR (MCR bit 0) = USB power up */
+	__raw_writel(1, (void __iomem *)KSEG1ADDR(AU1000_UART3_PHYS_ADDR + 0x18));
+	wmb();
 
 #ifdef CONFIG_PCI
 #if defined(__MIPSEB__)
@@ -92,3 +79,23 @@ void __init board_setup(void)
 #endif
 #endif
 }
+
+static int __init xxs1500_init_irq(void)
+{
+	irq_set_irq_type(AU1500_GPIO204_INT, IRQF_TRIGGER_HIGH);
+	irq_set_irq_type(AU1500_GPIO201_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO202_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO203_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO205_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO207_INT, IRQF_TRIGGER_LOW);
+
+	irq_set_irq_type(AU1500_GPIO0_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO1_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO2_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO3_INT, IRQF_TRIGGER_LOW);
+	irq_set_irq_type(AU1500_GPIO4_INT, IRQF_TRIGGER_LOW); /* CF irq */
+	irq_set_irq_type(AU1500_GPIO5_INT, IRQF_TRIGGER_LOW);
+
+	return 0;
+}
+arch_initcall(xxs1500_init_irq);

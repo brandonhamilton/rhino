@@ -29,19 +29,9 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/device.h>
-#include <linux/miscdevice.h>
-#include <linux/poll.h>
-#include <linux/fs.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
-
-#include <asm/uaccess.h>
-#include <asm/mach-types.h>
-
-#include <plat/mux.h>
-#include <plat/board.h>
 
 #include "cbus.h"
 #include "tahvo.h"
@@ -50,13 +40,12 @@
 #define PFX			"tahvo: "
 
 static int tahvo_initialized;
-static int tahvo_irq_pin;
 static int tahvo_is_betty;
 
 static struct tasklet_struct tahvo_tasklet;
-spinlock_t tahvo_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_SPINLOCK(tahvo_lock);
 
-static struct completion device_release;
+static struct device *the_dev;
 
 struct tahvo_irq_handler_desc {
 	int (*func)(unsigned long);
@@ -66,17 +55,24 @@ struct tahvo_irq_handler_desc {
 
 static struct tahvo_irq_handler_desc tahvo_irq_handlers[MAX_TAHVO_IRQ_HANDLERS];
 
+int tahvo_get_status(void)
+{
+	return tahvo_initialized;
+}
+EXPORT_SYMBOL(tahvo_get_status);
+
 /**
  * tahvo_read_reg - Read a value from a register in Tahvo
  * @reg: the register to read from
  *
  * This function returns the contents of the specified register
  */
-int tahvo_read_reg(int reg)
+int tahvo_read_reg(unsigned reg)
 {
 	BUG_ON(!tahvo_initialized);
-	return cbus_read_reg(cbus_host, TAHVO_ID, reg);
+	return cbus_read_reg(the_dev, TAHVO_ID, reg);
 }
+EXPORT_SYMBOL(tahvo_read_reg);
 
 /**
  * tahvo_write_reg - Write a value to a register in Tahvo
@@ -85,11 +81,12 @@ int tahvo_read_reg(int reg)
  *
  * This function writes a value to the specified register
  */
-void tahvo_write_reg(int reg, u16 val)
+void tahvo_write_reg(unsigned reg, u16 val)
 {
 	BUG_ON(!tahvo_initialized);
-	cbus_write_reg(cbus_host, TAHVO_ID, reg, val);
+	cbus_write_reg(the_dev, TAHVO_ID, reg, val);
 }
+EXPORT_SYMBOL(tahvo_write_reg);
 
 /**
  * tahvo_set_clear_reg_bits - set and clear register bits atomically
@@ -98,7 +95,7 @@ void tahvo_write_reg(int reg, u16 val)
  *
  * This function sets and clears the specified Tahvo register bits atomically
  */
-void tahvo_set_clear_reg_bits(int reg, u16 set, u16 clear)
+void tahvo_set_clear_reg_bits(unsigned reg, u16 set, u16 clear)
 {
 	unsigned long flags;
 	u16 w;
@@ -125,6 +122,7 @@ void tahvo_disable_irq(int id)
 	tahvo_write_reg(TAHVO_REG_IMR, mask);
 	spin_unlock_irqrestore(&tahvo_lock, flags);
 }
+EXPORT_SYMBOL(tahvo_disable_irq);
 
 /*
  * Enable given TAHVO interrupt
@@ -140,6 +138,7 @@ void tahvo_enable_irq(int id)
 	tahvo_write_reg(TAHVO_REG_IMR, mask);
 	spin_unlock_irqrestore(&tahvo_lock, flags);
 }
+EXPORT_SYMBOL(tahvo_enable_irq);
 
 /*
  * Acknowledge given TAHVO interrupt
@@ -148,6 +147,7 @@ void tahvo_ack_irq(int id)
 {
 	tahvo_write_reg(TAHVO_REG_IDR, 1 << id);
 }
+EXPORT_SYMBOL(tahvo_ack_irq);
 
 static int tahvo_7bit_backlight;
 
@@ -161,6 +161,7 @@ int tahvo_get_backlight_level(void)
 		mask = 0x0f;
 	return tahvo_read_reg(TAHVO_REG_LEDPWMR) & mask;
 }
+EXPORT_SYMBOL(tahvo_get_backlight_level);
 
 int tahvo_get_max_backlight_level(void)
 {
@@ -169,6 +170,7 @@ int tahvo_get_max_backlight_level(void)
 	else
 		return 0x0f;
 }
+EXPORT_SYMBOL(tahvo_get_max_backlight_level);
 
 void tahvo_set_backlight_level(int level)
 {
@@ -179,6 +181,7 @@ void tahvo_set_backlight_level(int level)
 		level = max_level;
 	tahvo_write_reg(TAHVO_REG_LEDPWMR, level);
 }
+EXPORT_SYMBOL(tahvo_set_backlight_level);
 
 /*
  * TAHVO interrupt handler. Only schedules the tasklet.
@@ -257,6 +260,7 @@ int tahvo_request_irq(int id, void *irq_handler, unsigned long arg, char *name)
 
 	return 0;
 }
+EXPORT_SYMBOL(tahvo_request_irq);
 
 /*
  * Unregister the handler for a given TAHVO interrupt source.
@@ -279,6 +283,7 @@ void tahvo_free_irq(int id)
 	tahvo_disable_irq(id);
 	hnd->func = NULL;
 }
+EXPORT_SYMBOL(tahvo_free_irq);
 
 /**
  * tahvo_probe - Probe for Tahvo ASIC
@@ -287,9 +292,12 @@ void tahvo_free_irq(int id)
  * Probe for the Tahvo ASIC and allocate memory
  * for its device-struct if found
  */
-static int __devinit tahvo_probe(struct device *dev)
+static int __init tahvo_probe(struct platform_device *pdev)
 {
 	int rev, id, ret;
+	int irq;
+
+	the_dev = &pdev->dev;
 
 	/* Prepare tasklet */
 	tasklet_init(&tahvo_tasklet, tahvo_tasklet_handler, 0);
@@ -306,89 +314,47 @@ static int __devinit tahvo_probe(struct device *dev)
 		tahvo_is_betty = 1;
 		tahvo_7bit_backlight = 1;
 	} else {
-		printk(KERN_ERR "Tahvo/Betty chip not found");
+		dev_err(&pdev->dev, "Tahvo/Betty chip not found");
 		return -ENODEV;
 	}
 
-	printk(KERN_INFO "%s v%d.%d found\n", tahvo_is_betty ? "Betty" : "Tahvo",
+	dev_err(&pdev->dev, "%s v%d.%d found\n", tahvo_is_betty ? "Betty" : "Tahvo",
 	       (rev >> 4) & 0x0f, rev & 0x0f);
 
-	/* REVISIT: Pass these from board-*.c files in platform_data */
-	if (machine_is_nokia770()) {
-		tahvo_irq_pin = 40;
-	} else if (machine_is_nokia_n800() || machine_is_nokia_n810() ||
-			machine_is_nokia_n810_wimax()) {
-		tahvo_irq_pin = 111;
-	} else {
-		printk(KERN_ERR "cbus: Unsupported board for tahvo\n");
-		return -ENODEV;
-	}
-
-	if ((ret = gpio_request(tahvo_irq_pin, "TAHVO irq")) < 0) {
-		printk(KERN_ERR PFX "Unable to reserve IRQ GPIO\n");
-		return ret;
-	}
-
-	/* Set the pin as input */
-	gpio_direction_input(tahvo_irq_pin);
-
-	/* Rising edge triggers the IRQ */
-	set_irq_type(gpio_to_irq(tahvo_irq_pin), IRQ_TYPE_EDGE_RISING);
+	irq = platform_get_irq(pdev, 0);
 
 	/* Mask all TAHVO interrupts */
 	tahvo_write_reg(TAHVO_REG_IMR, 0xffff);
 
-	ret = request_irq(gpio_to_irq(tahvo_irq_pin), tahvo_irq_handler, 0,
-			  "tahvo", 0);
+	ret = request_irq(irq, tahvo_irq_handler, IRQF_TRIGGER_RISING,
+			"tahvo", 0);
 	if (ret < 0) {
-		printk(KERN_ERR PFX "Unable to register IRQ handler\n");
-		gpio_free(tahvo_irq_pin);
+		dev_err(&pdev->dev, "Unable to register IRQ handler\n");
 		return ret;
 	}
-#ifdef CONFIG_CBUS_TAHVO_USER
-	/* Initialize user-space interface */
-	if (tahvo_user_init() < 0) {
-		printk(KERN_ERR "Unable to initialize driver\n");
-		free_irq(gpio_to_irq(tahvo_irq_pin), 0);
-		gpio_free(tahvo_irq_pin);
-		return ret;
-	}
-#endif
 	return 0;
 }
 
-static int tahvo_remove(struct device *dev)
+static int __exit tahvo_remove(struct platform_device *pdev)
 {
-#ifdef CONFIG_CBUS_TAHVO_USER
-	tahvo_user_cleanup();
-#endif
+	int irq;
+
+	irq = platform_get_irq(pdev, 0);
+
 	/* Mask all TAHVO interrupts */
 	tahvo_write_reg(TAHVO_REG_IMR, 0xffff);
-	free_irq(gpio_to_irq(tahvo_irq_pin), 0);
-	gpio_free(tahvo_irq_pin);
+	free_irq(irq, 0);
 	tasklet_kill(&tahvo_tasklet);
+	the_dev = NULL;
 
 	return 0;
 }
 
-static void tahvo_device_release(struct device *dev)
-{
-	complete(&device_release);
-}
-
-static struct device_driver tahvo_driver = {
-	.name		= "tahvo",
-	.bus		= &platform_bus_type,
-	.probe		= tahvo_probe,
-	.remove		= tahvo_remove,
-};
-
-static struct platform_device tahvo_device = {
-	.name		= "tahvo",
-	.id		= -1,
-	.dev = {
-		.release = tahvo_device_release,
-	}
+static struct platform_driver tahvo_driver = {
+	.remove		= __exit_p(tahvo_remove),
+	.driver		= {
+		.name	= "tahvo",
+	},
 };
 
 /**
@@ -398,20 +364,7 @@ static struct platform_device tahvo_device = {
  */
 static int __init tahvo_init(void)
 {
-	int ret = 0;
-
-	printk(KERN_INFO "Tahvo/Betty driver initialising\n");
-
-	init_completion(&device_release);
-
-	if ((ret = driver_register(&tahvo_driver)) < 0)
-		return ret;
-
-	if ((ret = platform_device_register(&tahvo_device)) < 0) {
-		driver_unregister(&tahvo_driver);
-		return ret;
-	}
-	return 0;
+	return platform_driver_probe(&tahvo_driver, tahvo_probe);
 }
 
 /*
@@ -419,25 +372,15 @@ static int __init tahvo_init(void)
  */
 static void __exit tahvo_exit(void)
 {
-	platform_device_unregister(&tahvo_device);
-	driver_unregister(&tahvo_driver);
-	wait_for_completion(&device_release);
+	platform_driver_unregister(&tahvo_driver);
 }
-
-EXPORT_SYMBOL(tahvo_request_irq);
-EXPORT_SYMBOL(tahvo_free_irq);
-EXPORT_SYMBOL(tahvo_enable_irq);
-EXPORT_SYMBOL(tahvo_disable_irq);
-EXPORT_SYMBOL(tahvo_ack_irq);
-EXPORT_SYMBOL(tahvo_read_reg);
-EXPORT_SYMBOL(tahvo_write_reg);
-EXPORT_SYMBOL(tahvo_get_backlight_level);
-EXPORT_SYMBOL(tahvo_get_max_backlight_level);
-EXPORT_SYMBOL(tahvo_set_backlight_level);
 
 subsys_initcall(tahvo_init);
 module_exit(tahvo_exit);
 
 MODULE_DESCRIPTION("Tahvo ASIC control");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Juha Yrjölä, David Weinehall, and Mikko Ylinen");
+MODULE_AUTHOR("Juha Yrjölä");
+MODULE_AUTHOR("David Weinehall");
+MODULE_AUTHOR("Mikko Ylinen");
+

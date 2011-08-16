@@ -42,21 +42,17 @@
 #define INFO(fmt, args...) yprintk(KERN_INFO, fmt, ## args)
 #define ERR(fmt, args...) yprintk(KERN_ERR, fmt, ## args)
 
-#define xprintk(level, facility, format, args...) do { \
-	if (_dbg_level(level)) { \
-		printk(facility "%s %d: " format , \
-				__func__, __LINE__ , ## args); \
-	} } while (0)
-
-extern unsigned musb_debug;
-
-static inline int _dbg_level(unsigned l)
+#ifdef CONFIG_DEBUG_FS
+extern int musb_init_debugfs(struct musb *musb);
+extern void musb_exit_debugfs(struct musb *musb);
+#else
+static inline int musb_init_debugfs(struct musb *musb)
 {
-	return musb_debug >= l;
+	return 0;
 }
-
-#define DBG(level, fmt, args...) xprintk(level, KERN_DEBUG, fmt, ## args)
-
-extern const char *otg_state_string(struct musb *);
+static inline void musb_exit_debugfs(struct musb *musb)
+{
+}
+#endif
 
 #endif				/*  __MUSB_LINUX_DEBUG_H__ */

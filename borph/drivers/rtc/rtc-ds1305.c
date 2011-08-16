@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/bcd.h>
+#include <linux/slab.h>
 #include <linux/rtc.h>
 #include <linux/workqueue.h>
 
@@ -138,49 +139,32 @@ static u8 hour2bcd(bool hr12, int hour)
  * Interface to RTC framework
  */
 
-#ifdef CONFIG_RTC_INTF_DEV
-
-/*
- * Context: caller holds rtc->ops_lock (to protect ds1305->ctrl)
- */
-static int ds1305_ioctl(struct device *dev, unsigned cmd, unsigned long arg)
+static int ds1305_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
 	struct ds1305	*ds1305 = dev_get_drvdata(dev);
 	u8		buf[2];
-	int		status = -ENOIOCTLCMD;
+	long		err = -EINVAL;
 
 	buf[0] = DS1305_WRITE | DS1305_CONTROL;
 	buf[1] = ds1305->ctrl[0];
 
-	switch (cmd) {
-	case RTC_AIE_OFF:
-		status = 0;
-		if (!(buf[1] & DS1305_AEI0))
-			goto done;
-		buf[1] &= ~DS1305_AEI0;
-		break;
-
-	case RTC_AIE_ON:
-		status = 0;
+	if (enabled) {
 		if (ds1305->ctrl[0] & DS1305_AEI0)
 			goto done;
 		buf[1] |= DS1305_AEI0;
-		break;
+	} else {
+		if (!(buf[1] & DS1305_AEI0))
+			goto done;
+		buf[1] &= ~DS1305_AEI0;
 	}
-	if (status == 0) {
-		status = spi_write_then_read(ds1305->spi, buf, sizeof buf,
-				NULL, 0);
-		if (status >= 0)
-			ds1305->ctrl[0] = buf[1];
-	}
-
+	err = spi_write_then_read(ds1305->spi, buf, sizeof buf, NULL, 0);
+	if (err >= 0)
+		ds1305->ctrl[0] = buf[1];
 done:
-	return status;
+	return err;
+
 }
 
-#else
-#define ds1305_ioctl	NULL
-#endif
 
 /*
  * Get/set of date and time is pretty normal.
@@ -459,12 +443,12 @@ done:
 #endif
 
 static const struct rtc_class_ops ds1305_ops = {
-	.ioctl		= ds1305_ioctl,
 	.read_time	= ds1305_get_time,
 	.set_time	= ds1305_set_time,
 	.read_alarm	= ds1305_get_alarm,
 	.set_alarm	= ds1305_set_alarm,
 	.proc		= ds1305_proc,
+	.alarm_irq_enable = ds1305_alarm_irq_enable,
 };
 
 static void ds1305_work(struct work_struct *work)
@@ -541,7 +525,8 @@ static void msg_init(struct spi_message *m, struct spi_transfer *x,
 }
 
 static ssize_t
-ds1305_nvram_read(struct kobject *kobj, struct bin_attribute *attr,
+ds1305_nvram_read(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct spi_device	*spi;
@@ -571,7 +556,8 @@ ds1305_nvram_read(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-ds1305_nvram_write(struct kobject *kobj, struct bin_attribute *attr,
+ds1305_nvram_write(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct spi_device	*spi;
@@ -617,7 +603,6 @@ static struct bin_attribute nvram = {
 static int __devinit ds1305_probe(struct spi_device *spi)
 {
 	struct ds1305			*ds1305;
-	struct rtc_device		*rtc;
 	int				status;
 	u8				addr, value;
 	struct ds1305_platform_data	*pdata = spi->dev.platform_data;
@@ -756,14 +741,13 @@ static int __devinit ds1305_probe(struct spi_device *spi)
 		dev_dbg(&spi->dev, "AM/PM\n");
 
 	/* register RTC ... from here on, ds1305->ctrl needs locking */
-	rtc = rtc_device_register("ds1305", &spi->dev,
+	ds1305->rtc = rtc_device_register("ds1305", &spi->dev,
 			&ds1305_ops, THIS_MODULE);
-	if (IS_ERR(rtc)) {
-		status = PTR_ERR(rtc);
+	if (IS_ERR(ds1305->rtc)) {
+		status = PTR_ERR(ds1305->rtc);
 		dev_dbg(&spi->dev, "register rtc --> %d\n", status);
 		goto fail0;
 	}
-	ds1305->rtc = rtc;
 
 	/* Maybe set up alarm IRQ; be ready to handle it triggering right
 	 * away.  NOTE that we don't share this.  The signal is active low,
@@ -774,12 +758,14 @@ static int __devinit ds1305_probe(struct spi_device *spi)
 	if (spi->irq) {
 		INIT_WORK(&ds1305->work, ds1305_work);
 		status = request_irq(spi->irq, ds1305_irq,
-				0, dev_name(&rtc->dev), ds1305);
+				0, dev_name(&ds1305->rtc->dev), ds1305);
 		if (status < 0) {
 			dev_dbg(&spi->dev, "request_irq %d --> %d\n",
 					spi->irq, status);
 			goto fail1;
 		}
+
+		device_set_wakeup_capable(&spi->dev, 1);
 	}
 
 	/* export NVRAM */
@@ -794,7 +780,7 @@ static int __devinit ds1305_probe(struct spi_device *spi)
 fail2:
 	free_irq(spi->irq, ds1305);
 fail1:
-	rtc_device_unregister(rtc);
+	rtc_device_unregister(ds1305->rtc);
 fail0:
 	kfree(ds1305);
 	return status;
@@ -802,7 +788,7 @@ fail0:
 
 static int __devexit ds1305_remove(struct spi_device *spi)
 {
-	struct ds1305	*ds1305 = spi_get_drvdata(spi);
+	struct ds1305 *ds1305 = spi_get_drvdata(spi);
 
 	sysfs_remove_bin_file(&spi->dev.kobj, &nvram);
 
@@ -810,7 +796,7 @@ static int __devexit ds1305_remove(struct spi_device *spi)
 	if (spi->irq) {
 		set_bit(FLAG_EXITING, &ds1305->flags);
 		free_irq(spi->irq, ds1305);
-		flush_scheduled_work();
+		cancel_work_sync(&ds1305->work);
 	}
 
 	rtc_device_unregister(ds1305->rtc);

@@ -16,11 +16,10 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
-#include <linux/slab.h>
 #include <linux/edac.h>
 #include "edac_core.h"
 
-#define AMD76X_REVISION	" Ver: 2.0.2 "  __DATE__
+#define AMD76X_REVISION	" Ver: 2.0.2"
 #define EDAC_MOD_STR	"amd76x_edac"
 
 #define amd76x_printk(level, fmt, arg...) \
@@ -295,7 +294,7 @@ static int __devinit amd76x_init_one(struct pci_dev *pdev,
 {
 	debugf0("%s()\n", __func__);
 
-	/* don't need to call pci_device_enable() */
+	/* don't need to call pci_enable_device() */
 	return amd76x_probe1(pdev, ent->driver_data);
 }
 

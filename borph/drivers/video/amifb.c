@@ -45,14 +45,14 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-
+#include <linux/platform_device.h>
 #include <linux/uaccess.h>
+
 #include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/amigahw.h>
@@ -1136,7 +1136,7 @@ static int amifb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg
 	 * Interface to the low level console driver
 	 */
 
-static void amifb_deinit(void);
+static void amifb_deinit(struct platform_device *pdev);
 
 	/*
 	 * Internal routines
@@ -2224,22 +2224,23 @@ static int amifb_ioctl(struct fb_info *info,
 	 * Allocate, Clear and Align a Block of Chip Memory
 	 */
 
-static u_long unaligned_chipptr = 0;
+static void *aligned_chipptr;
 
 static inline u_long __init chipalloc(u_long size)
 {
-	size += PAGE_SIZE-1;
-	if (!(unaligned_chipptr = (u_long)amiga_chip_alloc(size,
-							   "amifb [RAM]")))
-		panic("No Chip RAM for frame buffer");
-	memset((void *)unaligned_chipptr, 0, size);
-	return PAGE_ALIGN(unaligned_chipptr);
+	aligned_chipptr = amiga_chip_alloc(size, "amifb [RAM]");
+	if (!aligned_chipptr) {
+		pr_err("amifb: No Chip RAM for frame buffer");
+		return 0;
+	}
+	memset(aligned_chipptr, 0, size);
+	return (u_long)aligned_chipptr;
 }
 
 static inline void chipfree(void)
 {
-	if (unaligned_chipptr)
-		amiga_chip_free((void *)unaligned_chipptr);
+	if (aligned_chipptr)
+		amiga_chip_free(aligned_chipptr);
 }
 
 
@@ -2247,7 +2248,7 @@ static inline void chipfree(void)
 	 * Initialisation
 	 */
 
-static int __init amifb_init(void)
+static int __init amifb_probe(struct platform_device *pdev)
 {
 	int tag, i, err = 0;
 	u_long chipptr;
@@ -2262,16 +2263,6 @@ static int __init amifb_init(void)
 	}
 	amifb_setup(option);
 #endif
-	if (!MACH_IS_AMIGA || !AMIGAHW_PRESENT(AMI_VIDEO))
-		return -ENODEV;
-
-	/*
-	 * We request all registers starting from bplpt[0]
-	 */
-	if (!request_mem_region(CUSTOM_PHYSADDR+0xe0, 0x120,
-				"amifb [Denise/Lisa]"))
-		return -EBUSY;
-
 	custom.dmacon = DMAF_ALL | DMAF_MASTER;
 
 	switch (amiga_chipset) {
@@ -2305,7 +2296,7 @@ default_chipset:
 			    defmode = amiga_vblank == 50 ? DEFMODE_PAL
 							 : DEFMODE_NTSC;
 			if (amiga_chip_avail()-CHIPRAM_SAFETY_LIMIT >
-			    VIDEOMEMSIZE_ECS_1M)
+			    VIDEOMEMSIZE_ECS_2M)
 				fb_info.fix.smem_len = VIDEOMEMSIZE_ECS_2M;
 			else
 				fb_info.fix.smem_len = VIDEOMEMSIZE_ECS_1M;
@@ -2322,7 +2313,7 @@ default_chipset:
 			maxfmode = TAG_FMODE_4;
 			defmode = DEFMODE_AGA;
 			if (amiga_chip_avail()-CHIPRAM_SAFETY_LIMIT >
-			    VIDEOMEMSIZE_AGA_1M)
+			    VIDEOMEMSIZE_AGA_2M)
 				fb_info.fix.smem_len = VIDEOMEMSIZE_AGA_2M;
 			else
 				fb_info.fix.smem_len = VIDEOMEMSIZE_AGA_1M;
@@ -2378,6 +2369,7 @@ default_chipset:
 	fb_info.fbops = &amifb_ops;
 	fb_info.par = &currentpar;
 	fb_info.flags = FBINFO_DEFAULT;
+	fb_info.device = &pdev->dev;
 
 	if (!fb_find_mode(&fb_info.var, &fb_info, mode_option, ami_modedb,
 			  NUM_TOTAL_MODES, &ami_modedb[defmode], 4)) {
@@ -2394,6 +2386,10 @@ default_chipset:
 	                    DUMMYSPRITEMEMSIZE+
 	                    COPINITSIZE+
 	                    4*COPLISTSIZE);
+	if (!chipptr) {
+		err = -ENOMEM;
+		goto amifb_error;
+	}
 
 	assignchunk(videomemory, u_long, chipptr, fb_info.fix.smem_len);
 	assignchunk(spritememory, u_long, chipptr, SPRITEMEMSIZE);
@@ -2452,18 +2448,18 @@ default_chipset:
 	return 0;
 
 amifb_error:
-	amifb_deinit();
+	amifb_deinit(pdev);
 	return err;
 }
 
-static void amifb_deinit(void)
+static void amifb_deinit(struct platform_device *pdev)
 {
 	if (fb_info.cmap.len)
 		fb_dealloc_cmap(&fb_info.cmap);
+	fb_dealloc_cmap(&fb_info.cmap);
 	chipfree();
 	if (videomemory)
 		iounmap((void*)videomemory);
-	release_mem_region(CUSTOM_PHYSADDR+0xe0, 0x120);
 	custom.dmacon = DMAF_ALL | DMAF_MASTER;
 }
 
@@ -3795,14 +3791,35 @@ static void ami_rebuild_copper(void)
 	}
 }
 
-static void __exit amifb_exit(void)
+static int __exit amifb_remove(struct platform_device *pdev)
 {
 	unregister_framebuffer(&fb_info);
-	amifb_deinit();
+	amifb_deinit(pdev);
 	amifb_video_off();
+	return 0;
+}
+
+static struct platform_driver amifb_driver = {
+	.remove = __exit_p(amifb_remove),
+	.driver   = {
+		.name	= "amiga-video",
+		.owner	= THIS_MODULE,
+	},
+};
+
+static int __init amifb_init(void)
+{
+	return platform_driver_probe(&amifb_driver, amifb_probe);
 }
 
 module_init(amifb_init);
+
+static void __exit amifb_exit(void)
+{
+	platform_driver_unregister(&amifb_driver);
+}
+
 module_exit(amifb_exit);
 
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:amiga-video");

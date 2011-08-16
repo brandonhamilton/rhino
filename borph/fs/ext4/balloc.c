@@ -21,6 +21,8 @@
 #include "ext4_jbd2.h"
 #include "mballoc.h"
 
+#include <trace/events/ext4.h>
+
 /*
  * balloc.c contains the blocks allocation and deallocation routines
  */
@@ -97,8 +99,8 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
 		/* If checksum is bad mark all blocks used to prevent allocation
 		 * essentially implementing a per-group read-only flag. */
 		if (!ext4_group_desc_csum_verify(sbi, block_group, gdp)) {
-			ext4_error(sb, __func__,
-				  "Checksum bad for group %u", block_group);
+			ext4_error(sb, "Checksum bad for group %u",
+					block_group);
 			ext4_free_blks_set(sb, gdp, 0);
 			ext4_free_inodes_set(sb, gdp, 0);
 			ext4_itable_unused_set(sb, gdp, 0);
@@ -130,8 +132,7 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
 		 * to make sure we calculate the right free blocks
 		 */
 		group_blocks = ext4_blocks_count(sbi->s_es) -
-			le32_to_cpu(sbi->s_es->s_first_data_block) -
-			(EXT4_BLOCKS_PER_GROUP(sb) * (ngroups - 1));
+			ext4_group_first_block_no(sb, ngroups - 1);
 	} else {
 		group_blocks = EXT4_BLOCKS_PER_GROUP(sb);
 	}
@@ -172,7 +173,8 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
 		 * less than the blocksize * 8 ( which is the size
 		 * of bitmap ), set rest of the block bitmap to 1
 		 */
-		mark_bitmap_end(group_blocks, sb->s_blocksize * 8, bh->b_data);
+		ext4_mark_bitmap_end(group_blocks, sb->s_blocksize * 8,
+				     bh->b_data);
 	}
 	return free_blocks - ext4_group_used_meta_blocks(sb, block_group, gdp);
 }
@@ -188,9 +190,6 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
  * the free blocks count in the block.  The descriptors are loaded in memory
  * when a file system is mounted (see ext4_fill_super).
  */
-
-
-#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
 
 /**
  * ext4_get_group_desc() -- load group descriptor from disk
@@ -210,10 +209,8 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 
 	if (block_group >= ngroups) {
-		ext4_error(sb, "ext4_get_group_desc",
-			   "block_group >= groups_count - "
-			   "block_group = %u, groups_count = %u",
-			   block_group, ngroups);
+		ext4_error(sb, "block_group >= groups_count - block_group = %u,"
+			   " groups_count = %u", block_group, ngroups);
 
 		return NULL;
 	}
@@ -221,8 +218,7 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	group_desc = block_group >> EXT4_DESC_PER_BLOCK_BITS(sb);
 	offset = block_group & (EXT4_DESC_PER_BLOCK(sb) - 1);
 	if (!sbi->s_group_desc[group_desc]) {
-		ext4_error(sb, "ext4_get_group_desc",
-			   "Group descriptor not loaded - "
+		ext4_error(sb, "Group descriptor not loaded - "
 			   "block_group = %u, group_desc = %u, desc = %u",
 			   block_group, group_desc, offset);
 		return NULL;
@@ -282,9 +278,7 @@ static int ext4_valid_block_bitmap(struct super_block *sb,
 		return 1;
 
 err_out:
-	ext4_error(sb, __func__,
-			"Invalid block bitmap - "
-			"block_group = %d, block = %llu",
+	ext4_error(sb, "Invalid block bitmap - block_group = %d, block = %llu",
 			block_group, bitmap_blk);
 	return 0;
 }
@@ -311,8 +305,7 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	bitmap_blk = ext4_block_bitmap(sb, desc);
 	bh = sb_getblk(sb, bitmap_blk);
 	if (unlikely(!bh)) {
-		ext4_error(sb, __func__,
-			    "Cannot read block bitmap - "
+		ext4_error(sb, "Cannot read block bitmap - "
 			    "block_group = %u, block_bitmap = %llu",
 			    block_group, bitmap_blk);
 		return NULL;
@@ -351,11 +344,11 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	 * We do it here so the bitmap uptodate bit
 	 * get set with buffer lock held.
 	 */
+	trace_ext4_read_block_bitmap_load(sb, block_group);
 	set_bitmap_uptodate(bh);
 	if (bh_submit_read(bh) < 0) {
 		put_bh(bh);
-		ext4_error(sb, __func__,
-			    "Cannot read block bitmap - "
+		ext4_error(sb, "Cannot read block bitmap - "
 			    "block_group = %u, block_bitmap = %llu",
 			    block_group, bitmap_blk);
 		return NULL;
@@ -369,136 +362,6 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 }
 
 /**
- * ext4_add_groupblocks() -- Add given blocks to an existing group
- * @handle:			handle to this transaction
- * @sb:				super block
- * @block:			start physcial block to add to the block group
- * @count:			number of blocks to free
- *
- * This marks the blocks as free in the bitmap. We ask the
- * mballoc to reload the buddy after this by setting group
- * EXT4_GROUP_INFO_NEED_INIT_BIT flag
- */
-void ext4_add_groupblocks(handle_t *handle, struct super_block *sb,
-			 ext4_fsblk_t block, unsigned long count)
-{
-	struct buffer_head *bitmap_bh = NULL;
-	struct buffer_head *gd_bh;
-	ext4_group_t block_group;
-	ext4_grpblk_t bit;
-	unsigned int i;
-	struct ext4_group_desc *desc;
-	struct ext4_super_block *es;
-	struct ext4_sb_info *sbi;
-	int err = 0, ret, blk_free_count;
-	ext4_grpblk_t blocks_freed;
-	struct ext4_group_info *grp;
-
-	sbi = EXT4_SB(sb);
-	es = sbi->s_es;
-	ext4_debug("Adding block(s) %llu-%llu\n", block, block + count - 1);
-
-	ext4_get_group_no_and_offset(sb, block, &block_group, &bit);
-	grp = ext4_get_group_info(sb, block_group);
-	/*
-	 * Check to see if we are freeing blocks across a group
-	 * boundary.
-	 */
-	if (bit + count > EXT4_BLOCKS_PER_GROUP(sb)) {
-		goto error_return;
-	}
-	bitmap_bh = ext4_read_block_bitmap(sb, block_group);
-	if (!bitmap_bh)
-		goto error_return;
-	desc = ext4_get_group_desc(sb, block_group, &gd_bh);
-	if (!desc)
-		goto error_return;
-
-	if (in_range(ext4_block_bitmap(sb, desc), block, count) ||
-	    in_range(ext4_inode_bitmap(sb, desc), block, count) ||
-	    in_range(block, ext4_inode_table(sb, desc), sbi->s_itb_per_group) ||
-	    in_range(block + count - 1, ext4_inode_table(sb, desc),
-		     sbi->s_itb_per_group)) {
-		ext4_error(sb, __func__,
-			   "Adding blocks in system zones - "
-			   "Block = %llu, count = %lu",
-			   block, count);
-		goto error_return;
-	}
-
-	/*
-	 * We are about to add blocks to the bitmap,
-	 * so we need undo access.
-	 */
-	BUFFER_TRACE(bitmap_bh, "getting undo access");
-	err = ext4_journal_get_undo_access(handle, bitmap_bh);
-	if (err)
-		goto error_return;
-
-	/*
-	 * We are about to modify some metadata.  Call the journal APIs
-	 * to unshare ->b_data if a currently-committing transaction is
-	 * using it
-	 */
-	BUFFER_TRACE(gd_bh, "get_write_access");
-	err = ext4_journal_get_write_access(handle, gd_bh);
-	if (err)
-		goto error_return;
-	/*
-	 * make sure we don't allow a parallel init on other groups in the
-	 * same buddy cache
-	 */
-	down_write(&grp->alloc_sem);
-	for (i = 0, blocks_freed = 0; i < count; i++) {
-		BUFFER_TRACE(bitmap_bh, "clear bit");
-		if (!ext4_clear_bit_atomic(ext4_group_lock_ptr(sb, block_group),
-						bit + i, bitmap_bh->b_data)) {
-			ext4_error(sb, __func__,
-				   "bit already cleared for block %llu",
-				   (ext4_fsblk_t)(block + i));
-			BUFFER_TRACE(bitmap_bh, "bit already cleared");
-		} else {
-			blocks_freed++;
-		}
-	}
-	ext4_lock_group(sb, block_group);
-	blk_free_count = blocks_freed + ext4_free_blks_count(sb, desc);
-	ext4_free_blks_set(sb, desc, blk_free_count);
-	desc->bg_checksum = ext4_group_desc_csum(sbi, block_group, desc);
-	ext4_unlock_group(sb, block_group);
-	percpu_counter_add(&sbi->s_freeblocks_counter, blocks_freed);
-
-	if (sbi->s_log_groups_per_flex) {
-		ext4_group_t flex_group = ext4_flex_group(sbi, block_group);
-		atomic_add(blocks_freed,
-			   &sbi->s_flex_groups[flex_group].free_blocks);
-	}
-	/*
-	 * request to reload the buddy with the
-	 * new bitmap information
-	 */
-	set_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &(grp->bb_state));
-	grp->bb_free += blocks_freed;
-	up_write(&grp->alloc_sem);
-
-	/* We dirtied the bitmap block */
-	BUFFER_TRACE(bitmap_bh, "dirtied bitmap block");
-	err = ext4_handle_dirty_metadata(handle, NULL, bitmap_bh);
-
-	/* And the group descriptor block */
-	BUFFER_TRACE(gd_bh, "dirtied group descriptor block");
-	ret = ext4_handle_dirty_metadata(handle, NULL, gd_bh);
-	if (!err)
-		err = ret;
-	sb->s_dirt = 1;
-
-error_return:
-	brelse(bitmap_bh);
-	ext4_std_error(sb, err);
-	return;
-}
-
-/**
  * ext4_has_free_blocks()
  * @sbi:	in-core super block structure.
  * @nblocks:	number of needed blocks
@@ -506,7 +369,8 @@ error_return:
  * Check if filesystem has nblocks free & available for allocation.
  * On success return 1, return 0 on failure.
  */
-int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
+static int ext4_has_free_blocks(struct ext4_sb_info *sbi,
+				s64 nblocks, unsigned int flags)
 {
 	s64 free_blocks, dirty_blocks, root_blocks;
 	struct percpu_counter *fbc = &sbi->s_freeblocks_counter;
@@ -520,11 +384,6 @@ int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
 						EXT4_FREEBLOCKS_WATERMARK) {
 		free_blocks  = percpu_counter_sum_positive(fbc);
 		dirty_blocks = percpu_counter_sum_positive(dbc);
-		if (dirty_blocks < 0) {
-			printk(KERN_CRIT "Dirty block accounting "
-					"went wrong %lld\n",
-					(long long)dirty_blocks);
-		}
 	}
 	/* Check whether we have space after
 	 * accounting for current dirty blocks & root reserved blocks.
@@ -535,7 +394,9 @@ int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
 	/* Hm, nope.  Are (enough) root reserved blocks available? */
 	if (sbi->s_resuid == current_fsuid() ||
 	    ((sbi->s_resgid != 0) && in_group_p(sbi->s_resgid)) ||
-	    capable(CAP_SYS_RESOURCE)) {
+	    capable(CAP_SYS_RESOURCE) ||
+		(flags & EXT4_MB_USE_ROOT_BLOCKS)) {
+
 		if (free_blocks >= (nblocks + dirty_blocks))
 			return 1;
 	}
@@ -544,9 +405,9 @@ int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
 }
 
 int ext4_claim_free_blocks(struct ext4_sb_info *sbi,
-						s64 nblocks)
+			   s64 nblocks, unsigned int flags)
 {
-	if (ext4_has_free_blocks(sbi, nblocks)) {
+	if (ext4_has_free_blocks(sbi, nblocks, flags)) {
 		percpu_counter_add(&sbi->s_dirtyblocks_counter, nblocks);
 		return 0;
 	} else
@@ -560,14 +421,14 @@ int ext4_claim_free_blocks(struct ext4_sb_info *sbi,
  *
  * ext4_should_retry_alloc() is called when ENOSPC is returned, and if
  * it is profitable to retry the operation, this function will wait
- * for the current or commiting transaction to complete, and then
+ * for the current or committing transaction to complete, and then
  * return TRUE.
  *
  * if the total number of retries exceed three times, return FALSE.
  */
 int ext4_should_retry_alloc(struct super_block *sb, int *retries)
 {
-	if (!ext4_has_free_blocks(EXT4_SB(sb), 1) ||
+	if (!ext4_has_free_blocks(EXT4_SB(sb), 1, 0) ||
 	    (*retries)++ > 3 ||
 	    !EXT4_SB(sb)->s_journal)
 		return 0;
@@ -590,7 +451,8 @@ int ext4_should_retry_alloc(struct super_block *sb, int *retries)
  * error stores in errp pointer
  */
 ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
-		ext4_fsblk_t goal, unsigned long *count, int *errp)
+				  ext4_fsblk_t goal, unsigned int flags,
+				  unsigned long *count, int *errp)
 {
 	struct ext4_allocation_request ar;
 	ext4_fsblk_t ret;
@@ -600,18 +462,21 @@ ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 	ar.inode = inode;
 	ar.goal = goal;
 	ar.len = count ? *count : 1;
+	ar.flags = flags;
 
 	ret = ext4_mb_new_blocks(handle, &ar, errp);
 	if (count)
 		*count = ar.len;
-
 	/*
-	 * Account for the allocated meta blocks
+	 * Account for the allocated meta blocks.  We will never
+	 * fail EDQUOT for metdata, but we do account for it.
 	 */
-	if (!(*errp) && EXT4_I(inode)->i_delalloc_reserved_flag) {
+	if (!(*errp) &&
+	    ext4_test_inode_state(inode, EXT4_STATE_DELALLOC_RESERVED)) {
 		spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
 		EXT4_I(inode)->i_allocated_meta_blocks += ar.len;
 		spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
+		dquot_alloc_block_nofail(inode, ar.len);
 	}
 	return ret;
 }
@@ -753,5 +618,53 @@ unsigned long ext4_bg_num_gdb(struct super_block *sb, ext4_group_t group)
 
 	return ext4_bg_num_gdb_meta(sb,group);
 
+}
+
+/**
+ *	ext4_inode_to_goal_block - return a hint for block allocation
+ *	@inode: inode for block allocation
+ *
+ *	Return the ideal location to start allocating blocks for a
+ *	newly created inode.
+ */
+ext4_fsblk_t ext4_inode_to_goal_block(struct inode *inode)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+	ext4_group_t block_group;
+	ext4_grpblk_t colour;
+	int flex_size = ext4_flex_bg_size(EXT4_SB(inode->i_sb));
+	ext4_fsblk_t bg_start;
+	ext4_fsblk_t last_block;
+
+	block_group = ei->i_block_group;
+	if (flex_size >= EXT4_FLEX_SIZE_DIR_ALLOC_SCHEME) {
+		/*
+		 * If there are at least EXT4_FLEX_SIZE_DIR_ALLOC_SCHEME
+		 * block groups per flexgroup, reserve the first block
+		 * group for directories and special files.  Regular
+		 * files will start at the second block group.  This
+		 * tends to speed up directory access and improves
+		 * fsck times.
+		 */
+		block_group &= ~(flex_size-1);
+		if (S_ISREG(inode->i_mode))
+			block_group++;
+	}
+	bg_start = ext4_group_first_block_no(inode->i_sb, block_group);
+	last_block = ext4_blocks_count(EXT4_SB(inode->i_sb)->s_es) - 1;
+
+	/*
+	 * If we are doing delayed allocation, we don't need take
+	 * colour into account.
+	 */
+	if (test_opt(inode->i_sb, DELALLOC))
+		return bg_start;
+
+	if (bg_start + EXT4_BLOCKS_PER_GROUP(inode->i_sb) <= last_block)
+		colour = (current->pid % 16) *
+			(EXT4_BLOCKS_PER_GROUP(inode->i_sb) / 16);
+	else
+		colour = (current->pid % 16) * ((last_block - bg_start) / 16);
+	return bg_start + colour;
 }
 

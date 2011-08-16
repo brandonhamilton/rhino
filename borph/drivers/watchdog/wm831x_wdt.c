@@ -213,7 +213,7 @@ static ssize_t wm831x_wdt_write(struct file *file,
 	return count;
 }
 
-static struct watchdog_info ident = {
+static const struct watchdog_info ident = {
 	.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
 	.identity = "WM831x Watchdog",
 };
@@ -319,6 +319,11 @@ static int __devinit wm831x_wdt_probe(struct platform_device *pdev)
 	struct wm831x_pdata *chip_pdata;
 	struct wm831x_watchdog_pdata *pdata;
 	int reg, ret;
+
+	if (wm831x) {
+		dev_err(&pdev->dev, "wm831x watchdog already registered\n");
+		return -EBUSY;
+	}
 
 	wm831x = dev_get_drvdata(pdev->dev.parent);
 

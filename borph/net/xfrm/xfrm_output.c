@@ -14,6 +14,7 @@
 #include <linux/netdevice.h>
 #include <linux/netfilter.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <net/dst.h>
 #include <net/xfrm.h>
@@ -66,23 +67,18 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 			goto error;
 		}
 
-		if (x->type->flags & XFRM_TYPE_REPLAY_PROT) {
-			XFRM_SKB_CB(skb)->seq.output = ++x->replay.oseq;
-			if (unlikely(x->replay.oseq == 0)) {
-				XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATESEQERROR);
-				x->replay.oseq--;
-				xfrm_audit_state_replay_overflow(x, skb);
-				err = -EOVERFLOW;
-				goto error;
-			}
-			if (xfrm_aevent_is_on(net))
-				xfrm_replay_notify(x, XFRM_REPLAY_UPDATE);
+		err = x->repl->overflow(x, skb);
+		if (err) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATESEQERROR);
+			goto error;
 		}
 
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;
 
 		spin_unlock_bh(&x->lock);
+
+		skb_dst_force(skb);
 
 		err = x->type->output(x, skb);
 		if (err == -EINPROGRESS)
@@ -94,7 +90,7 @@ resume:
 			goto error_nolock;
 		}
 
-		dst = dst_pop(dst);
+		dst = skb_dst_pop(skb);
 		if (!dst) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
 			err = -EHOSTUNREACH;

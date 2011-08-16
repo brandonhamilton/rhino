@@ -17,6 +17,7 @@
 static DEFINE_PER_CPU(struct cpu, cpu_devices);
 
 cpumask_t cpu_core_map[NR_CPUS];
+EXPORT_SYMBOL(cpu_core_map);
 
 static cpumask_t cpu_coregroup_map(unsigned int cpu)
 {
@@ -52,7 +53,11 @@ static int __init topology_init(void)
 #endif
 
 	for_each_present_cpu(i) {
-		ret = register_cpu(&per_cpu(cpu_devices, i), i);
+		struct cpu *c = &per_cpu(cpu_devices, i);
+
+		c->hotpluggable = 1;
+
+		ret = register_cpu(c, i);
 		if (unlikely(ret))
 			printk(KERN_WARNING "%s: register_cpu %d failed (%d)\n",
 			       __func__, i, ret);

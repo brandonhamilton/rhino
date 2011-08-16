@@ -13,7 +13,7 @@
  * anybody does please mail me.
  *
  * For the pdf file see:
- * http://www.semiconductors.philips.com/pip/TEA5757H/V1
+ * http://www.nxp.com/acrobat_download2/expired_datasheets/TEA5757_5759_3.pdf 
  *
  *
  * CHANGES:
@@ -40,14 +40,18 @@
 #include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/videodev2.h>
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/io.h>
+#include <linux/slab.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
+
+#define DRIVER_VERSION	"0.7.8"
+
 
 MODULE_AUTHOR("Dimitromanolakis Apostolos, apdim@grecian.net");
 MODULE_DESCRIPTION("Radio driver for the Guillemot Maxi Radio FM2000 radio.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(DRIVER_VERSION);
 
 static int radio_nr = -1;
 module_param(radio_nr, int, 0);
@@ -56,10 +60,6 @@ static int debug;
 
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "activates debug info");
-
-#define DRIVER_VERSION	"0.77"
-
-#define RADIO_VERSION KERNEL_VERSION(0, 7, 7)
 
 #define dprintk(dev, num, fmt, arg...) \
 	v4l2_dbg(num, debug, &dev->v4l2_dev, fmt, ## arg)
@@ -76,8 +76,8 @@ MODULE_PARM_DESC(debug, "activates debug info");
 /* TEA5757 pin mappings */
 static const int clk = 1, data = 2, wren = 4, mo_st = 8, power = 16;
 
-#define FREQ_LO		(50 * 16000)
-#define FREQ_HI		(150 * 16000)
+#define FREQ_LO		(87 * 16000)
+#define FREQ_HI		(108 * 16000)
 
 #define FREQ_IF         171200 /* 10.7*16000   */
 #define FREQ_STEP       200    /* 12.5*16      */
@@ -194,7 +194,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->driver, "radio-maxiradio", sizeof(v->driver));
 	strlcpy(v->card, "Maxi Radio FM2000 radio", sizeof(v->card));
 	snprintf(v->bus_info, sizeof(v->bus_info), "PCI:%s", pci_name(dev->pdev));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -262,6 +261,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct maxiradio *dev = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	if (f->frequency < FREQ_LO || f->frequency > FREQ_HI) {
 		dprintk(dev, 1, "radio freq (%d.%02d MHz) out of range (%d-%d)\n",
 					f->frequency / 16000,
@@ -285,6 +286,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct maxiradio *dev = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = dev->freq;
 
@@ -341,7 +344,7 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 
 static const struct v4l2_file_operations maxiradio_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl          = video_ioctl2,
+	.unlocked_ioctl = video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops maxiradio_ioctl_ops = {
@@ -407,8 +410,7 @@ static int __devinit maxiradio_init_one(struct pci_dev *pdev, const struct pci_d
 		goto err_out_free_region;
 	}
 
-	v4l2_info(v4l2_dev, "version " DRIVER_VERSION
-			" time " __TIME__ "  " __DATE__ "\n");
+	v4l2_info(v4l2_dev, "version " DRIVER_VERSION "\n");
 
 	v4l2_info(v4l2_dev, "found Guillemot MAXI Radio device (io = 0x%x)\n",
 	       dev->io);

@@ -15,7 +15,7 @@
  * for this mutex, no need for a system wide mutex facility.
  *
  * Also this lock is often released before a call that could block because
- * reiserfs performances were partialy based on the release while schedule()
+ * reiserfs performances were partially based on the release while schedule()
  * property of the Bkl.
  */
 void reiserfs_write_lock(struct super_block *s)
@@ -86,3 +86,12 @@ void reiserfs_check_lock_depth(struct super_block *sb, char *caller)
 		reiserfs_panic(sb, "%s called without kernel lock held %d",
 			       caller);
 }
+
+#ifdef CONFIG_REISERFS_CHECK
+void reiserfs_lock_check_recursive(struct super_block *sb)
+{
+	struct reiserfs_sb_info *sb_i = REISERFS_SB(sb);
+
+	WARN_ONCE((sb_i->lock_depth > 0), "Unwanted recursive reiserfs lock!\n");
+}
+#endif

@@ -145,7 +145,7 @@ struct snd_als300_substream_data {
 	int block_counter_register;
 };
 
-static struct pci_device_id snd_als300_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_als300_ids) = {
 	{ 0x4005, 0x0300, PCI_ANY_ID, PCI_ANY_ID, 0, 0, DEVICE_ALS300 },
 	{ 0x4005, 0x0308, PCI_ANY_ID, PCI_ANY_ID, 0, 0, DEVICE_ALS300_PLUS },
 	{ 0, }
@@ -722,7 +722,7 @@ static int __devinit snd_als300_create(struct snd_card *card,
 		irq_handler = snd_als300_interrupt;
 
 	if (request_irq(pci->irq, irq_handler, IRQF_SHARED,
-			card->shortname, chip)) {
+			KBUILD_MODNAME, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_als300_free(chip);
 		return -EBUSY;
@@ -846,7 +846,7 @@ static int __devinit snd_als300_probe(struct pci_dev *pci,
 }
 
 static struct pci_driver driver = {
-	.name = "ALS300",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_als300_ids,
 	.probe = snd_als300_probe,
 	.remove = __devexit_p(snd_als300_remove),

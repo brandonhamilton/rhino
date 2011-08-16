@@ -40,6 +40,7 @@
 ******************************************************************************/
 
 #include <linux/init.h>
+#include <linux/interrupt.h>
 
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
@@ -439,7 +440,7 @@ static u8 mac_reader[] = {
 };
 
 struct atmel_private {
-	void *card; /* Bus dependent stucture varies for PCcard */
+	void *card; /* Bus dependent structure varies for PCcard */
 	int (*present_callback)(void *); /* And callback which uses it */
 	char firmware_id[32];
 	AtmelFWType firmware_type;
@@ -865,7 +866,6 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 
 	/* low bit of first byte of destination tells us if broadcast */
 	tx_update_descriptor(priv, *(skb->data) & 0x01, len + 18, buff, TX_PACKET_TYPE_DATA);
-	dev->trans_start = jiffies;
 	dev->stats.tx_bytes += len;
 
 	spin_unlock_irqrestore(&priv->irqlock, flags);
@@ -1162,7 +1162,7 @@ static irqreturn_t service_interrupt(int irq, void *dev_id)
 	struct atmel_private *priv = netdev_priv(dev);
 	u8 isr;
 	int i = -1;
-	static u8 irq_order[] = {
+	static const u8 irq_order[] = {
 		ISR_OUT_OF_RANGE,
 		ISR_RxCOMPLETE,
 		ISR_TxCOMPLETE,
@@ -3772,7 +3772,9 @@ static int probe_atmel_card(struct net_device *dev)
 
 	if (rc) {
 		if (dev->dev_addr[0] == 0xFF) {
-			u8 default_mac[] = {0x00, 0x04, 0x25, 0x00, 0x00, 0x00};
+			static const u8 default_mac[] = {
+				0x00, 0x04, 0x25, 0x00, 0x00, 0x00
+			};
 			printk(KERN_ALERT "%s: *** Invalid MAC address. UPGRADE Firmware ****\n", dev->name);
 			memcpy(dev->dev_addr, default_mac, 6);
 		}
@@ -3894,7 +3896,7 @@ static int reset_atmel_card(struct net_device *dev)
 
 	   This routine is also responsible for initialising some
 	   hardware-specific fields in the atmel_private structure,
-	   including a copy of the firmware's hostinfo stucture
+	   including a copy of the firmware's hostinfo structure
 	   which is the route into the rest of the firmware datastructures. */
 
 	struct atmel_private *priv = netdev_priv(dev);

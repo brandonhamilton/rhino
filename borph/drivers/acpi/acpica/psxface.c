@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2008, Intel Corp.
+ * Copyright (C) 2000 - 2011, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,7 +46,7 @@
 #include "acparser.h"
 #include "acdispat.h"
 #include "acinterp.h"
-#include "amlcode.h"
+#include "actables.h"
 
 #define _COMPONENT          ACPI_PARSER
 ACPI_MODULE_NAME("psxface")
@@ -220,6 +220,10 @@ acpi_status acpi_ps_execute_method(struct acpi_evaluate_info *info)
 
 	ACPI_FUNCTION_TRACE(ps_execute_method);
 
+	/* Quick validation of DSDT header */
+
+	acpi_tb_check_dsdt_header();
+
 	/* Validate the Info and method Node */
 
 	if (!info || !info->resolved_node) {
@@ -280,14 +284,15 @@ acpi_status acpi_ps_execute_method(struct acpi_evaluate_info *info)
 		goto cleanup;
 	}
 
-	if (info->obj_desc->method.flags & AOPOBJ_MODULE_LEVEL) {
+	if (info->obj_desc->method.info_flags & ACPI_METHOD_MODULE_LEVEL) {
 		walk_state->parse_flags |= ACPI_PARSE_MODULE_LEVEL;
 	}
 
 	/* Invoke an internal method if necessary */
 
-	if (info->obj_desc->method.method_flags & AML_METHOD_INTERNAL_ONLY) {
-		status = info->obj_desc->method.implementation(walk_state);
+	if (info->obj_desc->method.info_flags & ACPI_METHOD_INTERNAL_ONLY) {
+		status =
+		    info->obj_desc->method.dispatch.implementation(walk_state);
 		info->return_object = walk_state->return_desc;
 
 		/* Cleanup states */

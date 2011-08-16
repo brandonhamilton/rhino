@@ -17,15 +17,15 @@
 #include "jade.h"
 #include "isdnl1.h"
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 
 
 int
 JadeVersion(struct IsdnCardState *cs, char *s)
 {
-    int ver,i;
+    int ver;
     int to = 50;
     cs->BC_Write_Reg(cs, -1, 0x50, 0x19);
-    i=0;
     while (to) {
     	udelay(1);
 	ver = cs->BC_Read_Reg(cs, -1, 0x60);

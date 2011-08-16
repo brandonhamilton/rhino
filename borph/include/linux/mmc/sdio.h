@@ -9,8 +9,8 @@
  * your option) any later version.
  */
 
-#ifndef MMC_SDIO_H
-#define MMC_SDIO_H
+#ifndef LINUX_MMC_SDIO_H
+#define LINUX_MMC_SDIO_H
 
 /* SDIO commands                         type  argument     response */
 #define SD_IO_SEND_OP_COND          5 /* bcr  [23:0] OCR         R4  */
@@ -37,6 +37,8 @@
  *      [25:9] Register address
  *      [8:0] Byte/block count
  */
+
+#define R4_MEMORY_PRESENT (1 << 27)
 
 /*
   SDIO status in R5
@@ -94,6 +96,10 @@
 
 #define  SDIO_BUS_WIDTH_1BIT	0x00
 #define  SDIO_BUS_WIDTH_4BIT	0x02
+#define  SDIO_BUS_ECSI		0x20	/* Enable continuous SPI interrupt */
+#define  SDIO_BUS_SCSI		0x40	/* Support continuous SPI interrupt */
+
+#define  SDIO_BUS_ASYNC_INT	0x20
 
 #define  SDIO_BUS_CD_DISABLE     0x80	/* disable pull-up on DAT3 (pin 1) */
 
@@ -155,5 +161,4 @@
 
 #define SDIO_FBR_BLKSIZE	0x10	/* block size (2 bytes) */
 
-#endif
-
+#endif /* LINUX_MMC_SDIO_H */

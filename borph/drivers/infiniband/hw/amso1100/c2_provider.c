@@ -50,6 +50,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/if_arp.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -95,14 +96,6 @@ static int c2_query_port(struct ib_device *ibdev,
 	props->active_width = 1;
 	props->active_speed = 1;
 
-	return 0;
-}
-
-static int c2_modify_port(struct ib_device *ibdev,
-			  u8 port, int port_modify_mask,
-			  struct ib_port_modify *props)
-{
-	pr_debug("%s:%u\n", __func__, __LINE__);
 	return 0;
 }
 
@@ -816,7 +809,6 @@ int c2_register_device(struct c2_dev *dev)
 	dev->ibdev.dma_device = &dev->pcidev->dev;
 	dev->ibdev.query_device = c2_query_device;
 	dev->ibdev.query_port = c2_query_port;
-	dev->ibdev.modify_port = c2_modify_port;
 	dev->ibdev.query_pkey = c2_query_pkey;
 	dev->ibdev.query_gid = c2_query_gid;
 	dev->ibdev.alloc_ucontext = c2_alloc_ucontext;
@@ -864,7 +856,7 @@ int c2_register_device(struct c2_dev *dev)
 	dev->ibdev.iwcm->create_listen = c2_service_create;
 	dev->ibdev.iwcm->destroy_listen = c2_service_destroy;
 
-	ret = ib_register_device(&dev->ibdev);
+	ret = ib_register_device(&dev->ibdev, NULL);
 	if (ret)
 		goto out_free_iwcm;
 

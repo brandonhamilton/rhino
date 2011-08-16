@@ -10,9 +10,12 @@
  */
 #include <linux/init.h>
 #include <linux/pfn.h>
+#include <linux/slab.h>
 #include <linux/bootmem.h>
 #include <linux/module.h>
 #include <linux/kmemleak.h>
+#include <linux/range.h>
+#include <linux/memblock.h>
 
 #include <asm/bug.h>
 #include <asm/io.h>
@@ -20,17 +23,16 @@
 
 #include "internal.h"
 
+#ifndef CONFIG_NEED_MULTIPLE_NODES
+struct pglist_data __refdata contig_page_data = {
+	.bdata = &bootmem_node_data[0]
+};
+EXPORT_SYMBOL(contig_page_data);
+#endif
+
 unsigned long max_low_pfn;
 unsigned long min_low_pfn;
 unsigned long max_pfn;
-
-#ifdef CONFIG_CRASH_DUMP
-/*
- * If we have booted due to a crash, max_pfn will be a very low value. We need
- * to know the amount of memory that the previous kernel used.
- */
-unsigned long saved_max_pfn;
-#endif
 
 bootmem_data_t bootmem_node_data[MAX_NUMNODES] __initdata;
 
@@ -247,7 +249,13 @@ unsigned long __init free_all_bootmem_node(pg_data_t *pgdat)
  */
 unsigned long __init free_all_bootmem(void)
 {
-	return free_all_bootmem_core(NODE_DATA(0)->bdata);
+	unsigned long total_pages = 0;
+	bootmem_data_t *bdata;
+
+	list_for_each_entry(bdata, &bdata_list, list)
+		total_pages += free_all_bootmem_core(bdata);
+
+	return total_pages;
 }
 
 static void __init __free(bootmem_data_t *bdata,
@@ -430,6 +438,12 @@ int __init reserve_bootmem(unsigned long addr, unsigned long size,
 	end = PFN_UP(addr + size);
 
 	return mark_bootmem(start, end, 1, flags);
+}
+
+int __weak __init reserve_bootmem_generic(unsigned long phys, unsigned long len,
+				   int flags)
+{
+	return reserve_bootmem(phys, len, flags);
 }
 
 static unsigned long __init align_idx(struct bootmem_data *bdata,
@@ -631,7 +645,9 @@ restart:
 void * __init __alloc_bootmem_nopanic(unsigned long size, unsigned long align,
 					unsigned long goal)
 {
-	return ___alloc_bootmem_nopanic(size, align, goal, 0);
+	unsigned long limit = 0;
+
+	return ___alloc_bootmem_nopanic(size, align, goal, limit);
 }
 
 static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
@@ -665,7 +681,9 @@ static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
 void * __init __alloc_bootmem(unsigned long size, unsigned long align,
 			      unsigned long goal)
 {
-	return ___alloc_bootmem(size, align, goal, 0);
+	unsigned long limit = 0;
+
+	return ___alloc_bootmem(size, align, goal, limit);
 }
 
 static void * __init ___alloc_bootmem_node(bootmem_data_t *bdata,
@@ -706,7 +724,36 @@ void * __init __alloc_bootmem_node(pg_data_t *pgdat, unsigned long size,
 	if (WARN_ON_ONCE(slab_is_available()))
 		return kzalloc_node(size, GFP_NOWAIT, pgdat->node_id);
 
-	return ___alloc_bootmem_node(pgdat->bdata, size, align, goal, 0);
+	return  ___alloc_bootmem_node(pgdat->bdata, size, align, goal, 0);
+}
+
+void * __init __alloc_bootmem_node_high(pg_data_t *pgdat, unsigned long size,
+				   unsigned long align, unsigned long goal)
+{
+#ifdef MAX_DMA32_PFN
+	unsigned long end_pfn;
+
+	if (WARN_ON_ONCE(slab_is_available()))
+		return kzalloc_node(size, GFP_NOWAIT, pgdat->node_id);
+
+	/* update goal according ...MAX_DMA32_PFN */
+	end_pfn = pgdat->node_start_pfn + pgdat->node_spanned_pages;
+
+	if (end_pfn > MAX_DMA32_PFN + (128 >> (20 - PAGE_SHIFT)) &&
+	    (goal >> PAGE_SHIFT) < MAX_DMA32_PFN) {
+		void *ptr;
+		unsigned long new_goal;
+
+		new_goal = MAX_DMA32_PFN << PAGE_SHIFT;
+		ptr = alloc_bootmem_core(pgdat->bdata, size, align,
+						 new_goal, 0);
+		if (ptr)
+			return ptr;
+	}
+#endif
+
+	return __alloc_bootmem_node(pgdat, size, align, goal);
+
 }
 
 #ifdef CONFIG_SPARSEMEM

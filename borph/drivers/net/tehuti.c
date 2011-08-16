@@ -12,7 +12,7 @@
 /*
  * RX HW/SW interaction overview
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- * There are 2 types of RX communication channels betwean driver and NIC.
+ * There are 2 types of RX communication channels between driver and NIC.
  * 1) RX Free Fifo - RXF - holds descriptors of empty buffers to accept incoming
  * traffic. This Fifo is filled by SW and is readen by HW. Each descriptor holds
  * info about buffer's location, size and ID. An ID field is used to identify a
@@ -62,9 +62,11 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include "tehuti.h"
 
-static struct pci_device_id __devinitdata bdx_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(bdx_pci_tbl) = {
 	{0x1FC9, 0x3009, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{0x1FC9, 0x3010, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{0x1FC9, 0x3014, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
@@ -90,7 +92,7 @@ static void bdx_rx_free(struct bdx_priv *priv);
 static void bdx_tx_free(struct bdx_priv *priv);
 
 /* Definitions needed by bdx_probe */
-static void bdx_ethtool_ops(struct net_device *netdev);
+static void bdx_set_ethtool_ops(struct net_device *netdev);
 
 /*************************************************************************
  *    Print Info                                                         *
@@ -105,26 +107,24 @@ static void print_hw_id(struct pci_dev *pdev)
 	pci_read_config_word(pdev, PCI_LINK_STATUS_REG, &pci_link_status);
 	pci_read_config_word(pdev, PCI_DEV_CTRL_REG, &pci_ctrl);
 
-	printk(KERN_INFO "tehuti: %s%s\n", BDX_NIC_NAME,
-	       nic->port_num == 1 ? "" : ", 2-Port");
-	printk(KERN_INFO
-	       "tehuti: srom 0x%x fpga %d build %u lane# %d"
-	       " max_pl 0x%x mrrs 0x%x\n",
-	       readl(nic->regs + SROM_VER), readl(nic->regs + FPGA_VER) & 0xFFF,
-	       readl(nic->regs + FPGA_SEED),
-	       GET_LINK_STATUS_LANES(pci_link_status),
-	       GET_DEV_CTRL_MAXPL(pci_ctrl), GET_DEV_CTRL_MRRS(pci_ctrl));
+	pr_info("%s%s\n", BDX_NIC_NAME,
+		nic->port_num == 1 ? "" : ", 2-Port");
+	pr_info("srom 0x%x fpga %d build %u lane# %d max_pl 0x%x mrrs 0x%x\n",
+		readl(nic->regs + SROM_VER), readl(nic->regs + FPGA_VER) & 0xFFF,
+		readl(nic->regs + FPGA_SEED),
+		GET_LINK_STATUS_LANES(pci_link_status),
+		GET_DEV_CTRL_MAXPL(pci_ctrl), GET_DEV_CTRL_MRRS(pci_ctrl));
 }
 
 static void print_fw_id(struct pci_nic *nic)
 {
-	printk(KERN_INFO "tehuti: fw 0x%x\n", readl(nic->regs + FW_VER));
+	pr_info("fw 0x%x\n", readl(nic->regs + FW_VER));
 }
 
 static void print_eth_id(struct net_device *ndev)
 {
-	printk(KERN_INFO "%s: %s, Port %c\n", ndev->name, BDX_NIC_NAME,
-	       (ndev->if_port == 0) ? 'A' : 'B');
+	netdev_info(ndev, "%s, Port %c\n",
+		    BDX_NIC_NAME, (ndev->if_port == 0) ? 'A' : 'B');
 
 }
 
@@ -160,7 +160,7 @@ bdx_fifo_init(struct bdx_priv *priv, struct fifo *f, int fsz_type,
 	f->va = pci_alloc_consistent(priv->pdev,
 				     memsz + FIFO_EXTRA_SPACE, &f->da);
 	if (!f->va) {
-		ERR("pci_alloc_consistent failed\n");
+		pr_err("pci_alloc_consistent failed\n");
 		RET(-ENOMEM);
 	}
 	f->reg_CFG0 = reg_CFG0;
@@ -204,13 +204,13 @@ static void bdx_link_changed(struct bdx_priv *priv)
 		if (netif_carrier_ok(priv->ndev)) {
 			netif_stop_queue(priv->ndev);
 			netif_carrier_off(priv->ndev);
-			ERR("%s: Link Down\n", priv->ndev->name);
+			netdev_err(priv->ndev, "Link Down\n");
 		}
 	} else {
 		if (!netif_carrier_ok(priv->ndev)) {
 			netif_wake_queue(priv->ndev);
 			netif_carrier_on(priv->ndev);
-			ERR("%s: Link Up\n", priv->ndev->name);
+			netdev_err(priv->ndev, "Link Up\n");
 		}
 	}
 }
@@ -226,10 +226,10 @@ static void bdx_isr_extra(struct bdx_priv *priv, u32 isr)
 		bdx_link_changed(priv);
 
 	if (isr & IR_PCIE_LINK)
-		ERR("%s: PCI-E Link Fault\n", priv->ndev->name);
+		netdev_err(priv->ndev, "PCI-E Link Fault\n");
 
 	if (isr & IR_PCIE_TOUT)
-		ERR("%s: PCI-E Time Out\n", priv->ndev->name);
+		netdev_err(priv->ndev, "PCI-E Time Out\n");
 
 }
 
@@ -324,7 +324,7 @@ static int bdx_fw_load(struct bdx_priv *priv)
 	ENTER;
 	master = READ_REG(priv, regINIT_SEMAPHORE);
 	if (!READ_REG(priv, regINIT_STATUS) && master) {
-		rc = request_firmware(&fw, "tehuti/firmware.bin", &priv->pdev->dev);
+		rc = request_firmware(&fw, "tehuti/bdx.bin", &priv->pdev->dev);
 		if (rc)
 			goto out;
 		bdx_tx_push_desc_safe(priv, (char *)fw->data, fw->size);
@@ -345,7 +345,7 @@ out:
 		release_firmware(fw);
 
 	if (rc) {
-		ERR("%s: firmware loading failed\n", priv->ndev->name);
+		netdev_err(priv->ndev, "firmware loading failed\n");
 		if (rc == -EIO)
 			DBG("VPC = 0x%x VIC = 0x%x INIT_STATUS = 0x%x i=%d\n",
 			    READ_REG(priv, regVPC),
@@ -419,9 +419,11 @@ static int bdx_hw_start(struct bdx_priv *priv)
 	WRITE_REG(priv, regGMAC_RXF_A, GMAC_RX_FILTER_OSEN |
 		  GMAC_RX_FILTER_AM | GMAC_RX_FILTER_AB);
 
-#define BDX_IRQ_TYPE	((priv->nic->irq_type == IRQ_MSI)?0:IRQF_SHARED)
-	if ((rc = request_irq(priv->pdev->irq, bdx_isr_napi, BDX_IRQ_TYPE,
-			 ndev->name, ndev)))
+#define BDX_IRQ_TYPE	((priv->nic->irq_type == IRQ_MSI) ? 0 : IRQF_SHARED)
+
+	rc = request_irq(priv->pdev->irq, bdx_isr_napi, BDX_IRQ_TYPE,
+			 ndev->name, ndev);
+	if (rc)
 		goto err_irq;
 	bdx_enable_interrupts(priv);
 
@@ -462,7 +464,7 @@ static int bdx_hw_reset_direct(void __iomem *regs)
 			readl(regs + regRXD_CFG0_0);
 			return 0;
 		}
-	ERR("tehuti: HW reset failed\n");
+	pr_err("HW reset failed\n");
 	return 1;		/* failure */
 }
 
@@ -486,7 +488,7 @@ static int bdx_hw_reset(struct bdx_priv *priv)
 			READ_REG(priv, regRXD_CFG0_0);
 			return 0;
 		}
-	ERR("tehuti: HW reset failed\n");
+	pr_err("HW reset failed\n");
 	return 1;		/* failure */
 }
 
@@ -510,8 +512,7 @@ static int bdx_sw_reset(struct bdx_priv *priv)
 		mdelay(10);
 	}
 	if (i == 50)
-		ERR("%s: SW reset timeout. continuing anyway\n",
-		    priv->ndev->name);
+		netdev_err(priv->ndev, "SW reset timeout. continuing anyway\n");
 
 	/* 6. disable intrs */
 	WRITE_REG(priv, regRDINTCM0, 0);
@@ -604,18 +605,15 @@ static int bdx_open(struct net_device *ndev)
 	if (netif_running(ndev))
 		netif_stop_queue(priv->ndev);
 
-	if ((rc = bdx_tx_init(priv)))
-		goto err;
-
-	if ((rc = bdx_rx_init(priv)))
-		goto err;
-
-	if ((rc = bdx_fw_load(priv)))
+	if ((rc = bdx_tx_init(priv)) ||
+	    (rc = bdx_rx_init(priv)) ||
+	    (rc = bdx_fw_load(priv)))
 		goto err;
 
 	bdx_rx_alloc_skbs(priv, &priv->rxf_fifo0);
 
-	if ((rc = bdx_hw_start(priv)))
+	rc = bdx_hw_start(priv);
+	if (rc)
 		goto err;
 
 	napi_enable(&priv->napi);
@@ -647,8 +645,8 @@ static int bdx_ioctl_priv(struct net_device *ndev, struct ifreq *ifr, int cmd)
 	if (cmd != SIOCDEVPRIVATE) {
 		error = copy_from_user(data, ifr->ifr_data, sizeof(data));
 		if (error) {
-			ERR("cant copy from user\n");
-			RET(error);
+			pr_err("can't copy from user\n");
+			RET(-EFAULT);
 		}
 		DBG("%d 0x%x 0x%x\n", data[0], data[1], data[2]);
 	}
@@ -667,7 +665,7 @@ static int bdx_ioctl_priv(struct net_device *ndev, struct ifreq *ifr, int cmd)
 		    data[2]);
 		error = copy_to_user(ifr->ifr_data, data, sizeof(data));
 		if (error)
-			RET(error);
+			RET(-EFAULT);
 		break;
 
 	case BDX_OP_WRITE:
@@ -708,7 +706,7 @@ static void __bdx_vlan_rx_vid(struct net_device *ndev, uint16_t vid, int enable)
 	ENTER;
 	DBG2("vid=%d value=%d\n", (int)vid, enable);
 	if (unlikely(vid >= 4096)) {
-		ERR("tehuti: invalid VID: %u (> 4096)\n", vid);
+		pr_err("invalid VID: %u (> 4096)\n", vid);
 		RET();
 	}
 	reg = regVLAN_0 + (vid / 32) * 4;
@@ -744,22 +742,6 @@ static void bdx_vlan_rx_kill_vid(struct net_device *ndev, unsigned short vid)
 	__bdx_vlan_rx_vid(ndev, vid, 0);
 }
 
-/*
- * bdx_vlan_rx_register - kernel hook for adding VLAN group
- * @ndev network device
- * @grp  VLAN group
- */
-static void
-bdx_vlan_rx_register(struct net_device *ndev, struct vlan_group *grp)
-{
-	struct bdx_priv *priv = netdev_priv(ndev);
-
-	ENTER;
-	DBG("device='%s', group='%p'\n", ndev->name, grp);
-	priv->vlgrp = grp;
-	RET();
-}
-
 /**
  * bdx_change_mtu - Change the Maximum Transfer Unit
  * @netdev: network interface device structure
@@ -776,8 +758,8 @@ static int bdx_change_mtu(struct net_device *ndev, int new_mtu)
 
 	/* enforce minimum frame size */
 	if (new_mtu < ETH_ZLEN) {
-		ERR("%s: %s mtu %d is less then minimal %d\n",
-		    BDX_DRV_NAME, ndev->name, new_mtu, ETH_ZLEN);
+		netdev_err(ndev, "mtu %d is less then minimal %d\n",
+			   new_mtu, ETH_ZLEN);
 		RET(-EINVAL);
 	}
 
@@ -808,9 +790,9 @@ static void bdx_setmulti(struct net_device *ndev)
 		/* set IMF to accept all multicast frmaes */
 		for (i = 0; i < MAC_MCST_HASH_NUM; i++)
 			WRITE_REG(priv, regRX_MCST_HASH0 + i * 4, ~0);
-	} else if (ndev->mc_count) {
+	} else if (!netdev_mc_empty(ndev)) {
 		u8 hash;
-		struct dev_mc_list *mclist;
+		struct netdev_hw_addr *ha;
 		u32 reg, val;
 
 		/* set IMF to deny all multicast frames */
@@ -823,16 +805,14 @@ static void bdx_setmulti(struct net_device *ndev)
 		}
 
 		/* use PMF to accept first MAC_MCST_NUM (15) addresses */
-		/* TBD: sort addreses and write them in ascending order
+		/* TBD: sort addresses and write them in ascending order
 		 * into RX_MAC_MCST regs. we skip this phase now and accept ALL
 		 * multicast frames throu IMF */
-		mclist = ndev->mc_list;
-
 		/* accept the rest of addresses throu IMF */
-		for (; mclist; mclist = mclist->next) {
+		netdev_for_each_mc_addr(ha, ndev) {
 			hash = 0;
 			for (i = 0; i < ETH_ALEN; i++)
-				hash ^= mclist->dmi_addr[i];
+				hash ^= ha->addr[i];
 			reg = regRX_MCST_HASH0 + ((hash >> 5) << 2);
 			val = READ_REG(priv, reg);
 			val |= (1 << (hash % 32));
@@ -840,7 +820,7 @@ static void bdx_setmulti(struct net_device *ndev)
 		}
 
 	} else {
-		DBG("only own mac %d\n", ndev->mc_count);
+		DBG("only own mac %d\n", netdev_mc_count(ndev));
 		rxf_val |= GMAC_RX_FILTER_AB;
 	}
 	WRITE_REG(priv, regGMAC_RXF_A, rxf_val);
@@ -931,13 +911,6 @@ static void bdx_update_stats(struct bdx_priv *priv)
 	BDX_ASSERT((sizeof(struct bdx_stats) / sizeof(u64)) != i);
 }
 
-static struct net_device_stats *bdx_get_stats(struct net_device *ndev)
-{
-	struct bdx_priv *priv = netdev_priv(ndev);
-	struct net_device_stats *net_stat = &priv->net_stats;
-	return net_stat;
-}
-
 static void print_rxdd(struct rxd_desc *rxdd, u32 rxd_val1, u16 len,
 		       u16 rxd_vlan);
 static void print_rxfd(struct rxf_desc *rxfd);
@@ -1010,7 +983,7 @@ static inline void bdx_rxdb_free_elem(struct rxdb *db, int n)
  *
  * RxD fifo is smaller than RxF fifo by design. Upon high load, RxD will be
  * filled and packets will be dropped by nic without getting into host or
- * cousing interrupt. Anyway, in that condition, host has no chance to proccess
+ * cousing interrupt. Anyway, in that condition, host has no chance to process
  * all packets, but dropping in nic is cheaper, since it takes 0 cpu cycles
  */
 
@@ -1028,17 +1001,16 @@ static int bdx_rx_init(struct bdx_priv *priv)
 			  regRXF_CFG0_0, regRXF_CFG1_0,
 			  regRXF_RPTR_0, regRXF_WPTR_0))
 		goto err_mem;
-	if (!
-	    (priv->rxdb =
-	     bdx_rxdb_create(priv->rxf_fifo0.m.memsz /
-			     sizeof(struct rxf_desc))))
+	priv->rxdb = bdx_rxdb_create(priv->rxf_fifo0.m.memsz /
+				     sizeof(struct rxf_desc));
+	if (!priv->rxdb)
 		goto err_mem;
 
 	priv->rxf_fifo0.m.pktsz = priv->ndev->mtu + VLAN_ETH_HLEN;
 	return 0;
 
 err_mem:
-	ERR("%s: %s: Rx init failed\n", BDX_DRV_NAME, priv->ndev->name);
+	netdev_err(priv->ndev, "Rx init failed\n");
 	return -ENOMEM;
 }
 
@@ -1115,8 +1087,9 @@ static void bdx_rx_alloc_skbs(struct bdx_priv *priv, struct rxf_fifo *f)
 	ENTER;
 	dno = bdx_rxdb_available(db) - 1;
 	while (dno > 0) {
-		if (!(skb = dev_alloc_skb(f->m.pktsz + NET_IP_ALIGN))) {
-			ERR("NO MEM: dev_alloc_skb failed\n");
+		skb = dev_alloc_skb(f->m.pktsz + NET_IP_ALIGN);
+		if (!skb) {
+			pr_err("NO MEM: dev_alloc_skb failed\n");
 			break;
 		}
 		skb->dev = priv->ndev;
@@ -1157,21 +1130,15 @@ NETIF_RX_MUX(struct bdx_priv *priv, u32 rxd_val1, u16 rxd_vlan,
 	     struct sk_buff *skb)
 {
 	ENTER;
-	DBG("rxdd->flags.bits.vtag=%d vlgrp=%p\n", GET_RXD_VTAG(rxd_val1),
-	    priv->vlgrp);
-	if (priv->vlgrp && GET_RXD_VTAG(rxd_val1)) {
-		DBG("%s: vlan rcv vlan '%x' vtag '%x', device name '%s'\n",
+	DBG("rxdd->flags.bits.vtag=%d\n", GET_RXD_VTAG(rxd_val1));
+	if (GET_RXD_VTAG(rxd_val1)) {
+		DBG("%s: vlan rcv vlan '%x' vtag '%x'\n",
 		    priv->ndev->name,
 		    GET_RXD_VLAN_ID(rxd_vlan),
-		    GET_RXD_VTAG(rxd_val1),
-		    vlan_group_get_device(priv->vlgrp,
-					  GET_RXD_VLAN_ID(rxd_vlan))->name);
-		/* NAPI variant of receive functions */
-		vlan_hwaccel_receive_skb(skb, priv->vlgrp,
-					 GET_RXD_VLAN_TCI(rxd_vlan));
-	} else {
-		netif_receive_skb(skb);
+		    GET_RXD_VTAG(rxd_val1));
+		__vlan_hwaccel_put_tag(skb, GET_RXD_VLAN_TCI(rxd_vlan));
 	}
+	netif_receive_skb(skb);
 }
 
 static void bdx_recycle_skb(struct bdx_priv *priv, struct rxd_desc *rxdd)
@@ -1211,8 +1178,8 @@ static void bdx_recycle_skb(struct bdx_priv *priv, struct rxd_desc *rxdd)
 	RET();
 }
 
-/* bdx_rx_receive - recieves full packets from RXD fifo and pass them to OS
- * NOTE: a special treatment is given to non-continous descriptors
+/* bdx_rx_receive - receives full packets from RXD fifo and pass them to OS
+ * NOTE: a special treatment is given to non-continuous descriptors
  * that start near the end, wraps around and continue at the beginning. a second
  * part is copied right after the first, and then descriptor is interpreted as
  * normal. fifo has an extra space to allow such operations
@@ -1224,6 +1191,7 @@ static void bdx_recycle_skb(struct bdx_priv *priv, struct rxd_desc *rxdd)
 
 static int bdx_rx_receive(struct bdx_priv *priv, struct rxd_fifo *f, int budget)
 {
+	struct net_device *ndev = priv->ndev;
 	struct sk_buff *skb, *skb2;
 	struct rxd_desc *rxdd;
 	struct rx_map *dm;
@@ -1277,7 +1245,7 @@ static int bdx_rx_receive(struct bdx_priv *priv, struct rxd_fifo *f, int budget)
 
 		if (unlikely(GET_RXD_ERR(rxd_val1))) {
 			DBG("rxd_err = 0x%x\n", GET_RXD_ERR(rxd_val1));
-			priv->net_stats.rx_errors++;
+			ndev->stats.rx_errors++;
 			bdx_recycle_skb(priv, rxdd);
 			continue;
 		}
@@ -1304,16 +1272,16 @@ static int bdx_rx_receive(struct bdx_priv *priv, struct rxd_fifo *f, int budget)
 			bdx_rxdb_free_elem(db, rxdd->va_lo);
 		}
 
-		priv->net_stats.rx_bytes += len;
+		ndev->stats.rx_bytes += len;
 
 		skb_put(skb, len);
-		skb->dev = priv->ndev;
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		skb->protocol = eth_type_trans(skb, priv->ndev);
+		skb->protocol = eth_type_trans(skb, ndev);
 
 		/* Non-IP packets aren't checksum-offloaded */
 		if (GET_RXD_PKT_ID(rxd_val1) == 0)
-			skb->ip_summed = CHECKSUM_NONE;
+			skb_checksum_none_assert(skb);
+		else
+			skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 		NETIF_RX_MUX(priv, rxd_val1, rxd_vlan, skb);
 
@@ -1321,7 +1289,7 @@ static int bdx_rx_receive(struct bdx_priv *priv, struct rxd_fifo *f, int budget)
 			break;
 	}
 
-	priv->net_stats.rx_packets += done;
+	ndev->stats.rx_packets += done;
 
 	/* FIXME: do smth to minimize pci accesses    */
 	WRITE_REG(priv, f->m.reg_RPTR, f->m.rptr & TXF_WPTR_WR_PTR);
@@ -1337,9 +1305,7 @@ static int bdx_rx_receive(struct bdx_priv *priv, struct rxd_fifo *f, int budget)
 static void print_rxdd(struct rxd_desc *rxdd, u32 rxd_val1, u16 len,
 		       u16 rxd_vlan)
 {
-	DBG("ERROR: rxdd bc %d rxfq %d to %d type %d err %d rxp %d "
-	    "pkt_id %d vtag %d len %d vlan_id %d cfi %d prio %d "
-	    "va_lo %d va_hi %d\n",
+	DBG("ERROR: rxdd bc %d rxfq %d to %d type %d err %d rxp %d pkt_id %d vtag %d len %d vlan_id %d cfi %d prio %d va_lo %d va_hi %d\n",
 	    GET_RXD_BC(rxd_val1), GET_RXD_RXFQ(rxd_val1), GET_RXD_TO(rxd_val1),
 	    GET_RXD_TYPE(rxd_val1), GET_RXD_ERR(rxd_val1),
 	    GET_RXD_RXP(rxd_val1), GET_RXD_PKT_ID(rxd_val1),
@@ -1358,7 +1324,7 @@ static void print_rxfd(struct rxf_desc *rxfd)
 /*
  * TX HW/SW interaction overview
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- * There are 2 types of TX communication channels betwean driver and NIC.
+ * There are 2 types of TX communication channels between driver and NIC.
  * 1) TX Free Fifo - TXF - holds ack descriptors for sent packets
  * 2) TX Data Fifo - TXD - holds descriptors of full buffers.
  *
@@ -1515,7 +1481,7 @@ bdx_tx_map_skb(struct bdx_priv *priv, struct sk_buff *skb,
 	int nr_frags = skb_shinfo(skb)->nr_frags;
 	int i;
 
-	db->wptr->len = skb->len - skb->data_len;
+	db->wptr->len = skb_headlen(skb);
 	db->wptr->addr.dma = pci_map_single(priv->pdev, skb->data,
 					    db->wptr->len, PCI_DMA_TODEVICE);
 	pbl->len = CPU_CHIP_SWAP32(db->wptr->len);
@@ -1591,14 +1557,14 @@ static int bdx_tx_init(struct bdx_priv *priv)
 	return 0;
 
 err_mem:
-	ERR("tehuti: %s: Tx init failed\n", priv->ndev->name);
+	netdev_err(priv->ndev, "Tx init failed\n");
 	return -ENOMEM;
 }
 
 /*
- * bdx_tx_space - calculates avalable space in TX fifo
+ * bdx_tx_space - calculates available space in TX fifo
  * @priv - NIC private structure
- * Returns avaliable space in TX fifo in bytes
+ * Returns available space in TX fifo in bytes
  */
 static inline int bdx_tx_space(struct bdx_priv *priv)
 {
@@ -1609,7 +1575,7 @@ static inline int bdx_tx_space(struct bdx_priv *priv)
 	fsize = f->m.rptr - f->m.wptr;
 	if (fsize <= 0)
 		fsize = f->m.memsz + fsize;
-	return (fsize);
+	return fsize;
 }
 
 /* bdx_tx_transmit - send packet to NIC
@@ -1719,8 +1685,8 @@ static netdev_tx_t bdx_tx_transmit(struct sk_buff *skb,
 #ifdef BDX_LLTX
 	ndev->trans_start = jiffies; /* NETIF_F_LLTX driver :( */
 #endif
-	priv->net_stats.tx_packets++;
-	priv->net_stats.tx_bytes += skb->len;
+	ndev->stats.tx_packets++;
+	ndev->stats.tx_bytes += skb->len;
 
 	if (priv->tx_level < BDX_MIN_TX_LEVEL) {
 		DBG("%s: %s: TX Q STOP level %d\n",
@@ -1857,7 +1823,7 @@ static void bdx_tx_push_desc(struct bdx_priv *priv, void *data, int size)
  * @data - desc's data
  * @size - desc's size
  *
- * NOTE: this func does check for available space and, if neccessary, waits for
+ * NOTE: this func does check for available space and, if necessary, waits for
  *   NIC to read existing data before writing new one.
  */
 static void bdx_tx_push_desc_safe(struct bdx_priv *priv, void *data, int size)
@@ -1889,16 +1855,14 @@ static void bdx_tx_push_desc_safe(struct bdx_priv *priv, void *data, int size)
 }
 
 static const struct net_device_ops bdx_netdev_ops = {
-	.ndo_open	 	= bdx_open,
+	.ndo_open		= bdx_open,
 	.ndo_stop		= bdx_close,
 	.ndo_start_xmit		= bdx_tx_transmit,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_do_ioctl		= bdx_ioctl,
 	.ndo_set_multicast_list = bdx_setmulti,
-	.ndo_get_stats		= bdx_get_stats,
 	.ndo_change_mtu		= bdx_change_mtu,
 	.ndo_set_mac_address	= bdx_set_mac,
-	.ndo_vlan_rx_register	= bdx_vlan_rx_register,
 	.ndo_vlan_rx_add_vid	= bdx_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= bdx_vlan_rx_kill_vid,
 };
@@ -1937,8 +1901,9 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		RET(-ENOMEM);
 
     /************** pci *****************/
-	if ((err = pci_enable_device(pdev)))	/* it trigers interrupt, dunno why. */
-		goto err_pci;			/* it's not a problem though */
+	err = pci_enable_device(pdev);
+	if (err)			/* it triggers interrupt, dunno why. */
+		goto err_pci;		/* it's not a problem though */
 
 	if (!(err = pci_set_dma_mask(pdev, DMA_BIT_MASK(64))) &&
 	    !(err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64)))) {
@@ -1946,14 +1911,14 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	} else {
 		if ((err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) ||
 		    (err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32)))) {
-			printk(KERN_ERR "tehuti: No usable DMA configuration"
-					", aborting\n");
+			pr_err("No usable DMA configuration, aborting\n");
 			goto err_dma;
 		}
 		pci_using_dac = 0;
 	}
 
-	if ((err = pci_request_regions(pdev, BDX_DRV_NAME)))
+	err = pci_request_regions(pdev, BDX_DRV_NAME);
+	if (err)
 		goto err_dma;
 
 	pci_set_master(pdev);
@@ -1961,25 +1926,26 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	pciaddr = pci_resource_start(pdev, 0);
 	if (!pciaddr) {
 		err = -EIO;
-		ERR("tehuti: no MMIO resource\n");
+		pr_err("no MMIO resource\n");
 		goto err_out_res;
 	}
-	if ((regionSize = pci_resource_len(pdev, 0)) < BDX_REGS_SIZE) {
+	regionSize = pci_resource_len(pdev, 0);
+	if (regionSize < BDX_REGS_SIZE) {
 		err = -EIO;
-		ERR("tehuti: MMIO resource (%x) too small\n", regionSize);
+		pr_err("MMIO resource (%x) too small\n", regionSize);
 		goto err_out_res;
 	}
 
 	nic->regs = ioremap(pciaddr, regionSize);
 	if (!nic->regs) {
 		err = -EIO;
-		ERR("tehuti: ioremap failed\n");
+		pr_err("ioremap failed\n");
 		goto err_out_res;
 	}
 
 	if (pdev->irq < 2) {
 		err = -EIO;
-		ERR("tehuti: invalid irq (%d)\n", pdev->irq);
+		pr_err("invalid irq (%d)\n", pdev->irq);
 		goto err_out_iomap;
 	}
 	pci_set_drvdata(pdev, nic);
@@ -1996,8 +1962,9 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	nic->irq_type = IRQ_INTX;
 #ifdef BDX_MSI
 	if ((readl(nic->regs + FPGA_VER) & 0xFFF) >= 378) {
-		if ((err = pci_enable_msi(pdev)))
-			ERR("Tehuti: Can't eneble msi. error is %d\n", err);
+		err = pci_enable_msi(pdev);
+		if (err)
+			pr_err("Can't eneble msi. error is %d\n", err);
 		else
 			nic->irq_type = IRQ_MSI;
 	} else
@@ -2006,16 +1973,17 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
     /************** netdev **************/
 	for (port = 0; port < nic->port_num; port++) {
-		if (!(ndev = alloc_etherdev(sizeof(struct bdx_priv)))) {
+		ndev = alloc_etherdev(sizeof(struct bdx_priv));
+		if (!ndev) {
 			err = -ENOMEM;
-			printk(KERN_ERR "tehuti: alloc_etherdev failed\n");
+			pr_err("alloc_etherdev failed\n");
 			goto err_out_iomap;
 		}
 
 		ndev->netdev_ops = &bdx_netdev_ops;
 		ndev->tx_queue_len = BDX_NDEV_TXQ_LEN;
 
-		bdx_ethtool_ops(ndev);	/* ethtool interface */
+		bdx_set_ethtool_ops(ndev);	/* ethtool interface */
 
 		/* these fields are used for info purposes only
 		 * so we can have them same for all ports of the board */
@@ -2026,9 +1994,11 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		ndev->irq = pdev->irq;
 		ndev->features = NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO
 		    | NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX |
-		    NETIF_F_HW_VLAN_FILTER
+		    NETIF_F_HW_VLAN_FILTER | NETIF_F_RXCSUM
 		    /*| NETIF_F_FRAGLIST */
 		    ;
+		ndev->hw_features = NETIF_F_IP_CSUM | NETIF_F_SG |
+			NETIF_F_TSO | NETIF_F_HW_VLAN_TX;
 
 		if (pci_using_dac)
 			ndev->features |= NETIF_F_HIGHDMA;
@@ -2036,7 +2006,6 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/************** priv ****************/
 		priv = nic->priv[port] = netdev_priv(ndev);
 
-		memset(priv, 0, sizeof(struct bdx_priv));
 		priv->pBdxRegs = nic->regs + port * 0x8000;
 		priv->port = port;
 		priv->pdev = pdev;
@@ -2075,12 +2044,13 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 		/*bdx_hw_reset(priv); */
 		if (bdx_read_mac(priv)) {
-			printk(KERN_ERR "tehuti: load MAC address failed\n");
+			pr_err("load MAC address failed\n");
 			goto err_out_iomap;
 		}
 		SET_NETDEV_DEV(ndev, &pdev->dev);
-		if ((err = register_netdev(ndev))) {
-			printk(KERN_ERR "tehuti: register_netdev failed\n");
+		err = register_netdev(ndev);
+		if (err) {
+			pr_err("register_netdev failed\n");
 			goto err_out_free;
 		}
 		netif_carrier_off(ndev);
@@ -2158,7 +2128,7 @@ static int bdx_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 
 	ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_FIBRE);
 	ecmd->advertising = (ADVERTISED_10000baseT_Full | ADVERTISED_FIBRE);
-	ecmd->speed = SPEED_10000;
+	ethtool_cmd_speed_set(ecmd, SPEED_10000);
 	ecmd->duplex = DUPLEX_FULL;
 	ecmd->port = PORT_FIBRE;
 	ecmd->transceiver = XCVR_EXTERNAL;	/* what does it mean? */
@@ -2194,24 +2164,6 @@ bdx_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 	drvinfo->testinfo_len = 0;
 	drvinfo->regdump_len = 0;
 	drvinfo->eedump_len = 0;
-}
-
-/*
- * bdx_get_rx_csum - report whether receive checksums are turned on or off
- * @netdev
- */
-static u32 bdx_get_rx_csum(struct net_device *netdev)
-{
-	return 1;		/* always on */
-}
-
-/*
- * bdx_get_tx_csum - report whether transmit checksums are turned on or off
- * @netdev
- */
-static u32 bdx_get_tx_csum(struct net_device *netdev)
-{
-	return (netdev->features & NETIF_F_IP_CSUM) != 0;
 }
 
 /*
@@ -2294,13 +2246,13 @@ bdx_set_coalesce(struct net_device *netdev, struct ethtool_coalesce *ecoal)
 /* Convert RX fifo size to number of pending packets */
 static inline int bdx_rx_fifo_size_to_packets(int rx_size)
 {
-	return ((FIFO_SIZE * (1 << rx_size)) / sizeof(struct rxf_desc));
+	return (FIFO_SIZE * (1 << rx_size)) / sizeof(struct rxf_desc);
 }
 
 /* Convert TX fifo size to number of pending packets */
 static inline int bdx_tx_fifo_size_to_packets(int tx_size)
 {
-	return ((FIFO_SIZE * (1 << tx_size)) / BDX_TXF_DESC_SZ);
+	return (FIFO_SIZE * (1 << tx_size)) / BDX_TXF_DESC_SZ;
 }
 
 /*
@@ -2392,10 +2344,10 @@ static int bdx_get_sset_count(struct net_device *netdev, int stringset)
 	case ETH_SS_STATS:
 		BDX_ASSERT(ARRAY_SIZE(bdx_stat_names)
 			   != sizeof(struct bdx_stats) / sizeof(u64));
-		return ((priv->stats_flag) ? ARRAY_SIZE(bdx_stat_names)	: 0);
-	default:
-		return -EINVAL;
+		return (priv->stats_flag) ? ARRAY_SIZE(bdx_stat_names)	: 0;
 	}
+
+	return -EINVAL;
 }
 
 /*
@@ -2420,10 +2372,10 @@ static void bdx_get_ethtool_stats(struct net_device *netdev,
 }
 
 /*
- * bdx_ethtool_ops - ethtool interface implementation
+ * bdx_set_ethtool_ops - ethtool interface implementation
  * @netdev
  */
-static void bdx_ethtool_ops(struct net_device *netdev)
+static void bdx_set_ethtool_ops(struct net_device *netdev)
 {
 	static const struct ethtool_ops bdx_ethtool_ops = {
 		.get_settings = bdx_get_settings,
@@ -2433,10 +2385,6 @@ static void bdx_ethtool_ops(struct net_device *netdev)
 		.set_coalesce = bdx_set_coalesce,
 		.get_ringparam = bdx_get_ringparam,
 		.set_ringparam = bdx_set_ringparam,
-		.get_rx_csum = bdx_get_rx_csum,
-		.get_tx_csum = bdx_get_tx_csum,
-		.get_sg = ethtool_op_get_sg,
-		.get_tso = ethtool_op_get_tso,
 		.get_strings = bdx_get_strings,
 		.get_sset_count = bdx_get_sset_count,
 		.get_ethtool_stats = bdx_get_ethtool_stats,
@@ -2493,10 +2441,8 @@ static struct pci_driver bdx_pci_driver = {
  */
 static void __init print_driver_id(void)
 {
-	printk(KERN_INFO "%s: %s, %s\n", BDX_DRV_NAME, BDX_DRV_DESC,
-	       BDX_DRV_VERSION);
-	printk(KERN_INFO "%s: Options: hw_csum %s\n", BDX_DRV_NAME,
-	       BDX_MSI_STRING);
+	pr_info("%s, %s\n", BDX_DRV_DESC, BDX_DRV_VERSION);
+	pr_info("Options: hw_csum %s\n", BDX_MSI_STRING);
 }
 
 static int __init bdx_module_init(void)
@@ -2521,4 +2467,4 @@ module_exit(bdx_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(BDX_DRV_DESC);
-MODULE_FIRMWARE("tehuti/firmware.bin");
+MODULE_FIRMWARE("tehuti/bdx.bin");

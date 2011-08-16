@@ -85,6 +85,7 @@
 #include <linux/cpumask.h>
 #include <linux/kdebug.h>
 #include <linux/cpu.h>
+#include <linux/gfp.h>
 
 #include <asm/delay.h>
 #include <asm/machvec.h>
@@ -581,6 +582,8 @@ out:
 	/* Get the CPE error record and log it */
 	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CPE);
 
+	local_irq_disable();
+
 	return IRQ_HANDLED;
 }
 
@@ -888,9 +891,10 @@ ia64_mca_modify_comm(const struct task_struct *previous_current)
 }
 
 static void
-finish_pt_regs(struct pt_regs *regs, const pal_min_state_area_t *ms,
+finish_pt_regs(struct pt_regs *regs, struct ia64_sal_os_state *sos,
 		unsigned long *nat)
 {
+	const pal_min_state_area_t *ms = sos->pal_min_state;
 	const u64 *bank;
 
 	/* If ipsr.ic then use pmsa_{iip,ipsr,ifs}, else use
@@ -904,6 +908,10 @@ finish_pt_regs(struct pt_regs *regs, const pal_min_state_area_t *ms,
 		regs->cr_iip = ms->pmsa_xip;
 		regs->cr_ipsr = ms->pmsa_xpsr;
 		regs->cr_ifs = ms->pmsa_xfs;
+
+		sos->iip = ms->pmsa_iip;
+		sos->ipsr = ms->pmsa_ipsr;
+		sos->ifs = ms->pmsa_ifs;
 	}
 	regs->pr = ms->pmsa_pr;
 	regs->b0 = ms->pmsa_br0;
@@ -1079,7 +1087,7 @@ ia64_mca_modify_original_stack(struct pt_regs *regs,
 	memcpy(old_regs, regs, sizeof(*regs));
 	old_regs->loadrs = loadrs;
 	old_unat = old_regs->ar_unat;
-	finish_pt_regs(old_regs, ms, &old_unat);
+	finish_pt_regs(old_regs, sos, &old_unat);
 
 	/* Next stack a struct switch_stack.  mca_asm.S built a partial
 	 * switch_stack, copy it and fill in the blanks using pt_regs and
@@ -1150,7 +1158,7 @@ no_mod:
 	mprintk(KERN_INFO "cpu %d, %s %s, original stack not modified\n",
 			smp_processor_id(), type, msg);
 	old_unat = regs->ar_unat;
-	finish_pt_regs(regs, ms, &old_unat);
+	finish_pt_regs(regs, sos, &old_unat);
 	return previous_current;
 }
 
@@ -1220,9 +1228,12 @@ static void mca_insert_tr(u64 iord)
 	unsigned long psr;
 	int cpu = smp_processor_id();
 
+	if (!ia64_idtrs[cpu])
+		return;
+
 	psr = ia64_clear_ic();
 	for (i = IA64_TR_ALLOC_BASE; i < IA64_TR_ALLOC_MAX; i++) {
-		p = &__per_cpu_idtrs[cpu][iord-1][i];
+		p = ia64_idtrs[cpu] + (iord - 1) * IA64_TR_ALLOC_MAX;
 		if (p->pte & 0x1) {
 			old_rr = ia64_get_rr(p->ifa);
 			if (old_rr != p->rr) {
@@ -1850,7 +1861,8 @@ ia64_mca_cpu_init(void *cpu_data)
 			data = mca_bootmem();
 			first_time = 0;
 		} else
-			data = __get_free_pages(GFP_KERNEL, get_order(sz));
+			data = (void *)__get_free_pages(GFP_KERNEL,
+							get_order(sz));
 		if (!data)
 			panic("Could not allocate MCA memory for cpu %d\n",
 					cpu);
@@ -2046,25 +2058,6 @@ ia64_mca_init(void)
 
 	IA64_MCA_DEBUG("%s: registered OS INIT handler with SAL\n", __func__);
 
-	/*
-	 *  Configure the CMCI/P vector and handler. Interrupts for CMC are
-	 *  per-processor, so AP CMC interrupts are setup in smp_callin() (smpboot.c).
-	 */
-	register_percpu_irq(IA64_CMC_VECTOR, &cmci_irqaction);
-	register_percpu_irq(IA64_CMCP_VECTOR, &cmcp_irqaction);
-	ia64_mca_cmc_vector_setup();       /* Setup vector on BSP */
-
-	/* Setup the MCA rendezvous interrupt vector */
-	register_percpu_irq(IA64_MCA_RENDEZ_VECTOR, &mca_rdzv_irqaction);
-
-	/* Setup the MCA wakeup interrupt vector */
-	register_percpu_irq(IA64_MCA_WAKEUP_VECTOR, &mca_wkup_irqaction);
-
-#ifdef CONFIG_ACPI
-	/* Setup the CPEI/P handler */
-	register_percpu_irq(IA64_CPEP_VECTOR, &mca_cpep_irqaction);
-#endif
-
 	/* Initialize the areas set aside by the OS to buffer the
 	 * platform/processor error states for MCA/INIT/CMC
 	 * handling.
@@ -2094,6 +2087,25 @@ ia64_mca_late_init(void)
 	if (!mca_init)
 		return 0;
 
+	/*
+	 *  Configure the CMCI/P vector and handler. Interrupts for CMC are
+	 *  per-processor, so AP CMC interrupts are setup in smp_callin() (smpboot.c).
+	 */
+	register_percpu_irq(IA64_CMC_VECTOR, &cmci_irqaction);
+	register_percpu_irq(IA64_CMCP_VECTOR, &cmcp_irqaction);
+	ia64_mca_cmc_vector_setup();       /* Setup vector on BSP */
+
+	/* Setup the MCA rendezvous interrupt vector */
+	register_percpu_irq(IA64_MCA_RENDEZ_VECTOR, &mca_rdzv_irqaction);
+
+	/* Setup the MCA wakeup interrupt vector */
+	register_percpu_irq(IA64_MCA_WAKEUP_VECTOR, &mca_wkup_irqaction);
+
+#ifdef CONFIG_ACPI
+	/* Setup the CPEI/P handler */
+	register_percpu_irq(IA64_CPEP_VECTOR, &mca_cpep_irqaction);
+#endif
+
 	register_hotcpu_notifier(&mca_cpu_notifier);
 
 	/* Setup the CMCI/P vector and handler */
@@ -2113,7 +2125,6 @@ ia64_mca_late_init(void)
 	cpe_poll_timer.function = ia64_mca_cpe_poll;
 
 	{
-		struct irq_desc *desc;
 		unsigned int irq;
 
 		if (cpe_vector >= 0) {
@@ -2121,8 +2132,7 @@ ia64_mca_late_init(void)
 			irq = local_vector_to_irq(cpe_vector);
 			if (irq > 0) {
 				cpe_poll_enabled = 0;
-				desc = irq_desc + irq;
-				desc->status |= IRQ_PER_CPU;
+				irq_set_status_flags(irq, IRQ_PER_CPU);
 				setup_irq(irq, &mca_cpe_irqaction);
 				ia64_cpe_irq = irq;
 				ia64_mca_register_cpev(cpe_vector);

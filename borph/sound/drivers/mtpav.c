@@ -54,15 +54,13 @@
 #include <linux/interrupt.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/ioport.h>
+#include <linux/io.h>
 #include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/rawmidi.h>
 #include <linux/delay.h>
-
-#include <asm/io.h>
 
 /*
  *      globals

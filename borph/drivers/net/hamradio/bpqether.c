@@ -61,6 +61,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
@@ -167,7 +168,7 @@ static inline struct net_device *bpq_get_ax25_dev(struct net_device *dev)
 
 static inline int dev_is_ethdev(struct net_device *dev)
 {
-	return (dev->type == ARPHRD_ETHER && strncmp(dev->name, "dummy", 5));
+	return dev->type == ARPHRD_ETHER && strncmp(dev->name, "dummy", 5);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -248,6 +249,7 @@ static netdev_tx_t bpq_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	unsigned char *ptr;
 	struct bpqdev *bpq;
+	struct net_device *orig_dev;
 	int size;
 
 	/*
@@ -282,8 +284,9 @@ static netdev_tx_t bpq_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	bpq = netdev_priv(dev);
 
+	orig_dev = dev;
 	if ((dev = bpq_get_ether_dev(dev)) == NULL) {
-		dev->stats.tx_dropped++;
+		orig_dev->stats.tx_dropped++;
 		kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
@@ -397,13 +400,14 @@ static void *bpq_seq_start(struct seq_file *seq, loff_t *pos)
 static void *bpq_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct list_head *p;
+	struct bpqdev *bpqdev = v;
 
 	++*pos;
 
 	if (v == SEQ_START_TOKEN)
-		p = rcu_dereference(bpq_devices.next);
+		p = rcu_dereference(list_next_rcu(&bpq_devices));
 	else
-		p = rcu_dereference(((struct bpqdev *)v)->bpq_list.next);
+		p = rcu_dereference(list_next_rcu(&bpqdev->bpq_list));
 
 	return (p == &bpq_devices) ? NULL 
 		: list_entry(p, struct bpqdev, bpq_list);
@@ -511,10 +515,6 @@ static int bpq_new_device(struct net_device *edev)
 
 	memcpy(bpq->dest_addr, bcast_addr, sizeof(bpq_eth_addr));
 	memcpy(bpq->acpt_addr, bcast_addr, sizeof(bpq_eth_addr));
-
-	err = dev_alloc_name(ndev, ndev->name);
-	if (err < 0) 
-		goto error;
 
 	err = register_netdevice(ndev);
 	if (err)

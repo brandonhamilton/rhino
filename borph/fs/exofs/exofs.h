@@ -35,12 +35,10 @@
 
 #include <linux/fs.h>
 #include <linux/time.h>
-#include "common.h"
+#include <linux/backing-dev.h>
+#include <scsi/osd_ore.h>
 
-/* FIXME: Remove once pnfs hits mainline
- * #include <linux/exportfs/pnfs_osd_xdr.h>
- */
-#include "pnfs.h"
+#include "common.h"
 
 #define EXOFS_ERR(fmt, a...) printk(KERN_ERR "exofs: " fmt, ##a)
 
@@ -59,76 +57,41 @@
  * our extension to the in-memory superblock
  */
 struct exofs_sb_info {
-	struct exofs_fscb s_fscb;		/* Written often, pre-allocate*/
-	osd_id		s_pid;			/* partition ID of file system*/
+	struct backing_dev_info bdi;		/* register our bdi with VFS  */
+	struct exofs_sb_stats s_ess;		/* Written often, pre-allocate*/
 	int		s_timeout;		/* timeout for OSD operations */
 	uint64_t	s_nextid;		/* highest object ID used     */
 	uint32_t	s_numfiles;		/* number of files on fs      */
 	spinlock_t	s_next_gen_lock;	/* spinlock for gen # update  */
 	u32		s_next_generation;	/* next gen # to use          */
 	atomic_t	s_curr_pending;		/* number of pending commands */
-	uint8_t		s_cred[OSD_CAP_LEN];	/* credential for the fscb    */
 
-	struct pnfs_osd_data_map data_map;	/* Default raid to use        */
-	unsigned	s_numdevs;		/* Num of devices in array    */
-	struct osd_dev	*s_ods[1];		/* Variable length, minimum 1 */
+	struct pnfs_osd_data_map data_map;	/* Default raid to use
+						 * FIXME: Needed ?
+						 */
+	struct ore_layout	layout;		/* Default files layout       */
+	struct ore_comp one_comp;		/* id & cred of partition id=0*/
+	struct ore_components comps;		/* comps for the partition    */
+	struct osd_dev	*_min_one_dev[1];	/* Place holder for one dev   */
 };
 
 /*
  * our extension to the in-memory inode
  */
 struct exofs_i_info {
+	struct inode   vfs_inode;          /* normal in-memory inode          */
+	wait_queue_head_t i_wq;            /* wait queue for inode            */
 	unsigned long  i_flags;            /* various atomic flags            */
 	uint32_t       i_data[EXOFS_IDATA];/*short symlink names and device #s*/
 	uint32_t       i_dir_start_lookup; /* which page to start lookup      */
-	wait_queue_head_t i_wq;            /* wait queue for inode            */
 	uint64_t       i_commit_size;      /* the object's written length     */
-	uint8_t        i_cred[OSD_CAP_LEN];/* all-powerful credential         */
-	struct inode   vfs_inode;          /* normal in-memory inode          */
+	struct ore_comp one_comp;	   /* same component for all devices  */
+	struct ore_components comps;	   /* inode view of the device table  */
 };
 
 static inline osd_id exofs_oi_objno(struct exofs_i_info *oi)
 {
 	return oi->vfs_inode.i_ino + EXOFS_OBJ_OFF;
-}
-
-struct exofs_io_state;
-typedef void (*exofs_io_done_fn)(struct exofs_io_state *or, void *private);
-
-struct exofs_io_state {
-	struct kref		kref;
-
-	void			*private;
-	exofs_io_done_fn	done;
-
-	struct exofs_sb_info	*sbi;
-	struct osd_obj_id	obj;
-	u8			*cred;
-
-	/* Global read/write IO*/
-	loff_t			offset;
-	unsigned long		length;
-	void			*kern_buff;
-	struct bio		*bio;
-
-	/* Attributes */
-	unsigned		in_attr_len;
-	struct osd_attr 	*in_attr;
-	unsigned		out_attr_len;
-	struct osd_attr 	*out_attr;
-
-	/* Variable array of size numdevs */
-	unsigned numdevs;
-	struct exofs_per_dev_state {
-		struct osd_request *or;
-		struct bio *bio;
-	} per_dev[];
-};
-
-static inline unsigned exofs_io_state_size(unsigned numdevs)
-{
-	return sizeof(struct exofs_io_state) +
-		sizeof(struct exofs_per_dev_state) * numdevs;
 }
 
 /*
@@ -183,51 +146,17 @@ static inline struct exofs_i_info *exofs_i(struct inode *inode)
  * function declarations *
  *************************/
 
-/* ios.c */
-void exofs_make_credential(u8 cred_a[OSD_CAP_LEN],
-			   const struct osd_obj_id *obj);
-int exofs_read_kern(struct osd_dev *od, u8 *cred, struct osd_obj_id *obj,
-		    u64 offset, void *p, unsigned length);
-
-int  exofs_get_io_state(struct exofs_sb_info *sbi, struct exofs_io_state** ios);
-void exofs_put_io_state(struct exofs_io_state *ios);
-
-int exofs_check_io(struct exofs_io_state *ios, u64 *resid);
-
-int exofs_sbi_create(struct exofs_io_state *ios);
-int exofs_sbi_remove(struct exofs_io_state *ios);
-int exofs_sbi_write(struct exofs_io_state *ios);
-int exofs_sbi_read(struct exofs_io_state *ios);
-
-int extract_attr_from_ios(struct exofs_io_state *ios, struct osd_attr *attr);
-
-int exofs_oi_truncate(struct exofs_i_info *oi, u64 new_len);
-static inline int exofs_oi_write(struct exofs_i_info *oi,
-				 struct exofs_io_state *ios)
-{
-	ios->obj.id = exofs_oi_objno(oi);
-	ios->cred = oi->i_cred;
-	return exofs_sbi_write(ios);
-}
-
-static inline int exofs_oi_read(struct exofs_i_info *oi,
-				struct exofs_io_state *ios)
-{
-	ios->obj.id = exofs_oi_objno(oi);
-	ios->cred = oi->i_cred;
-	return exofs_sbi_read(ios);
-}
-
 /* inode.c               */
-void exofs_truncate(struct inode *inode);
+unsigned exofs_max_io_pages(struct ore_layout *layout,
+			    unsigned expected_pages);
 int exofs_setattr(struct dentry *, struct iattr *);
 int exofs_write_begin(struct file *file, struct address_space *mapping,
 		loff_t pos, unsigned len, unsigned flags,
 		struct page **pagep, void **fsdata);
 extern struct inode *exofs_iget(struct super_block *, unsigned long);
 struct inode *exofs_new_inode(struct inode *, int);
-extern int exofs_write_inode(struct inode *, int);
-extern void exofs_delete_inode(struct inode *);
+extern int exofs_write_inode(struct inode *, struct writeback_control *wbc);
+extern void exofs_evict_inode(struct inode *);
 
 /* dir.c:                */
 int exofs_add_link(struct dentry *, struct inode *);
@@ -243,7 +172,9 @@ int exofs_set_link(struct inode *, struct exofs_dir_entry *, struct page *,
 		    struct inode *);
 
 /* super.c               */
-int exofs_sync_fs(struct super_block *sb, int wait);
+void exofs_make_credential(u8 cred_a[OSD_CAP_LEN],
+			   const struct osd_obj_id *obj);
+int exofs_sbi_write_stats(struct exofs_sb_info *sbi);
 
 /*********************
  * operation vectors *
@@ -257,7 +188,6 @@ extern const struct file_operations exofs_file_operations;
 
 /* inode.c           */
 extern const struct address_space_operations exofs_aops;
-extern const struct osd_attr g_attr_logical_length;
 
 /* namei.c           */
 extern const struct inode_operations exofs_dir_inode_operations;
@@ -266,5 +196,34 @@ extern const struct inode_operations exofs_special_inode_operations;
 /* symlink.c         */
 extern const struct inode_operations exofs_symlink_inode_operations;
 extern const struct inode_operations exofs_fast_symlink_inode_operations;
+
+/* exofs_init_comps will initialize an ore_components device array
+ * pointing to a single ore_comp struct, and a round-robin view
+ * of the device table.
+ * The first device of each inode is the [inode->ino % num_devices]
+ * and the rest of the devices sequentially following where the
+ * first device is after the last device.
+ * It is assumed that the global device array at @sbi is twice
+ * bigger and that the device table repeats twice.
+ * See: exofs_read_lookup_dev_table()
+ */
+static inline void exofs_init_comps(struct ore_components *comps,
+				    struct ore_comp *one_comp,
+				    struct exofs_sb_info *sbi, osd_id oid)
+{
+	unsigned dev_mod = (unsigned)oid, first_dev;
+
+	one_comp->obj.partition = sbi->one_comp.obj.partition;
+	one_comp->obj.id = oid;
+	exofs_make_credential(one_comp->cred, &one_comp->obj);
+
+	comps->numdevs = sbi->comps.numdevs;
+	comps->single_comp = EC_SINGLE_COMP;
+	comps->comps = one_comp;
+
+	/* Round robin device view of the table */
+	first_dev = (dev_mod * sbi->layout.mirrors_p1) % sbi->comps.numdevs;
+	comps->ods = sbi->comps.ods + first_dev;
+}
 
 #endif

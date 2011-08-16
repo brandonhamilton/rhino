@@ -57,7 +57,7 @@
  * 2. compute new FSCKSize from new LVSize;
  * 3. set new FSSize as MIN(FSSize, LVSize-(LogSize+FSCKSize)) where
  *    assert(new FSSize >= old FSSize),
- *    i.e., file system must not be shrinked;
+ *    i.e., file system must not be shrunk;
  */
 int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 {
@@ -80,7 +80,8 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	int log_formatted = 0;
 	struct inode *iplist[1];
 	struct jfs_superblock *j_sb, *j_sb2;
-	uint old_agsize;
+	s64 old_agsize;
+	int agsizechanged = 0;
 	struct buffer_head *bh, *bh2;
 
 	/* If the volume hasn't grown, get out now */
@@ -181,7 +182,7 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	 */
 	newFSSize = newLVSize - newLogSize - newFSCKSize;
 
-	/* file system cannot be shrinked */
+	/* file system cannot be shrunk */
 	if (newFSSize < bmp->db_mapsize) {
 		rc = -EINVAL;
 		goto out;
@@ -333,6 +334,9 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	 */
 	if ((rc = dbExtendFS(ipbmap, XAddress, nblocks)))
 		goto error_out;
+
+	agsizechanged |= (bmp->db_agsize != old_agsize);
+
 	/*
 	 * the map now has extended to cover additional nblocks:
 	 * dn_mapsize = oldMapsize + nblocks;
@@ -432,7 +436,7 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	 * will correctly identify the new ag);
 	 */
 	/* if new AG size the same as old AG size, done! */
-	if (bmp->db_agsize != old_agsize) {
+	if (agsizechanged) {
 		if ((rc = diExtendFS(ipimap, ipbmap)))
 			goto error_out;
 

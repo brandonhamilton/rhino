@@ -57,7 +57,7 @@ struct mpc52xx_lpbfifo {
 static struct mpc52xx_lpbfifo lpbfifo;
 
 /**
- * mpc52xx_lpbfifo_kick - Trigger the next block of data to be transfered
+ * mpc52xx_lpbfifo_kick - Trigger the next block of data to be transferred
  */
 static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
 {
@@ -179,7 +179,7 @@ static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
  *
  * On transmit, the dma completion irq triggers before the fifo completion
  * triggers.  Handle the dma completion here instead of the LPB FIFO Bestcomm
- * task completion irq becuase everyting is not really done until the LPB FIFO
+ * task completion irq because everything is not really done until the LPB FIFO
  * completion irq triggers.
  *
  * In other words:
@@ -195,7 +195,7 @@ static void mpc52xx_lpbfifo_kick(struct mpc52xx_lpbfifo_request *req)
  * Exit conditions:
  * 1) Transfer aborted
  * 2) FIFO complete without DMA; more data to do
- * 3) FIFO complete without DMA; all data transfered
+ * 3) FIFO complete without DMA; all data transferred
  * 4) FIFO complete using DMA
  *
  * Condition 1 can occur regardless of whether or not DMA is used.
@@ -436,8 +436,7 @@ void mpc52xx_lpbfifo_abort(struct mpc52xx_lpbfifo_request *req)
 }
 EXPORT_SYMBOL(mpc52xx_lpbfifo_abort);
 
-static int __devinit
-mpc52xx_lpbfifo_probe(struct of_device *op, const struct of_device_id *match)
+static int __devinit mpc52xx_lpbfifo_probe(struct platform_device *op)
 {
 	struct resource res;
 	int rc = -ENOMEM;
@@ -445,14 +444,14 @@ mpc52xx_lpbfifo_probe(struct of_device *op, const struct of_device_id *match)
 	if (lpbfifo.dev != NULL)
 		return -ENOSPC;
 
-	lpbfifo.irq = irq_of_parse_and_map(op->node, 0);
+	lpbfifo.irq = irq_of_parse_and_map(op->dev.of_node, 0);
 	if (!lpbfifo.irq)
 		return -ENODEV;
 
-	if (of_address_to_resource(op->node, 0, &res))
+	if (of_address_to_resource(op->dev.of_node, 0, &res))
 		return -ENODEV;
 	lpbfifo.regs_phys = res.start;
-	lpbfifo.regs = of_iomap(op->node, 0);
+	lpbfifo.regs = of_iomap(op->dev.of_node, 0);
 	if (!lpbfifo.regs)
 		return -ENOMEM;
 
@@ -481,6 +480,8 @@ mpc52xx_lpbfifo_probe(struct of_device *op, const struct of_device_id *match)
 	if (rc)
 		goto err_bcom_rx_irq;
 
+	lpbfifo.dma_irqs_enabled = 1;
+
 	/* Request the Bestcomm transmit (memory --> fifo) task and IRQ */
 	lpbfifo.bcom_tx_task =
 		bcom_gen_bd_tx_init(2, res.start + LPBFIFO_REG_FIFO_DATA,
@@ -505,7 +506,7 @@ mpc52xx_lpbfifo_probe(struct of_device *op, const struct of_device_id *match)
 }
 
 
-static int __devexit mpc52xx_lpbfifo_remove(struct of_device *op)
+static int __devexit mpc52xx_lpbfifo_remove(struct platform_device *op)
 {
 	if (lpbfifo.dev != &op->dev)
 		return 0;
@@ -534,10 +535,12 @@ static struct of_device_id mpc52xx_lpbfifo_match[] __devinitconst = {
 	{},
 };
 
-static struct of_platform_driver mpc52xx_lpbfifo_driver = {
-	.owner = THIS_MODULE,
-	.name = "mpc52xx-lpbfifo",
-	.match_table = mpc52xx_lpbfifo_match,
+static struct platform_driver mpc52xx_lpbfifo_driver = {
+	.driver = {
+		.name = "mpc52xx-lpbfifo",
+		.owner = THIS_MODULE,
+		.of_match_table = mpc52xx_lpbfifo_match,
+	},
 	.probe = mpc52xx_lpbfifo_probe,
 	.remove = __devexit_p(mpc52xx_lpbfifo_remove),
 };
@@ -547,14 +550,12 @@ static struct of_platform_driver mpc52xx_lpbfifo_driver = {
  */
 static int __init mpc52xx_lpbfifo_init(void)
 {
-	pr_debug("Registering LocalPlus bus FIFO driver\n");
-	return of_register_platform_driver(&mpc52xx_lpbfifo_driver);
+	return platform_driver_register(&mpc52xx_lpbfifo_driver);
 }
 module_init(mpc52xx_lpbfifo_init);
 
 static void __exit mpc52xx_lpbfifo_exit(void)
 {
-	pr_debug("Unregistering LocalPlus bus FIFO driver\n");
-	of_unregister_platform_driver(&mpc52xx_lpbfifo_driver);
+	platform_driver_unregister(&mpc52xx_lpbfifo_driver);
 }
 module_exit(mpc52xx_lpbfifo_exit);

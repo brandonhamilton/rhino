@@ -7,13 +7,13 @@
  * We still have a notion of a driver for a system device, because we still
  * want to perform basic operations on these devices. 
  *
- * We also support auxillary drivers binding to devices of a certain class.
+ * We also support auxiliary drivers binding to devices of a certain class.
  * 
  * This allows configurable drivers to register themselves for devices of
  * a certain type. And, it allows class definitions to reside in generic
  * code while arch-specific code can register specific drivers.
  *
- * Auxillary drivers registered with a NULL cls are registered as drivers
+ * Auxiliary drivers registered with a NULL cls are registered as drivers
  * for all system devices, and get notification calls for each device. 
  */
 
@@ -27,22 +27,21 @@
 
 
 struct sys_device;
+struct sysdev_class_attribute;
 
 struct sysdev_class {
 	const char *name;
 	struct list_head	drivers;
-
-	/* Default operations for these types of devices */
-	int	(*shutdown)(struct sys_device *);
-	int	(*suspend)(struct sys_device *, pm_message_t state);
-	int	(*resume)(struct sys_device *);
+	struct sysdev_class_attribute **attrs;
 	struct kset		kset;
 };
 
 struct sysdev_class_attribute {
 	struct attribute attr;
-	ssize_t (*show)(struct sysdev_class *, char *);
-	ssize_t (*store)(struct sysdev_class *, const char *, size_t);
+	ssize_t (*show)(struct sysdev_class *, struct sysdev_class_attribute *,
+			char *);
+	ssize_t (*store)(struct sysdev_class *, struct sysdev_class_attribute *,
+			 const char *, size_t);
 };
 
 #define _SYSDEV_CLASS_ATTR(_name,_mode,_show,_store) 		\
@@ -65,16 +64,13 @@ extern int sysdev_class_create_file(struct sysdev_class *,
 extern void sysdev_class_remove_file(struct sysdev_class *,
 	struct sysdev_class_attribute *);
 /**
- * Auxillary system device drivers.
+ * Auxiliary system device drivers.
  */
 
 struct sysdev_driver {
 	struct list_head	entry;
 	int	(*add)(struct sys_device *);
 	int	(*remove)(struct sys_device *);
-	int	(*shutdown)(struct sys_device *);
-	int	(*suspend)(struct sys_device *, pm_message_t state);
-	int	(*resume)(struct sys_device *);
 };
 
 
@@ -118,6 +114,19 @@ struct sysdev_attribute {
 
 extern int sysdev_create_file(struct sys_device *, struct sysdev_attribute *);
 extern void sysdev_remove_file(struct sys_device *, struct sysdev_attribute *);
+
+/* Create/remove NULL terminated attribute list */
+static inline int
+sysdev_create_files(struct sys_device *d, struct sysdev_attribute **a)
+{
+	return sysfs_create_files(&d->kobj, (const struct attribute **)a);
+}
+
+static inline void
+sysdev_remove_files(struct sys_device *d, struct sysdev_attribute **a)
+{
+	return sysfs_remove_files(&d->kobj, (const struct attribute **)a);
+}
 
 struct sysdev_ext_attribute {
 	struct sysdev_attribute attr;

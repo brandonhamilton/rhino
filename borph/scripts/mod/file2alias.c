@@ -702,6 +702,24 @@ static int do_ssb_entry(const char *filename,
 	return 1;
 }
 
+/* Looks like: bcma:mNidNrevNclN. */
+static int do_bcma_entry(const char *filename,
+			 struct bcma_device_id *id, char *alias)
+{
+	id->manuf = TO_NATIVE(id->manuf);
+	id->id = TO_NATIVE(id->id);
+	id->rev = TO_NATIVE(id->rev);
+	id->class = TO_NATIVE(id->class);
+
+	strcpy(alias, "bcma:");
+	ADD(alias, "m", id->manuf != BCMA_ANY_MANUF, id->manuf);
+	ADD(alias, "id", id->id != BCMA_ANY_ID, id->id);
+	ADD(alias, "rev", id->rev != BCMA_ANY_REV, id->rev);
+	ADD(alias, "cl", id->class != BCMA_ANY_CLASS, id->class);
+	add_wildcard(alias);
+	return 1;
+}
+
 /* Looks like: virtio:dNvN */
 static int do_virtio_entry(const char *filename, struct virtio_device_id *id,
 			   char *alias)
@@ -796,6 +814,51 @@ static int do_platform_entry(const char *filename,
 	return 1;
 }
 
+static int do_mdio_entry(const char *filename,
+			 struct mdio_device_id *id, char *alias)
+{
+	int i;
+
+	alias += sprintf(alias, MDIO_MODULE_PREFIX);
+
+	for (i = 0; i < 32; i++) {
+		if (!((id->phy_id_mask >> (31-i)) & 1))
+			*(alias++) = '?';
+		else if ((id->phy_id >> (31-i)) & 1)
+			*(alias++) = '1';
+		else
+			*(alias++) = '0';
+	}
+
+	/* Terminate the string */
+	*alias = 0;
+
+	return 1;
+}
+
+/* Looks like: zorro:iN. */
+static int do_zorro_entry(const char *filename, struct zorro_device_id *id,
+			  char *alias)
+{
+	id->id = TO_NATIVE(id->id);
+	strcpy(alias, "zorro:");
+	ADD(alias, "i", id->id != ZORRO_WILDCARD, id->id);
+	return 1;
+}
+
+/* looks like: "pnp:dD" */
+static int do_isapnp_entry(const char *filename,
+			   struct isapnp_device_id *id, char *alias)
+{
+	sprintf(alias, "pnp:d%c%c%c%x%x%x%x*",
+		'A' + ((id->vendor >> 2) & 0x3f) - 1,
+		'A' + (((id->vendor & 3) << 3) | ((id->vendor >> 13) & 7)) - 1,
+		'A' + ((id->vendor >> 8) & 0x1f) - 1,
+		(id->function >> 4) & 0x0f, id->function & 0x0f,
+		(id->function >> 12) & 0x0f, (id->function >> 8) & 0x0f);
+	return 1;
+}
+
 /* Ignore any prefix, eg. some architectures prepend _ */
 static inline int sym_is(const char *symbol, const char *name)
 {
@@ -804,7 +867,7 @@ static inline int sym_is(const char *symbol, const char *name)
 	match = strstr(symbol, name);
 	if (!match)
 		return 0;
-	return match[strlen(symbol)] == '\0';
+	return match[strlen(name)] == '\0';
 }
 
 static void do_table(void *symval, unsigned long size,
@@ -839,16 +902,16 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 	char *zeros = NULL;
 
 	/* We're looking for a section relative symbol */
-	if (!sym->st_shndx || sym->st_shndx >= info->hdr->e_shnum)
+	if (!sym->st_shndx || get_secindex(info, sym) >= info->num_sections)
 		return;
 
 	/* Handle all-NULL symbols allocated into .bss */
-	if (info->sechdrs[sym->st_shndx].sh_type & SHT_NOBITS) {
+	if (info->sechdrs[get_secindex(info, sym)].sh_type & SHT_NOBITS) {
 		zeros = calloc(1, sym->st_size);
 		symval = zeros;
 	} else {
 		symval = (void *)info->hdr
-			+ info->sechdrs[sym->st_shndx].sh_offset
+			+ info->sechdrs[get_secindex(info, sym)].sh_offset
 			+ sym->st_value;
 	}
 
@@ -923,6 +986,10 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 		do_table(symval, sym->st_size,
 			 sizeof(struct ssb_device_id), "ssb",
 			 do_ssb_entry, mod);
+	else if (sym_is(symname, "__mod_bcma_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct bcma_device_id), "bcma",
+			 do_bcma_entry, mod);
 	else if (sym_is(symname, "__mod_virtio_device_table"))
 		do_table(symval, sym->st_size,
 			 sizeof(struct virtio_device_id), "virtio",
@@ -943,6 +1010,18 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 		do_table(symval, sym->st_size,
 			 sizeof(struct platform_device_id), "platform",
 			 do_platform_entry, mod);
+	else if (sym_is(symname, "__mod_mdio_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct mdio_device_id), "mdio",
+			 do_mdio_entry, mod);
+	else if (sym_is(symname, "__mod_zorro_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct zorro_device_id), "zorro",
+			 do_zorro_entry, mod);
+	else if (sym_is(symname, "__mod_isapnp_device_table"))
+		do_table(symval, sym->st_size,
+			sizeof(struct isapnp_device_id), "isa",
+			do_isapnp_entry, mod);
 	free(zeros);
 }
 

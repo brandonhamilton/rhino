@@ -17,6 +17,7 @@
 #include <linux/nfs_fs_sb.h>
 #include <linux/in6.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 
 #include "internal.h"
 #include "iostat.h"
@@ -258,12 +259,10 @@ static void nfs_fscache_disable_inode_cookie(struct inode *inode)
 		dfprintk(FSCACHE,
 			 "NFS: nfsi 0x%p turning cache off\n", NFS_I(inode));
 
-		/* Need to invalidate any mapped pages that were read in before
-		 * turning off the cache.
+		/* Need to uncache any pages attached to this inode that
+		 * fscache knows about before turning off the cache.
 		 */
-		if (inode->i_mapping && inode->i_mapping->nrpages)
-			invalidate_inode_pages2(inode->i_mapping);
-
+		fscache_uncache_all_inode_pages(NFS_I(inode)->fscache, inode);
 		nfs_fscache_zap_inode_cookie(inode);
 	}
 }
@@ -354,12 +353,11 @@ void nfs_fscache_reset_inode_cookie(struct inode *inode)
  */
 int nfs_fscache_release_page(struct page *page, gfp_t gfp)
 {
-	struct nfs_inode *nfsi = NFS_I(page->mapping->host);
-	struct fscache_cookie *cookie = nfsi->fscache;
-
-	BUG_ON(!cookie);
-
 	if (PageFsCache(page)) {
+		struct nfs_inode *nfsi = NFS_I(page->mapping->host);
+		struct fscache_cookie *cookie = nfsi->fscache;
+
+		BUG_ON(!cookie);
 		dfprintk(FSCACHE, "NFS: fscache releasepage (0x%p/0x%p/0x%p)\n",
 			 cookie, page, nfsi);
 
@@ -467,7 +465,8 @@ int __nfs_readpages_from_fscache(struct nfs_open_context *ctx,
 				 struct list_head *pages,
 				 unsigned *nr_pages)
 {
-	int ret, npages = *nr_pages;
+	unsigned npages = *nr_pages;
+	int ret;
 
 	dfprintk(FSCACHE, "NFS: nfs_getpages_from_fscache (0x%p/%u/0x%p)\n",
 		 NFS_I(inode)->fscache, npages, inode);

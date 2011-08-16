@@ -16,7 +16,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -305,13 +304,16 @@ int __init pci_versatile_setup(int nr, struct pci_sys_data *sys)
 }
 
 
-struct pci_bus *pci_versatile_scan_bus(int nr, struct pci_sys_data *sys)
+struct pci_bus * __init pci_versatile_scan_bus(int nr, struct pci_sys_data *sys)
 {
 	return pci_scan_bus(sys->busnr, &pci_versatile_ops, sys);
 }
 
 void __init pci_versatile_preinit(void)
 {
+	pcibios_min_io = 0x44000000;
+	pcibios_min_mem = 0x50000000;
+
 	__raw_writel(VERSATILE_PCI_MEM_BASE0 >> 28, PCI_IMAP0);
 	__raw_writel(VERSATILE_PCI_MEM_BASE1 >> 28, PCI_IMAP1);
 	__raw_writel(VERSATILE_PCI_MEM_BASE2 >> 28, PCI_IMAP2);
@@ -326,7 +328,7 @@ void __init pci_versatile_preinit(void)
 /*
  * map the specified device/slot/pin to an IRQ.   Different backplanes may need to modify this.
  */
-static int __init versatile_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
+static int __init versatile_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 	int devslot = PCI_SLOT(dev->devfn);

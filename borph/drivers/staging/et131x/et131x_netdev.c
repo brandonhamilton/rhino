@@ -65,7 +65,6 @@
 
 #include <linux/sched.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -85,77 +84,9 @@
 #include <linux/ioport.h>
 
 #include "et1310_phy.h"
-#include "et1310_pm.h"
-#include "et1310_jagcore.h"
-#include "et1310_mac.h"
 #include "et1310_tx.h"
-
 #include "et131x_adapter.h"
-#include "et131x_isr.h"
-#include "et131x_initpci.h"
-
-struct net_device_stats *et131x_stats(struct net_device *netdev);
-int et131x_open(struct net_device *netdev);
-int et131x_close(struct net_device *netdev);
-int et131x_ioctl(struct net_device *netdev, struct ifreq *reqbuf, int cmd);
-void et131x_multicast(struct net_device *netdev);
-int et131x_tx(struct sk_buff *skb, struct net_device *netdev);
-void et131x_tx_timeout(struct net_device *netdev);
-int et131x_change_mtu(struct net_device *netdev, int new_mtu);
-int et131x_set_mac_addr(struct net_device *netdev, void *new_mac);
-void et131x_vlan_rx_register(struct net_device *netdev, struct vlan_group *grp);
-void et131x_vlan_rx_add_vid(struct net_device *netdev, uint16_t vid);
-void et131x_vlan_rx_kill_vid(struct net_device *netdev, uint16_t vid);
-
-static const struct net_device_ops et131x_netdev_ops = {
-	.ndo_open		= et131x_open,
-	.ndo_stop		= et131x_close,
-	.ndo_start_xmit		= et131x_tx,
-	.ndo_set_multicast_list	= et131x_multicast,
-	.ndo_tx_timeout		= et131x_tx_timeout,
-	.ndo_change_mtu		= et131x_change_mtu,
-	.ndo_set_mac_address	= et131x_set_mac_addr,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_get_stats		= et131x_stats,
-	.ndo_do_ioctl		= et131x_ioctl,
-};
-
-/**
- * et131x_device_alloc
- *
- * Returns pointer to the allocated and initialized net_device struct for
- * this device.
- *
- * Create instances of net_device and wl_private for the new adapter and
- * register the device's entry points in the net_device structure.
- */
-struct net_device *et131x_device_alloc(void)
-{
-	struct net_device *netdev;
-
-	/* Alloc net_device and adapter structs */
-	netdev = alloc_etherdev(sizeof(struct et131x_adapter));
-
-	if (netdev == NULL) {
-		printk(KERN_ERR "et131x: Alloc of net_device struct failed\n");
-		return NULL;
-	}
-
-	/* Setup the function registration table (and other data) for a
-	 * net_device
-	 */
-	/* netdev->init               = &et131x_init; */
-	/* netdev->set_config = &et131x_config; */
-	netdev->watchdog_timeo = ET131X_TX_TIMEOUT;
-	netdev->netdev_ops = &et131x_netdev_ops;
-
-	/* netdev->ethtool_ops        = &et131x_ethtool_ops; */
-
-	/* Poll? */
-	/* netdev->poll               = &et131x_poll; */
-	/* netdev->poll_controller    = &et131x_poll_controller; */
-	return netdev;
-}
+#include "et131x.h"
 
 /**
  * et131x_stats - Return the current device statistics.
@@ -163,14 +94,12 @@ struct net_device *et131x_device_alloc(void)
  *
  * Returns 0 on success, errno on failure (as defined in errno.h)
  */
-struct net_device_stats *et131x_stats(struct net_device *netdev)
+static struct net_device_stats *et131x_stats(struct net_device *netdev)
 {
 	struct et131x_adapter *adapter = netdev_priv(netdev);
 	struct net_device_stats *stats = &adapter->net_stats;
-	CE_STATS_t *devstat = &adapter->Stats;
+	struct ce_stats *devstat = &adapter->stats;
 
-	stats->rx_packets = devstat->ipackets;
-	stats->tx_packets = devstat->opackets;
 	stats->rx_errors = devstat->length_err + devstat->alignment_err +
 	    devstat->crc_err + devstat->code_violations + devstat->other_errors;
 	stats->tx_errors = devstat->max_pkt_error;
@@ -233,7 +162,7 @@ int et131x_open(struct net_device *netdev)
 	/* Enable device interrupts */
 	et131x_enable_interrupts(adapter);
 
-	adapter->Flags |= fMP_ADAPTER_INTERRUPT_IN_USE;
+	adapter->flags |= fMP_ADAPTER_INTERRUPT_IN_USE;
 
 	/* We're ready to move some data, so start the queue */
 	netif_start_queue(netdev);
@@ -261,7 +190,7 @@ int et131x_close(struct net_device *netdev)
 	et131x_disable_interrupts(adapter);
 
 	/* Deregistering ISR */
-	adapter->Flags &= ~fMP_ADAPTER_INTERRUPT_IN_USE;
+	adapter->flags &= ~fMP_ADAPTER_INTERRUPT_IN_USE;
 	free_irq(netdev->irq, netdev);
 
 	/* Stop the error timer */
@@ -285,7 +214,7 @@ int et131x_ioctl_mii(struct net_device *netdev, struct ifreq *reqbuf, int cmd)
 
 	switch (cmd) {
 	case SIOCGMIIPHY:
-		data->phy_id = etdev->Stats.xcvr_addr;
+		data->phy_id = etdev->stats.xcvr_addr;
 		break;
 
 	case SIOCGMIIREG:
@@ -339,66 +268,64 @@ int et131x_ioctl(struct net_device *netdev, struct ifreq *reqbuf, int cmd)
  * et131x_set_packet_filter - Configures the Rx Packet filtering on the device
  * @adapter: pointer to our private adapter structure
  *
+ * FIXME: lot of dups with MAC code
+ *
  * Returns 0 on success, errno on failure
  */
 int et131x_set_packet_filter(struct et131x_adapter *adapter)
 {
 	int status = 0;
 	uint32_t filter = adapter->PacketFilter;
-	RXMAC_CTRL_t ctrl;
-	RXMAC_PF_CTRL_t pf_ctrl;
+	u32 ctrl;
+	u32 pf_ctrl;
 
-	ctrl.value = readl(&adapter->regs->rxmac.ctrl.value);
-	pf_ctrl.value = readl(&adapter->regs->rxmac.pf_ctrl.value);
+	ctrl = readl(&adapter->regs->rxmac.ctrl);
+	pf_ctrl = readl(&adapter->regs->rxmac.pf_ctrl);
 
 	/* Default to disabled packet filtering.  Enable it in the individual
 	 * case statements that require the device to filter something
 	 */
-	ctrl.bits.pkt_filter_disable = 1;
+	ctrl |= 0x04;
 
 	/* Set us to be in promiscuous mode so we receive everything, this
 	 * is also true when we get a packet filter of 0
 	 */
-	if ((filter & ET131X_PACKET_TYPE_PROMISCUOUS) || filter == 0) {
-		pf_ctrl.bits.filter_broad_en = 0;
-		pf_ctrl.bits.filter_multi_en = 0;
-		pf_ctrl.bits.filter_uni_en = 0;
-	} else {
+	if ((filter & ET131X_PACKET_TYPE_PROMISCUOUS) || filter == 0)
+		pf_ctrl &= ~7;	/* Clear filter bits */
+	else {
 		/*
 		 * Set us up with Multicast packet filtering.  Three cases are
 		 * possible - (1) we have a multi-cast list, (2) we receive ALL
 		 * multicast entries or (3) we receive none.
 		 */
-		if (filter & ET131X_PACKET_TYPE_ALL_MULTICAST) {
-			pf_ctrl.bits.filter_multi_en = 0;
-		} else {
+		if (filter & ET131X_PACKET_TYPE_ALL_MULTICAST)
+			pf_ctrl &= ~2;	/* Multicast filter bit */
+		else {
 			SetupDeviceForMulticast(adapter);
-			pf_ctrl.bits.filter_multi_en = 1;
-			ctrl.bits.pkt_filter_disable = 0;
+			pf_ctrl |= 2;
+			ctrl &= ~0x04;
 		}
 
 		/* Set us up with Unicast packet filtering */
 		if (filter & ET131X_PACKET_TYPE_DIRECTED) {
 			SetupDeviceForUnicast(adapter);
-			pf_ctrl.bits.filter_uni_en = 1;
-			ctrl.bits.pkt_filter_disable = 0;
+			pf_ctrl |= 4;
+			ctrl &= ~0x04;
 		}
 
 		/* Set us up with Broadcast packet filtering */
 		if (filter & ET131X_PACKET_TYPE_BROADCAST) {
-			pf_ctrl.bits.filter_broad_en = 1;
-			ctrl.bits.pkt_filter_disable = 0;
-		} else {
-			pf_ctrl.bits.filter_broad_en = 0;
-		}
+			pf_ctrl |= 1;	/* Broadcast filter bit */
+			ctrl &= ~0x04;
+		} else
+			pf_ctrl &= ~1;
 
 		/* Setup the receive mac configuration registers - Packet
 		 * Filter control + the enable / disable for packet filter
 		 * in the control reg.
 		 */
-		writel(pf_ctrl.value,
-		       &adapter->regs->rxmac.pf_ctrl.value);
-		writel(ctrl.value, &adapter->regs->rxmac.ctrl.value);
+		writel(pf_ctrl, &adapter->regs->rxmac.pf_ctrl);
+		writel(ctrl, &adapter->regs->rxmac.ctrl);
 	}
 	return status;
 }
@@ -411,9 +338,9 @@ void et131x_multicast(struct net_device *netdev)
 {
 	struct et131x_adapter *adapter = netdev_priv(netdev);
 	uint32_t PacketFilter = 0;
-	uint32_t count;
 	unsigned long flags;
-	struct dev_mc_list *mclist = netdev->mc_list;
+	struct netdev_hw_addr *ha;
+	int i;
 
 	spin_lock_irqsave(&adapter->Lock, flags);
 
@@ -423,7 +350,7 @@ void et131x_multicast(struct net_device *netdev)
 	 */
 	PacketFilter = adapter->PacketFilter;
 
-	/* Clear the 'multicast' flag locally; becuase we only have a single
+	/* Clear the 'multicast' flag locally; because we only have a single
 	 * flag to check multicast, and multiple multicast addresses can be
 	 * set, this is the easiest way to determine if more than one
 	 * multicast address is being set.
@@ -434,34 +361,31 @@ void et131x_multicast(struct net_device *netdev)
 	 * accordingly
 	 */
 
-	if (netdev->flags & IFF_PROMISC) {
+	if (netdev->flags & IFF_PROMISC)
 		adapter->PacketFilter |= ET131X_PACKET_TYPE_PROMISCUOUS;
-	} else {
+	else
 		adapter->PacketFilter &= ~ET131X_PACKET_TYPE_PROMISCUOUS;
-	}
 
-	if (netdev->flags & IFF_ALLMULTI) {
+	if (netdev->flags & IFF_ALLMULTI)
 		adapter->PacketFilter |= ET131X_PACKET_TYPE_ALL_MULTICAST;
-	}
 
-	if (netdev->mc_count > NIC_MAX_MCAST_LIST) {
+	if (netdev_mc_count(netdev) > NIC_MAX_MCAST_LIST)
 		adapter->PacketFilter |= ET131X_PACKET_TYPE_ALL_MULTICAST;
-	}
 
-	if (netdev->mc_count < 1) {
+	if (netdev_mc_count(netdev) < 1) {
 		adapter->PacketFilter &= ~ET131X_PACKET_TYPE_ALL_MULTICAST;
 		adapter->PacketFilter &= ~ET131X_PACKET_TYPE_MULTICAST;
-	} else {
+	} else
 		adapter->PacketFilter |= ET131X_PACKET_TYPE_MULTICAST;
-	}
 
 	/* Set values in the private adapter struct */
-	adapter->MCAddressCount = netdev->mc_count;
-
-	if (netdev->mc_count) {
-		count = netdev->mc_count - 1;
-		memcpy(adapter->MCList[count], mclist->dmi_addr, ETH_ALEN);
+	i = 0;
+	netdev_for_each_mc_addr(ha, netdev) {
+		if (i == NIC_MAX_MCAST_LIST)
+			break;
+		memcpy(adapter->MCList[i++], ha->addr, ETH_ALEN);
 	}
+	adapter->MCAddressCount = i;
 
 	/* Are the new flags different from the previous ones? If not, then no
 	 * action is required
@@ -522,18 +446,14 @@ void et131x_tx_timeout(struct net_device *netdev)
 	struct tcb *tcb;
 	unsigned long flags;
 
-	/* Just skip this part if the adapter is doing link detection */
-	if (etdev->Flags & fMP_ADAPTER_LINK_DETECTION)
-		return;
-
 	/* Any nonrecoverable hardware error?
 	 * Checks adapter->flags for any failure in phy reading
 	 */
-	if (etdev->Flags & fMP_ADAPTER_NON_RECOVER_ERROR)
+	if (etdev->flags & fMP_ADAPTER_NON_RECOVER_ERROR)
 		return;
 
 	/* Hardware failure? */
-	if (etdev->Flags & fMP_ADAPTER_HARDWARE_ERROR) {
+	if (etdev->flags & fMP_ADAPTER_HARDWARE_ERROR) {
 		dev_err(&etdev->pdev->dev, "hardware error - reset\n");
 		return;
 	}
@@ -551,7 +471,7 @@ void et131x_tx_timeout(struct net_device *netdev)
 					       flags);
 
 			dev_warn(&etdev->pdev->dev,
-				"Send stuck - reset.  tcb->WrIndex %x, Flags 0x%08x\n",
+				"Send stuck - reset.  tcb->WrIndex %x, flags 0x%08x\n",
 				tcb->index,
 				tcb->flags);
 
@@ -614,13 +534,13 @@ int et131x_change_mtu(struct net_device *netdev, int new_mtu)
 	et131x_init_send(adapter);
 
 	et131x_hwaddr_init(adapter);
-	memcpy(netdev->dev_addr, adapter->CurrentAddress, ETH_ALEN);
+	memcpy(netdev->dev_addr, adapter->addr, ETH_ALEN);
 
 	/* Init the device with the new settings */
 	et131x_adapter_setup(adapter);
 
 	/* Enable interrupts */
-	if (adapter->Flags & fMP_ADAPTER_INTERRUPT_IN_USE)
+	if (adapter->flags & fMP_ADAPTER_INTERRUPT_IN_USE)
 		et131x_enable_interrupts(adapter);
 
 	/* Restart the Tx and Rx DMA engines */
@@ -674,12 +594,8 @@ int et131x_set_mac_addr(struct net_device *netdev, void *new_mac)
 
 	memcpy(netdev->dev_addr, address->sa_data, netdev->addr_len);
 
-	printk(KERN_INFO
-		"%s: Setting MAC address to %02x:%02x:%02x:%02x:%02x:%02x\n",
-			netdev->name,
-			netdev->dev_addr[0], netdev->dev_addr[1],
-			netdev->dev_addr[2], netdev->dev_addr[3],
-			netdev->dev_addr[4], netdev->dev_addr[5]);
+	printk(KERN_INFO "%s: Setting MAC address to %pM\n",
+			netdev->name, netdev->dev_addr);
 
 	/* Free Rx DMA memory */
 	et131x_adapter_memory_free(adapter);
@@ -706,7 +622,7 @@ int et131x_set_mac_addr(struct net_device *netdev, void *new_mac)
 	et131x_adapter_setup(adapter);
 
 	/* Enable interrupts */
-	if (adapter->Flags & fMP_ADAPTER_INTERRUPT_IN_USE)
+	if (adapter->flags & fMP_ADAPTER_INTERRUPT_IN_USE)
 		et131x_enable_interrupts(adapter);
 
 	/* Restart the Tx and Rx DMA engines */
@@ -717,3 +633,54 @@ int et131x_set_mac_addr(struct net_device *netdev, void *new_mac)
 	netif_wake_queue(netdev);
 	return result;
 }
+
+static const struct net_device_ops et131x_netdev_ops = {
+	.ndo_open		= et131x_open,
+	.ndo_stop		= et131x_close,
+	.ndo_start_xmit		= et131x_tx,
+	.ndo_set_multicast_list	= et131x_multicast,
+	.ndo_tx_timeout		= et131x_tx_timeout,
+	.ndo_change_mtu		= et131x_change_mtu,
+	.ndo_set_mac_address	= et131x_set_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_get_stats		= et131x_stats,
+	.ndo_do_ioctl		= et131x_ioctl,
+};
+
+/**
+ * et131x_device_alloc
+ *
+ * Returns pointer to the allocated and initialized net_device struct for
+ * this device.
+ *
+ * Create instances of net_device and wl_private for the new adapter and
+ * register the device's entry points in the net_device structure.
+ */
+struct net_device *et131x_device_alloc(void)
+{
+	struct net_device *netdev;
+
+	/* Alloc net_device and adapter structs */
+	netdev = alloc_etherdev(sizeof(struct et131x_adapter));
+
+	if (netdev == NULL) {
+		printk(KERN_ERR "et131x: Alloc of net_device struct failed\n");
+		return NULL;
+	}
+
+	/* Setup the function registration table (and other data) for a
+	 * net_device
+	 */
+	/* netdev->init               = &et131x_init; */
+	/* netdev->set_config = &et131x_config; */
+	netdev->watchdog_timeo = ET131X_TX_TIMEOUT;
+	netdev->netdev_ops = &et131x_netdev_ops;
+
+	/* netdev->ethtool_ops        = &et131x_ethtool_ops; */
+
+	/* Poll? */
+	/* netdev->poll               = &et131x_poll; */
+	/* netdev->poll_controller    = &et131x_poll_controller; */
+	return netdev;
+}
+

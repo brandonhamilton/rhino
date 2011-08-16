@@ -30,6 +30,7 @@ static const char version[] =
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/delay.h>
 
 #include <asm/system.h>
@@ -351,7 +352,6 @@ hpp_reset_8390(struct net_device *dev)
 		printk("%s: hp_reset_8390() did not complete.\n", dev->name);
 
 	if (ei_debug > 1) printk("8390 reset done (%ld).", jiffies);
-	return;
 }
 
 /* The programmed-I/O version of reading the 4 byte 8390 specific header.
@@ -422,7 +422,6 @@ hpp_io_block_output(struct net_device *dev, int count,
 	int ioaddr = dev->base_addr - NIC_OFFSET;
 	outw(start_page << 8, ioaddr + HPP_OUT_ADDR);
 	outsl(ioaddr + HP_DATAPORT, buf, (count+3)>>2);
-	return;
 }
 
 static void
@@ -436,8 +435,6 @@ hpp_mem_block_output(struct net_device *dev, int count,
 	outw(option_reg & ~(MemDisable + BootROMEnb), ioaddr + HPP_OPTION);
 	memcpy_toio(ei_status.mem, buf, (count + 3) & ~3);
 	outw(option_reg, ioaddr + HPP_OPTION);
-
-	return;
 }
 
 

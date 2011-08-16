@@ -13,7 +13,6 @@ struct kvm_lapic {
 	u32 divide_count;
 	struct kvm_vcpu *vcpu;
 	bool irr_pending;
-	struct page *regs_page;
 	void *regs;
 	gpa_t vapic_addr;
 	struct page *vapic_page;
@@ -48,4 +47,12 @@ void kvm_lapic_sync_to_vapic(struct kvm_vcpu *vcpu);
 
 int kvm_x2apic_msr_write(struct kvm_vcpu *vcpu, u32 msr, u64 data);
 int kvm_x2apic_msr_read(struct kvm_vcpu *vcpu, u32 msr, u64 *data);
+
+int kvm_hv_vapic_msr_write(struct kvm_vcpu *vcpu, u32 msr, u64 data);
+int kvm_hv_vapic_msr_read(struct kvm_vcpu *vcpu, u32 msr, u64 *data);
+
+static inline bool kvm_hv_vapic_assist_page_enabled(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.hv_vapic & HV_X64_MSR_APIC_ASSIST_PAGE_ENABLE;
+}
 #endif

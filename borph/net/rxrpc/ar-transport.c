@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/net.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include "ar-internal.h"
@@ -110,6 +111,7 @@ struct rxrpc_transport *rxrpc_get_transport(struct rxrpc_local *local,
 	/* we can now add the new candidate to the list */
 	trans = candidate;
 	candidate = NULL;
+	usage = atomic_read(&trans->usage);
 
 	rxrpc_get_local(trans->local);
 	atomic_inc(&trans->peer->usage);
@@ -124,7 +126,7 @@ success:
 	     trans->local->debug_id,
 	     trans->peer->debug_id);
 
-	_leave(" = %p {u=%d}", trans, atomic_read(&trans->usage));
+	_leave(" = %p {u=%d}", trans, usage);
 	return trans;
 
 	/* we found the transport in the list immediately */

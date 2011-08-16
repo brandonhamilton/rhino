@@ -102,6 +102,9 @@
 #define AUDIT_EOE		1320	/* End of multi-record event */
 #define AUDIT_BPRM_FCAPS	1321	/* Information about fcaps increasing perms */
 #define AUDIT_CAPSET		1322	/* Record showing argument to sys_capset */
+#define AUDIT_MMAP		1323	/* Record showing descriptor and flags in mmap */
+#define AUDIT_NETFILTER_PKT	1324	/* Packets traversing netfilter chains */
+#define AUDIT_NETFILTER_CFG	1325	/* Netfilter chain modifications */
 
 #define AUDIT_AVC		1400	/* SE Linux avc denial or grant */
 #define AUDIT_SELINUX_ERR	1401	/* Internal SE Linux Errors */
@@ -371,6 +374,7 @@ struct audit_buffer;
 struct audit_context;
 struct inode;
 struct netlink_skb_parms;
+struct path;
 struct linux_binprm;
 struct mq_attr;
 struct mqstat;
@@ -424,7 +428,7 @@ extern void audit_syscall_exit(int failed, long return_code);
 extern void __audit_getname(const char *name);
 extern void audit_putname(const char *name);
 extern void __audit_inode(const char *name, const struct dentry *dentry);
-extern void __audit_inode_child(const char *dname, const struct dentry *dentry,
+extern void __audit_inode_child(const struct dentry *dentry,
 				const struct inode *parent);
 extern void __audit_ptrace(struct task_struct *t);
 
@@ -442,11 +446,10 @@ static inline void audit_inode(const char *name, const struct dentry *dentry) {
 	if (unlikely(!audit_dummy_context()))
 		__audit_inode(name, dentry);
 }
-static inline void audit_inode_child(const char *dname, 
-				     const struct dentry *dentry,
+static inline void audit_inode_child(const struct dentry *dentry,
 				     const struct inode *parent) {
 	if (unlikely(!audit_dummy_context()))
-		__audit_inode_child(dname, dentry, parent);
+		__audit_inode_child(dentry, parent);
 }
 void audit_core_dumps(long signr);
 
@@ -479,6 +482,7 @@ extern int __audit_log_bprm_fcaps(struct linux_binprm *bprm,
 				  const struct cred *new,
 				  const struct cred *old);
 extern void __audit_log_capset(pid_t pid, const struct cred *new, const struct cred *old);
+extern void __audit_mmap_fd(int fd, int flags);
 
 static inline void audit_ipc_obj(struct kern_ipc_perm *ipcp)
 {
@@ -532,6 +536,12 @@ static inline void audit_log_capset(pid_t pid, const struct cred *new,
 		__audit_log_capset(pid, new, old);
 }
 
+static inline void audit_mmap_fd(int fd, int flags)
+{
+	if (unlikely(!audit_dummy_context()))
+		__audit_mmap_fd(fd, flags);
+}
+
 extern int audit_n_rules;
 extern int audit_signals;
 #else
@@ -544,9 +554,9 @@ extern int audit_signals;
 #define audit_getname(n) do { ; } while (0)
 #define audit_putname(n) do { ; } while (0)
 #define __audit_inode(n,d) do { ; } while (0)
-#define __audit_inode_child(d,i,p) do { ; } while (0)
-#define audit_inode(n,d) do { ; } while (0)
-#define audit_inode_child(d,i,p) do { ; } while (0)
+#define __audit_inode_child(i,p) do { ; } while (0)
+#define audit_inode(n,d) do { (void)(d); } while (0)
+#define audit_inode_child(i,p) do { ; } while (0)
 #define audit_core_dumps(i) do { ; } while (0)
 #define auditsc_get_stamp(c,t,s) (0)
 #define audit_get_loginuid(t) (-1)
@@ -565,6 +575,7 @@ extern int audit_signals;
 #define audit_mq_getsetattr(d,s) ((void)0)
 #define audit_log_bprm_fcaps(b, ncr, ocr) ({ 0; })
 #define audit_log_capset(pid, ncr, ocr) ((void)0)
+#define audit_mmap_fd(fd, flags) ((void)0)
 #define audit_ptrace(t) ((void)0)
 #define audit_n_rules 0
 #define audit_signals 0
@@ -602,6 +613,12 @@ extern void		    audit_log_d_path(struct audit_buffer *ab,
 extern void		    audit_log_key(struct audit_buffer *ab,
 					  char *key);
 extern void		    audit_log_lost(const char *message);
+#ifdef CONFIG_SECURITY
+extern void 		    audit_log_secctx(struct audit_buffer *ab, u32 secid);
+#else
+#define audit_log_secctx(b,s) do { ; } while (0)
+#endif
+
 extern int		    audit_update_lsm_rules(void);
 
 				/* Private API (for audit.c only) */
@@ -624,6 +641,7 @@ extern int audit_enabled;
 #define audit_log_untrustedstring(a,s) do { ; } while (0)
 #define audit_log_d_path(b, p, d) do { ; } while (0)
 #define audit_log_key(b, k) do { ; } while (0)
+#define audit_log_secctx(b,s) do { ; } while (0)
 #define audit_enabled 0
 #endif
 #endif

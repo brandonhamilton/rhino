@@ -118,6 +118,7 @@ struct lpfc_scsi_buf {
 
 	uint32_t timeout;
 
+	uint16_t exch_busy;     /* SLI4 hba reported XB on complete WCQE */
 	uint16_t status;	/* From IOCB Word 7- ulpStatus */
 	uint32_t result;	/* From IOCB Word 4. */
 
@@ -129,7 +130,7 @@ struct lpfc_scsi_buf {
 	dma_addr_t nonsg_phys;	/* Non scatter-gather physical address. */
 
 	/*
-	 * data and dma_handle are the kernel virutal and bus address of the
+	 * data and dma_handle are the kernel virtual and bus address of the
 	 * dma-able buffer containing the fcp_cmd, fcp_rsp and a scatter
 	 * gather bde list that supports the sg_tablesize value.
 	 */

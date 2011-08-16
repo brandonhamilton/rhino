@@ -424,7 +424,7 @@ int lx_dsp_get_clock_frequency(struct lx6464es *chip, u32 *rfreq)
 	return ret;
 }
 
-int lx_dsp_get_mac(struct lx6464es *chip, u8 *mac_address)
+int lx_dsp_get_mac(struct lx6464es *chip)
 {
 	u32 macmsb, maclsb;
 
@@ -432,12 +432,12 @@ int lx_dsp_get_mac(struct lx6464es *chip, u8 *mac_address)
 	maclsb = lx_dsp_reg_read(chip, eReg_ADMACESLSB) & 0x00FFFFFF;
 
 	/* todo: endianess handling */
-	mac_address[5] = ((u8 *)(&maclsb))[0];
-	mac_address[4] = ((u8 *)(&maclsb))[1];
-	mac_address[3] = ((u8 *)(&maclsb))[2];
-	mac_address[2] = ((u8 *)(&macmsb))[0];
-	mac_address[1] = ((u8 *)(&macmsb))[1];
-	mac_address[0] = ((u8 *)(&macmsb))[2];
+	chip->mac_address[5] = ((u8 *)(&maclsb))[0];
+	chip->mac_address[4] = ((u8 *)(&maclsb))[1];
+	chip->mac_address[3] = ((u8 *)(&maclsb))[2];
+	chip->mac_address[2] = ((u8 *)(&macmsb))[0];
+	chip->mac_address[1] = ((u8 *)(&macmsb))[1];
+	chip->mac_address[0] = ((u8 *)(&macmsb))[2];
 
 	return 0;
 }
@@ -1152,7 +1152,7 @@ static int lx_interrupt_request_new_buffer(struct lx6464es *chip,
 					   struct lx_stream *lx_stream)
 {
 	struct snd_pcm_substream *substream = lx_stream->stream;
-	int is_capture = lx_stream->is_capture;
+	const unsigned int is_capture = lx_stream->is_capture;
 	int err;
 	unsigned long flags;
 

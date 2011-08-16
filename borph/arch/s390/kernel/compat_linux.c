@@ -25,11 +25,9 @@
 #include <linux/resource.h>
 #include <linux/times.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/sem.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
-#include <linux/slab.h>
 #include <linux/uio.h>
 #include <linux/quota.h>
 #include <linux/module.h>
@@ -52,6 +50,7 @@
 #include <linux/ptrace.h>
 #include <linux/fadvise.h>
 #include <linux/ipc.h>
+#include <linux/slab.h>
 
 #include <asm/types.h>
 #include <asm/uaccess.h>
@@ -436,7 +435,7 @@ sys32_rt_sigqueueinfo(int pid, int sig, compat_siginfo_t __user *uinfo)
  * sys32_execve() executes a new program after the asm stub has set
  * things up for us.  This should basically do what I want it to.
  */
-asmlinkage long sys32_execve(char __user *name, compat_uptr_t __user *argv,
+asmlinkage long sys32_execve(const char __user *name, compat_uptr_t __user *argv,
 			     compat_uptr_t __user *envp)
 {
 	struct pt_regs *regs = task_pt_regs(current);
@@ -570,7 +569,7 @@ static int cp_stat64(struct stat64_emu31 __user *ubuf, struct kstat *stat)
 	return copy_to_user(ubuf,&tmp,sizeof(tmp)) ? -EFAULT : 0; 
 }
 
-asmlinkage long sys32_stat64(char __user * filename, struct stat64_emu31 __user * statbuf)
+asmlinkage long sys32_stat64(const char __user * filename, struct stat64_emu31 __user * statbuf)
 {
 	struct kstat stat;
 	int ret = vfs_stat(filename, &stat);
@@ -579,7 +578,7 @@ asmlinkage long sys32_stat64(char __user * filename, struct stat64_emu31 __user 
 	return ret;
 }
 
-asmlinkage long sys32_lstat64(char __user * filename, struct stat64_emu31 __user * statbuf)
+asmlinkage long sys32_lstat64(const char __user * filename, struct stat64_emu31 __user * statbuf)
 {
 	struct kstat stat;
 	int ret = vfs_lstat(filename, &stat);
@@ -597,7 +596,7 @@ asmlinkage long sys32_fstat64(unsigned long fd, struct stat64_emu31 __user * sta
 	return ret;
 }
 
-asmlinkage long sys32_fstatat64(unsigned int dfd, char __user *filename,
+asmlinkage long sys32_fstatat64(unsigned int dfd, const char __user *filename,
 				struct stat64_emu31 __user* statbuf, int flag)
 {
 	struct kstat stat;
@@ -616,44 +615,35 @@ asmlinkage long sys32_fstatat64(unsigned int dfd, char __user *filename,
  */
 
 struct mmap_arg_struct_emu31 {
-	u32	addr;
-	u32	len;
-	u32	prot;
-	u32	flags;
-	u32	fd;
-	u32	offset;
+	compat_ulong_t addr;
+	compat_ulong_t len;
+	compat_ulong_t prot;
+	compat_ulong_t flags;
+	compat_ulong_t fd;
+	compat_ulong_t offset;
 };
 
-asmlinkage unsigned long
-old32_mmap(struct mmap_arg_struct_emu31 __user *arg)
+asmlinkage unsigned long old32_mmap(struct mmap_arg_struct_emu31 __user *arg)
 {
 	struct mmap_arg_struct_emu31 a;
-	int error = -EFAULT;
 
 	if (copy_from_user(&a, arg, sizeof(a)))
-		goto out;
-
-	error = -EINVAL;
+		return -EFAULT;
 	if (a.offset & ~PAGE_MASK)
-		goto out;
-
-	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
-			       a.offset >> PAGE_SHIFT);
-out:
-	return error;
+		return -EINVAL;
+	a.addr = (unsigned long) compat_ptr(a.addr);
+	return sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
+			      a.offset >> PAGE_SHIFT);
 }
 
-asmlinkage long 
-sys32_mmap2(struct mmap_arg_struct_emu31 __user *arg)
+asmlinkage long sys32_mmap2(struct mmap_arg_struct_emu31 __user *arg)
 {
 	struct mmap_arg_struct_emu31 a;
-	int error = -EFAULT;
 
 	if (copy_from_user(&a, arg, sizeof(a)))
-		goto out;
-	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd, a.offset);
-out:
-	return error;
+		return -EFAULT;
+	a.addr = (unsigned long) compat_ptr(a.addr);
+	return sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd, a.offset);
 }
 
 asmlinkage long sys32_read(unsigned int fd, char __user * buf, size_t count)
@@ -664,7 +654,7 @@ asmlinkage long sys32_read(unsigned int fd, char __user * buf, size_t count)
 	return sys_read(fd, buf, count);
 }
 
-asmlinkage long sys32_write(unsigned int fd, char __user * buf, size_t count)
+asmlinkage long sys32_write(unsigned int fd, const char __user * buf, size_t count)
 {
 	if ((compat_ssize_t) count < 0)
 		return -EINVAL; 

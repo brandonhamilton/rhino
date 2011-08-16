@@ -91,7 +91,7 @@ MODULE_PARM_DESC(tachometer,
 static int type = 500;
 module_param(type, int, 0);
 MODULE_PARM_DESC(type,
-		"WDT501-P Card type (500 or 501 , default=500)");
+		"WDT501-P Card type (500 or 501, default=500)");
 
 /*
  *	Programming support
@@ -358,7 +358,7 @@ static long wdt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int new_heartbeat;
 	int status;
 
-	static struct watchdog_info ident = {
+	struct watchdog_info ident = {
 		.options =		WDIOF_SETTIMEOUT|
 					WDIOF_MAGICCLOSE|
 					WDIOF_KEEPALIVEPING,
@@ -581,7 +581,7 @@ static void __exit wdt_exit(void)
 }
 
 /**
- * 	wdt_init:
+ *	wdt_init:
  *
  *	Set up the WDT watchdog board. All we have to do is grab the
  *	resources we require and bitch if anyone beat us to them.

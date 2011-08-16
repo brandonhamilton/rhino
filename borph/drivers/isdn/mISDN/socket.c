@@ -16,6 +16,7 @@
  */
 
 #include <linux/mISDNif.h>
+#include <linux/slab.h>
 #include "core.h"
 
 static u_int	*debug;
@@ -391,6 +392,7 @@ data_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		if (dev) {
 			struct mISDN_devinfo di;
 
+			memset(&di, 0, sizeof(di));
 			di.id = dev->id;
 			di.Dprotocols = dev->Dprotocols;
 			di.Bprotocols = dev->Bprotocols | get_all_Bprotocols();
@@ -454,6 +456,9 @@ static int data_sock_getsockopt(struct socket *sock, int level, int optname,
 
 	if (get_user(len, optlen))
 		return -EFAULT;
+
+	if (len != sizeof(char))
+		return -EINVAL;
 
 	switch (optname) {
 	case MISDN_TIME_STAMP:
@@ -671,6 +676,7 @@ base_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		if (dev) {
 			struct mISDN_devinfo di;
 
+			memset(&di, 0, sizeof(di));
 			di.id = dev->id;
 			di.Dprotocols = dev->Dprotocols;
 			di.Bprotocols = dev->Bprotocols | get_all_Bprotocols();

@@ -21,10 +21,16 @@
 #include <linux/usb.h>
 #include <linux/irq.h>
 #include <linux/platform_device.h>
+#include <linux/dma-mapping.h>
 
 #include "musb_core.h"
 
-static void tusb_source_power(struct musb *musb, int is_on);
+struct tusb6010_glue {
+	struct device		*dev;
+	struct platform_device	*musb;
+};
+
+static void tusb_musb_set_vbus(struct musb *musb, int is_on);
 
 #define TUSB_REV_MAJOR(reg_val)		((reg_val >> 4) & 0xf)
 #define TUSB_REV_MINOR(reg_val)		(reg_val & 0xf)
@@ -50,7 +56,7 @@ u8 tusb_get_revision(struct musb *musb)
 	return rev;
 }
 
-static int __init tusb_print_revision(struct musb *musb)
+static int tusb_print_revision(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	u8		rev;
@@ -100,7 +106,7 @@ static void tusb_wbus_quirk(struct musb *musb, int enabled)
 		tmp = phy_otg_ena & ~WBUS_QUIRK_MASK;
 		tmp |= TUSB_PHY_OTG_CTRL_WRPROTECT | TUSB_PHY_OTG_CTRL_TESTM2;
 		musb_writel(tbase, TUSB_PHY_OTG_CTRL_ENABLE, tmp);
-		DBG(2, "Enabled tusb wbus quirk ctrl %08x ena %08x\n",
+		dev_dbg(musb->controller, "Enabled tusb wbus quirk ctrl %08x ena %08x\n",
 			musb_readl(tbase, TUSB_PHY_OTG_CTRL),
 			musb_readl(tbase, TUSB_PHY_OTG_CTRL_ENABLE));
 	} else if (musb_readl(tbase, TUSB_PHY_OTG_CTRL_ENABLE)
@@ -109,7 +115,7 @@ static void tusb_wbus_quirk(struct musb *musb, int enabled)
 		musb_writel(tbase, TUSB_PHY_OTG_CTRL, tmp);
 		tmp = TUSB_PHY_OTG_CTRL_WRPROTECT | phy_otg_ena;
 		musb_writel(tbase, TUSB_PHY_OTG_CTRL_ENABLE, tmp);
-		DBG(2, "Disabled tusb wbus quirk ctrl %08x ena %08x\n",
+		dev_dbg(musb->controller, "Disabled tusb wbus quirk ctrl %08x ena %08x\n",
 			musb_readl(tbase, TUSB_PHY_OTG_CTRL),
 			musb_readl(tbase, TUSB_PHY_OTG_CTRL_ENABLE));
 		phy_otg_ctrl = 0;
@@ -166,13 +172,14 @@ static inline void tusb_fifo_read_unaligned(void __iomem *fifo,
 
 void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *buf)
 {
+	struct musb *musb = hw_ep->musb;
 	void __iomem	*ep_conf = hw_ep->conf;
 	void __iomem	*fifo = hw_ep->fifo;
 	u8		epnum = hw_ep->epnum;
 
 	prefetch(buf);
 
-	DBG(4, "%cX ep%d fifo %p count %d buf %p\n",
+	dev_dbg(musb->controller, "%cX ep%d fifo %p count %d buf %p\n",
 			'T', epnum, fifo, len, buf);
 
 	if (epnum)
@@ -215,11 +222,12 @@ void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *buf)
 
 void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *buf)
 {
+	struct musb *musb = hw_ep->musb;
 	void __iomem	*ep_conf = hw_ep->conf;
 	void __iomem	*fifo = hw_ep->fifo;
 	u8		epnum = hw_ep->epnum;
 
-	DBG(4, "%cX ep%d fifo %p count %d buf %p\n",
+	dev_dbg(musb->controller, "%cX ep%d fifo %p count %d buf %p\n",
 			'R', epnum, fifo, len, buf);
 
 	if (epnum)
@@ -261,8 +269,6 @@ void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *buf)
 
 static struct musb *the_musb;
 
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-
 /* This is used by gadget drivers, and OTG transceiver logic, allowing
  * at most mA current to be drawn from VBUS during a Default-B session
  * (that is, while VBUS exceeds 4.4V).  In Default-A (including pure host
@@ -274,17 +280,6 @@ static int tusb_draw_power(struct otg_transceiver *x, unsigned mA)
 	struct musb	*musb = the_musb;
 	void __iomem	*tbase = musb->ctrl_base;
 	u32		reg;
-
-	/*
-	 * Keep clock active when enabled. Note that this is not tied to
-	 * drawing VBUS, as with OTG mA can be less than musb->min_power.
-	 */
-	if (musb->set_clock) {
-		if (mA)
-			musb->set_clock(musb->clock, 1);
-		else
-			musb->set_clock(musb->clock, 0);
-	}
 
 	/* tps65030 seems to consume max 100mA, with maybe 60mA available
 	 * (measured on one board) for things other than tps and tusb.
@@ -309,13 +304,9 @@ static int tusb_draw_power(struct otg_transceiver *x, unsigned mA)
 	}
 	musb_writel(tbase, TUSB_PRCM_MNGMT, reg);
 
-	DBG(2, "draw max %d mA VBUS\n", mA);
+	dev_dbg(musb->controller, "draw max %d mA VBUS\n", mA);
 	return 0;
 }
-
-#else
-#define tusb_draw_power	NULL
-#endif
 
 /* workaround for issue 13:  change clock during chip idle
  * (to be fixed in rev3 silicon) ... symptoms include disconnect
@@ -348,7 +339,7 @@ static void tusb_set_clock_source(struct musb *musb, unsigned mode)
  * USB link is not suspended ... and tells us the relevant wakeup
  * events.  SW_EN for voltage is handled separately.
  */
-void tusb_allow_idle(struct musb *musb, u32 wakeup_enables)
+static void tusb_allow_idle(struct musb *musb, u32 wakeup_enables)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	u32		reg;
@@ -379,13 +370,13 @@ void tusb_allow_idle(struct musb *musb, u32 wakeup_enables)
 	reg |= TUSB_PRCM_MNGMT_PM_IDLE | TUSB_PRCM_MNGMT_DEV_IDLE;
 	musb_writel(tbase, TUSB_PRCM_MNGMT, reg);
 
-	DBG(6, "idle, wake on %02x\n", wakeup_enables);
+	dev_dbg(musb->controller, "idle, wake on %02x\n", wakeup_enables);
 }
 
 /*
  * Updates cable VBUS status. Caller must take care of locking.
  */
-int musb_platform_get_vbus_status(struct musb *musb)
+static int tusb_musb_vbus_status(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	u32		otg_stat, prcm_mngmt;
@@ -426,12 +417,12 @@ static void musb_do_idle(unsigned long _musb)
 		if ((musb->a_wait_bcon != 0)
 			&& (musb->idle_timeout == 0
 				|| time_after(jiffies, musb->idle_timeout))) {
-			DBG(4, "Nothing connected %s, turning off VBUS\n",
-					otg_state_string(musb));
+			dev_dbg(musb->controller, "Nothing connected %s, turning off VBUS\n",
+					otg_state_string(musb->xceiv->state));
 		}
 		/* FALLTHROUGH */
 	case OTG_STATE_A_IDLE:
-		tusb_source_power(musb, 0);
+		tusb_musb_set_vbus(musb, 0);
 	default:
 		break;
 	}
@@ -443,19 +434,15 @@ static void musb_do_idle(unsigned long _musb)
 		if (is_host_active(musb) && (musb->port1_status >> 16))
 			goto done;
 
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-		if (is_peripheral_enabled(musb) && !musb->gadget_driver)
+		if (is_peripheral_enabled(musb) && !musb->gadget_driver) {
 			wakeups = 0;
-		else {
+		} else {
 			wakeups = TUSB_PRCM_WHOSTDISCON
-					| TUSB_PRCM_WBUS
+				| TUSB_PRCM_WBUS
 					| TUSB_PRCM_WVBUS;
 			if (is_otg_enabled(musb))
 				wakeups |= TUSB_PRCM_WID;
 		}
-#else
-		wakeups = TUSB_PRCM_WHOSTDISCON | TUSB_PRCM_WBUS;
-#endif
 		tusb_allow_idle(musb, wakeups);
 	}
 done:
@@ -475,7 +462,7 @@ done:
  * we don't want to treat that full speed J as a wakeup event.
  * ... peripherals must draw only suspend current after 10 msec.
  */
-void musb_platform_try_idle(struct musb *musb, unsigned long timeout)
+static void tusb_musb_try_idle(struct musb *musb, unsigned long timeout)
 {
 	unsigned long		default_timeout = jiffies + msecs_to_jiffies(3);
 	static unsigned long	last_timer;
@@ -486,7 +473,8 @@ void musb_platform_try_idle(struct musb *musb, unsigned long timeout)
 	/* Never idle if active, or when VBUS timeout is not set as host */
 	if (musb->is_active || ((musb->a_wait_bcon == 0)
 			&& (musb->xceiv->state == OTG_STATE_A_WAIT_BCON))) {
-		DBG(4, "%s active, deleting timer\n", otg_state_string(musb));
+		dev_dbg(musb->controller, "%s active, deleting timer\n",
+			otg_state_string(musb->xceiv->state));
 		del_timer(&musb_idle_timer);
 		last_timer = jiffies;
 		return;
@@ -496,14 +484,14 @@ void musb_platform_try_idle(struct musb *musb, unsigned long timeout)
 		if (!timer_pending(&musb_idle_timer))
 			last_timer = timeout;
 		else {
-			DBG(4, "Longer idle timer already pending, ignoring\n");
+			dev_dbg(musb->controller, "Longer idle timer already pending, ignoring\n");
 			return;
 		}
 	}
 	last_timer = timeout;
 
-	DBG(4, "%s inactive, for idle timer for %lu ms\n",
-		otg_state_string(musb),
+	dev_dbg(musb->controller, "%s inactive, for idle timer for %lu ms\n",
+		otg_state_string(musb->xceiv->state),
 		(unsigned long)jiffies_to_msecs(timeout - jiffies));
 	mod_timer(&musb_idle_timer, timeout);
 }
@@ -515,7 +503,7 @@ void musb_platform_try_idle(struct musb *musb, unsigned long timeout)
 				| TUSB_DEV_OTG_TIMER_ENABLE) \
 		: 0)
 
-static void tusb_source_power(struct musb *musb, int is_on)
+static void tusb_musb_set_vbus(struct musb *musb, int is_on)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	u32		conf, prcm, timer;
@@ -531,8 +519,6 @@ static void tusb_source_power(struct musb *musb, int is_on)
 	devctl = musb_readb(musb->mregs, MUSB_DEVCTL);
 
 	if (is_on) {
-		if (musb->set_clock)
-			musb->set_clock(musb->clock, 1);
 		timer = OTG_TIMER_MS(OTG_TIME_A_WAIT_VRISE);
 		musb->xceiv->default_a = 1;
 		musb->xceiv->state = OTG_STATE_A_WAIT_VRISE;
@@ -571,8 +557,6 @@ static void tusb_source_power(struct musb *musb, int is_on)
 
 		devctl &= ~MUSB_DEVCTL_SESSION;
 		conf &= ~TUSB_DEV_CONF_USB_HOST_MODE;
-		if (musb->set_clock)
-			musb->set_clock(musb->clock, 0);
 	}
 	prcm &= ~(TUSB_PRCM_MNGMT_15_SW_EN | TUSB_PRCM_MNGMT_33_SW_EN);
 
@@ -581,8 +565,8 @@ static void tusb_source_power(struct musb *musb, int is_on)
 	musb_writel(tbase, TUSB_DEV_CONF, conf);
 	musb_writeb(musb->mregs, MUSB_DEVCTL, devctl);
 
-	DBG(1, "VBUS %s, devctl %02x otg %3x conf %08x prcm %08x\n",
-		otg_state_string(musb),
+	dev_dbg(musb->controller, "VBUS %s, devctl %02x otg %3x conf %08x prcm %08x\n",
+		otg_state_string(musb->xceiv->state),
 		musb_readb(musb->mregs, MUSB_DEVCTL),
 		musb_readl(tbase, TUSB_DEV_OTG_STAT),
 		conf, prcm);
@@ -599,7 +583,7 @@ static void tusb_source_power(struct musb *musb, int is_on)
  * and peripheral modes in non-OTG configurations by reconfiguring hardware
  * and then setting musb->board_mode. For now, only support OTG mode.
  */
-int musb_platform_set_mode(struct musb *musb, u8 musb_mode)
+static int tusb_musb_set_mode(struct musb *musb, u8 musb_mode)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	u32		otg_stat, phy_otg_ctrl, phy_otg_ena, dev_conf;
@@ -616,33 +600,25 @@ int musb_platform_set_mode(struct musb *musb, u8 musb_mode)
 
 	switch (musb_mode) {
 
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	case MUSB_HOST:		/* Disable PHY ID detect, ground ID */
 		phy_otg_ctrl &= ~TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		phy_otg_ena |= TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		dev_conf |= TUSB_DEV_CONF_ID_SEL;
 		dev_conf &= ~TUSB_DEV_CONF_SOFT_ID;
 		break;
-#endif
-
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 	case MUSB_PERIPHERAL:	/* Disable PHY ID detect, keep ID pull-up on */
 		phy_otg_ctrl |= TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		phy_otg_ena |= TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		dev_conf |= (TUSB_DEV_CONF_ID_SEL | TUSB_DEV_CONF_SOFT_ID);
 		break;
-#endif
-
-#ifdef CONFIG_USB_MUSB_OTG
 	case MUSB_OTG:		/* Use PHY ID detection */
 		phy_otg_ctrl |= TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		phy_otg_ena |= TUSB_PHY_OTG_CTRL_OTG_ID_PULLUP;
 		dev_conf &= ~(TUSB_DEV_CONF_ID_SEL | TUSB_DEV_CONF_SOFT_ID);
 		break;
-#endif
 
 	default:
-		DBG(2, "Trying to set mode %i\n", musb_mode);
+		dev_dbg(musb->controller, "Trying to set mode %i\n", musb_mode);
 		return -EINVAL;
 	}
 
@@ -675,9 +651,9 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 			default_a = !(otg_stat & TUSB_DEV_OTG_STAT_ID_STATUS);
 		else
 			default_a = is_host_enabled(musb);
-		DBG(2, "Default-%c\n", default_a ? 'A' : 'B');
+		dev_dbg(musb->controller, "Default-%c\n", default_a ? 'A' : 'B');
 		musb->xceiv->default_a = default_a;
-		tusb_source_power(musb, default_a);
+		tusb_musb_set_vbus(musb, default_a);
 
 		/* Don't allow idling immediately */
 		if (default_a)
@@ -690,7 +666,6 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 		/* B-dev state machine:  no vbus ~= disconnect */
 		if ((is_otg_enabled(musb) && !musb->xceiv->default_a)
 				|| !is_host_enabled(musb)) {
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
 			/* ? musb_root_disconnect(musb); */
 			musb->port1_status &=
 				~(USB_PORT_STAT_CONNECTION
@@ -699,10 +674,9 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 				| USB_PORT_STAT_HIGH_SPEED
 				| USB_PORT_STAT_TEST
 				);
-#endif
 
 			if (otg_stat & TUSB_DEV_OTG_STAT_SESS_END) {
-				DBG(1, "Forcing disconnect (no interrupt)\n");
+				dev_dbg(musb->controller, "Forcing disconnect (no interrupt)\n");
 				if (musb->xceiv->state != OTG_STATE_B_IDLE) {
 					/* INTR_DISCONNECT can hide... */
 					musb->xceiv->state = OTG_STATE_B_IDLE;
@@ -710,19 +684,19 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 				}
 				musb->is_active = 0;
 			}
-			DBG(2, "vbus change, %s, otg %03x\n",
-				otg_state_string(musb), otg_stat);
+			dev_dbg(musb->controller, "vbus change, %s, otg %03x\n",
+				otg_state_string(musb->xceiv->state), otg_stat);
 			idle_timeout = jiffies + (1 * HZ);
 			schedule_work(&musb->irq_work);
 
 		} else /* A-dev state machine */ {
-			DBG(2, "vbus change, %s, otg %03x\n",
-				otg_state_string(musb), otg_stat);
+			dev_dbg(musb->controller, "vbus change, %s, otg %03x\n",
+				otg_state_string(musb->xceiv->state), otg_stat);
 
 			switch (musb->xceiv->state) {
 			case OTG_STATE_A_IDLE:
-				DBG(2, "Got SRP, turning on VBUS\n");
-				musb_set_vbus(musb, 1);
+				dev_dbg(musb->controller, "Got SRP, turning on VBUS\n");
+				musb_platform_set_vbus(musb, 1);
 
 				/* CONNECT can wake if a_wait_bcon is set */
 				if (musb->a_wait_bcon != 0)
@@ -748,11 +722,11 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 				 */
 				if (musb->vbuserr_retry) {
 					musb->vbuserr_retry--;
-					tusb_source_power(musb, 1);
+					tusb_musb_set_vbus(musb, 1);
 				} else {
 					musb->vbuserr_retry
 						= VBUSERR_RETRY_COUNT;
-					tusb_source_power(musb, 0);
+					tusb_musb_set_vbus(musb, 0);
 				}
 				break;
 			default:
@@ -765,7 +739,8 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 	if (int_src & TUSB_INT_SRC_OTG_TIMEOUT) {
 		u8	devctl;
 
-		DBG(4, "%s timer, %03x\n", otg_state_string(musb), otg_stat);
+		dev_dbg(musb->controller, "%s timer, %03x\n",
+			otg_state_string(musb->xceiv->state), otg_stat);
 
 		switch (musb->xceiv->state) {
 		case OTG_STATE_A_WAIT_VRISE:
@@ -776,7 +751,7 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 			if (otg_stat & TUSB_DEV_OTG_STAT_VBUS_VALID) {
 				if ((devctl & MUSB_DEVCTL_VBUS)
 						!= MUSB_DEVCTL_VBUS) {
-					DBG(2, "devctl %02x\n", devctl);
+					dev_dbg(musb->controller, "devctl %02x\n", devctl);
 					break;
 				}
 				musb->xceiv->state = OTG_STATE_A_WAIT_BCON;
@@ -786,7 +761,7 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 			} else {
 				/* REVISIT report overcurrent to hub? */
 				ERR("vbus too slow, devctl %02x\n", devctl);
-				tusb_source_power(musb, 0);
+				tusb_musb_set_vbus(musb, 0);
 			}
 			break;
 		case OTG_STATE_A_WAIT_BCON:
@@ -807,7 +782,7 @@ tusb_otg_ints(struct musb *musb, u32 int_src, void __iomem *tbase)
 	return idle_timeout;
 }
 
-static irqreturn_t tusb_interrupt(int irq, void *__hci)
+static irqreturn_t tusb_musb_interrupt(int irq, void *__hci)
 {
 	struct musb	*musb = __hci;
 	void __iomem	*tbase = musb->ctrl_base;
@@ -821,7 +796,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 	musb_writel(tbase, TUSB_INT_MASK, ~TUSB_INT_MASK_RESERVED_BITS);
 
 	int_src = musb_readl(tbase, TUSB_INT_SRC) & ~TUSB_INT_SRC_RESERVED_BITS;
-	DBG(3, "TUSB IRQ %08x\n", int_src);
+	dev_dbg(musb->controller, "TUSB IRQ %08x\n", int_src);
 
 	musb->int_usb = (u8) int_src;
 
@@ -842,7 +817,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 			reg = musb_readl(tbase, TUSB_SCRATCH_PAD);
 			if (reg == i)
 				break;
-			DBG(6, "TUSB NOR not ready\n");
+			dev_dbg(musb->controller, "TUSB NOR not ready\n");
 		}
 
 		/* work around issue 13 (2nd half) */
@@ -854,7 +829,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 			musb->is_active = 1;
 			schedule_work(&musb->irq_work);
 		}
-		DBG(3, "wake %sactive %02x\n",
+		dev_dbg(musb->controller, "wake %sactive %02x\n",
 				musb->is_active ? "" : "in", reg);
 
 		/* REVISIT host side TUSB_PRCM_WHOSTDISCON, TUSB_PRCM_WBUS */
@@ -876,7 +851,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 		u32	dma_src = musb_readl(tbase, TUSB_DMA_INT_SRC);
 		u32	real_dma_src = musb_readl(tbase, TUSB_DMA_INT_MASK);
 
-		DBG(3, "DMA IRQ %08x\n", dma_src);
+		dev_dbg(musb->controller, "DMA IRQ %08x\n", dma_src);
 		real_dma_src = ~real_dma_src & dma_src;
 		if (tusb_dma_omap() && real_dma_src) {
 			int	tx_source = (real_dma_src & 0xffff);
@@ -884,7 +859,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 
 			for (i = 1; i <= 15; i++) {
 				if (tx_source & (1 << i)) {
-					DBG(3, "completing ep%i %s\n", i, "tx");
+					dev_dbg(musb->controller, "completing ep%i %s\n", i, "tx");
 					musb_dma_completion(musb, i, 1);
 				}
 			}
@@ -911,7 +886,7 @@ static irqreturn_t tusb_interrupt(int irq, void *__hci)
 	musb_writel(tbase, TUSB_INT_SRC_CLEAR,
 		int_src & ~TUSB_INT_MASK_RESERVED_BITS);
 
-	musb_platform_try_idle(musb, idle_timeout);
+	tusb_musb_try_idle(musb, idle_timeout);
 
 	musb_writel(tbase, TUSB_INT_MASK, int_mask);
 	spin_unlock_irqrestore(&musb->lock, flags);
@@ -926,7 +901,7 @@ static int dma_off;
  * REVISIT:
  * - Check what is unnecessary in MGC_HdrcStart()
  */
-void musb_platform_enable(struct musb *musb)
+static void tusb_musb_enable(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 
@@ -952,7 +927,7 @@ void musb_platform_enable(struct musb *musb)
 	musb_writel(tbase, TUSB_INT_CTRL_CONF,
 			TUSB_INT_CTRL_CONF_INT_RELCYC(0));
 
-	set_irq_type(musb->nIrq, IRQ_TYPE_LEVEL_LOW);
+	irq_set_irq_type(musb->nIrq, IRQ_TYPE_LEVEL_LOW);
 
 	/* maybe force into the Default-A OTG state machine */
 	if (!(musb_readl(tbase, TUSB_DEV_OTG_STAT)
@@ -970,7 +945,7 @@ void musb_platform_enable(struct musb *musb)
 /*
  * Disables TUSB6010. Caller must take care of locking.
  */
-void musb_platform_disable(struct musb *musb)
+static void tusb_musb_disable(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 
@@ -995,7 +970,7 @@ void musb_platform_disable(struct musb *musb)
  * Sets up TUSB6010 CPU interface specific signals and registers
  * Note: Settings optimized for OMAP24xx
  */
-static void __init tusb_setup_cpu_interface(struct musb *musb)
+static void tusb_setup_cpu_interface(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 
@@ -1022,7 +997,7 @@ static void __init tusb_setup_cpu_interface(struct musb *musb)
 	musb_writel(tbase, TUSB_WAIT_COUNT, 1);
 }
 
-static int __init tusb_start(struct musb *musb)
+static int tusb_musb_start(struct musb *musb)
 {
 	void __iomem	*tbase = musb->ctrl_base;
 	int		ret = 0;
@@ -1091,7 +1066,7 @@ err:
 	return -ENODEV;
 }
 
-int __init musb_platform_init(struct musb *musb)
+static int tusb_musb_init(struct musb *musb)
 {
 	struct platform_device	*pdev;
 	struct resource		*mem;
@@ -1118,7 +1093,7 @@ int __init musb_platform_init(struct musb *musb)
 	}
 	musb->sync = mem->start;
 
-	sync = ioremap(mem->start, mem->end - mem->start + 1);
+	sync = ioremap(mem->start, resource_size(mem));
 	if (!sync) {
 		pr_debug("ioremap for sync failed\n");
 		ret = -ENOMEM;
@@ -1131,16 +1106,14 @@ int __init musb_platform_init(struct musb *musb)
 	 */
 	musb->mregs += TUSB_BASE_OFFSET;
 
-	ret = tusb_start(musb);
+	ret = tusb_musb_start(musb);
 	if (ret) {
 		printk(KERN_ERR "Could not start tusb6010 (%d)\n",
 				ret);
 		goto done;
 	}
-	musb->isr = tusb_interrupt;
+	musb->isr = tusb_musb_interrupt;
 
-	if (is_host_enabled(musb))
-		musb->board_set_vbus = tusb_source_power;
 	if (is_peripheral_enabled(musb)) {
 		musb->xceiv->set_power = tusb_draw_power;
 		the_musb = musb;
@@ -1152,12 +1125,14 @@ done:
 	if (ret < 0) {
 		if (sync)
 			iounmap(sync);
+
+		otg_put_transceiver(musb->xceiv);
 		usb_nop_xceiv_unregister();
 	}
 	return ret;
 }
 
-int musb_platform_exit(struct musb *musb)
+static int tusb_musb_exit(struct musb *musb)
 {
 	del_timer_sync(&musb_idle_timer);
 	the_musb = NULL;
@@ -1166,6 +1141,120 @@ int musb_platform_exit(struct musb *musb)
 		musb->board_set_power(0);
 
 	iounmap(musb->sync_va);
+
+	otg_put_transceiver(musb->xceiv);
 	usb_nop_xceiv_unregister();
 	return 0;
 }
+
+static const struct musb_platform_ops tusb_ops = {
+	.init		= tusb_musb_init,
+	.exit		= tusb_musb_exit,
+
+	.enable		= tusb_musb_enable,
+	.disable	= tusb_musb_disable,
+
+	.set_mode	= tusb_musb_set_mode,
+	.try_idle	= tusb_musb_try_idle,
+
+	.vbus_status	= tusb_musb_vbus_status,
+	.set_vbus	= tusb_musb_set_vbus,
+};
+
+static u64 tusb_dmamask = DMA_BIT_MASK(32);
+
+static int __init tusb_probe(struct platform_device *pdev)
+{
+	struct musb_hdrc_platform_data	*pdata = pdev->dev.platform_data;
+	struct platform_device		*musb;
+	struct tusb6010_glue		*glue;
+
+	int				ret = -ENOMEM;
+
+	glue = kzalloc(sizeof(*glue), GFP_KERNEL);
+	if (!glue) {
+		dev_err(&pdev->dev, "failed to allocate glue context\n");
+		goto err0;
+	}
+
+	musb = platform_device_alloc("musb-hdrc", -1);
+	if (!musb) {
+		dev_err(&pdev->dev, "failed to allocate musb device\n");
+		goto err1;
+	}
+
+	musb->dev.parent		= &pdev->dev;
+	musb->dev.dma_mask		= &tusb_dmamask;
+	musb->dev.coherent_dma_mask	= tusb_dmamask;
+
+	glue->dev			= &pdev->dev;
+	glue->musb			= musb;
+
+	pdata->platform_ops		= &tusb_ops;
+
+	platform_set_drvdata(pdev, glue);
+
+	ret = platform_device_add_resources(musb, pdev->resource,
+			pdev->num_resources);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add resources\n");
+		goto err2;
+	}
+
+	ret = platform_device_add_data(musb, pdata, sizeof(*pdata));
+	if (ret) {
+		dev_err(&pdev->dev, "failed to add platform_data\n");
+		goto err2;
+	}
+
+	ret = platform_device_add(musb);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to register musb device\n");
+		goto err1;
+	}
+
+	return 0;
+
+err2:
+	platform_device_put(musb);
+
+err1:
+	kfree(glue);
+
+err0:
+	return ret;
+}
+
+static int __exit tusb_remove(struct platform_device *pdev)
+{
+	struct tusb6010_glue		*glue = platform_get_drvdata(pdev);
+
+	platform_device_del(glue->musb);
+	platform_device_put(glue->musb);
+	kfree(glue);
+
+	return 0;
+}
+
+static struct platform_driver tusb_driver = {
+	.remove		= __exit_p(tusb_remove),
+	.driver		= {
+		.name	= "musb-tusb",
+	},
+};
+
+MODULE_DESCRIPTION("TUSB6010 MUSB Glue Layer");
+MODULE_AUTHOR("Felipe Balbi <balbi@ti.com>");
+MODULE_LICENSE("GPL v2");
+
+static int __init tusb_init(void)
+{
+	return platform_driver_probe(&tusb_driver, tusb_probe);
+}
+subsys_initcall(tusb_init);
+
+static void __exit tusb_exit(void)
+{
+	platform_driver_unregister(&tusb_driver);
+}
+module_exit(tusb_exit);

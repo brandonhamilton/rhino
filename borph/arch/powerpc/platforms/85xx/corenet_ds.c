@@ -3,7 +3,7 @@
  *
  * Maintained by Kumar Gala (see MAINTAINERS for contact information)
  *
- * Copyright 2009 Freescale Semiconductor Inc.
+ * Copyright 2009-2011 Freescale Semiconductor Inc.
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -16,12 +16,13 @@
 #include <linux/kdev_t.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/lmb.h>
+#include <linux/memblock.h>
 
 #include <asm/system.h>
 #include <asm/time.h>
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
+#include <asm/ppc-pci.h>
 #include <mm/mmu_decl.h>
 #include <asm/prom.h>
 #include <asm/udbg.h>
@@ -61,10 +62,6 @@ void __init corenet_ds_pic_init(void)
 	mpic_init(mpic);
 }
 
-#ifdef CONFIG_PCI
-static int primary_phb_addr;
-#endif
-
 /*
  * Setup the architecture
  */
@@ -85,22 +82,23 @@ void __init corenet_ds_setup_arch(void)
 #endif
 
 #ifdef CONFIG_PCI
-	for_each_compatible_node(np, "pci", "fsl,p4080-pcie") {
-		struct resource rsrc;
-		of_address_to_resource(np, 0, &rsrc);
-		if ((rsrc.start & 0xfffff) == primary_phb_addr)
-			fsl_add_bridge(np, 1);
-		else
+	for_each_node_by_type(np, "pci") {
+		if (of_device_is_compatible(np, "fsl,p4080-pcie") ||
+		    of_device_is_compatible(np, "fsl,qoriq-pcie-v2.2")) {
 			fsl_add_bridge(np, 0);
-
-		hose = pci_find_hose_for_OF_device(np);
-		max = min(max, hose->dma_window_base_cur +
-				hose->dma_window_size);
+			hose = pci_find_hose_for_OF_device(np);
+			max = min(max, hose->dma_window_base_cur +
+					hose->dma_window_size);
+		}
 	}
+
+#ifdef CONFIG_PPC64
+	pci_devs_phb_init();
+#endif
 #endif
 
 #ifdef CONFIG_SWIOTLB
-	if (lmb_end_of_DRAM() > max) {
+	if (memblock_end_of_DRAM() > max) {
 		ppc_swiotlb_enable = 1;
 		set_pci_dma_ops(&swiotlb_dma_ops);
 		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_swiotlb;
@@ -115,6 +113,19 @@ static const struct of_device_id of_device_ids[] __devinitconst = {
 	},
 	{
 		.compatible	= "fsl,rapidio-delta",
+	},
+	{
+		.compatible	= "fsl,p4080-pcie",
+	},
+	{
+		.compatible	= "fsl,qoriq-pcie-v2.2",
+	},
+	/* The following two are for the Freescale hypervisor */
+	{
+		.name		= "hypervisor",
+	},
+	{
+		.name		= "handles",
 	},
 	{}
 };

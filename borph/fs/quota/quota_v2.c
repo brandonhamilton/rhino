@@ -63,9 +63,8 @@ static int v2_read_header(struct super_block *sb, int type,
 	size = sb->s_op->quota_read(sb, type, (char *)dqhead,
 				    sizeof(struct v2_disk_dqheader), 0);
 	if (size != sizeof(struct v2_disk_dqheader)) {
-		printk(KERN_WARNING "quota_v2: Failed header read:"
-		       " expected=%zd got=%zd\n",
-			sizeof(struct v2_disk_dqheader), size);
+		quota_error(sb, "Failed header read: expected=%zd got=%zd",
+			    sizeof(struct v2_disk_dqheader), size);
 		return 0;
 	}
 	return 1;
@@ -97,21 +96,23 @@ static int v2_read_file_info(struct super_block *sb, int type)
 	unsigned int version;
 
 	if (!v2_read_header(sb, type, &dqhead))
-		return 0;
+		return -1;
 	version = le32_to_cpu(dqhead.dqh_version);
+	if ((info->dqi_fmt_id == QFMT_VFS_V0 && version != 0) ||
+	    (info->dqi_fmt_id == QFMT_VFS_V1 && version != 1))
+		return -1;
 
 	size = sb->s_op->quota_read(sb, type, (char *)&dinfo,
 	       sizeof(struct v2_disk_dqinfo), V2_DQINFOOFF);
 	if (size != sizeof(struct v2_disk_dqinfo)) {
-		printk(KERN_WARNING "quota_v2: Can't read info structure on device %s.\n",
-			sb->s_id);
+		quota_error(sb, "Can't read info structure");
 		return -1;
 	}
 	info->dqi_priv = kmalloc(sizeof(struct qtree_mem_dqinfo), GFP_NOFS);
 	if (!info->dqi_priv) {
 		printk(KERN_WARNING
 		       "Not enough memory for quota information structure.\n");
-		return -1;
+		return -ENOMEM;
 	}
 	qinfo = info->dqi_priv;
 	if (version == 0) {
@@ -120,8 +121,8 @@ static int v2_read_file_info(struct super_block *sb, int type)
 		info->dqi_maxilimit = 0xffffffff;
 	} else {
 		/* used space is stored as unsigned 64-bit value */
-		info->dqi_maxblimit = 0xffffffffffffffff;	/* 2^64-1 */
-		info->dqi_maxilimit = 0xffffffffffffffff;
+		info->dqi_maxblimit = 0xffffffffffffffffULL;	/* 2^64-1 */
+		info->dqi_maxilimit = 0xffffffffffffffffULL;
 	}
 	info->dqi_bgrace = le32_to_cpu(dinfo.dqi_bgrace);
 	info->dqi_igrace = le32_to_cpu(dinfo.dqi_igrace);
@@ -164,8 +165,7 @@ static int v2_write_file_info(struct super_block *sb, int type)
 	size = sb->s_op->quota_write(sb, type, (char *)&dinfo,
 	       sizeof(struct v2_disk_dqinfo), V2_DQINFOOFF);
 	if (size != sizeof(struct v2_disk_dqinfo)) {
-		printk(KERN_WARNING "Can't write info structure on device %s.\n",
-			sb->s_id);
+		quota_error(sb, "Can't write info structure");
 		return -1;
 	}
 	return 0;

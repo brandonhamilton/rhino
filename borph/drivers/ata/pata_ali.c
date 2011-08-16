@@ -124,7 +124,7 @@ static unsigned long ali_20_filter(struct ata_device *adev, unsigned long mask)
 	ata_id_c_string(adev->id, model_num, ATA_ID_PROD, sizeof(model_num));
 	if (strstr(model_num, "WDC"))
 		return mask &= ~ATA_MASK_UDMA;
-	return ata_bmdma_mode_filter(adev, mask);
+	return mask;
 }
 
 /**
@@ -159,8 +159,7 @@ static void ali_fifo_control(struct ata_port *ap, struct ata_device *adev, int o
  *	ali_program_modes	-	load mode registers
  *	@ap: ALi channel to load
  *	@adev: Device the timing is for
- *	@cmd: Command timing
- *	@data: Data timing
+ *	@t: timing data
  *	@ultra: UDMA timing or zero for off
  *
  *	Loads the timing registers for cmd/data and disable UDMA if
@@ -202,8 +201,7 @@ static void ali_program_modes(struct ata_port *ap, struct ata_device *adev, stru
  *	@ap: ATA interface
  *	@adev: ATA device
  *
- *	Program the ALi registers for PIO mode. FIXME: add timings for
- *	PIO5.
+ *	Program the ALi registers for PIO mode.
  */
 
 static void ali_set_piomode(struct ata_port *ap, struct ata_device *adev)
@@ -237,7 +235,7 @@ static void ali_set_piomode(struct ata_port *ap, struct ata_device *adev)
  *	@ap: ATA interface
  *	@adev: ATA device
  *
- *	FIXME: MWDMA timings
+ *	Program the ALi registers for DMA mode.
  */
 
 static void ali_set_dmamode(struct ata_port *ap, struct ata_device *adev)
@@ -289,10 +287,10 @@ static void ali_warn_atapi_dma(struct ata_device *adev)
 	int print_info = ehc->i.flags & ATA_EHI_PRINTINFO;
 
 	if (print_info && adev->class == ATA_DEV_ATAPI && !ali_atapi_dma) {
-		ata_dev_printk(adev, KERN_WARNING,
-			       "WARNING: ATAPI DMA disabled for reliability issues.  It can be enabled\n");
-		ata_dev_printk(adev, KERN_WARNING,
-			       "WARNING: via pata_ali.atapi_dma modparam or corresponding sysfs node.\n");
+		ata_dev_warn(adev,
+			     "WARNING: ATAPI DMA disabled for reliability issues.  It can be enabled\n");
+		ata_dev_warn(adev,
+			     "WARNING: via pata_ali.atapi_dma modparam or corresponding sysfs node.\n");
 	}
 }
 
@@ -585,7 +583,10 @@ static int ali_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	        	ppi[0] = &info_20_udma;
 	}
 
-	return ata_pci_sff_init_one(pdev, ppi, &ali_sht, NULL);
+	if (!ppi[0]->mwdma_mask && !ppi[0]->udma_mask)
+		return ata_pci_sff_init_one(pdev, ppi, &ali_sht, NULL, 0);
+	else
+		return ata_pci_bmdma_init_one(pdev, ppi, &ali_sht, NULL, 0);
 }
 
 #ifdef CONFIG_PM

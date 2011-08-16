@@ -34,7 +34,7 @@
 #include <linux/bootmem.h>
 #include <linux/pci.h>
 #include <linux/lockdep.h>
-#include <linux/lmb.h>
+#include <linux/memblock.h>
 #include <asm/io.h>
 #include <asm/kdump.h>
 #include <asm/prom.h>
@@ -61,8 +61,9 @@
 #include <asm/xmon.h>
 #include <asm/udbg.h>
 #include <asm/kexec.h>
-#include <asm/swiotlb.h>
 #include <asm/mmu_context.h>
+#include <asm/code-patching.h>
+#include <asm/kvm_ppc.h>
 
 #include "setup.h"
 
@@ -73,6 +74,7 @@
 #endif
 
 int boot_cpuid = 0;
+int __initdata spinning_secondaries;
 u64 ppc64_pft_size;
 
 /* Pick defaults since we might want to patch instructions
@@ -96,7 +98,7 @@ int ucache_bsize;
 
 #ifdef CONFIG_SMP
 
-static int smt_enabled_cmdline;
+static char *smt_enabled_cmdline;
 
 /* Look for ibm,smt-enabled OF option */
 static void check_smt_enabled(void)
@@ -104,37 +106,46 @@ static void check_smt_enabled(void)
 	struct device_node *dn;
 	const char *smt_option;
 
+	/* Default to enabling all threads */
+	smt_enabled_at_boot = threads_per_core;
+
 	/* Allow the command line to overrule the OF option */
-	if (smt_enabled_cmdline)
-		return;
+	if (smt_enabled_cmdline) {
+		if (!strcmp(smt_enabled_cmdline, "on"))
+			smt_enabled_at_boot = threads_per_core;
+		else if (!strcmp(smt_enabled_cmdline, "off"))
+			smt_enabled_at_boot = 0;
+		else {
+			long smt;
+			int rc;
 
-	dn = of_find_node_by_path("/options");
+			rc = strict_strtol(smt_enabled_cmdline, 10, &smt);
+			if (!rc)
+				smt_enabled_at_boot =
+					min(threads_per_core, (int)smt);
+		}
+	} else {
+		dn = of_find_node_by_path("/options");
+		if (dn) {
+			smt_option = of_get_property(dn, "ibm,smt-enabled",
+						     NULL);
 
-	if (dn) {
-		smt_option = of_get_property(dn, "ibm,smt-enabled", NULL);
+			if (smt_option) {
+				if (!strcmp(smt_option, "on"))
+					smt_enabled_at_boot = threads_per_core;
+				else if (!strcmp(smt_option, "off"))
+					smt_enabled_at_boot = 0;
+			}
 
-                if (smt_option) {
-			if (!strcmp(smt_option, "on"))
-				smt_enabled_at_boot = 1;
-			else if (!strcmp(smt_option, "off"))
-				smt_enabled_at_boot = 0;
-                }
-        }
+			of_node_put(dn);
+		}
+	}
 }
 
 /* Look for smt-enabled= cmdline option */
 static int __init early_smt_enabled(char *p)
 {
-	smt_enabled_cmdline = 1;
-
-	if (!p)
-		return 0;
-
-	if (!strcmp(p, "on") || !strcmp(p, "1"))
-		smt_enabled_at_boot = 1;
-	else if (!strcmp(p, "off") || !strcmp(p, "0"))
-		smt_enabled_at_boot = 0;
-
+	smt_enabled_cmdline = p;
 	return 0;
 }
 early_param("smt-enabled", early_smt_enabled);
@@ -143,23 +154,13 @@ early_param("smt-enabled", early_smt_enabled);
 #define check_smt_enabled()
 #endif /* CONFIG_SMP */
 
-/* Put the paca pointer into r13 and SPRG_PACA */
-void __init setup_paca(int cpu)
-{
-	local_paca = &paca[cpu];
-	mtspr(SPRN_SPRG_PACA, local_paca);
-#ifdef CONFIG_PPC_BOOK3E
-	mtspr(SPRN_SPRG_TLB_EXFRAME, local_paca->extlb);
-#endif
-}
-
 /*
  * Early initialization entry point. This is called by head.S
  * with MMU translation disabled. We rely on the "feature" of
  * the CPU that ignores the top 2 bits of the address in real
  * mode so we can access kernel globals normally provided we
  * only toy with things in the RMO region. From here, we do
- * some early parsing of the device-tree to setup out LMB
+ * some early parsing of the device-tree to setup out MEMBLOCK
  * data structures, and allocate & initialize the hash table
  * and segment tables so we can start running with translation
  * enabled.
@@ -176,14 +177,12 @@ void __init early_setup(unsigned long dt_ptr)
 {
 	/* -------- printk is _NOT_ safe to use here ! ------- */
 
-	/* Fill in any unititialised pacas */
-	initialise_pacas();
-
 	/* Identify CPU type */
 	identify_cpu(0, mfspr(SPRN_PVR));
 
 	/* Assume we're on cpu 0 for now. Don't write to the paca yet! */
-	setup_paca(0);
+	initialise_paca(&boot_paca, 0);
+	setup_paca(&boot_paca);
 
 	/* Initialize lockdep early or else spinlocks will blow */
 	lockdep_init();
@@ -203,7 +202,7 @@ void __init early_setup(unsigned long dt_ptr)
 	early_init_devtree(__va(dt_ptr));
 
 	/* Now we know the logical id of our boot cpu, setup the paca. */
-	setup_paca(boot_cpuid);
+	setup_paca(&paca[boot_cpuid]);
 
 	/* Fix up paca fields required for the boot cpu */
 	get_paca()->cpu_start = 1;
@@ -237,6 +236,7 @@ void early_setup_secondary(void)
 void smp_release_cpus(void)
 {
 	unsigned long *ptr;
+	int i;
 
 	DBG(" -> smp_release_cpus()\n");
 
@@ -249,7 +249,16 @@ void smp_release_cpus(void)
 	ptr  = (unsigned long *)((unsigned long)&__secondary_hold_spinloop
 			- PHYSICAL_START);
 	*ptr = __pa(generic_secondary_smp_init);
-	mb();
+
+	/* And wait a bit for them to catch up */
+	for (i = 0; i < 100000; i++) {
+		mb();
+		HMT_low();
+		if (spinning_secondaries == 0)
+			break;
+		udelay(1);
+	}
+	DBG("spinning_secondaries = %d\n", spinning_secondaries);
 
 	DBG(" <- smp_release_cpus()\n");
 }
@@ -393,8 +402,8 @@ void __init setup_system(void)
 	 */
 	xmon_setup();
 
-	check_smt_enabled();
 	smp_setup_cpu_maps();
+	check_smt_enabled();
 
 #ifdef CONFIG_SMP
 	/* Release secondary cpus out of their spinloops at 0x60 now that
@@ -407,7 +416,7 @@ void __init setup_system(void)
 
 	printk("-----------------------------------------------------\n");
 	printk("ppc64_pft_size                = 0x%llx\n", ppc64_pft_size);
-	printk("physicalMemorySize            = 0x%llx\n", lmb_phys_mem_size());
+	printk("physicalMemorySize            = 0x%llx\n", memblock_phys_mem_size());
 	if (ppc64_caches.dline_size != 0x80)
 		printk("ppc64_caches.dcache_line_size = 0x%x\n",
 		       ppc64_caches.dline_size);
@@ -427,41 +436,66 @@ void __init setup_system(void)
 	DBG(" <- setup_system()\n");
 }
 
-#ifdef CONFIG_IRQSTACKS
+/* This returns the limit below which memory accesses to the linear
+ * mapping are guarnateed not to cause a TLB or SLB miss. This is
+ * used to allocate interrupt or emergency stacks for which our
+ * exception entry path doesn't deal with being interrupted.
+ */
+static u64 safe_stack_limit(void)
+{
+#ifdef CONFIG_PPC_BOOK3E
+	/* Freescale BookE bolts the entire linear mapping */
+	if (mmu_has_feature(MMU_FTR_TYPE_FSL_E))
+		return linear_map_top;
+	/* Other BookE, we assume the first GB is bolted */
+	return 1ul << 30;
+#else
+	/* BookS, the first segment is bolted */
+	if (mmu_has_feature(MMU_FTR_1T_SEGMENT))
+		return 1UL << SID_SHIFT_1T;
+	return 1UL << SID_SHIFT;
+#endif
+}
+
 static void __init irqstack_early_init(void)
 {
+	u64 limit = safe_stack_limit();
 	unsigned int i;
 
 	/*
-	 * interrupt stacks must be under 256MB, we cannot afford to take
-	 * SLB misses on them.
+	 * Interrupt stacks must be in the first segment since we
+	 * cannot afford to take SLB misses on them.
 	 */
 	for_each_possible_cpu(i) {
 		softirq_ctx[i] = (struct thread_info *)
-			__va(lmb_alloc_base(THREAD_SIZE,
-					    THREAD_SIZE, 0x10000000));
+			__va(memblock_alloc_base(THREAD_SIZE,
+					    THREAD_SIZE, limit));
 		hardirq_ctx[i] = (struct thread_info *)
-			__va(lmb_alloc_base(THREAD_SIZE,
-					    THREAD_SIZE, 0x10000000));
+			__va(memblock_alloc_base(THREAD_SIZE,
+					    THREAD_SIZE, limit));
 	}
 }
-#else
-#define irqstack_early_init()
-#endif
 
 #ifdef CONFIG_PPC_BOOK3E
 static void __init exc_lvl_early_init(void)
 {
+	extern unsigned int interrupt_base_book3e;
+	extern unsigned int exc_debug_debug_book3e;
+
 	unsigned int i;
 
 	for_each_possible_cpu(i) {
 		critirq_ctx[i] = (struct thread_info *)
-			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
 		dbgirq_ctx[i] = (struct thread_info *)
-			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
 		mcheckirq_ctx[i] = (struct thread_info *)
-			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+			__va(memblock_alloc(THREAD_SIZE, THREAD_SIZE));
 	}
+
+	if (cpu_has_feature(CPU_FTR_DEBUG_LVL_EXC))
+		patch_branch(&interrupt_base_book3e + (0x040 / 4) + 1,
+			     (unsigned long)&exc_debug_debug_book3e, 0);
 }
 #else
 #define exc_lvl_early_init()
@@ -473,7 +507,7 @@ static void __init exc_lvl_early_init(void)
  */
 static void __init emergency_stack_init(void)
 {
-	unsigned long limit;
+	u64 limit;
 	unsigned int i;
 
 	/*
@@ -485,20 +519,19 @@ static void __init emergency_stack_init(void)
 	 * bringup, we need to get at them in real mode. This means they
 	 * must also be within the RMO region.
 	 */
-	limit = min(0x10000000ULL, lmb.rmo_size);
+	limit = min(safe_stack_limit(), ppc64_rma_size);
 
 	for_each_possible_cpu(i) {
 		unsigned long sp;
-		sp  = lmb_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
+		sp  = memblock_alloc_base(THREAD_SIZE, THREAD_SIZE, limit);
 		sp += THREAD_SIZE;
 		paca[i].emergency_sp = __va(sp);
 	}
 }
 
 /*
- * Called into from start_kernel, after lock_kernel has been called.
- * Initializes bootmem, which is unsed to manage page allocation until
- * mem_init is called.
+ * Called into from start_kernel this initializes bootmem, which is used
+ * to manage page allocation until mem_init is called.
  */
 void __init setup_arch(char **cmdline_p)
 {
@@ -543,15 +576,12 @@ void __init setup_arch(char **cmdline_p)
 	if (ppc_md.setup_arch)
 		ppc_md.setup_arch();
 
-#ifdef CONFIG_SWIOTLB
-	if (ppc_swiotlb_enable)
-		swiotlb_init(1);
-#endif
-
 	paging_init();
 
 	/* Initialize the MMU context management stuff */
 	mmu_context_init();
+
+	kvm_rma_init();
 
 	ppc64_boot_msg(0x15, "Setup Done");
 }
@@ -581,12 +611,6 @@ void ppc64_boot_msg(unsigned int src, const char *msg)
 	printk("[boot]%04x %s\n", src, msg);
 }
 
-void cpu_die(void)
-{
-	if (ppc_md.cpu_die)
-		ppc_md.cpu_die();
-}
-
 #ifdef CONFIG_SMP
 #define PCPU_DYN_SIZE		()
 
@@ -608,6 +632,9 @@ static int pcpu_cpu_distance(unsigned int from, unsigned int to)
 	else
 		return REMOTE_DISTANCE;
 }
+
+unsigned long __per_cpu_offset[NR_CPUS] __read_mostly;
+EXPORT_SYMBOL(__per_cpu_offset);
 
 void __init setup_per_cpu_areas(void)
 {
@@ -633,8 +660,10 @@ void __init setup_per_cpu_areas(void)
 		panic("cannot initialize percpu area (err=%d)", rc);
 
 	delta = (unsigned long)pcpu_base_addr - (unsigned long)__per_cpu_start;
-	for_each_possible_cpu(cpu)
-		paca[cpu].data_offset = delta + pcpu_unit_offsets[cpu];
+	for_each_possible_cpu(cpu) {
+                __per_cpu_offset[cpu] = delta + pcpu_unit_offsets[cpu];
+		paca[cpu].data_offset = __per_cpu_offset[cpu];
+	}
 }
 #endif
 

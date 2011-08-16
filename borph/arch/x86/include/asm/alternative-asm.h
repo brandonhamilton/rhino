@@ -6,13 +6,22 @@
 	.macro LOCK_PREFIX
 1:	lock
 	.section .smp_locks,"a"
-	_ASM_ALIGN
-	_ASM_PTR 1b
+	.balign 4
+	.long 1b - .
 	.previous
 	.endm
 #else
 	.macro LOCK_PREFIX
 	.endm
 #endif
+
+.macro altinstruction_entry orig alt feature orig_len alt_len
+	.align 8
+	.long \orig - .
+	.long \alt - .
+	.word \feature
+	.byte \orig_len
+	.byte \alt_len
+.endm
 
 #endif  /*  __ASSEMBLY__  */

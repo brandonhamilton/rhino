@@ -47,38 +47,19 @@
 
 #include <asm/mpspec.h>
 
-#ifdef CONFIG_X86_32
-
-/* Mappings between logical cpu number and node number */
-extern int cpu_to_node_map[];
-
-/* Returns the number of the node containing CPU 'cpu' */
-static inline int cpu_to_node(int cpu)
-{
-	return cpu_to_node_map[cpu];
-}
-#define early_cpu_to_node(cpu)	cpu_to_node(cpu)
-
-#else /* CONFIG_X86_64 */
-
 /* Mappings between logical cpu number and node number */
 DECLARE_EARLY_PER_CPU(int, x86_cpu_to_node_map);
 
-/* Returns the number of the current Node. */
-DECLARE_PER_CPU(int, node_number);
-#define numa_node_id()		percpu_read(node_number)
-
 #ifdef CONFIG_DEBUG_PER_CPU_MAPS
-extern int cpu_to_node(int cpu);
+/*
+ * override generic percpu implementation of cpu_to_node
+ */
+extern int __cpu_to_node(int cpu);
+#define cpu_to_node __cpu_to_node
+
 extern int early_cpu_to_node(int cpu);
 
 #else	/* !CONFIG_DEBUG_PER_CPU_MAPS */
-
-/* Returns the number of the node containing CPU 'cpu' */
-static inline int cpu_to_node(int cpu)
-{
-	return per_cpu(x86_cpu_to_node_map, cpu);
-}
 
 /* Same function but used if called before per_cpu areas are setup */
 static inline int early_cpu_to_node(int cpu)
@@ -87,8 +68,6 @@ static inline int early_cpu_to_node(int cpu)
 }
 
 #endif /* !CONFIG_DEBUG_PER_CPU_MAPS */
-
-#endif /* CONFIG_X86_64 */
 
 /* Mappings between node number and cpus on that node. */
 extern cpumask_var_t node_to_cpumask_map[MAX_NUMNODES];
@@ -114,19 +93,11 @@ extern void setup_node_to_cpumask_map(void);
 #define pcibus_to_node(bus) __pcibus_to_node(bus)
 
 #ifdef CONFIG_X86_32
-extern unsigned long node_start_pfn[];
-extern unsigned long node_end_pfn[];
-extern unsigned long node_remap_size[];
-#define node_has_online_mem(nid) (node_start_pfn[nid] != node_end_pfn[nid])
-
 # define SD_CACHE_NICE_TRIES	1
 # define SD_IDLE_IDX		1
-
 #else
-
 # define SD_CACHE_NICE_TRIES	2
 # define SD_IDLE_IDX		2
-
 #endif
 
 /* sched_domains SD_NODE_INIT for NUMA machines */
@@ -159,7 +130,7 @@ extern unsigned long node_remap_size[];
 	.balance_interval	= 1,					\
 }
 
-#ifdef CONFIG_X86_64_ACPI_NUMA
+#ifdef CONFIG_X86_64
 extern int __node_distance(int, int);
 #define node_distance(a, b) __node_distance(a, b)
 #endif
@@ -170,6 +141,10 @@ static inline int numa_node_id(void)
 {
 	return 0;
 }
+/*
+ * indicate override:
+ */
+#define numa_node_id numa_node_id
 
 static inline int early_cpu_to_node(int cpu)
 {

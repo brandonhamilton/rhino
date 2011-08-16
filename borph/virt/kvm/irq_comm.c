@@ -17,9 +17,11 @@
  * Authors:
  *   Yaozu (Eddie) Dong <Eddie.dong@intel.com>
  *
+ * Copyright 2010 Red Hat, Inc. and/or its affiliates.
  */
 
 #include <linux/kvm_host.h>
+#include <linux/slab.h>
 #include <trace/events/kvm.h>
 
 #include <asm/msidef.h>
@@ -98,7 +100,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 			if (r < 0)
 				r = 0;
 			r += kvm_apic_set_irq(vcpu, irq);
-		} else {
+		} else if (kvm_lapic_enabled(vcpu)) {
 			if (!lowest)
 				lowest = vcpu;
 			else if (kvm_apic_compare_prio(vcpu, lowest) < 0)
@@ -112,8 +114,8 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 	return r;
 }
 
-static int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
-		       struct kvm *kvm, int irq_source_id, int level)
+int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
+		struct kvm *kvm, int irq_source_id, int level)
 {
 	struct kvm_lapic_irq irq;
 
@@ -277,15 +279,19 @@ void kvm_unregister_irq_mask_notifier(struct kvm *kvm, int irq,
 	synchronize_rcu();
 }
 
-void kvm_fire_mask_notifiers(struct kvm *kvm, int irq, bool mask)
+void kvm_fire_mask_notifiers(struct kvm *kvm, unsigned irqchip, unsigned pin,
+			     bool mask)
 {
 	struct kvm_irq_mask_notifier *kimn;
 	struct hlist_node *n;
+	int gsi;
 
 	rcu_read_lock();
-	hlist_for_each_entry_rcu(kimn, n, &kvm->mask_notifier_list, link)
-		if (kimn->irq == irq)
-			kimn->func(kimn, mask);
+	gsi = rcu_dereference(kvm->irq_routing)->chip[irqchip][pin];
+	if (gsi != -1)
+		hlist_for_each_entry_rcu(kimn, n, &kvm->mask_notifier_list, link)
+			if (kimn->irq == gsi)
+				kimn->func(kimn, mask);
 	rcu_read_unlock();
 }
 
@@ -302,6 +308,7 @@ static int setup_routing_entry(struct kvm_irq_routing_table *rt,
 {
 	int r = -EINVAL;
 	int delta;
+	unsigned max_pin;
 	struct kvm_kernel_irq_routing_entry *ei;
 	struct hlist_node *n;
 
@@ -322,12 +329,15 @@ static int setup_routing_entry(struct kvm_irq_routing_table *rt,
 		switch (ue->u.irqchip.irqchip) {
 		case KVM_IRQCHIP_PIC_MASTER:
 			e->set = kvm_set_pic_irq;
+			max_pin = 16;
 			break;
 		case KVM_IRQCHIP_PIC_SLAVE:
 			e->set = kvm_set_pic_irq;
+			max_pin = 16;
 			delta = 8;
 			break;
 		case KVM_IRQCHIP_IOAPIC:
+			max_pin = KVM_IOAPIC_NUM_PINS;
 			e->set = kvm_set_ioapic_irq;
 			break;
 		default:
@@ -335,7 +345,7 @@ static int setup_routing_entry(struct kvm_irq_routing_table *rt,
 		}
 		e->irqchip.irqchip = ue->u.irqchip.irqchip;
 		e->irqchip.pin = ue->u.irqchip.pin + delta;
-		if (e->irqchip.pin >= KVM_IOAPIC_NUM_PINS)
+		if (e->irqchip.pin >= max_pin)
 			goto out;
 		rt->chip[ue->u.irqchip.irqchip][e->irqchip.pin] = ue->gsi;
 		break;
@@ -399,8 +409,9 @@ int kvm_set_irq_routing(struct kvm *kvm,
 
 	mutex_lock(&kvm->irq_lock);
 	old = kvm->irq_routing;
-	rcu_assign_pointer(kvm->irq_routing, new);
+	kvm_irq_routing_update(kvm, new);
 	mutex_unlock(&kvm->irq_lock);
+
 	synchronize_rcu();
 
 	new = old;

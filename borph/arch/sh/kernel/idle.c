@@ -16,14 +16,15 @@
 #include <linux/thread_info.h>
 #include <linux/irqflags.h>
 #include <linux/smp.h>
+#include <linux/cpuidle.h>
 #include <asm/pgalloc.h>
 #include <asm/system.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
+#include <asm/smp.h>
+
+static void (*pm_idle)(void);
 
 static int hlt_counter;
-void (*pm_idle)(void) = NULL;
-void (*pm_power_off)(void);
-EXPORT_SYMBOL(pm_power_off);
 
 static int __init nohlt_setup(char *__unused)
 {
@@ -62,6 +63,7 @@ void default_idle(void)
 		clear_thread_flag(TIF_POLLING_NRFLAG);
 		smp_mb__after_clear_bit();
 
+		set_bl_bit();
 		if (!need_resched()) {
 			local_irq_enable();
 			cpu_sleep();
@@ -69,6 +71,7 @@ void default_idle(void)
 			local_irq_enable();
 
 		set_thread_flag(TIF_POLLING_NRFLAG);
+		clear_bl_bit();
 	} else
 		poll_idle();
 }
@@ -88,14 +91,18 @@ void cpu_idle(void)
 	while (1) {
 		tick_nohz_stop_sched_tick(1);
 
-		while (!need_resched() && cpu_online(cpu)) {
+		while (!need_resched()) {
 			check_pgt_cache();
 			rmb();
+
+			if (cpu_is_offline(cpu))
+				play_dead();
 
 			local_irq_disable();
 			/* Don't trace irqs off for idle */
 			stop_critical_timings();
-			pm_idle();
+			if (cpuidle_idle_call())
+				pm_idle();
 			/*
 			 * Sanity check to ensure that pm_idle() returns
 			 * with IRQs enabled
@@ -111,7 +118,7 @@ void cpu_idle(void)
 	}
 }
 
-void __cpuinit select_idle_routine(void)
+void __init select_idle_routine(void)
 {
 	/*
 	 * If a platform has set its own idle routine, leave it alone.
@@ -127,6 +134,15 @@ void __cpuinit select_idle_routine(void)
 
 static void do_nothing(void *unused)
 {
+}
+
+void stop_this_cpu(void *unused)
+{
+	local_irq_disable();
+	set_cpu_online(smp_processor_id(), false);
+
+	for (;;)
+		cpu_sleep();
 }
 
 /*

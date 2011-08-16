@@ -9,6 +9,8 @@
  * (at your option) any later version.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
+
 #include <linux/dma-mapping.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -17,12 +19,14 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/moduleparam.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
-#include <mach/ep93xx-regs.h>
-#include <mach/platform.h>
-#include <asm/io.h>
+#include <linux/io.h>
+#include <linux/slab.h>
+
+#include <mach/hardware.h>
 
 #define DRV_MODULE_NAME		"ep93xx-eth"
 #define DRV_MODULE_VERSION	"0.1"
@@ -172,8 +176,6 @@ struct ep93xx_priv
 	struct net_device	*dev;
 	struct napi_struct	napi;
 
-	struct net_device_stats	stats;
-
 	struct mii_if_info	mii;
 	u8			mdc_divisor;
 };
@@ -185,12 +187,46 @@ struct ep93xx_priv
 #define wrw(ep, off, val)	__raw_writew((val), (ep)->base_addr + (off))
 #define wrl(ep, off, val)	__raw_writel((val), (ep)->base_addr + (off))
 
-static int ep93xx_mdio_read(struct net_device *dev, int phy_id, int reg);
-
-static struct net_device_stats *ep93xx_get_stats(struct net_device *dev)
+static int ep93xx_mdio_read(struct net_device *dev, int phy_id, int reg)
 {
 	struct ep93xx_priv *ep = netdev_priv(dev);
-	return &(ep->stats);
+	int data;
+	int i;
+
+	wrl(ep, REG_MIICMD, REG_MIICMD_READ | (phy_id << 5) | reg);
+
+	for (i = 0; i < 10; i++) {
+		if ((rdl(ep, REG_MIISTS) & REG_MIISTS_BUSY) == 0)
+			break;
+		msleep(1);
+	}
+
+	if (i == 10) {
+		pr_info("mdio read timed out\n");
+		data = 0xffff;
+	} else {
+		data = rdl(ep, REG_MIIDATA);
+	}
+
+	return data;
+}
+
+static void ep93xx_mdio_write(struct net_device *dev, int phy_id, int reg, int data)
+{
+	struct ep93xx_priv *ep = netdev_priv(dev);
+	int i;
+
+	wrl(ep, REG_MIIDATA, data);
+	wrl(ep, REG_MIICMD, REG_MIICMD_WRITE | (phy_id << 5) | reg);
+
+	for (i = 0; i < 10; i++) {
+		if ((rdl(ep, REG_MIISTS) & REG_MIISTS_BUSY) == 0)
+			break;
+		msleep(1);
+	}
+
+	if (i == 10)
+		pr_info("mdio write timed out\n");
 }
 
 static int ep93xx_rx(struct net_device *dev, int processed, int budget)
@@ -217,32 +253,28 @@ static int ep93xx_rx(struct net_device *dev, int processed, int budget)
 		rstat->rstat1 = 0;
 
 		if (!(rstat0 & RSTAT0_EOF))
-			printk(KERN_CRIT "ep93xx_rx: not end-of-frame "
-					 " %.8x %.8x\n", rstat0, rstat1);
+			pr_crit("not end-of-frame %.8x %.8x\n", rstat0, rstat1);
 		if (!(rstat0 & RSTAT0_EOB))
-			printk(KERN_CRIT "ep93xx_rx: not end-of-buffer "
-					 " %.8x %.8x\n", rstat0, rstat1);
+			pr_crit("not end-of-buffer %.8x %.8x\n", rstat0, rstat1);
 		if ((rstat1 & RSTAT1_BUFFER_INDEX) >> 16 != entry)
-			printk(KERN_CRIT "ep93xx_rx: entry mismatch "
-					 " %.8x %.8x\n", rstat0, rstat1);
+			pr_crit("entry mismatch %.8x %.8x\n", rstat0, rstat1);
 
 		if (!(rstat0 & RSTAT0_RWE)) {
-			ep->stats.rx_errors++;
+			dev->stats.rx_errors++;
 			if (rstat0 & RSTAT0_OE)
-				ep->stats.rx_fifo_errors++;
+				dev->stats.rx_fifo_errors++;
 			if (rstat0 & RSTAT0_FE)
-				ep->stats.rx_frame_errors++;
+				dev->stats.rx_frame_errors++;
 			if (rstat0 & (RSTAT0_RUNT | RSTAT0_EDATA))
-				ep->stats.rx_length_errors++;
+				dev->stats.rx_length_errors++;
 			if (rstat0 & RSTAT0_CRCE)
-				ep->stats.rx_crc_errors++;
+				dev->stats.rx_crc_errors++;
 			goto err;
 		}
 
 		length = rstat1 & RSTAT1_FRAME_LENGTH;
 		if (length > MAX_PKT_SIZE) {
-			printk(KERN_NOTICE "ep93xx_rx: invalid length "
-					 " %.8x %.8x\n", rstat0, rstat1);
+			pr_notice("invalid length %.8x %.8x\n", rstat0, rstat1);
 			goto err;
 		}
 
@@ -252,29 +284,28 @@ static int ep93xx_rx(struct net_device *dev, int processed, int budget)
 
 		skb = dev_alloc_skb(length + 2);
 		if (likely(skb != NULL)) {
+			struct ep93xx_rdesc *rxd = &ep->descs->rdesc[entry];
 			skb_reserve(skb, 2);
-			dma_sync_single_for_cpu(NULL, ep->descs->rdesc[entry].buf_addr,
+			dma_sync_single_for_cpu(dev->dev.parent, rxd->buf_addr,
 						length, DMA_FROM_DEVICE);
 			skb_copy_to_linear_data(skb, ep->rx_buf[entry], length);
+			dma_sync_single_for_device(dev->dev.parent,
+						   rxd->buf_addr, length,
+						   DMA_FROM_DEVICE);
 			skb_put(skb, length);
 			skb->protocol = eth_type_trans(skb, dev);
 
 			netif_receive_skb(skb);
 
-			ep->stats.rx_packets++;
-			ep->stats.rx_bytes += length;
+			dev->stats.rx_packets++;
+			dev->stats.rx_bytes += length;
 		} else {
-			ep->stats.rx_dropped++;
+			dev->stats.rx_dropped++;
 		}
 
 err:
 		ep->rx_pointer = (entry + 1) & (RX_QUEUE_ENTRIES - 1);
 		processed++;
-	}
-
-	if (processed) {
-		wrw(ep, REG_RXDENQ, processed);
-		wrw(ep, REG_RXSTSENQ, processed);
 	}
 
 	return processed;
@@ -311,16 +342,22 @@ poll_some_more:
 			goto poll_some_more;
 	}
 
+	if (rx) {
+		wrw(ep, REG_RXDENQ, rx);
+		wrw(ep, REG_RXSTSENQ, rx);
+	}
+
 	return rx;
 }
 
 static int ep93xx_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ep93xx_priv *ep = netdev_priv(dev);
+	struct ep93xx_tdesc *txd;
 	int entry;
 
 	if (unlikely(skb->len > MAX_PKT_SIZE)) {
-		ep->stats.tx_dropped++;
+		dev->stats.tx_dropped++;
 		dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
@@ -328,14 +365,15 @@ static int ep93xx_xmit(struct sk_buff *skb, struct net_device *dev)
 	entry = ep->tx_pointer;
 	ep->tx_pointer = (ep->tx_pointer + 1) & (TX_QUEUE_ENTRIES - 1);
 
-	ep->descs->tdesc[entry].tdesc1 =
-		TDESC1_EOF | (entry << 16) | (skb->len & 0xfff);
-	skb_copy_and_csum_dev(skb, ep->tx_buf[entry]);
-	dma_sync_single_for_cpu(NULL, ep->descs->tdesc[entry].buf_addr,
-				skb->len, DMA_TO_DEVICE);
-	dev_kfree_skb(skb);
+	txd = &ep->descs->tdesc[entry];
 
-	dev->trans_start = jiffies;
+	txd->tdesc1 = TDESC1_EOF | (entry << 16) | (skb->len & 0xfff);
+	dma_sync_single_for_cpu(dev->dev.parent, txd->buf_addr, skb->len,
+				DMA_TO_DEVICE);
+	skb_copy_and_csum_dev(skb, ep->tx_buf[entry]);
+	dma_sync_single_for_device(dev->dev.parent, txd->buf_addr, skb->len,
+				   DMA_TO_DEVICE);
+	dev_kfree_skb(skb);
 
 	spin_lock_irq(&ep->tx_pending_lock);
 	ep->tx_pending++;
@@ -371,26 +409,24 @@ static void ep93xx_tx_complete(struct net_device *dev)
 		tstat->tstat0 = 0;
 
 		if (tstat0 & TSTAT0_FA)
-			printk(KERN_CRIT "ep93xx_tx_complete: frame aborted "
-					 " %.8x\n", tstat0);
+			pr_crit("frame aborted %.8x\n", tstat0);
 		if ((tstat0 & TSTAT0_BUFFER_INDEX) != entry)
-			printk(KERN_CRIT "ep93xx_tx_complete: entry mismatch "
-					 " %.8x\n", tstat0);
+			pr_crit("entry mismatch %.8x\n", tstat0);
 
 		if (tstat0 & TSTAT0_TXWE) {
 			int length = ep->descs->tdesc[entry].tdesc1 & 0xfff;
 
-			ep->stats.tx_packets++;
-			ep->stats.tx_bytes += length;
+			dev->stats.tx_packets++;
+			dev->stats.tx_bytes += length;
 		} else {
-			ep->stats.tx_errors++;
+			dev->stats.tx_errors++;
 		}
 
 		if (tstat0 & TSTAT0_OW)
-			ep->stats.tx_window_errors++;
+			dev->stats.tx_window_errors++;
 		if (tstat0 & TSTAT0_TXU)
-			ep->stats.tx_fifo_errors++;
-		ep->stats.collisions += (tstat0 >> 16) & 0x1f;
+			dev->stats.tx_fifo_errors++;
+		dev->stats.collisions += (tstat0 >> 16) & 0x1f;
 
 		ep->tx_clean_pointer = (entry + 1) & (TX_QUEUE_ENTRIES - 1);
 		if (ep->tx_pending == TX_QUEUE_ENTRIES)
@@ -430,89 +466,80 @@ static irqreturn_t ep93xx_irq(int irq, void *dev_id)
 
 static void ep93xx_free_buffers(struct ep93xx_priv *ep)
 {
+	struct device *dev = ep->dev->dev.parent;
 	int i;
 
-	for (i = 0; i < RX_QUEUE_ENTRIES; i += 2) {
+	for (i = 0; i < RX_QUEUE_ENTRIES; i++) {
 		dma_addr_t d;
 
 		d = ep->descs->rdesc[i].buf_addr;
 		if (d)
-			dma_unmap_single(NULL, d, PAGE_SIZE, DMA_FROM_DEVICE);
+			dma_unmap_single(dev, d, PKT_BUF_SIZE, DMA_FROM_DEVICE);
 
 		if (ep->rx_buf[i] != NULL)
-			free_page((unsigned long)ep->rx_buf[i]);
+			kfree(ep->rx_buf[i]);
 	}
 
-	for (i = 0; i < TX_QUEUE_ENTRIES; i += 2) {
+	for (i = 0; i < TX_QUEUE_ENTRIES; i++) {
 		dma_addr_t d;
 
 		d = ep->descs->tdesc[i].buf_addr;
 		if (d)
-			dma_unmap_single(NULL, d, PAGE_SIZE, DMA_TO_DEVICE);
+			dma_unmap_single(dev, d, PKT_BUF_SIZE, DMA_TO_DEVICE);
 
 		if (ep->tx_buf[i] != NULL)
-			free_page((unsigned long)ep->tx_buf[i]);
+			kfree(ep->tx_buf[i]);
 	}
 
-	dma_free_coherent(NULL, sizeof(struct ep93xx_descs), ep->descs,
+	dma_free_coherent(dev, sizeof(struct ep93xx_descs), ep->descs,
 							ep->descs_dma_addr);
 }
 
-/*
- * The hardware enforces a sub-2K maximum packet size, so we put
- * two buffers on every hardware page.
- */
 static int ep93xx_alloc_buffers(struct ep93xx_priv *ep)
 {
+	struct device *dev = ep->dev->dev.parent;
 	int i;
 
-	ep->descs = dma_alloc_coherent(NULL, sizeof(struct ep93xx_descs),
-				&ep->descs_dma_addr, GFP_KERNEL | GFP_DMA);
+	ep->descs = dma_alloc_coherent(dev, sizeof(struct ep93xx_descs),
+				&ep->descs_dma_addr, GFP_KERNEL);
 	if (ep->descs == NULL)
 		return 1;
 
-	for (i = 0; i < RX_QUEUE_ENTRIES; i += 2) {
-		void *page;
+	for (i = 0; i < RX_QUEUE_ENTRIES; i++) {
+		void *buf;
 		dma_addr_t d;
 
-		page = (void *)__get_free_page(GFP_KERNEL | GFP_DMA);
-		if (page == NULL)
+		buf = kmalloc(PKT_BUF_SIZE, GFP_KERNEL);
+		if (buf == NULL)
 			goto err;
 
-		d = dma_map_single(NULL, page, PAGE_SIZE, DMA_FROM_DEVICE);
-		if (dma_mapping_error(NULL, d)) {
-			free_page((unsigned long)page);
+		d = dma_map_single(dev, buf, PKT_BUF_SIZE, DMA_FROM_DEVICE);
+		if (dma_mapping_error(dev, d)) {
+			kfree(buf);
 			goto err;
 		}
 
-		ep->rx_buf[i] = page;
+		ep->rx_buf[i] = buf;
 		ep->descs->rdesc[i].buf_addr = d;
 		ep->descs->rdesc[i].rdesc1 = (i << 16) | PKT_BUF_SIZE;
-
-		ep->rx_buf[i + 1] = page + PKT_BUF_SIZE;
-		ep->descs->rdesc[i + 1].buf_addr = d + PKT_BUF_SIZE;
-		ep->descs->rdesc[i + 1].rdesc1 = ((i + 1) << 16) | PKT_BUF_SIZE;
 	}
 
-	for (i = 0; i < TX_QUEUE_ENTRIES; i += 2) {
-		void *page;
+	for (i = 0; i < TX_QUEUE_ENTRIES; i++) {
+		void *buf;
 		dma_addr_t d;
 
-		page = (void *)__get_free_page(GFP_KERNEL | GFP_DMA);
-		if (page == NULL)
+		buf = kmalloc(PKT_BUF_SIZE, GFP_KERNEL);
+		if (buf == NULL)
 			goto err;
 
-		d = dma_map_single(NULL, page, PAGE_SIZE, DMA_TO_DEVICE);
-		if (dma_mapping_error(NULL, d)) {
-			free_page((unsigned long)page);
+		d = dma_map_single(dev, buf, PKT_BUF_SIZE, DMA_TO_DEVICE);
+		if (dma_mapping_error(dev, d)) {
+			kfree(buf);
 			goto err;
 		}
 
-		ep->tx_buf[i] = page;
+		ep->tx_buf[i] = buf;
 		ep->descs->tdesc[i].buf_addr = d;
-
-		ep->tx_buf[i + 1] = page + PKT_BUF_SIZE;
-		ep->descs->tdesc[i + 1].buf_addr = d + PKT_BUF_SIZE;
 	}
 
 	return 0;
@@ -536,7 +563,7 @@ static int ep93xx_start_hw(struct net_device *dev)
 	}
 
 	if (i == 10) {
-		printk(KERN_CRIT DRV_MODULE_NAME ": hw failed to reset\n");
+		pr_crit("hw failed to reset\n");
 		return 1;
 	}
 
@@ -581,7 +608,7 @@ static int ep93xx_start_hw(struct net_device *dev)
 	}
 
 	if (i == 10) {
-		printk(KERN_CRIT DRV_MODULE_NAME ": hw failed to start\n");
+		pr_crit("hw failed to start\n");
 		return 1;
 	}
 
@@ -617,7 +644,7 @@ static void ep93xx_stop_hw(struct net_device *dev)
 	}
 
 	if (i == 10)
-		printk(KERN_CRIT DRV_MODULE_NAME ": hw failed to reset\n");
+		pr_crit("hw failed to reset\n");
 }
 
 static int ep93xx_open(struct net_device *dev)
@@ -681,48 +708,6 @@ static int ep93xx_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	return generic_mii_ioctl(&ep->mii, data, cmd, NULL);
 }
 
-static int ep93xx_mdio_read(struct net_device *dev, int phy_id, int reg)
-{
-	struct ep93xx_priv *ep = netdev_priv(dev);
-	int data;
-	int i;
-
-	wrl(ep, REG_MIICMD, REG_MIICMD_READ | (phy_id << 5) | reg);
-
-	for (i = 0; i < 10; i++) {
-		if ((rdl(ep, REG_MIISTS) & REG_MIISTS_BUSY) == 0)
-			break;
-		msleep(1);
-	}
-
-	if (i == 10) {
-		printk(KERN_INFO DRV_MODULE_NAME ": mdio read timed out\n");
-		data = 0xffff;
-	} else {
-		data = rdl(ep, REG_MIIDATA);
-	}
-
-	return data;
-}
-
-static void ep93xx_mdio_write(struct net_device *dev, int phy_id, int reg, int data)
-{
-	struct ep93xx_priv *ep = netdev_priv(dev);
-	int i;
-
-	wrl(ep, REG_MIIDATA, data);
-	wrl(ep, REG_MIICMD, REG_MIICMD_WRITE | (phy_id << 5) | reg);
-
-	for (i = 0; i < 10; i++) {
-		if ((rdl(ep, REG_MIISTS) & REG_MIISTS_BUSY) == 0)
-			break;
-		msleep(1);
-	}
-
-	if (i == 10)
-		printk(KERN_INFO DRV_MODULE_NAME ": mdio write timed out\n");
-}
-
 static void ep93xx_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
 	strcpy(info->driver, DRV_MODULE_NAME);
@@ -765,7 +750,6 @@ static const struct net_device_ops ep93xx_netdev_ops = {
 	.ndo_open		= ep93xx_open,
 	.ndo_stop		= ep93xx_close,
 	.ndo_start_xmit		= ep93xx_xmit,
-	.ndo_get_stats		= ep93xx_get_stats,
 	.ndo_do_ioctl		= ep93xx_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= eth_change_mtu,
@@ -825,11 +809,18 @@ static int ep93xx_eth_probe(struct platform_device *pdev)
 	struct ep93xx_eth_data *data;
 	struct net_device *dev;
 	struct ep93xx_priv *ep;
+	struct resource *mem;
+	int irq;
 	int err;
 
 	if (pdev == NULL)
 		return -ENODEV;
 	data = pdev->dev.platform_data;
+
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	irq = platform_get_irq(pdev, 0);
+	if (!mem || irq < 0)
+		return -ENXIO;
 
 	dev = ep93xx_dev_alloc(data);
 	if (dev == NULL) {
@@ -838,27 +829,26 @@ static int ep93xx_eth_probe(struct platform_device *pdev)
 	}
 	ep = netdev_priv(dev);
 	ep->dev = dev;
+	SET_NETDEV_DEV(dev, &pdev->dev);
 	netif_napi_add(dev, &ep->napi, ep93xx_poll, 64);
 
 	platform_set_drvdata(pdev, dev);
 
-	ep->res = request_mem_region(pdev->resource[0].start,
-			pdev->resource[0].end - pdev->resource[0].start + 1,
-			dev_name(&pdev->dev));
+	ep->res = request_mem_region(mem->start, resource_size(mem),
+				     dev_name(&pdev->dev));
 	if (ep->res == NULL) {
 		dev_err(&pdev->dev, "Could not reserve memory region\n");
 		err = -ENOMEM;
 		goto err_out;
 	}
 
-	ep->base_addr = ioremap(pdev->resource[0].start,
-			pdev->resource[0].end - pdev->resource[0].start);
+	ep->base_addr = ioremap(mem->start, resource_size(mem));
 	if (ep->base_addr == NULL) {
 		dev_err(&pdev->dev, "Failed to ioremap ethernet registers\n");
 		err = -EIO;
 		goto err_out;
 	}
-	ep->irq = pdev->resource[1].start;
+	ep->irq = irq;
 
 	ep->mii.phy_id = data->phy_id;
 	ep->mii.phy_id_mask = 0x1f;
@@ -877,11 +867,8 @@ static int ep93xx_eth_probe(struct platform_device *pdev)
 		goto err_out;
 	}
 
-	printk(KERN_INFO "%s: ep93xx on-chip ethernet, IRQ %d, "
-			 "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x.\n", dev->name,
-			ep->irq, data->dev_addr[0], data->dev_addr[1],
-			data->dev_addr[2], data->dev_addr[3],
-			data->dev_addr[4], data->dev_addr[5]);
+	printk(KERN_INFO "%s: ep93xx on-chip ethernet, IRQ %d, %pM\n",
+			dev->name, ep->irq, dev->dev_addr);
 
 	return 0;
 

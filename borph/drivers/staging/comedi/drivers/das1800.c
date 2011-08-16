@@ -101,6 +101,8 @@ TODO:
 */
 
 #include <linux/interrupt.h>
+#include <linux/slab.h>
+#include <linux/io.h>
 #include "../comedidev.h"
 
 #include <linux/ioport.h>
@@ -197,7 +199,7 @@ static void das1800_flush_dma(struct comedi_device *dev,
 			      struct comedi_subdevice *s);
 static void das1800_flush_dma_channel(struct comedi_device *dev,
 				      struct comedi_subdevice *s,
-				      unsigned int channel, uint16_t * buffer);
+				      unsigned int channel, uint16_t *buffer);
 static void das1800_handle_fifo_half_full(struct comedi_device *dev,
 					  struct comedi_subdevice *s);
 static void das1800_handle_fifo_not_empty(struct comedi_device *dev,
@@ -530,7 +532,18 @@ static struct comedi_driver driver_das1800 = {
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-COMEDI_INITCLEANUP(driver_das1800);
+static int __init driver_das1800_init_module(void)
+{
+	return comedi_driver_register(&driver_das1800);
+}
+
+static void __exit driver_das1800_cleanup_module(void)
+{
+	comedi_driver_unregister(&driver_das1800);
+}
+
+module_init(driver_das1800_init_module);
+module_exit(driver_das1800_cleanup_module);
 
 static int das1800_init_dma(struct comedi_device *dev, unsigned int dma0,
 			    unsigned int dma1)
@@ -796,10 +809,8 @@ static int das1800_detach(struct comedi_device *dev)
 			free_dma(devpriv->dma0);
 		if (devpriv->dma1)
 			free_dma(devpriv->dma1);
-		if (devpriv->ai_buf0)
-			kfree(devpriv->ai_buf0);
-		if (devpriv->ai_buf1)
-			kfree(devpriv->ai_buf1);
+		kfree(devpriv->ai_buf0);
+		kfree(devpriv->ai_buf1);
 	}
 
 	printk("comedi%d: %s: remove\n", dev->minor,
@@ -1040,9 +1051,8 @@ static void munge_data(struct comedi_device *dev, uint16_t * array,
 
 	/* convert to unsigned type if we are in a bipolar mode */
 	if (!unipolar) {
-		for (i = 0; i < num_elements; i++) {
+		for (i = 0; i < num_elements; i++)
 			array[i] = munge_bipolar_sample(dev, array[i]);
-		}
 	}
 }
 
@@ -1050,7 +1060,7 @@ static void munge_data(struct comedi_device *dev, uint16_t * array,
  * Assumes dma lock is held */
 static void das1800_flush_dma_channel(struct comedi_device *dev,
 				      struct comedi_subdevice *s,
-				      unsigned int channel, uint16_t * buffer)
+				      unsigned int channel, uint16_t *buffer)
 {
 	unsigned int num_bytes, num_samples;
 	struct comedi_cmd *cmd = &s->async->cmd;
@@ -1077,7 +1087,7 @@ static void das1800_flush_dma_channel(struct comedi_device *dev,
 	return;
 }
 
-/* flushes remaining data from board when external trigger has stopped aquisition
+/* flushes remaining data from board when external trigger has stopped acquisition
  * and we are using dma transfers */
 static void das1800_flush_dma(struct comedi_device *dev,
 			      struct comedi_subdevice *s)
@@ -1143,7 +1153,8 @@ static void das1800_handle_fifo_not_empty(struct comedi_device *dev,
 			break;
 		dpnt = inw(dev->iobase + DAS1800_FIFO);
 		/* convert to unsigned type if we are in a bipolar mode */
-		if (!unipolar) ;
+		if (!unipolar)
+			;
 		dpnt = munge_bipolar_sample(dev, dpnt);
 		cfc_write_to_buffer(s, dpnt);
 		if (cmd->stop_src == TRIG_COUNT)
@@ -1354,9 +1365,8 @@ static int control_a_bits(struct comedi_cmd cmd)
 	int control_a;
 
 	control_a = FFEN;	/* enable fifo */
-	if (cmd.stop_src == TRIG_EXT) {
+	if (cmd.stop_src == TRIG_EXT)
 		control_a |= ATEN;
-	}
 	switch (cmd.start_src) {
 	case TRIG_EXT:
 		control_a |= TGEN | CGSL;
@@ -1433,9 +1443,8 @@ static int setup_counters(struct comedi_device *dev, struct comedi_cmd cmd)
 						       &(cmd.convert_arg),
 						       cmd.
 						       flags & TRIG_ROUND_MASK);
-			if (das1800_set_frequency(dev) < 0) {
+			if (das1800_set_frequency(dev) < 0)
 				return -1;
-			}
 		}
 		break;
 	case TRIG_TIMER:	/*  in burst mode */
@@ -1444,9 +1453,8 @@ static int setup_counters(struct comedi_device *dev, struct comedi_cmd cmd)
 					       &(devpriv->divisor2),
 					       &(cmd.scan_begin_arg),
 					       cmd.flags & TRIG_ROUND_MASK);
-		if (das1800_set_frequency(dev) < 0) {
+		if (das1800_set_frequency(dev) < 0)
 			return -1;
-		}
 		break;
 	default:
 		break;
@@ -1543,11 +1551,10 @@ static int das1800_ai_do_cmd(struct comedi_device *dev,
 
 	/* disable dma on TRIG_WAKE_EOS, or TRIG_RT
 	 * (because dma in handler is unsafe at hard real-time priority) */
-	if (cmd.flags & (TRIG_WAKE_EOS | TRIG_RT)) {
+	if (cmd.flags & (TRIG_WAKE_EOS | TRIG_RT))
 		devpriv->irq_dma_bits &= ~DMA_ENABLED;
-	} else {
+	else
 		devpriv->irq_dma_bits |= devpriv->dma_bits;
-	}
 	/*  interrupt on end of conversion for TRIG_WAKE_EOS */
 	if (cmd.flags & TRIG_WAKE_EOS) {
 		/*  interrupt fifo not empty */
@@ -1557,9 +1564,8 @@ static int das1800_ai_do_cmd(struct comedi_device *dev,
 		devpriv->irq_dma_bits |= FIMD;
 	}
 	/*  determine how many conversions we need */
-	if (cmd.stop_src == TRIG_COUNT) {
+	if (cmd.stop_src == TRIG_COUNT)
 		devpriv->count = cmd.stop_arg * cmd.chanlist_len;
-	}
 
 	das1800_cancel(dev, s);
 
@@ -1638,7 +1644,8 @@ static int das1800_ai_rinsn(struct comedi_device *dev,
 		}
 		if (i == timeout) {
 			comedi_error(dev, "timeout");
-			return -ETIME;
+			n = -ETIME;
+			goto exit;
 		}
 		dpnt = inw(dev->iobase + DAS1800_FIFO);
 		/* shift data to offset binary for bipolar ranges */
@@ -1646,6 +1653,7 @@ static int das1800_ai_rinsn(struct comedi_device *dev,
 			dpnt += 1 << (thisboard->resolution - 1);
 		data[n] = dpnt;
 	}
+exit:
 	spin_unlock_irqrestore(&dev->spinlock, irq_flags);
 
 	return n;
@@ -1799,3 +1807,7 @@ static unsigned int suggest_transfer_size(struct comedi_cmd *cmd)
 
 	return size;
 }
+
+MODULE_AUTHOR("Comedi http://www.comedi.org");
+MODULE_DESCRIPTION("Comedi low-level driver");
+MODULE_LICENSE("GPL");

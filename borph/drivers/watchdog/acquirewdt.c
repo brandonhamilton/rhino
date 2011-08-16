@@ -26,7 +26,7 @@
  *	Theory of Operation:
  *		The Watch-Dog Timer is provided to ensure that standalone
  *		Systems can always recover from catastrophic conditions that
- *		caused the CPU to crash. This condition may have occured by
+ *		caused the CPU to crash. This condition may have occurred by
  *		external EMI or a software bug. When the CPU stops working
  *		correctly, hardware on the board will either perform a hardware
  *		reset (cold boot) or a non-maskable interrupt (NMI) to bring the
@@ -150,7 +150,7 @@ static long acq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int options, retval = -EINVAL;
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static struct watchdog_info ident = {
+	static const struct watchdog_info ident = {
 		.options = WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
 		.firmware_version = 1,
 		.identity = WATCHDOG_NAME,

@@ -38,14 +38,18 @@
 
 #include <mach/board.h>
 #include <mach/gpio.h>
+#include <mach/cpu.h>
 
 #include "generic.h"
 
 
-static void __init ecb_at91map_io(void)
+static void __init ecb_at91init_early(void)
 {
+	/* Set cpu type: PQFP */
+	at91rm9200_set_type(ARCH_REVISON_9200_PQFP);
+
 	/* Initialize processor: 18.432 MHz crystal */
-	at91rm9200_initialize(18432000, AT91RM9200_PQFP);
+	at91_initialize(18432000);
 
 	/* Setup the LEDs */
 	at91_init_leds(AT91_PIN_PC7, AT91_PIN_PC7);
@@ -58,11 +62,6 @@ static void __init ecb_at91map_io(void)
 
 	/* set serial console to ttyS0 (ie, DBGU) */
 	at91_set_serial_console(0);
-}
-
-static void __init ecb_at91init_irq(void)
-{
-	at91rm9200_init_interrupts(NULL);
 }
 
 static struct at91_eth_data __initdata ecb_at91eth_data = {
@@ -128,17 +127,17 @@ static struct spi_board_info __initdata ecb_at91spi_devices[] = {
 		.platform_data	= &my_flash0_platform,
 #endif
 	},
-	{	/* User accessable spi - cs1 (250KHz) */
+	{	/* User accessible spi - cs1 (250KHz) */
 		.modalias	= "spi-cs1",
 		.chip_select	= 1,
 		.max_speed_hz	= 250 * 1000,
 	},
-	{	/* User accessable spi - cs2 (1MHz) */
+	{	/* User accessible spi - cs2 (1MHz) */
 		.modalias	= "spi-cs2",
 		.chip_select	= 2,
 		.max_speed_hz	= 1 * 1000 * 1000,
 	},
-	{	/* User accessable spi - cs3 (10MHz) */
+	{	/* User accessible spi - cs3 (10MHz) */
 		.modalias	= "spi-cs3",
 		.chip_select	= 3,
 		.max_speed_hz	= 10 * 1000 * 1000,
@@ -168,11 +167,9 @@ static void __init ecb_at91board_init(void)
 
 MACHINE_START(ECBAT91, "emQbit's ECB_AT91")
 	/* Maintainer: emQbit.com */
-	.phys_io	= AT91_BASE_SYS,
-	.io_pg_offst	= (AT91_VA_BASE_SYS >> 18) & 0xfffc,
-	.boot_params	= AT91_SDRAM_BASE + 0x100,
 	.timer		= &at91rm9200_timer,
-	.map_io		= ecb_at91map_io,
-	.init_irq	= ecb_at91init_irq,
+	.map_io		= at91_map_io,
+	.init_early	= ecb_at91init_early,
+	.init_irq	= at91_init_irq_default,
 	.init_machine	= ecb_at91board_init,
 MACHINE_END

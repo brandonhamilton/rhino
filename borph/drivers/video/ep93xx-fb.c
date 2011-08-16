@@ -4,7 +4,7 @@
  * Framebuffer support for the EP93xx series.
  *
  * Copyright (C) 2007 Bluewater Systems Ltd
- * Author: Ryan Mallon <ryan@bluewatersys.com>
+ * Author: Ryan Mallon
  *
  * Copyright (c) 2009 H Hartley Sweeten <hsweeten@visionengravers.com>
  *
@@ -19,6 +19,7 @@
 
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
+#include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/fb.h>
 
@@ -358,6 +359,8 @@ static int ep93xxfb_setcolreg(unsigned int regno, unsigned int red,
 
 	switch (info->fix.visual) {
 	case FB_VISUAL_PSEUDOCOLOR:
+		if (regno > 255)
+			return 1;
 		rgb = ((red & 0xff00) << 8) | (green & 0xff00) |
 			((blue & 0xff00) >> 8);
 
@@ -453,7 +456,7 @@ static int __init ep93xxfb_alloc_videomem(struct fb_info *info)
 	 * There is a bug in the ep93xx framebuffer which causes problems
 	 * if bit 27 of the physical address is set.
 	 * See: http://marc.info/?l=linux-arm-kernel&m=110061245502000&w=2
-	 * There does not seem to be any offical errata for this, but I
+	 * There does not seem to be any official errata for this, but I
 	 * have confirmed the problem exists on my hardware (ep9315) at
 	 * least.
 	 */
@@ -480,7 +483,7 @@ static void ep93xxfb_dealloc_videomem(struct fb_info *info)
 				  info->screen_base, info->fix.smem_start);
 }
 
-static int __init ep93xxfb_probe(struct platform_device *pdev)
+static int __devinit ep93xxfb_probe(struct platform_device *pdev)
 {
 	struct ep93xxfb_mach_info *mach_info = pdev->dev.platform_data;
 	struct fb_info *info;
@@ -595,7 +598,7 @@ failed:
 	return err;
 }
 
-static int ep93xxfb_remove(struct platform_device *pdev)
+static int __devexit ep93xxfb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 	struct ep93xx_fbi *fbi = info->par;
@@ -619,7 +622,7 @@ static int ep93xxfb_remove(struct platform_device *pdev)
 
 static struct platform_driver ep93xxfb_driver = {
 	.probe		= ep93xxfb_probe,
-	.remove		= ep93xxfb_remove,
+	.remove		= __devexit_p(ep93xxfb_remove),
 	.driver = {
 		.name	= "ep93xx-fb",
 		.owner	= THIS_MODULE,
@@ -641,6 +644,6 @@ module_exit(ep93xxfb_exit);
 
 MODULE_DESCRIPTION("EP93XX Framebuffer Driver");
 MODULE_ALIAS("platform:ep93xx-fb");
-MODULE_AUTHOR("Ryan Mallon <ryan&bluewatersys.com>, "
+MODULE_AUTHOR("Ryan Mallon, "
 	      "H Hartley Sweeten <hsweeten@visionengravers.com");
 MODULE_LICENSE("GPL");

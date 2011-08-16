@@ -89,7 +89,6 @@
 
 /* Interrupt Mask register */
 #define PERF_IRQMASK_REG		0xc
-#define PERF_IRQSTAT_REG		0x10
 
 /* Interrupt Status register */
 #define PERF_IRQSTAT_REG		0x10
@@ -770,4 +769,3 @@
 #define DMIPSPLLCFG_N2_MASK		(0x7 << DMIPSPLLCFG_N2_SHIFT)
 
 #endif /* BCM63XX_REGS_H_ */
-

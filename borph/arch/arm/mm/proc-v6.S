@@ -30,26 +30,20 @@
 #define TTB_RGN_WT	(2 << 3)
 #define TTB_RGN_WB	(3 << 3)
 
-#ifndef CONFIG_SMP
-#define TTB_FLAGS	TTB_RGN_WBWA
-#define PMD_FLAGS	PMD_SECT_WB
-#else
-#define TTB_FLAGS	TTB_RGN_WBWA|TTB_S
-#define PMD_FLAGS	PMD_SECT_WBWA|PMD_SECT_S
-#endif
+#define TTB_FLAGS_UP	TTB_RGN_WBWA
+#define PMD_FLAGS_UP	PMD_SECT_WB
+#define TTB_FLAGS_SMP	TTB_RGN_WBWA|TTB_S
+#define PMD_FLAGS_SMP	PMD_SECT_WBWA|PMD_SECT_S
 
 ENTRY(cpu_v6_proc_init)
 	mov	pc, lr
 
 ENTRY(cpu_v6_proc_fin)
-	stmfd	sp!, {lr}
-	cpsid	if				@ disable interrupts
-	bl	v6_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x0006			@ .............ca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	ldmfd	sp!, {pc}
+	mov	pc, lr
 
 /*
  *	cpu_v6_reset(loc)
@@ -59,11 +53,14 @@ ENTRY(cpu_v6_proc_fin)
  *	to what would be the reset vector.
  *
  *	- loc   - location to jump to for soft reset
- *
- *	It is assumed that:
  */
 	.align	5
 ENTRY(cpu_v6_reset)
+	mrc	p15, 0, r1, c1, c0, 0		@ ctrl register
+	bic	r1, r1, #0x1			@ ...............m
+	mcr	p15, 0, r1, c1, c0, 0		@ disable MMU
+	mov	r1, #0
+	mcr	p15, 0, r1, c7, c5, 4		@ ISB
 	mov	pc, r0
 
 /*
@@ -102,7 +99,8 @@ ENTRY(cpu_v6_switch_mm)
 #ifdef CONFIG_MMU
 	mov	r2, #0
 	ldr	r1, [r1, #MM_CONTEXT_ID]	@ get mm->context.id
-	orr	r0, r0, #TTB_FLAGS
+	ALT_SMP(orr	r0, r0, #TTB_FLAGS_SMP)
+	ALT_UP(orr	r0, r0, #TTB_FLAGS_UP)
 	mcr	p15, 0, r2, c7, c5, 6		@ flush BTAC/BTB
 	mcr	p15, 0, r2, c7, c10, 4		@ drain write buffer
 	mcr	p15, 0, r0, c2, c0, 0		@ set TTB 0
@@ -128,21 +126,56 @@ ENTRY(cpu_v6_set_pte_ext)
 #endif
 	mov	pc, lr
 
+/* Suspend/resume support: taken from arch/arm/mach-s3c64xx/sleep.S */
+.globl	cpu_v6_suspend_size
+.equ	cpu_v6_suspend_size, 4 * 8
+#ifdef CONFIG_PM_SLEEP
+ENTRY(cpu_v6_do_suspend)
+	stmfd	sp!, {r4 - r11, lr}
+	mrc	p15, 0, r4, c13, c0, 0	@ FCSE/PID
+	mrc	p15, 0, r5, c13, c0, 1	@ Context ID
+	mrc	p15, 0, r6, c3, c0, 0	@ Domain ID
+	mrc	p15, 0, r7, c2, c0, 0	@ Translation table base 0
+	mrc	p15, 0, r8, c2, c0, 1	@ Translation table base 1
+	mrc	p15, 0, r9, c1, c0, 1	@ auxiliary control register
+	mrc	p15, 0, r10, c1, c0, 2	@ co-processor access control
+	mrc	p15, 0, r11, c1, c0, 0	@ control register
+	stmia	r0, {r4 - r11}
+	ldmfd	sp!, {r4- r11, pc}
+ENDPROC(cpu_v6_do_suspend)
 
+ENTRY(cpu_v6_do_resume)
+	mov	ip, #0
+	mcr	p15, 0, ip, c7, c14, 0	@ clean+invalidate D cache
+	mcr	p15, 0, ip, c7, c5, 0	@ invalidate I cache
+	mcr	p15, 0, ip, c7, c15, 0	@ clean+invalidate cache
+	mcr	p15, 0, ip, c7, c10, 4	@ drain write buffer
+	ldmia	r0, {r4 - r11}
+	mcr	p15, 0, r4, c13, c0, 0	@ FCSE/PID
+	mcr	p15, 0, r5, c13, c0, 1	@ Context ID
+	mcr	p15, 0, r6, c3, c0, 0	@ Domain ID
+	mcr	p15, 0, r7, c2, c0, 0	@ Translation table base 0
+	mcr	p15, 0, r8, c2, c0, 1	@ Translation table base 1
+	mcr	p15, 0, r9, c1, c0, 1	@ auxiliary control register
+	mcr	p15, 0, r10, c1, c0, 2	@ co-processor access control
+	mcr	p15, 0, ip, c2, c0, 2	@ TTB control register
+	mcr	p15, 0, ip, c7, c5, 4	@ ISB
+	mov	r0, r11			@ control register
+	mov	r2, r7, lsr #14		@ get TTB0 base
+	mov	r2, r2, lsl #14
+	ldr	r3, cpu_resume_l1_flags
+	b	cpu_resume_mmu
+ENDPROC(cpu_v6_do_resume)
+cpu_resume_l1_flags:
+	ALT_SMP(.long PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_FLAGS_SMP)
+	ALT_UP(.long  PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_FLAGS_UP)
+#endif
 
-	.type	cpu_v6_name, #object
-cpu_v6_name:
-	.asciz	"ARMv6-compatible processor"
-	.size	cpu_v6_name, . - cpu_v6_name
-
-	.type	cpu_pj4_name, #object
-cpu_pj4_name:
-	.asciz	"Marvell PJ4 processor"
-	.size	cpu_pj4_name, . - cpu_pj4_name
+	string	cpu_v6_name, "ARMv6-compatible processor"
 
 	.align
 
-	__INIT
+	__CPUINIT
 
 /*
  *	__v6_setup
@@ -161,9 +194,11 @@ cpu_pj4_name:
  */
 __v6_setup:
 #ifdef CONFIG_SMP
-	mrc	p15, 0, r0, c1, c0, 1		@ Enable SMP/nAMP mode
+	ALT_SMP(mrc	p15, 0, r0, c1, c0, 1)	@ Enable SMP/nAMP mode
+	ALT_UP(nop)
 	orr	r0, r0, #0x20
-	mcr	p15, 0, r0, c1, c0, 1
+	ALT_SMP(mcr	p15, 0, r0, c1, c0, 1)
+	ALT_UP(nop)
 #endif
 
 	mov	r0, #0
@@ -174,8 +209,11 @@ __v6_setup:
 #ifdef CONFIG_MMU
 	mcr	p15, 0, r0, c8, c7, 0		@ invalidate I + D TLBs
 	mcr	p15, 0, r0, c2, c0, 2		@ TTB control register
-	orr	r4, r4, #TTB_FLAGS
-	mcr	p15, 0, r4, c2, c0, 1		@ load TTB1
+	ALT_SMP(orr	r4, r4, #TTB_FLAGS_SMP)
+	ALT_UP(orr	r4, r4, #TTB_FLAGS_UP)
+	ALT_SMP(orr	r8, r8, #TTB_FLAGS_SMP)
+	ALT_UP(orr	r8, r8, #TTB_FLAGS_UP)
+	mcr	p15, 0, r8, c2, c0, 1		@ load TTB1
 #endif /* CONFIG_MMU */
 	adr	r5, v6_crval
 	ldmia	r5, {r5, r6}
@@ -197,28 +235,15 @@ __v6_setup:
 v6_crval:
 	crval	clear=0x01e0fb7f, mmuset=0x00c0387d, ucset=0x00c0187c
 
-	.type	v6_processor_functions, #object
-ENTRY(v6_processor_functions)
-	.word	v6_early_abort
-	.word	v6_pabort
-	.word	cpu_v6_proc_init
-	.word	cpu_v6_proc_fin
-	.word	cpu_v6_reset
-	.word	cpu_v6_do_idle
-	.word	cpu_v6_dcache_clean_area
-	.word	cpu_v6_switch_mm
-	.word	cpu_v6_set_pte_ext
-	.size	v6_processor_functions, . - v6_processor_functions
+	__INITDATA
 
-	.type	cpu_arch_name, #object
-cpu_arch_name:
-	.asciz	"armv6"
-	.size	cpu_arch_name, . - cpu_arch_name
+	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
+	define_processor_functions v6, dabort=v6_early_abort, pabort=v6_pabort, suspend=1
 
-	.type	cpu_elf_name, #object
-cpu_elf_name:
-	.asciz	"v6"
-	.size	cpu_elf_name, . - cpu_elf_name
+	.section ".rodata"
+
+	string	cpu_arch_name, "armv6"
+	string	cpu_elf_name, "v6"
 	.align
 
 	.section ".proc.info.init", #alloc, #execinstr
@@ -230,10 +255,16 @@ cpu_elf_name:
 __v6_proc_info:
 	.long	0x0007b000
 	.long	0x0007f000
-	.long   PMD_TYPE_SECT | \
+	ALT_SMP(.long \
+		PMD_TYPE_SECT | \
 		PMD_SECT_AP_WRITE | \
 		PMD_SECT_AP_READ | \
-		PMD_FLAGS
+		PMD_FLAGS_SMP)
+	ALT_UP(.long \
+		PMD_TYPE_SECT | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ | \
+		PMD_FLAGS_UP)
 	.long   PMD_TYPE_SECT | \
 		PMD_SECT_XN | \
 		PMD_SECT_AP_WRITE | \
@@ -241,34 +272,11 @@ __v6_proc_info:
 	b	__v6_setup
 	.long	cpu_arch_name
 	.long	cpu_elf_name
-	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_JAVA
+	/* See also feat_v6_fixup() for HWCAP_TLS */
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_JAVA|HWCAP_TLS
 	.long	cpu_v6_name
 	.long	v6_processor_functions
 	.long	v6wbi_tlb_fns
 	.long	v6_user_fns
 	.long	v6_cache_fns
 	.size	__v6_proc_info, . - __v6_proc_info
-
-	.type	__pj4_v6_proc_info, #object
-__pj4_v6_proc_info:
-	.long	0x560f5810
-	.long	0xff0ffff0
-	.long   PMD_TYPE_SECT | \
-		PMD_SECT_BUFFERABLE | \
-		PMD_SECT_CACHEABLE | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ
-	.long   PMD_TYPE_SECT | \
-		PMD_SECT_XN | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ
-	b	__v6_setup
-	.long	cpu_arch_name
-	.long	cpu_elf_name
-	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
-	.long	cpu_pj4_name
-	.long	v6_processor_functions
-	.long	v6wbi_tlb_fns
-	.long	v6_user_fns
-	.long	v6_cache_fns
-	.size	__pj4_v6_proc_info, . - __pj4_v6_proc_info

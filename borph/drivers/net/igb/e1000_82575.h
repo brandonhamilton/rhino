@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2009 Intel Corporation.
+  Copyright(c) 2007-2011 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -29,6 +29,8 @@
 #define _E1000_82575_H_
 
 extern void igb_shutdown_serdes_link_82575(struct e1000_hw *hw);
+extern void igb_power_up_serdes_link_82575(struct e1000_hw *hw);
+extern void igb_power_down_phy_copper_82575(struct e1000_hw *hw);
 extern void igb_rx_fifo_flush_82575(struct e1000_hw *hw);
 
 #define ID_LED_DEFAULT_82575_SERDES ((ID_LED_DEF1_DEF2 << 12) | \
@@ -36,9 +38,10 @@ extern void igb_rx_fifo_flush_82575(struct e1000_hw *hw);
                                      (ID_LED_DEF1_DEF2 <<  4) | \
                                      (ID_LED_OFF1_ON2))
 
-#define E1000_RAR_ENTRIES_82575   16
-#define E1000_RAR_ENTRIES_82576   24
-#define E1000_RAR_ENTRIES_82580   24
+#define E1000_RAR_ENTRIES_82575        16
+#define E1000_RAR_ENTRIES_82576        24
+#define E1000_RAR_ENTRIES_82580        24
+#define E1000_RAR_ENTRIES_I350         32
 
 #define E1000_SW_SYNCH_MB              0x00000100
 #define E1000_STAT_DEV_RST_SET         0x00100000
@@ -50,6 +53,7 @@ extern void igb_rx_fifo_flush_82575(struct e1000_hw *hw);
 #define E1000_SRRCTL_DESCTYPE_ADV_ONEBUF                0x02000000
 #define E1000_SRRCTL_DESCTYPE_HDR_SPLIT_ALWAYS          0x0A000000
 #define E1000_SRRCTL_DROP_EN                            0x80000000
+#define E1000_SRRCTL_TIMESTAMP                          0x40000000
 
 #define E1000_MRQC_ENABLE_RSS_4Q            0x00000002
 #define E1000_MRQC_ENABLE_VMDQ              0x00000003
@@ -106,6 +110,7 @@ union e1000_adv_rx_desc {
 #define E1000_RXDADV_HDRBUFLEN_MASK      0x7FE0
 #define E1000_RXDADV_HDRBUFLEN_SHIFT     5
 #define E1000_RXDADV_STAT_TS             0x10000 /* Pkt was time stamped */
+#define E1000_RXDADV_STAT_TSIP           0x08000 /* timestamp in packet */
 
 /* Transmit Descriptor - Advanced */
 union e1000_adv_tx_desc {
@@ -189,6 +194,10 @@ struct e1000_adv_tx_context_desc {
 #define E1000_NVM_APME_82575          0x0400
 #define MAX_NUM_VFS                   8
 
+#define E1000_DTXSWC_MAC_SPOOF_MASK   0x000000FF /* Per VF MAC spoof control */
+#define E1000_DTXSWC_VLAN_SPOOF_MASK  0x0000FF00 /* Per VF VLAN spoof control */
+#define E1000_DTXSWC_LLE_MASK         0x00FF0000 /* Per VF Local LB enables */
+#define E1000_DTXSWC_VLAN_SPOOF_SHIFT 8
 #define E1000_DTXSWC_VMDQ_LOOPBACK_EN (1 << 31)  /* global VF LB enable */
 
 /* Easy defines for setting default pool, would normally be left a zero */
@@ -219,6 +228,9 @@ struct e1000_adv_tx_context_desc {
 #define E1000_VLVF_LVLAN          0x00100000
 #define E1000_VLVF_VLANID_ENABLE  0x80000000
 
+#define E1000_VMVIR_VLANA_DEFAULT      0x40000000 /* Always use default VLAN */
+#define E1000_VMVIR_VLANA_NEVER        0x80000000 /* Never insert VLAN tag */
+
 #define E1000_IOVCTL 0x05BBC
 #define E1000_IOVCTL_REUSE_VFQ 0x00000001
 
@@ -231,12 +243,16 @@ struct e1000_adv_tx_context_desc {
 #define E1000_DTXCTL_MDP_EN     0x0020
 #define E1000_DTXCTL_SPOOF_INT  0x0040
 
+#define E1000_EEPROM_PCS_AUTONEG_DISABLE_BIT	(1 << 14)
+
 #define ALL_QUEUES   0xFFFF
 
 /* RX packet buffer size defines */
 #define E1000_RXPBS_SIZE_MASK_82576  0x0000007F
+void igb_vmdq_set_anti_spoofing_pf(struct e1000_hw *, bool, int);
 void igb_vmdq_set_loopback_pf(struct e1000_hw *, bool);
 void igb_vmdq_set_replication_pf(struct e1000_hw *, bool);
 u16 igb_rxpbs_adjust_82580(u32 data);
+s32 igb_set_eee_i350(struct e1000_hw *);
 
 #endif

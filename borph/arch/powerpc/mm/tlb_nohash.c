@@ -34,7 +34,8 @@
 #include <linux/pagemap.h>
 #include <linux/preempt.h>
 #include <linux/spinlock.h>
-#include <linux/lmb.h>
+#include <linux/memblock.h>
+#include <linux/of_fdt.h>
 
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
@@ -46,6 +47,7 @@
 struct mmu_psize_def mmu_psize_defs[MMU_PAGE_COUNT] = {
 	[MMU_PAGE_4K] = {
 		.shift	= 12,
+		.ind	= 20,
 		.enc	= BOOK3E_PAGESZ_4K,
 	},
 	[MMU_PAGE_16K] = {
@@ -54,6 +56,7 @@ struct mmu_psize_def mmu_psize_defs[MMU_PAGE_COUNT] = {
 	},
 	[MMU_PAGE_64K] = {
 		.shift	= 16,
+		.ind	= 28,
 		.enc	= BOOK3E_PAGESZ_64K,
 	},
 	[MMU_PAGE_1M] = {
@@ -62,6 +65,7 @@ struct mmu_psize_def mmu_psize_defs[MMU_PAGE_COUNT] = {
 	},
 	[MMU_PAGE_16M] = {
 		.shift	= 24,
+		.ind	= 36,
 		.enc	= BOOK3E_PAGESZ_16M,
 	},
 	[MMU_PAGE_256M] = {
@@ -98,6 +102,12 @@ int book3e_htw_enabled;		/* Is HW tablewalk enabled ? */
 unsigned long linear_map_top;	/* Top of linear mapping */
 
 #endif /* CONFIG_PPC64 */
+
+#ifdef CONFIG_PPC_FSL_BOOK3E
+/* next_tlbcam_idx is used to round-robin tlbcam entry assignment */
+DEFINE_PER_CPU(int, next_tlbcam_idx);
+EXPORT_PER_CPU_SYMBOL(next_tlbcam_idx);
+#endif
 
 /*
  * Base TLB flushing operations:
@@ -150,7 +160,7 @@ EXPORT_SYMBOL(local_flush_tlb_page);
  */
 #ifdef CONFIG_SMP
 
-static DEFINE_SPINLOCK(tlbivax_lock);
+static DEFINE_RAW_SPINLOCK(tlbivax_lock);
 
 static int mm_is_core_local(struct mm_struct *mm)
 {
@@ -232,10 +242,10 @@ void __flush_tlb_page(struct mm_struct *mm, unsigned long vmaddr,
 		if (mmu_has_feature(MMU_FTR_USE_TLBIVAX_BCAST)) {
 			int lock = mmu_has_feature(MMU_FTR_LOCK_BCAST_INVAL);
 			if (lock)
-				spin_lock(&tlbivax_lock);
+				raw_spin_lock(&tlbivax_lock);
 			_tlbivax_bcast(vmaddr, pid, tsize, ind);
 			if (lock)
-				spin_unlock(&tlbivax_lock);
+				raw_spin_unlock(&tlbivax_lock);
 			goto bail;
 		} else {
 			struct tlb_flush_param p = {
@@ -262,6 +272,17 @@ void flush_tlb_page(struct vm_area_struct *vma, unsigned long vmaddr)
 EXPORT_SYMBOL(flush_tlb_page);
 
 #endif /* CONFIG_SMP */
+
+#ifdef CONFIG_PPC_47x
+void __init early_init_mmu_47x(void)
+{
+#ifdef CONFIG_SMP
+	unsigned long root = of_get_flat_dt_root();
+	if (of_get_flat_dt_prop(root, "cooperative-partition", NULL))
+		mmu_clear_feature(MMU_FTR_USE_TLBIVAX_BCAST);
+#endif /* CONFIG_SMP */
+}
+#endif /* CONFIG_PPC_47x */
 
 /*
  * Flush kernel TLB entries in the given range
@@ -296,9 +317,6 @@ EXPORT_SYMBOL(flush_tlb_range);
 void tlb_flush(struct mmu_gather *tlb)
 {
 	flush_tlb_mm(tlb->mm);
-
-	/* Push out batch of freed page tables */
-	pte_free_finish();
 }
 
 /*
@@ -344,16 +362,150 @@ void tlb_flush_pgtable(struct mmu_gather *tlb, unsigned long address)
 	}
 }
 
+static void setup_page_sizes(void)
+{
+	unsigned int tlb0cfg;
+	unsigned int tlb0ps;
+	unsigned int eptcfg;
+	int i, psize;
+
+#ifdef CONFIG_PPC_FSL_BOOK3E
+	unsigned int mmucfg = mfspr(SPRN_MMUCFG);
+
+	if (((mmucfg & MMUCFG_MAVN) == MMUCFG_MAVN_V1) &&
+		(mmu_has_feature(MMU_FTR_TYPE_FSL_E))) {
+		unsigned int tlb1cfg = mfspr(SPRN_TLB1CFG);
+		unsigned int min_pg, max_pg;
+
+		min_pg = (tlb1cfg & TLBnCFG_MINSIZE) >> TLBnCFG_MINSIZE_SHIFT;
+		max_pg = (tlb1cfg & TLBnCFG_MAXSIZE) >> TLBnCFG_MAXSIZE_SHIFT;
+
+		for (psize = 0; psize < MMU_PAGE_COUNT; ++psize) {
+			struct mmu_psize_def *def;
+			unsigned int shift;
+
+			def = &mmu_psize_defs[psize];
+			shift = def->shift;
+
+			if (shift == 0)
+				continue;
+
+			/* adjust to be in terms of 4^shift Kb */
+			shift = (shift - 10) >> 1;
+
+			if ((shift >= min_pg) && (shift <= max_pg))
+				def->flags |= MMU_PAGE_SIZE_DIRECT;
+		}
+
+		goto no_indirect;
+	}
+#endif
+
+	tlb0cfg = mfspr(SPRN_TLB0CFG);
+	tlb0ps = mfspr(SPRN_TLB0PS);
+	eptcfg = mfspr(SPRN_EPTCFG);
+
+	/* Look for supported direct sizes */
+	for (psize = 0; psize < MMU_PAGE_COUNT; ++psize) {
+		struct mmu_psize_def *def = &mmu_psize_defs[psize];
+
+		if (tlb0ps & (1U << (def->shift - 10)))
+			def->flags |= MMU_PAGE_SIZE_DIRECT;
+	}
+
+	/* Indirect page sizes supported ? */
+	if ((tlb0cfg & TLBnCFG_IND) == 0)
+		goto no_indirect;
+
+	/* Now, we only deal with one IND page size for each
+	 * direct size. Hopefully all implementations today are
+	 * unambiguous, but we might want to be careful in the
+	 * future.
+	 */
+	for (i = 0; i < 3; i++) {
+		unsigned int ps, sps;
+
+		sps = eptcfg & 0x1f;
+		eptcfg >>= 5;
+		ps = eptcfg & 0x1f;
+		eptcfg >>= 5;
+		if (!ps || !sps)
+			continue;
+		for (psize = 0; psize < MMU_PAGE_COUNT; psize++) {
+			struct mmu_psize_def *def = &mmu_psize_defs[psize];
+
+			if (ps == (def->shift - 10))
+				def->flags |= MMU_PAGE_SIZE_INDIRECT;
+			if (sps == (def->shift - 10))
+				def->ind = ps + 10;
+		}
+	}
+ no_indirect:
+
+	/* Cleanup array and print summary */
+	pr_info("MMU: Supported page sizes\n");
+	for (psize = 0; psize < MMU_PAGE_COUNT; ++psize) {
+		struct mmu_psize_def *def = &mmu_psize_defs[psize];
+		const char *__page_type_names[] = {
+			"unsupported",
+			"direct",
+			"indirect",
+			"direct & indirect"
+		};
+		if (def->flags == 0) {
+			def->shift = 0;	
+			continue;
+		}
+		pr_info("  %8ld KB as %s\n", 1ul << (def->shift - 10),
+			__page_type_names[def->flags & 0x3]);
+	}
+}
+
+static void __patch_exception(int exc, unsigned long addr)
+{
+	extern unsigned int interrupt_base_book3e;
+ 	unsigned int *ibase = &interrupt_base_book3e;
+ 
+	/* Our exceptions vectors start with a NOP and -then- a branch
+	 * to deal with single stepping from userspace which stops on
+	 * the second instruction. Thus we need to patch the second
+	 * instruction of the exception, not the first one
+	 */
+
+	patch_branch(ibase + (exc / 4) + 1, addr, 0);
+}
+
+#define patch_exception(exc, name) do { \
+	extern unsigned int name; \
+	__patch_exception((exc), (unsigned long)&name); \
+} while (0)
+
+static void setup_mmu_htw(void)
+{
+	/* Check if HW tablewalk is present, and if yes, enable it by:
+	 *
+	 * - patching the TLB miss handlers to branch to the
+	 *   one dedicates to it
+	 *
+	 * - setting the global book3e_htw_enabled
+       	 */
+	unsigned int tlb0cfg = mfspr(SPRN_TLB0CFG);
+
+	if ((tlb0cfg & TLBnCFG_IND) &&
+	    (tlb0cfg & TLBnCFG_PT)) {
+		patch_exception(0x1c0, exc_data_tlb_miss_htw_book3e);
+		patch_exception(0x1e0, exc_instruction_tlb_miss_htw_book3e);
+		book3e_htw_enabled = 1;
+	}
+	pr_info("MMU: Book3E HW tablewalk %s\n",
+		book3e_htw_enabled ? "enabled" : "not supported");
+}
+
 /*
  * Early initialization of the MMU TLB code
  */
 static void __early_init_mmu(int boot_cpu)
 {
-	extern unsigned int interrupt_base_book3e;
-	extern unsigned int exc_data_tlb_miss_htw_book3e;
-	extern unsigned int exc_instruction_tlb_miss_htw_book3e;
-
-	unsigned int *ibase = &interrupt_base_book3e;
 	unsigned int mas4;
 
 	/* XXX This will have to be decided at runtime, but right
@@ -370,35 +522,17 @@ static void __early_init_mmu(int boot_cpu)
 	 */
 	mmu_vmemmap_psize = MMU_PAGE_16M;
 
-	/* Check if HW tablewalk is present, and if yes, enable it by:
-	 *
-	 * - patching the TLB miss handlers to branch to the
-	 *   one dedicates to it
-	 *
-	 * - setting the global book3e_htw_enabled
-	 *
-	 * - Set MAS4:INDD and default page size
-	 */
-
 	/* XXX This code only checks for TLB 0 capabilities and doesn't
 	 *     check what page size combos are supported by the HW. It
 	 *     also doesn't handle the case where a separate array holds
 	 *     the IND entries from the array loaded by the PT.
 	 */
 	if (boot_cpu) {
-		unsigned int tlb0cfg = mfspr(SPRN_TLB0CFG);
+		/* Look for supported page sizes */
+		setup_page_sizes();
 
-		/* Check if HW loader is supported */
-		if ((tlb0cfg & TLBnCFG_IND) &&
-		    (tlb0cfg & TLBnCFG_PT)) {
-			patch_branch(ibase + (0x1c0 / 4),
-			     (unsigned long)&exc_data_tlb_miss_htw_book3e, 0);
-			patch_branch(ibase + (0x1e0 / 4),
-			     (unsigned long)&exc_instruction_tlb_miss_htw_book3e, 0);
-			book3e_htw_enabled = 1;
-		}
-		pr_info("MMU: Book3E Page Tables %s\n",
-			book3e_htw_enabled ? "Enabled" : "Disabled");
+		/* Look for HW tablewalk support */
+		setup_mmu_htw();
 	}
 
 	/* Set MAS4 based on page table setting */
@@ -426,12 +560,31 @@ static void __early_init_mmu(int boot_cpu)
 	/* Set the global containing the top of the linear mapping
 	 * for use by the TLB miss code
 	 */
-	linear_map_top = lmb_end_of_DRAM();
+	linear_map_top = memblock_end_of_DRAM();
+
+#ifdef CONFIG_PPC_FSL_BOOK3E
+	if (mmu_has_feature(MMU_FTR_TYPE_FSL_E)) {
+		unsigned int num_cams;
+
+		/* use a quarter of the TLBCAM for bolted linear map */
+		num_cams = (mfspr(SPRN_TLB1CFG) & TLBnCFG_N_ENTRY) / 4;
+		linear_map_top = map_mem_in_cams(linear_map_top, num_cams);
+
+		/* limit memory so we dont have linear faults */
+		memblock_enforce_memory_limit(linear_map_top);
+		memblock_analyze();
+
+		patch_exception(0x1c0, exc_data_tlb_miss_bolted_book3e);
+		patch_exception(0x1e0, exc_instruction_tlb_miss_bolted_book3e);
+	}
+#endif
 
 	/* A sync won't hurt us after mucking around with
 	 * the MMU configuration
 	 */
 	mb();
+
+	memblock_set_current_limit(linear_map_top);
 }
 
 void __init early_init_mmu(void)
@@ -444,4 +597,25 @@ void __cpuinit early_init_mmu_secondary(void)
 	__early_init_mmu(0);
 }
 
+void setup_initial_memory_limit(phys_addr_t first_memblock_base,
+				phys_addr_t first_memblock_size)
+{
+	/* On Embedded 64-bit, we adjust the RMA size to match
+	 * the bolted TLB entry. We know for now that only 1G
+	 * entries are supported though that may eventually
+	 * change. We crop it to the size of the first MEMBLOCK to
+	 * avoid going over total available memory just in case...
+	 */
+	ppc64_rma_size = min_t(u64, first_memblock_size, 0x40000000);
+
+	/* Finally limit subsequent allocations */
+	memblock_set_current_limit(first_memblock_base + ppc64_rma_size);
+}
+#else /* ! CONFIG_PPC64 */
+void __init early_init_mmu(void)
+{
+#ifdef CONFIG_PPC_47x
+	early_init_mmu_47x();
+#endif
+}
 #endif /* CONFIG_PPC64 */

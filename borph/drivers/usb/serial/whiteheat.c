@@ -111,17 +111,17 @@ static int debug;
    separate ID tables, and then a third table that combines them
    just for the purpose of exporting the autoloading information.
 */
-static struct usb_device_id id_table_std [] = {
+static const struct usb_device_id id_table_std[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static struct usb_device_id id_table_prerenumeration [] = {
+static const struct usb_device_id id_table_prerenumeration[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static struct usb_device_id id_table_combined [] = {
+static const struct usb_device_id id_table_combined[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
@@ -152,12 +152,12 @@ static int  whiteheat_write(struct tty_struct *tty,
 			struct usb_serial_port *port,
 			const unsigned char *buf, int count);
 static int  whiteheat_write_room(struct tty_struct *tty);
-static int  whiteheat_ioctl(struct tty_struct *tty, struct file *file,
+static int  whiteheat_ioctl(struct tty_struct *tty,
 			unsigned int cmd, unsigned long arg);
 static void whiteheat_set_termios(struct tty_struct *tty,
 			struct usb_serial_port *port, struct ktermios *old);
-static int  whiteheat_tiocmget(struct tty_struct *tty, struct file *file);
-static int  whiteheat_tiocmset(struct tty_struct *tty, struct file *file,
+static int  whiteheat_tiocmget(struct tty_struct *tty);
+static int  whiteheat_tiocmset(struct tty_struct *tty,
 			unsigned int set, unsigned int clear);
 static void whiteheat_break_ctl(struct tty_struct *tty, int break_state);
 static int  whiteheat_chars_in_buffer(struct tty_struct *tty);
@@ -655,8 +655,6 @@ static void whiteheat_release(struct usb_serial *serial)
 		}
 		kfree(info);
 	}
-
-	return;
 }
 
 static int whiteheat_open(struct tty_struct *tty, struct usb_serial_port *port)
@@ -835,7 +833,7 @@ static int whiteheat_write_room(struct tty_struct *tty)
 	return (room);
 }
 
-static int whiteheat_tiocmget(struct tty_struct *tty, struct file *file)
+static int whiteheat_tiocmget(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct whiteheat_private *info = usb_get_serial_port_data(port);
@@ -852,7 +850,7 @@ static int whiteheat_tiocmget(struct tty_struct *tty, struct file *file)
 	return modem_signals;
 }
 
-static int whiteheat_tiocmset(struct tty_struct *tty, struct file *file,
+static int whiteheat_tiocmset(struct tty_struct *tty,
 			       unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -876,7 +874,7 @@ static int whiteheat_tiocmset(struct tty_struct *tty, struct file *file,
 }
 
 
-static int whiteheat_ioctl(struct tty_struct *tty, struct file *file,
+static int whiteheat_ioctl(struct tty_struct *tty,
 					unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -955,8 +953,6 @@ static void whiteheat_throttle(struct tty_struct *tty)
 	spin_lock_irq(&info->lock);
 	info->flags |= THROTTLED;
 	spin_unlock_irq(&info->lock);
-
-	return;
 }
 
 
@@ -975,8 +971,6 @@ static void whiteheat_unthrottle(struct tty_struct *tty)
 
 	if (actually_throttled)
 		rx_data_softint(&info->rx_work);
-
-	return;
 }
 
 
@@ -1492,21 +1486,9 @@ static void rx_data_softint(struct work_struct *work)
 		wrap = list_entry(tmp, struct whiteheat_urb_wrap, list);
 		urb = wrap->urb;
 
-		if (tty && urb->actual_length) {
-			int len = tty_buffer_request_room(tty,
-							urb->actual_length);
-			/* This stuff can go away now I suspect */
-			if (unlikely(len < urb->actual_length)) {
-				spin_lock_irqsave(&info->lock, flags);
-				list_add(tmp, &info->rx_urb_q);
-				spin_unlock_irqrestore(&info->lock, flags);
-				tty_flip_buffer_push(tty);
-				schedule_work(&info->rx_work);
-				goto out;
-			}
-			tty_insert_flip_string(tty, urb->transfer_buffer, len);
-			sent += len;
-		}
+		if (tty && urb->actual_length)
+			sent += tty_insert_flip_string(tty,
+				urb->transfer_buffer, urb->actual_length);
 
 		urb->dev = port->serial->dev;
 		result = usb_submit_urb(urb, GFP_ATOMIC);

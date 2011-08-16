@@ -12,6 +12,7 @@
 
 struct gfs2_inode;
 struct gfs2_sbd;
+struct shrink_control;
 
 #define NO_QUOTA_CHANGE ((u32)-1)
 
@@ -25,7 +26,7 @@ extern int gfs2_quota_check(struct gfs2_inode *ip, u32 uid, u32 gid);
 extern void gfs2_quota_change(struct gfs2_inode *ip, s64 change,
 			      u32 uid, u32 gid);
 
-extern int gfs2_quota_sync(struct super_block *sb, int type);
+extern int gfs2_quota_sync(struct super_block *sb, int type, int wait);
 extern int gfs2_quota_refresh(struct gfs2_sbd *sdp, int user, u32 id);
 
 extern int gfs2_quota_init(struct gfs2_sbd *sdp);
@@ -51,7 +52,8 @@ static inline int gfs2_quota_lock_check(struct gfs2_inode *ip)
 	return ret;
 }
 
-extern int gfs2_shrink_qd_memory(int nr, gfp_t gfp_mask);
+extern int gfs2_shrink_qd_memory(struct shrinker *shrink,
+				 struct shrink_control *sc);
 extern const struct quotactl_ops gfs2_quotactl_ops;
 
 #endif /* __QUOTA_DOT_H__ */

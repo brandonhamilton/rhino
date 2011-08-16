@@ -11,7 +11,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
-#include <linux/slab.h>
 #include <linux/edac.h>
 #include <linux/io.h>
 #include "edac_core.h"
@@ -101,6 +100,19 @@ struct i3200_priv {
 };
 
 static int nr_channels;
+
+#ifndef readq
+static inline __u64 readq(const volatile void __iomem *addr)
+{
+	const volatile u32 __iomem *p = addr;
+	u32 low, high;
+
+	low = readl(p);
+	high = readl(p + 1);
+
+	return low + ((u64)high << 32);
+}
+#endif
 
 static int how_many_channels(struct pci_dev *pdev)
 {

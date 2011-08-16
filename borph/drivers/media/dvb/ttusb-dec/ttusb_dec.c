@@ -234,7 +234,7 @@ static void ttusb_dec_handle_irq( struct urb *urb)
 		 * (with buffer[3] == 0x40) in an intervall of ~100ms.
 		 * But to handle this correctly we had to imlemenent some
 		 * kind of timer which signals a 'key up' event if no
-		 * keyrepeat signal is recieved for lets say 200ms.
+		 * keyrepeat signal is received for lets say 200ms.
 		 * this should/could be added later ...
 		 * for now lets report each signal as a key down and up*/
 		dprintk("%s:rc signal:%d\n", __func__, buffer[4]);
@@ -1257,7 +1257,7 @@ static int ttusb_dec_init_usb(struct ttusb_dec *dec)
 		if(!dec->irq_urb) {
 			return -ENOMEM;
 		}
-		dec->irq_buffer = usb_buffer_alloc(dec->udev,IRQ_PACKET_SIZE,
+		dec->irq_buffer = usb_alloc_coherent(dec->udev,IRQ_PACKET_SIZE,
 					GFP_ATOMIC, &dec->irq_dma_handle);
 		if(!dec->irq_buffer) {
 			usb_free_urb(dec->irq_urb);
@@ -1550,8 +1550,8 @@ static void ttusb_dec_exit_rc(struct ttusb_dec *dec)
 
 	usb_free_urb(dec->irq_urb);
 
-	usb_buffer_free(dec->udev,IRQ_PACKET_SIZE,
-			   dec->irq_buffer, dec->irq_dma_handle);
+	usb_free_coherent(dec->udev,IRQ_PACKET_SIZE,
+			  dec->irq_buffer, dec->irq_dma_handle);
 
 	if (dec->rc_input_dev) {
 		input_unregister_device(dec->rc_input_dev);

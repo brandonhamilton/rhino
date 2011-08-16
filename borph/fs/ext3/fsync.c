@@ -30,6 +30,7 @@
 #include <linux/jbd.h>
 #include <linux/ext3_fs.h>
 #include <linux/ext3_jbd.h>
+#include <trace/events/ext3.h>
 
 /*
  * akpm: A new design for ext3_sync_file().
@@ -43,16 +44,29 @@
  * inode to disk.
  */
 
-int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
+int ext3_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = file->f_mapping->host;
 	struct ext3_inode_info *ei = EXT3_I(inode);
 	journal_t *journal = EXT3_SB(inode->i_sb)->s_journal;
-	int ret = 0;
+	int ret, needs_barrier = 0;
 	tid_t commit_tid;
+
+	trace_ext3_sync_file_enter(file, datasync);
 
 	if (inode->i_sb->s_flags & MS_RDONLY)
 		return 0;
+
+	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	if (ret)
+		goto out;
+
+	/*
+	 * Taking the mutex here just to keep consistent with how fsync was
+	 * called previously, however it looks like we don't need to take
+	 * i_mutex at all.
+	 */
+	mutex_lock(&inode->i_mutex);
 
 	J_ASSERT(ext3_journal_current_handle() == NULL);
 
@@ -71,6 +85,7 @@ int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
 	 *  safe in-journal, which is all fsync() needs to ensure.
 	 */
 	if (ext3_should_journal_data(inode)) {
+		mutex_unlock(&inode->i_mutex);
 		ret = ext3_force_commit(inode->i_sb);
 		goto out;
 	}
@@ -80,18 +95,22 @@ int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
 	else
 		commit_tid = atomic_read(&ei->i_sync_tid);
 
-	if (log_start_commit(journal, commit_tid)) {
-		log_wait_commit(journal, commit_tid);
-		goto out;
-	}
+	if (test_opt(inode->i_sb, BARRIER) &&
+	    !journal_trans_will_send_data_barrier(journal, commit_tid))
+		needs_barrier = 1;
+	log_start_commit(journal, commit_tid);
+	ret = log_wait_commit(journal, commit_tid);
 
 	/*
 	 * In case we didn't commit a transaction, we have to flush
 	 * disk caches manually so that data really is on persistent
 	 * storage
 	 */
-	if (test_opt(inode->i_sb, BARRIER))
-		blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
+	if (needs_barrier)
+		blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+
+	mutex_unlock(&inode->i_mutex);
 out:
+	trace_ext3_sync_file_exit(inode, ret);
 	return ret;
 }

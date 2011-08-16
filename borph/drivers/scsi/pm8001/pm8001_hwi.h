@@ -209,7 +209,7 @@ struct  pio_setup_fis {
 
 /*
  * brief the data structure of SATA Completion Response
- * use to discribe the sata task response (64 bytes)
+ * use to describe the sata task response (64 bytes)
  */
 struct sata_completion_resp {
 	__le32	tag;
@@ -242,8 +242,7 @@ struct reg_dev_req {
 	__le32	phyid_portid;
 	__le32	dtype_dlr_retry;
 	__le32	firstburstsize_ITNexustimeout;
-	u32	sas_addr_hi;
-	u32	sas_addr_low;
+	u8	sas_addr[SAS_ADDR_SIZE];
 	__le32	upper_device_id;
 	u32	reserved[8];
 } __attribute__((packed, aligned(4)));
@@ -952,7 +951,7 @@ struct set_dev_state_resp {
 #define PCIE_EVENT_INTERRUPT		0x003044
 #define PCIE_ERROR_INTERRUPT_ENABLE	0x003048
 #define PCIE_ERROR_INTERRUPT		0x00304C
-/* signature defintion for host scratch pad0 register */
+/* signature definition for host scratch pad0 register */
 #define SPC_SOFT_RESET_SIGNATURE	0x252acbcd
 /* Signature for Soft Reset */
 

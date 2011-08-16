@@ -874,7 +874,7 @@ static void finalize_request(struct s3cmci_host *host)
 	if (!mrq->data)
 		goto request_done;
 
-	/* Calulate the amout of bytes transfer if there was no error */
+	/* Calculate the amout of bytes transfer if there was no error */
 	if (mrq->data->error == 0) {
 		mrq->data->bytes_xfered =
 			(mrq->data->blocks * mrq->data->blksz);
@@ -882,7 +882,7 @@ static void finalize_request(struct s3cmci_host *host)
 		mrq->data->bytes_xfered = 0;
 	}
 
-	/* If we had an error while transfering data we flush the
+	/* If we had an error while transferring data we flush the
 	 * DMA channel and the fifo to clear out any garbage. */
 	if (mrq->data->error != 0) {
 		if (s3cmci_host_usedma(host))
@@ -980,7 +980,7 @@ static int s3cmci_setup_data(struct s3cmci_host *host, struct mmc_data *data)
 
 	if ((data->blksz & 3) != 0) {
 		/* We cannot deal with unaligned blocks with more than
-		 * one block being transfered. */
+		 * one block being transferred. */
 
 		if (data->blocks > 1) {
 			pr_warning("%s: can't do non-word sized block transfers (blksz %d)\n", __func__, data->blksz);
@@ -1179,7 +1179,7 @@ static int s3cmci_card_present(struct mmc_host *mmc)
 	struct s3c24xx_mci_pdata *pdata = host->pdata;
 	int ret;
 
-	if (pdata->gpio_detect == 0)
+	if (pdata->no_detect)
 		return -ENOSYS;
 
 	ret = gpio_get_value(pdata->gpio_detect) ? 0 : 1;
@@ -1360,6 +1360,8 @@ static struct mmc_host_ops s3cmci_ops = {
 static struct s3c24xx_mci_pdata s3cmci_def_pdata = {
 	/* This is currently here to avoid a number of if (host->pdata)
 	 * checks. Any zero fields to ensure reasonable defaults are picked. */
+	 .no_wprotect = 1,
+	 .no_detect = 1,
 };
 
 #ifdef CONFIG_CPU_FREQ
@@ -1598,7 +1600,7 @@ static int __devinit s3cmci_probe(struct platform_device *pdev)
 	host->pio_active 	= XFER_NONE;
 
 #ifdef CONFIG_MMC_S3C_PIODMA
-	host->dodma		= host->pdata->dma;
+	host->dodma		= host->pdata->use_dma;
 #endif
 
 	host->mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1734,8 +1736,7 @@ static int __devinit s3cmci_probe(struct platform_device *pdev)
 	mmc->max_req_size	= 4095 * 512;
 	mmc->max_seg_size	= mmc->max_req_size;
 
-	mmc->max_phys_segs	= 128;
-	mmc->max_hw_segs	= 128;
+	mmc->max_segs		= 128;
 
 	dbg(host, dbg_debug,
 	    "probe: mode:%s mapped mci_base:%p irq:%u irq_cd:%u dma:%u.\n",
@@ -1879,9 +1880,8 @@ MODULE_DEVICE_TABLE(platform, s3cmci_driver_ids);
 static int s3cmci_suspend(struct device *dev)
 {
 	struct mmc_host *mmc = platform_get_drvdata(to_platform_device(dev));
-	struct pm_message event = { PM_EVENT_SUSPEND };
 
-	return mmc_suspend_host(mmc, event);
+	return mmc_suspend_host(mmc);
 }
 
 static int s3cmci_resume(struct device *dev)

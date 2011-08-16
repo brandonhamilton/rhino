@@ -6,13 +6,13 @@
  */
 
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/pm.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
+#include <linux/slab.h>
 
 #include <asm/portmux.h>
 #include <asm/bfin_rotary.h>

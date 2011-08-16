@@ -24,6 +24,7 @@
 #include <linux/bootmem.h>
 #include <linux/pagemap.h>
 #include <linux/poison.h>
+#include <linux/gfp.h>
 
 #include <asm/sections.h>
 #include <asm/system.h>
@@ -35,8 +36,6 @@
 #include <asm/tlb.h>
 #include <asm/prom.h>
 #include <asm/leon.h>
-
-DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 unsigned long *sparc_valid_addr_bitmap;
 EXPORT_SYMBOL(sparc_valid_addr_bitmap);
@@ -74,10 +73,10 @@ void __init kmap_init(void)
 	kmap_prot = __pgprot(SRMMU_ET_PTE | SRMMU_PRIV | SRMMU_CACHE);
 }
 
-void show_mem(void)
+void show_mem(unsigned int filter)
 {
 	printk("Mem-info:\n");
-	show_free_areas();
+	show_free_areas(filter);
 	printk("Free swap:       %6ldkB\n",
 	       nr_swap_pages << (PAGE_SHIFT-10));
 	printk("%ld pages of RAM\n", totalram_pages);
@@ -341,7 +340,7 @@ void __init paging_init(void)
 		prom_printf("paging_init: sparc_cpu_model = %d\n", sparc_cpu_model);
 		prom_printf("paging_init: Halting...\n");
 		prom_halt();
-	};
+	}
 
 	/* Initialize the protection map with non-constant, MMU dependent values. */
 	protection_map[0] = PAGE_NONE;

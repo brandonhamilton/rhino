@@ -29,19 +29,20 @@ u16 MCS_DATA_RATE[2][2][77] =
 			660, 450, 540, 630, 540, 630, 720, 810, 720, 810, 900, 900, 990}	}	// Short GI, 40MHz
 	};
 
-static u8 UNKNOWN_BORADCOM[3] = {0x00, 0x14, 0xbf};
-static u8 LINKSYSWRT330_LINKSYSWRT300_BROADCOM[3] = {0x00, 0x1a, 0x70};
-static u8 LINKSYSWRT350_LINKSYSWRT150_BROADCOM[3] = {0x00, 0x1d, 0x7e};
-static u8 NETGEAR834Bv2_BROADCOM[3] = {0x00, 0x1b, 0x2f};
-static u8 BELKINF5D8233V1_RALINK[3] = {0x00, 0x17, 0x3f};	//cosa 03202008
-static u8 BELKINF5D82334V3_RALINK[3] = {0x00, 0x1c, 0xdf};
-static u8 PCI_RALINK[3] = {0x00, 0x90, 0xcc};
-static u8 EDIMAX_RALINK[3] = {0x00, 0x0e, 0x2e};
-static u8 AIRLINK_RALINK[3] = {0x00, 0x18, 0x02};
-static u8 DLINK_ATHEROS[3] = {0x00, 0x1c, 0xf0};
-static u8 CISCO_BROADCOM[3] = {0x00, 0x17, 0x94};
+static const u8 UNKNOWN_BORADCOM[3] = {0x00, 0x14, 0xbf};
+static const u8 LINKSYSWRT330_LINKSYSWRT300_BROADCOM[3] = {0x00, 0x1a, 0x70};
+static const u8 LINKSYSWRT350_LINKSYSWRT150_BROADCOM[3] = {0x00, 0x1d, 0x7e};
+//static u8 NETGEAR834Bv2_BROADCOM[3] = {0x00, 0x1b, 0x2f};
+static const u8 BELKINF5D8233V1_RALINK[3] = {0x00, 0x17, 0x3f};
+static const u8 BELKINF5D82334V3_RALINK[3] = {0x00, 0x1c, 0xdf};
+static const u8 PCI_RALINK[3] = {0x00, 0x90, 0xcc};
+static const u8 EDIMAX_RALINK[3] = {0x00, 0x0e, 0x2e};
+static const u8 AIRLINK_RALINK[3] = {0x00, 0x18, 0x02};
+static const u8 DLINK_ATHEROS[3] = {0x00, 0x1c, 0xf0};
+static const u8 CISCO_BROADCOM[3] = {0x00, 0x17, 0x94};
+static const u8 LINKSYS_MARVELL_4400N[3] = {0x00, 0x14, 0xa4};
 
-// 2008/04/01 MH For Cisco G mode RX TP We need to change FW duration. Shoud we put the
+// 2008/04/01 MH For Cisco G mode RX TP We need to change FW duration. Should we put the
 // code in other place??
 //static u8 WIFI_CISCO_G_AP[3] = {0x00, 0x40, 0x96};
 /********************************************************************************************************************
@@ -54,10 +55,7 @@ static u8 CISCO_BROADCOM[3] = {0x00, 0x17, 0x94};
 void HTUpdateDefaultSetting(struct ieee80211_device* ieee)
 {
 	PRT_HIGH_THROUGHPUT	pHTInfo = ieee->pHTInfo;
-	//const typeof( ((struct ieee80211_device *)0)->pHTInfo ) *__mptr = &pHTInfo;
 
-	//printk("pHTinfo:%p, &pHTinfo:%p, mptr:%p,  offsetof:%x\n", pHTInfo, &pHTInfo, __mptr, offsetof(struct ieee80211_device, pHTInfo));
-	//printk("===>ieee:%p,\n", ieee);
 	// ShortGI support
 	pHTInfo->bRegShortGI20MHz= 1;
 	pHTInfo->bRegShortGI40MHz= 1;
@@ -147,8 +145,6 @@ void HTDebugHTCapability(u8* CapIE, u8* TitleString )
 	IEEE80211_DEBUG(IEEE80211_DL_HT,  "\tMPDU Density = %d\n", pCapELE->MPDUDensity);
 	IEEE80211_DEBUG(IEEE80211_DL_HT,  "\tMCS Rate Set = [%x][%x][%x][%x][%x]\n", pCapELE->MCS[0],\
 				pCapELE->MCS[1], pCapELE->MCS[2], pCapELE->MCS[3], pCapELE->MCS[4]);
-	return;
-
 }
 /********************************************************************************************************************
  *function:  This function print out each field on HT Information IE mainly from (Beacon/ProbeRsp)
@@ -213,7 +209,6 @@ void HTDebugHTInfo(u8*	InfoIE, u8* TitleString)
 
 	IEEE80211_DEBUG(IEEE80211_DL_HT, "\tBasic MCS Rate Set = [%x][%x][%x][%x][%x]\n", pHTInfoEle->BasicMSC[0],\
 				pHTInfoEle->BasicMSC[1], pHTInfoEle->BasicMSC[2], pHTInfoEle->BasicMSC[3], pHTInfoEle->BasicMSC[4]);
-	return;
 }
 
 /*
@@ -228,7 +223,7 @@ bool IsHTHalfNmode40Bandwidth(struct ieee80211_device* ieee)
 		retValue = false;
 	else if(pHTInfo->bRegBW40MHz == false)	// station supports 40 bw
 		retValue = false;
-	else if(!ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev)) 	// station in half n mode
+	else if (!ieee->GetHalfNmodeSupportByAPsHandler(ieee))	// station in half n mode
 		retValue = false;
 	else if(((PHT_CAPABILITY_ELE)(pHTInfo->PeerHTCapBuf))->ChlWidth) // ap support 40 bw
 		retValue = true;
@@ -245,7 +240,7 @@ bool IsHTHalfNmodeSGI(struct ieee80211_device* ieee, bool is40MHz)
 
 	if(pHTInfo->bCurrentHTSupport == false )	// wireless is n mode
 		retValue = false;
-	else if(!ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev)) 	// station in half n mode
+	else if (!ieee->GetHalfNmodeSupportByAPsHandler(ieee))	// station in half n mode
 		retValue = false;
 	else if(is40MHz) // ap support 40 bw
 	{
@@ -349,12 +344,12 @@ bool IsHTHalfNmodeAPs(struct ieee80211_device* ieee)
 	bool			retValue = false;
 	struct ieee80211_network* net = &ieee->current_network;
 #if 0
-	if(pMgntInfo->bHalfNMode == false)
+	if(ieee->bHalfNMode == false)
 		retValue = false;
 	else
 #endif
 	if((memcmp(net->bssid, BELKINF5D8233V1_RALINK, 3)==0) ||
-		     (memcmp(net->bssid, BELKINF5D82334V3_RALINK, 3)==0) ||
+	   	     (memcmp(net->bssid, BELKINF5D82334V3_RALINK, 3)==0) ||
 		     (memcmp(net->bssid, PCI_RALINK, 3)==0) ||
 		     (memcmp(net->bssid, EDIMAX_RALINK, 3)==0) ||
 		     (memcmp(net->bssid, AIRLINK_RALINK, 3)==0) ||
@@ -363,7 +358,7 @@ bool IsHTHalfNmodeAPs(struct ieee80211_device* ieee)
 	else if((memcmp(net->bssid, UNKNOWN_BORADCOM, 3)==0) ||
     		    (memcmp(net->bssid, LINKSYSWRT330_LINKSYSWRT300_BROADCOM, 3)==0)||
     		    (memcmp(net->bssid, LINKSYSWRT350_LINKSYSWRT150_BROADCOM, 3)==0)||
-    		    (memcmp(net->bssid, NETGEAR834Bv2_BROADCOM, 3)==0) ||
+    		    //(memcmp(net->bssid, NETGEAR834Bv2_BROADCOM, 3)==0) ||
     		    (net->broadcom_cap_exist))
     		  retValue = true;
 	else if(net->bssht.bdRT2RTAggregation)
@@ -387,13 +382,15 @@ void HTIOTPeerDetermine(struct ieee80211_device* ieee)
 	struct ieee80211_network* net = &ieee->current_network;
 	if(net->bssht.bdRT2RTAggregation)
 		pHTInfo->IOTPeer = HT_IOT_PEER_REALTEK;
-	else if(net->broadcom_cap_exist)
+	else if(net->broadcom_cap_exist){
 		pHTInfo->IOTPeer = HT_IOT_PEER_BROADCOM;
+	}
 	else if((memcmp(net->bssid, UNKNOWN_BORADCOM, 3)==0) ||
 			(memcmp(net->bssid, LINKSYSWRT330_LINKSYSWRT300_BROADCOM, 3)==0)||
-			(memcmp(net->bssid, LINKSYSWRT350_LINKSYSWRT150_BROADCOM, 3)==0)||
-			(memcmp(net->bssid, NETGEAR834Bv2_BROADCOM, 3)==0) )
+			(memcmp(net->bssid, LINKSYSWRT350_LINKSYSWRT150_BROADCOM, 3)==0)){//||
+			//(memcmp(net->bssid, NETGEAR834Bv2_BROADCOM, 3)==0) ){
 		pHTInfo->IOTPeer = HT_IOT_PEER_BROADCOM;
+	}
 	else if((memcmp(net->bssid, BELKINF5D8233V1_RALINK, 3)==0) ||
 			(memcmp(net->bssid, BELKINF5D82334V3_RALINK, 3)==0) ||
 			(memcmp(net->bssid, PCI_RALINK, 3)==0) ||
@@ -405,6 +402,10 @@ void HTIOTPeerDetermine(struct ieee80211_device* ieee)
 		pHTInfo->IOTPeer = HT_IOT_PEER_ATHEROS;
 	else if(memcmp(net->bssid, CISCO_BROADCOM, 3)==0)
 		pHTInfo->IOTPeer = HT_IOT_PEER_CISCO;
+        else if ((memcmp(net->bssid, LINKSYS_MARVELL_4400N, 3) == 0) ||
+			net->marvell_cap_exist){
+		pHTInfo->IOTPeer = HT_IOT_PEER_MARVELL;
+	}
 	else
 		pHTInfo->IOTPeer = HT_IOT_PEER_UNKNOWN;
 
@@ -442,11 +443,23 @@ u8 HTIOTActIsDisableMCS14(struct ieee80211_device* ieee, u8* PeerMacAddr)
 	return ret;
  }
 
+u8 HTIOTActIsForcedCTS2Self(struct ieee80211_device *ieee, struct ieee80211_network *network)
+{
+        u8      retValue = 0;
+        //if(network->marvell_cap_exist)
+        if(ieee->pHTInfo->IOTPeer == HT_IOT_PEER_MARVELL)
+        {
+                retValue = 1;
+        }
+
+        return retValue;
+}
+
 
 /**
 * Function:	HTIOTActIsDisableMCS15
 *
-* Overview:	Check whether driver should declare capability of receving MCS15
+* Overview:	Check whether driver should declare capability of receiving MCS15
 *
 * Input:
 *			PADAPTER		Adapter,
@@ -483,7 +496,7 @@ bool HTIOTActIsDisableMCS15(struct ieee80211_device* ieee)
 /**
 * Function:	HTIOTActIsDisableMCSTwoSpatialStream
 *
-* Overview:	Check whether driver should declare capability of receving All 2 ss packets
+* Overview:	Check whether driver should declare capability of receiving All 2 ss packets
 *
 * Input:
 *			PADAPTER		Adapter,
@@ -578,6 +591,23 @@ u8 HTIOTActIsCCDFsync(u8* PeerMacAddr)
 	return retValue;
 }
 
+//
+//  Send null data for to tell AP that we are awake.
+//
+bool
+HTIOTActIsNullDataPowerSaving(struct ieee80211_device* ieee,struct ieee80211_network *network)
+{
+	bool	retValue = false;
+
+	PRT_HIGH_THROUGHPUT	pHTInfo = ieee->pHTInfo;
+	{
+		if(pHTInfo->IOTPeer == HT_IOT_PEER_BROADCOM) // ||(pBssDesc->Vender == HT_IOT_PEER_ATHEROS && pBssDesc->SubTypeOfVender == HT_IOT_PEER_ATHEROS_DIR635))
+			return true;
+
+	}
+	return retValue;
+}
+
 void HTResetIOTSetting(
 	PRT_HIGH_THROUGHPUT		pHTInfo
 )
@@ -622,7 +652,7 @@ void HTConstructCapabilityElement(struct ieee80211_device* ieee, u8* posHTCap, u
 
 	//HT capability info
 	pCapELE->AdvCoding 		= 0; // This feature is not supported now!!
-	if(ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev))
+	if (ieee->GetHalfNmodeSupportByAPsHandler(ieee))
 	{
 		pCapELE->ChlWidth = 0;
 	}
@@ -675,7 +705,7 @@ void HTConstructCapabilityElement(struct ieee80211_device* ieee, u8* posHTCap, u
 
 	// 2008.06.12
 	// For RTL819X, if pairwisekey = wep/tkip, ap is ralink, we support only MCS0~7.
-	if(ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev))
+	if (ieee->GetHalfNmodeSupportByAPsHandler(ieee))
 	{
 		int i;
 		for(i = 1; i< 16; i++)
@@ -696,15 +726,6 @@ void HTConstructCapabilityElement(struct ieee80211_device* ieee, u8* posHTCap, u
 		*len = 30 + 2;
 	else
 		*len = 26 + 2;
-
-
-
-//	IEEE80211_DEBUG_DATA(IEEE80211_DL_DATA | IEEE80211_DL_HT, posHTCap, *len -2);
-
-	//Print each field in detail. Driver should not print out this message by default
-//	HTDebugHTCapability(posHTCap, (u8*)"HTConstructCapability()");
-	return;
-
 }
 /********************************************************************************************************************
  *function:  Construct  Information Element in Beacon... if HTEnable is turned on
@@ -756,9 +777,6 @@ void HTConstructInfoElement(struct ieee80211_device* ieee, u8* posHTInfo, u8* le
 		//STA should not generate High Throughput Information Element
 		*len = 0;
 	}
-	//IEEE80211_DEBUG_DATA(IEEE80211_DL_DATA | IEEE80211_DL_HT, posHTInfo, *len - 2);
-	//HTDebugHTInfo(posHTInfo, "HTConstructInforElement");
-	return;
 }
 
 /*
@@ -975,7 +993,7 @@ u8 HTFilterMCSRate( struct ieee80211_device* ieee, u8* pSupportMCS, u8* pOperate
 	HT_PickMCSRate(ieee, pOperateMCS);
 
 	// For RTL819X, if pairwisekey = wep/tkip, we support only MCS0~7.
-	if(ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev))
+	if (ieee->GetHalfNmodeSupportByAPsHandler(ieee))
 		pOperateMCS[1] = 0;
 
 	//
@@ -988,17 +1006,6 @@ u8 HTFilterMCSRate( struct ieee80211_device* ieee, u8* pSupportMCS, u8* pOperate
 	return true;
 }
 void HTSetConnectBwMode(struct ieee80211_device* ieee, HT_CHANNEL_WIDTH	Bandwidth, HT_EXTCHNL_OFFSET	Offset);
-#if 0
-//I need move this function to other places, such as rx?
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20))
-void HTOnAssocRsp_wq(struct work_struct *work)
-{
-	struct ieee80211_device *ieee = container_of(work, struct ieee80211_device, ht_onAssRsp);
-#else
-void HTOnAssocRsp_wq(struct ieee80211_device *ieee)
-{
-#endif
-#endif
 void HTOnAssocRsp(struct ieee80211_device *ieee)
 {
 	PRT_HIGH_THROUGHPUT	pHTInfo = ieee->pHTInfo;
@@ -1071,6 +1078,13 @@ void HTOnAssocRsp(struct ieee80211_device *ieee)
 	// Config and configure A-MSDU setting
 	//
 	pHTInfo->bCurrent_AMSDU_Support = pHTInfo->bAMSDU_Support;
+        if (ieee->rtllib_ap_sec_type &&
+           (ieee->rtllib_ap_sec_type(ieee)&(SEC_ALG_WEP|SEC_ALG_TKIP))){
+                if( (pHTInfo->IOTPeer== HT_IOT_PEER_ATHEROS) ||
+                                (pHTInfo->IOTPeer == HT_IOT_PEER_UNKNOWN) )
+                        pHTInfo->bCurrentAMPDUEnable = false;
+        }
+
 
 	nMaxAMSDUSize = (pPeerHTCap->MaxAMSDUSize==0)?3839:7935;
 
@@ -1515,6 +1529,9 @@ void HTResetSelfAndSavePeerSetting(struct ieee80211_device* ieee, 	struct ieee80
 		bIOTAction = HTIOTActIsDisableMCS14(ieee, pNetwork->bssid);
 		if(bIOTAction)
 			pHTInfo->IOTAction |= HT_IOT_ACT_DISABLE_MCS14;
+		bIOTAction = HTIOTActIsForcedCTS2Self(ieee, pNetwork);
+		if(bIOTAction)
+			pHTInfo->IOTAction |= HT_IOT_ACT_FORCED_CTS2SELF;
 
 		bIOTAction = HTIOTActIsDisableMCS15(ieee);
 		if(bIOTAction)
@@ -1537,6 +1554,9 @@ void HTResetSelfAndSavePeerSetting(struct ieee80211_device* ieee, 	struct ieee80
 		if(bIOTAction)
 			pHTInfo->IOTAction |= HT_IOT_ACT_CDD_FSYNC;
 
+		bIOTAction = HTIOTActIsNullDataPowerSaving(ieee, pNetwork);
+		if(bIOTAction)
+			pHTInfo->IOTAction |= HT_IOT_ACT_NULL_DATA_POWER_SAVING;
 
 	}
 	else
@@ -1613,7 +1633,6 @@ void HTUseDefaultSetting(struct ieee80211_device* ieee)
 	{
 		pHTInfo->bCurrentHTSupport = false;
 	}
-	return;
 }
 /********************************************************************************************************************
  *function:  check whether HT control field exists
@@ -1660,9 +1679,9 @@ void HTSetConnectBwMode(struct ieee80211_device* ieee, HT_CHANNEL_WIDTH	Bandwidt
 		return;
 	}
 	//if in half N mode, set to 20M bandwidth please 09.08.2008 WB.
-	if(Bandwidth==HT_CHANNEL_WIDTH_20_40 && (!ieee->GetHalfNmodeSupportByAPsHandler(ieee->dev)))
+	if (Bandwidth==HT_CHANNEL_WIDTH_20_40 && (!ieee->GetHalfNmodeSupportByAPsHandler(ieee)))
 	 {
-	 		// Handle Illegal extention channel offset!!
+	 		// Handle Illegal extension channel offset!!
 		if(ieee->current_network.channel<2 && Offset==HT_EXTCHNL_OFFSET_LOWER)
 			Offset = HT_EXTCHNL_OFFSET_NO_EXT;
 		if(Offset==HT_EXTCHNL_OFFSET_UPPER || Offset==HT_EXTCHNL_OFFSET_LOWER) {
@@ -1679,7 +1698,7 @@ void HTSetConnectBwMode(struct ieee80211_device* ieee, HT_CHANNEL_WIDTH	Bandwidt
 
 	pHTInfo->bSwBwInProgress = true;
 
-	// TODO: 2007.7.13 by Emily Wait 2000ms  in order to garantee that switching
+	// TODO: 2007.7.13 by Emily Wait 2000ms  in order to guarantee that switching
 	//   bandwidth is executed after scan is finished. It is a temporal solution
 	//   because software should ganrantee the last operation of switching bandwidth
 	//   is executed properlly.
@@ -1697,23 +1716,17 @@ void HTSetConnectBwModeCallback(struct ieee80211_device* ieee)
 	if(pHTInfo->bCurBW40MHz)
 	{
 		if(pHTInfo->CurSTAExtChnlOffset==HT_EXTCHNL_OFFSET_UPPER)
-			ieee->set_chan(ieee->dev, ieee->current_network.channel+2);
+			ieee->set_chan(ieee, ieee->current_network.channel+2);
 		else if(pHTInfo->CurSTAExtChnlOffset==HT_EXTCHNL_OFFSET_LOWER)
-			ieee->set_chan(ieee->dev, ieee->current_network.channel-2);
+			ieee->set_chan(ieee, ieee->current_network.channel-2);
 		else
-			ieee->set_chan(ieee->dev, ieee->current_network.channel);
+			ieee->set_chan(ieee, ieee->current_network.channel);
 
-		ieee->SetBWModeHandler(ieee->dev, HT_CHANNEL_WIDTH_20_40, pHTInfo->CurSTAExtChnlOffset);
+		ieee->SetBWModeHandler(ieee, HT_CHANNEL_WIDTH_20_40, pHTInfo->CurSTAExtChnlOffset);
 	} else {
-		ieee->set_chan(ieee->dev, ieee->current_network.channel);
-		ieee->SetBWModeHandler(ieee->dev, HT_CHANNEL_WIDTH_20, HT_EXTCHNL_OFFSET_NO_EXT);
+		ieee->set_chan(ieee, ieee->current_network.channel);
+		ieee->SetBWModeHandler(ieee, HT_CHANNEL_WIDTH_20, HT_EXTCHNL_OFFSET_NO_EXT);
 	}
 
 	pHTInfo->bSwBwInProgress = false;
 }
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
-//EXPORT_SYMBOL_NOVERS(HTUpdateSelfAndPeerSetting);
-#else
-//EXPORT_SYMBOL(HTUpdateSelfAndPeerSetting);
-#endif

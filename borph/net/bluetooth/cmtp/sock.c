@@ -26,7 +26,6 @@
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
 #include <linux/skbuff.h>
@@ -34,12 +33,13 @@
 #include <linux/ioctl.h>
 #include <linux/file.h>
 #include <linux/compat.h>
+#include <linux/gfp.h>
+#include <linux/uaccess.h>
 #include <net/sock.h>
 
 #include <linux/isdn/capilli.h>
 
 #include <asm/system.h>
-#include <asm/uaccess.h>
 
 #include "cmtp.h"
 

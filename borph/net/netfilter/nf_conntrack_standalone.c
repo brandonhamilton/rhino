@@ -8,12 +8,14 @@
 
 #include <linux/types.h>
 #include <linux/netfilter.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/percpu.h>
 #include <linux/netdevice.h>
+#include <linux/security.h>
 #include <net/net_namespace.h>
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
@@ -26,6 +28,9 @@
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_acct.h>
+#include <net/netfilter/nf_conntrack_zones.h>
+#include <net/netfilter/nf_conntrack_timestamp.h>
+#include <linux/rculist_nulls.h>
 
 MODULE_LICENSE("GPL");
 
@@ -42,6 +47,7 @@ EXPORT_SYMBOL_GPL(print_tuple);
 struct ct_iter_state {
 	struct seq_net_private p;
 	unsigned int bucket;
+	u_int64_t time_now;
 };
 
 static struct hlist_nulls_node *ct_get_first(struct seq_file *seq)
@@ -51,9 +57,9 @@ static struct hlist_nulls_node *ct_get_first(struct seq_file *seq)
 	struct hlist_nulls_node *n;
 
 	for (st->bucket = 0;
-	     st->bucket < nf_conntrack_htable_size;
+	     st->bucket < net->ct.htable_size;
 	     st->bucket++) {
-		n = rcu_dereference(net->ct.hash[st->bucket].first);
+		n = rcu_dereference(hlist_nulls_first_rcu(&net->ct.hash[st->bucket]));
 		if (!is_a_nulls(n))
 			return n;
 	}
@@ -66,13 +72,15 @@ static struct hlist_nulls_node *ct_get_next(struct seq_file *seq,
 	struct net *net = seq_file_net(seq);
 	struct ct_iter_state *st = seq->private;
 
-	head = rcu_dereference(head->next);
+	head = rcu_dereference(hlist_nulls_next_rcu(head));
 	while (is_a_nulls(head)) {
 		if (likely(get_nulls_value(head) == st->bucket)) {
-			if (++st->bucket >= nf_conntrack_htable_size)
+			if (++st->bucket >= net->ct.htable_size)
 				return NULL;
 		}
-		head = rcu_dereference(net->ct.hash[st->bucket].first);
+		head = rcu_dereference(
+				hlist_nulls_first_rcu(
+					&net->ct.hash[st->bucket]));
 	}
 	return head;
 }
@@ -90,6 +98,9 @@ static struct hlist_nulls_node *ct_get_idx(struct seq_file *seq, loff_t pos)
 static void *ct_seq_start(struct seq_file *seq, loff_t *pos)
 	__acquires(RCU)
 {
+	struct ct_iter_state *st = seq->private;
+
+	st->time_now = ktime_to_ns(ktime_get_real());
 	rcu_read_lock();
 	return ct_get_idx(seq, *pos);
 }
@@ -105,6 +116,57 @@ static void ct_seq_stop(struct seq_file *s, void *v)
 {
 	rcu_read_unlock();
 }
+
+#ifdef CONFIG_NF_CONNTRACK_SECMARK
+static int ct_show_secctx(struct seq_file *s, const struct nf_conn *ct)
+{
+	int ret;
+	u32 len;
+	char *secctx;
+
+	ret = security_secid_to_secctx(ct->secmark, &secctx, &len);
+	if (ret)
+		return 0;
+
+	ret = seq_printf(s, "secctx=%s ", secctx);
+
+	security_release_secctx(secctx, len);
+	return ret;
+}
+#else
+static inline int ct_show_secctx(struct seq_file *s, const struct nf_conn *ct)
+{
+	return 0;
+}
+#endif
+
+#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
+static int ct_show_delta_time(struct seq_file *s, const struct nf_conn *ct)
+{
+	struct ct_iter_state *st = s->private;
+	struct nf_conn_tstamp *tstamp;
+	s64 delta_time;
+
+	tstamp = nf_conn_tstamp_find(ct);
+	if (tstamp) {
+		delta_time = st->time_now - tstamp->start;
+		if (delta_time > 0)
+			delta_time = div_s64(delta_time, NSEC_PER_SEC);
+		else
+			delta_time = 0;
+
+		return seq_printf(s, "delta-time=%llu ",
+				  (unsigned long long)delta_time);
+	}
+	return 0;
+}
+#else
+static inline int
+ct_show_delta_time(struct seq_file *s, const struct nf_conn *ct)
+{
+	return 0;
+}
+#endif
 
 /* return 0 on success, 1 in case of error */
 static int ct_seq_show(struct seq_file *s, void *v)
@@ -166,10 +228,16 @@ static int ct_seq_show(struct seq_file *s, void *v)
 		goto release;
 #endif
 
-#ifdef CONFIG_NF_CONNTRACK_SECMARK
-	if (seq_printf(s, "secmark=%u ", ct->secmark))
+	if (ct_show_secctx(s, ct))
+		goto release;
+
+#ifdef CONFIG_NF_CONNTRACK_ZONES
+	if (seq_printf(s, "zone=%u ", nf_ct_zone(ct)))
 		goto release;
 #endif
+
+	if (ct_show_delta_time(s, ct))
+		goto release;
 
 	if (seq_printf(s, "use=%u\n", atomic_read(&ct->ct_general.use)))
 		goto release;
@@ -177,7 +245,7 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	ret = 0;
 release:
 	nf_ct_put(ct);
-	return 0;
+	return ret;
 }
 
 static const struct seq_operations ct_seq_ops = {
@@ -245,12 +313,12 @@ static int ct_cpu_seq_show(struct seq_file *seq, void *v)
 	const struct ip_conntrack_stat *st = v;
 
 	if (v == SEQ_START_TOKEN) {
-		seq_printf(seq, "entries  searched found new invalid ignore delete delete_list insert insert_failed drop early_drop icmp_error  expect_new expect_create expect_delete\n");
+		seq_printf(seq, "entries  searched found new invalid ignore delete delete_list insert insert_failed drop early_drop icmp_error  expect_new expect_create expect_delete search_restart\n");
 		return 0;
 	}
 
 	seq_printf(seq, "%08x  %08x %08x %08x %08x %08x %08x %08x "
-			"%08x %08x %08x %08x %08x  %08x %08x %08x \n",
+			"%08x %08x %08x %08x %08x  %08x %08x %08x %08x\n",
 		   nr_conntracks,
 		   st->searched,
 		   st->found,
@@ -267,7 +335,8 @@ static int ct_cpu_seq_show(struct seq_file *seq, void *v)
 
 		   st->expect_new,
 		   st->expect_create,
-		   st->expect_delete
+		   st->expect_delete,
+		   st->search_restart
 		);
 	return 0;
 }
@@ -355,7 +424,7 @@ static ctl_table nf_ct_sysctl_table[] = {
 	},
 	{
 		.procname       = "nf_conntrack_buckets",
-		.data           = &nf_conntrack_htable_size,
+		.data           = &init_net.ct.htable_size,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
@@ -421,6 +490,7 @@ static int nf_conntrack_standalone_init_sysctl(struct net *net)
 		goto out_kmemdup;
 
 	table[1].data = &net->ct.count;
+	table[2].data = &net->ct.htable_size;
 	table[3].data = &net->ct.sysctl_checksum;
 	table[4].data = &net->ct.sysctl_log_invalid;
 
@@ -437,7 +507,7 @@ out_kmemdup:
 	if (net_eq(net, &init_net))
 		unregister_sysctl_table(nf_ct_netfilter_header);
 out:
-	printk("nf_conntrack: can't register to sysctl.\n");
+	printk(KERN_ERR "nf_conntrack: can't register to sysctl.\n");
 	return -ENOMEM;
 }
 

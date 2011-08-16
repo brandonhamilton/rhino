@@ -16,7 +16,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 
 #include <mach/gpio.h>
 #include <mach/pxa2xx-regs.h>
@@ -81,6 +81,7 @@ static int __mfp_config_gpio(unsigned gpio, unsigned long c)
 		PGSR(bank) &= ~mask;
 		is_out = 1;
 		break;
+	case MFP_LPM_INPUT:
 	case MFP_LPM_DEFAULT:
 		break;
 	default:
@@ -178,8 +179,17 @@ int gpio_set_wake(unsigned int gpio, unsigned int on)
 	if (!d->valid)
 		return -EINVAL;
 
-	if (d->keypad_gpio)
-		return -EINVAL;
+	/* Allow keypad GPIOs to wakeup system when
+	 * configured as generic GPIOs.
+	 */
+	if (d->keypad_gpio && (MFP_AF(d->config) == 0) &&
+	    (d->config & MFP_LPM_CAN_WAKEUP)) {
+		if (on)
+			PKWR |= d->mask;
+		else
+			PKWR &= ~d->mask;
+		return 0;
+	}
 
 	mux_taken = (PWER & d->mux_mask) & (~d->mask);
 	if (on && mux_taken)
@@ -239,21 +249,25 @@ static int pxa27x_pkwr_gpio[] = {
 int keypad_set_wake(unsigned int on)
 {
 	unsigned int i, gpio, mask = 0;
-
-	if (!on) {
-		PKWR = 0;
-		return 0;
-	}
+	struct gpio_desc *d;
 
 	for (i = 0; i < ARRAY_SIZE(pxa27x_pkwr_gpio); i++) {
 
 		gpio = pxa27x_pkwr_gpio[i];
+		d = &gpio_desc[gpio];
 
-		if (gpio_desc[gpio].config & MFP_LPM_CAN_WAKEUP)
+		/* skip if configured as generic GPIO */
+		if (MFP_AF(d->config) == 0)
+			continue;
+
+		if (d->config & MFP_LPM_CAN_WAKEUP)
 			mask |= gpio_desc[gpio].mask;
 	}
 
-	PKWR = mask;
+	if (on)
+		PKWR |= mask;
+	else
+		PKWR &= ~mask;
 	return 0;
 }
 
@@ -324,9 +338,20 @@ static unsigned long saved_gafr[2][4];
 static unsigned long saved_gpdr[4];
 static unsigned long saved_pgsr[4];
 
-static int pxa2xx_mfp_suspend(struct sys_device *d, pm_message_t state)
+static int pxa2xx_mfp_suspend(void)
 {
 	int i;
+
+	/* set corresponding PGSR bit of those marked MFP_LPM_KEEP_OUTPUT */
+	for (i = 0; i < pxa_last_gpio; i++) {
+		if ((gpio_desc[i].config & MFP_LPM_KEEP_OUTPUT) &&
+		    (GPDR(i) & GPIO_bit(i))) {
+			if (GPLR(i) & GPIO_bit(i))
+				PGSR(gpio_to_bank(i)) |= GPIO_bit(i);
+			else
+				PGSR(gpio_to_bank(i)) &= ~GPIO_bit(i);
+		}
+	}
 
 	for (i = 0; i <= gpio_to_bank(pxa_last_gpio); i++) {
 
@@ -340,7 +365,7 @@ static int pxa2xx_mfp_suspend(struct sys_device *d, pm_message_t state)
 	return 0;
 }
 
-static int pxa2xx_mfp_resume(struct sys_device *d)
+static void pxa2xx_mfp_resume(void)
 {
 	int i;
 
@@ -351,15 +376,13 @@ static int pxa2xx_mfp_resume(struct sys_device *d)
 		PGSR(i) = saved_pgsr[i];
 	}
 	PSSR = PSSR_RDH | PSSR_PH;
-	return 0;
 }
 #else
 #define pxa2xx_mfp_suspend	NULL
 #define pxa2xx_mfp_resume	NULL
 #endif
 
-struct sysdev_class pxa2xx_mfp_sysclass = {
-	.name		= "mfp",
+struct syscore_ops pxa2xx_mfp_syscore_ops = {
 	.suspend	= pxa2xx_mfp_suspend,
 	.resume		= pxa2xx_mfp_resume,
 };
@@ -384,6 +407,6 @@ static int __init pxa2xx_mfp_init(void)
 	for (i = 0; i <= gpio_to_bank(pxa_last_gpio); i++)
 		gpdr_lpm[i] = GPDR(i * 32);
 
-	return sysdev_class_register(&pxa2xx_mfp_sysclass);
+	return 0;
 }
 postcore_initcall(pxa2xx_mfp_init);

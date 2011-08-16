@@ -53,7 +53,7 @@
 
 #define DRV_NAME "sis5513"
 
-/* registers layout and init values are chipset family dependant */
+/* registers layout and init values are chipset family dependent */
 
 #define ATA_16		0x01
 #define ATA_33		0x02
@@ -290,10 +290,10 @@ static void config_drive_art_rwp(ide_drive_t *drive)
 		pci_write_config_byte(dev, 0x4b, rw_prefetch);
 }
 
-static void sis_set_pio_mode(ide_drive_t *drive, const u8 pio)
+static void sis_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 {
 	config_drive_art_rwp(drive);
-	sis_program_timings(drive, XFER_PIO_0 + pio);
+	sis_program_timings(drive, drive->pio_mode);
 }
 
 static void sis_ata133_program_udma_timings(ide_drive_t *drive, const u8 mode)
@@ -340,8 +340,10 @@ static void sis_program_udma_timings(ide_drive_t *drive, const u8 mode)
 		sis_ata33_program_udma_timings(drive, mode);
 }
 
-static void sis_set_dma_mode(ide_drive_t *drive, const u8 speed)
+static void sis_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 {
+	const u8 speed = drive->dma_mode;
+
 	if (speed >= XFER_UDMA_0)
 		sis_program_udma_timings(drive, speed);
 	else
@@ -404,7 +406,7 @@ static int __devinit sis_find_family(struct pci_dev *dev)
 					pci_name(dev));
 				chipset_family = ATA_133;
 
-				/* Check for 5513 compability mapping
+				/* Check for 5513 compatibility mapping
 				 * We must use this, else the port enabled code will fail,
 				 * as it expects the enablebits at 0x4a.
 				 */

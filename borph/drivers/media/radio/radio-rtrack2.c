@@ -15,7 +15,6 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <linux/videodev2.h>	/* kernel radio structs		*/
 #include <linux/mutex.h>
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/io.h>		/* outb, outb_p			*/
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -23,6 +22,7 @@
 MODULE_AUTHOR("Ben Pfaff");
 MODULE_DESCRIPTION("A driver for the RadioTrack II radio card.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 #ifndef CONFIG_RADIO_RTRACK2_PORT
 #define CONFIG_RADIO_RTRACK2_PORT -1
@@ -34,8 +34,6 @@ static int radio_nr = -1;
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the RadioTrack card (0x20c or 0x30c)");
 module_param(radio_nr, int, 0);
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 struct rtrack2
 {
@@ -121,7 +119,6 @@ static int vidioc_querycap(struct file *file, void *priv,
 	strlcpy(v->driver, "radio-rtrack2", sizeof(v->driver));
 	strlcpy(v->card, "RadioTrack II", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -167,6 +164,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct rtrack2 *rt = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	rt_setfreq(rt, f->frequency);
 	return 0;
 }
@@ -176,6 +175,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct rtrack2 *rt = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = rt->curfreq;
 	return 0;
@@ -262,7 +263,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations rtrack2_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops rtrack2_ioctl_ops = {
@@ -311,6 +312,10 @@ static int __init rtrack2_init(void)
 	dev->vdev.release = video_device_release_empty;
 	video_set_drvdata(&dev->vdev, dev);
 
+	/* mute card - prevents noisy bootups */
+	outb(1, dev->io);
+	dev->muted = 1;
+
 	mutex_init(&dev->lock);
 	if (video_register_device(&dev->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
 		v4l2_device_unregister(v4l2_dev);
@@ -319,10 +324,6 @@ static int __init rtrack2_init(void)
 	}
 
 	v4l2_info(v4l2_dev, "AIMSlab Radiotrack II card driver.\n");
-
-	/* mute card - prevents noisy bootups */
-	outb(1, dev->io);
-	dev->muted = 1;
 
 	return 0;
 }

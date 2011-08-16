@@ -13,14 +13,13 @@
 #ifndef _IP6_FIB_H
 #define _IP6_FIB_H
 
-#ifdef __KERNEL__
-
 #include <linux/ipv6_route.h>
 #include <linux/rtnetlink.h>
 #include <linux/spinlock.h>
 #include <net/dst.h>
 #include <net/flow.h>
 #include <net/netlink.h>
+#include <net/inetpeer.h>
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 #define FIB6_TABLE_HASHSZ 256
@@ -41,6 +40,7 @@ struct fib6_config {
 
 	struct in6_addr	fc_dst;
 	struct in6_addr	fc_src;
+	struct in6_addr	fc_prefsrc;
 	struct in6_addr	fc_gateway;
 
 	unsigned long	fc_expires;
@@ -84,38 +84,41 @@ struct rt6key {
 struct fib6_table;
 
 struct rt6_info {
-	union {
-		struct dst_entry	dst;
-	} u;
+	struct dst_entry		dst;
 
-	struct inet6_dev		*rt6i_idev;
+#define rt6i_dev			dst.dev
+#define rt6i_expires			dst.expires
 
-#define rt6i_dev			u.dst.dev
-#define rt6i_nexthop			u.dst.neighbour
-#define rt6i_expires			u.dst.expires
-
+	/*
+	 * Tail elements of dst_entry (__refcnt etc.)
+	 * and these elements (rarely used in hot path) are in
+	 * the same cache line.
+	 */
+	struct fib6_table		*rt6i_table;
 	struct fib6_node		*rt6i_node;
 
 	struct in6_addr			rt6i_gateway;
-	
-	u32				rt6i_flags;
-	u32				rt6i_metric;
+
 	atomic_t			rt6i_ref;
 
-	/* more non-fragment space at head required */
-	unsigned short			rt6i_nfheader_len;
+	/* These are in a separate cache line. */
+	struct rt6key			rt6i_dst ____cacheline_aligned_in_smp;
+	u32				rt6i_flags;
+	struct rt6key			rt6i_src;
+	struct rt6key			rt6i_prefsrc;
+	u32				rt6i_metric;
+	u32				rt6i_peer_genid;
 
-	u8				rt6i_protocol;
-
-	struct fib6_table		*rt6i_table;
-
-	struct rt6key			rt6i_dst;
+	struct inet6_dev		*rt6i_idev;
+	struct inet_peer		*rt6i_peer;
 
 #ifdef CONFIG_XFRM
 	u32				rt6i_flow_cache_genid;
 #endif
+	/* more non-fragment space at head required */
+	unsigned short			rt6i_nfheader_len;
 
-	struct rt6key			rt6i_src;
+	u8				rt6i_protocol;
 };
 
 static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)
@@ -124,11 +127,13 @@ static inline struct inet6_dev *ip6_dst_idev(struct dst_entry *dst)
 }
 
 struct fib6_walker_t {
-	struct fib6_walker_t *prev, *next;
+	struct list_head lh;
 	struct fib6_node *root, *node;
 	struct rt6_info *leaf;
 	unsigned char state;
 	unsigned char prune;
+	unsigned int skip;
+	unsigned int count;
 	int (*func)(struct fib6_walker_t *);
 	void *args;
 };
@@ -177,7 +182,7 @@ struct fib6_table {
 
 typedef struct rt6_info *(*pol_lookup_t)(struct net *,
 					 struct fib6_table *,
-					 struct flowi *, int);
+					 struct flowi6 *, int);
 
 /*
  *	exported functions
@@ -186,16 +191,16 @@ typedef struct rt6_info *(*pol_lookup_t)(struct net *,
 extern struct fib6_table        *fib6_get_table(struct net *net, u32 id);
 extern struct fib6_table        *fib6_new_table(struct net *net, u32 id);
 extern struct dst_entry         *fib6_rule_lookup(struct net *net,
-						  struct flowi *fl, int flags,
+						  struct flowi6 *fl6, int flags,
 						  pol_lookup_t lookup);
 
 extern struct fib6_node		*fib6_lookup(struct fib6_node *root,
-					     struct in6_addr *daddr,
-					     struct in6_addr *saddr);
+					     const struct in6_addr *daddr,
+					     const struct in6_addr *saddr);
 
 struct fib6_node		*fib6_locate(struct fib6_node *root,
-					     struct in6_addr *daddr, int dst_len,
-					     struct in6_addr *saddr, int src_len);
+					     const struct in6_addr *daddr, int dst_len,
+					     const struct in6_addr *saddr, int src_len);
 
 extern void			fib6_clean_all(struct net *net,
 					       int (*func)(struct rt6_info *, void *arg),
@@ -230,6 +235,5 @@ static inline void              fib6_rules_cleanup(void)
 {
 	return ;
 }
-#endif
 #endif
 #endif

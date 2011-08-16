@@ -36,6 +36,7 @@
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/interrupt.h>
 #include <linux/jiffies.h>
 
 #include <asm/system.h>
@@ -521,7 +522,6 @@ apne_block_output(struct net_device *dev, int count,
 
     outb(ENISR_RDC, nic_base + NE_EN0_ISR);	/* Ack intr. */
     ei_status.dmaing &= ~0x01;
-    return;
 }
 
 static irqreturn_t apne_interrupt(int irq, void *dev_id)

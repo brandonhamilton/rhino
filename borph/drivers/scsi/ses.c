@@ -21,6 +21,7 @@
 **-----------------------------------------------------------------------------
 */
 
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/enclosure.h>
@@ -34,9 +35,11 @@
 
 struct ses_device {
 	unsigned char *page1;
+	unsigned char *page1_types;
 	unsigned char *page2;
 	unsigned char *page10;
 	short page1_len;
+	short page1_num_types;
 	short page2_len;
 	short page10_len;
 };
@@ -109,12 +112,12 @@ static int ses_set_page2_descriptor(struct enclosure_device *edev,
 	int i, j, count = 0, descriptor = ecomp->number;
 	struct scsi_device *sdev = to_scsi_device(edev->edev.parent);
 	struct ses_device *ses_dev = edev->scratch;
-	unsigned char *type_ptr = ses_dev->page1 + 12 + ses_dev->page1[11];
+	unsigned char *type_ptr = ses_dev->page1_types;
 	unsigned char *desc_ptr = ses_dev->page2 + 8;
 
 	/* Clear everything */
 	memset(desc_ptr, 0, ses_dev->page2_len - 8);
-	for (i = 0; i < ses_dev->page1[10]; i++, type_ptr += 4) {
+	for (i = 0; i < ses_dev->page1_num_types; i++, type_ptr += 4) {
 		for (j = 0; j < type_ptr[1]; j++) {
 			desc_ptr += 4;
 			if (type_ptr[0] != ENCLOSURE_COMPONENT_DEVICE &&
@@ -139,12 +142,12 @@ static unsigned char *ses_get_page2_descriptor(struct enclosure_device *edev,
 	int i, j, count = 0, descriptor = ecomp->number;
 	struct scsi_device *sdev = to_scsi_device(edev->edev.parent);
 	struct ses_device *ses_dev = edev->scratch;
-	unsigned char *type_ptr = ses_dev->page1 + 12 + ses_dev->page1[11];
+	unsigned char *type_ptr = ses_dev->page1_types;
 	unsigned char *desc_ptr = ses_dev->page2 + 8;
 
 	ses_recv_diag(sdev, 2, ses_dev->page2, ses_dev->page2_len);
 
-	for (i = 0; i < ses_dev->page1[10]; i++, type_ptr += 4) {
+	for (i = 0; i < ses_dev->page1_num_types; i++, type_ptr += 4) {
 		for (j = 0; j < type_ptr[1]; j++) {
 			desc_ptr += 4;
 			if (type_ptr[0] != ENCLOSURE_COMPONENT_DEVICE &&
@@ -157,6 +160,10 @@ static unsigned char *ses_get_page2_descriptor(struct enclosure_device *edev,
 	return NULL;
 }
 
+/* For device slot and array device slot elements, byte 3 bit 6
+ * is "fault sensed" while byte 3 bit 5 is "fault reqstd". As this
+ * code stands these bits are shifted 4 positions right so in
+ * sysfs they will appear as bits 2 and 1 respectively. Strange. */
 static void ses_get_fault(struct enclosure_device *edev,
 			  struct enclosure_component *ecomp)
 {
@@ -178,7 +185,7 @@ static int ses_set_fault(struct enclosure_device *edev,
 		/* zero is disabled */
 		break;
 	case ENCLOSURE_SETTING_ENABLED:
-		desc[2] = 0x02;
+		desc[3] = 0x20;
 		break;
 	default:
 		/* SES doesn't do the SGPIO blink settings */
@@ -357,7 +364,7 @@ static void ses_enclosure_data_process(struct enclosure_device *edev,
 	unsigned char *buf = NULL, *type_ptr, *desc_ptr, *addl_desc_ptr = NULL;
 	int i, j, page7_len, len, components;
 	struct ses_device *ses_dev = edev->scratch;
-	int types = ses_dev->page1[10];
+	int types = ses_dev->page1_num_types;
 	unsigned char *hdr_buf = kzalloc(INIT_ALLOC_SIZE, GFP_KERNEL);
 
 	if (!hdr_buf)
@@ -389,10 +396,10 @@ static void ses_enclosure_data_process(struct enclosure_device *edev,
 		len = (desc_ptr[2] << 8) + desc_ptr[3];
 		/* skip past overall descriptor */
 		desc_ptr += len + 4;
-		if (ses_dev->page10)
-			addl_desc_ptr = ses_dev->page10 + 8;
 	}
-	type_ptr = ses_dev->page1 + 12 + ses_dev->page1[11];
+	if (ses_dev->page10)
+		addl_desc_ptr = ses_dev->page10 + 8;
+	type_ptr = ses_dev->page1_types;
 	components = 0;
 	for (i = 0; i < types; i++, type_ptr += 4) {
 		for (j = 0; j < type_ptr[1]; j++) {
@@ -448,13 +455,17 @@ static void ses_match_to_enclosure(struct enclosure_device *edev,
 		.addr = 0,
 	};
 
-	buf = scsi_get_vpd_page(sdev, 0x83);
-	if (!buf)
-		return;
+	buf = kmalloc(INIT_ALLOC_SIZE, GFP_KERNEL);
+	if (!buf || scsi_get_vpd_page(sdev, 0x83, buf, INIT_ALLOC_SIZE))
+		goto free;
 
 	ses_enclosure_data_process(edev, to_scsi_device(edev->edev.parent), 0);
 
 	vpd_len = ((buf[2] << 8) | buf[3]) + 4;
+	kfree(buf);
+	buf = kmalloc(vpd_len, GFP_KERNEL);
+	if (!buf ||scsi_get_vpd_page(sdev, 0x83, buf, vpd_len))
+		goto free;
 
 	desc = buf + 4;
 	while (desc < buf + vpd_len) {
@@ -498,6 +509,7 @@ static int ses_intf_add(struct device *cdev,
 	u32 result;
 	int i, types, len, components = 0;
 	int err = -ENOMEM;
+	int num_enclosures;
 	struct enclosure_device *edev;
 	struct ses_component *scomp = NULL;
 
@@ -525,16 +537,6 @@ static int ses_intf_add(struct device *cdev,
 	if (result)
 		goto recv_failed;
 
-	if (hdr_buf[1] != 0) {
-		/* FIXME: need subenclosure support; I've just never
-		 * seen a device with subenclosures and it makes the
-		 * traversal routines more complex */
-		sdev_printk(KERN_ERR, sdev,
-			"FIXME driver has no support for subenclosures (%d)\n",
-			hdr_buf[1]);
-		goto err_free;
-	}
-
 	len = (hdr_buf[2] << 8) + hdr_buf[3] + 4;
 	buf = kzalloc(len, GFP_KERNEL);
 	if (!buf)
@@ -544,11 +546,24 @@ static int ses_intf_add(struct device *cdev,
 	if (result)
 		goto recv_failed;
 
-	types = buf[10];
+	types = 0;
 
-	type_ptr = buf + 12 + buf[11];
+	/* we always have one main enclosure and the rest are referred
+	 * to as secondary subenclosures */
+	num_enclosures = buf[1] + 1;
 
-	for (i = 0; i < types; i++, type_ptr += 4) {
+	/* begin at the enclosure descriptor */
+	type_ptr = buf + 8;
+	/* skip all the enclosure descriptors */
+	for (i = 0; i < num_enclosures && type_ptr < buf + len; i++) {
+		types += type_ptr[2];
+		type_ptr += type_ptr[3] + 4;
+	}
+
+	ses_dev->page1_types = type_ptr;
+	ses_dev->page1_num_types = types;
+
+	for (i = 0; i < types && type_ptr < buf + len; i++, type_ptr += 4) {
 		if (type_ptr[0] == ENCLOSURE_COMPONENT_DEVICE ||
 		    type_ptr[0] == ENCLOSURE_COMPONENT_ARRAY_DEVICE)
 			components += type_ptr[1];
@@ -591,8 +606,6 @@ static int ses_intf_add(struct device *cdev,
 		ses_dev->page10_len = len;
 		buf = NULL;
 	}
-	kfree(hdr_buf);
-
 	scomp = kzalloc(sizeof(struct ses_component) * components, GFP_KERNEL);
 	if (!scomp)
 		goto err_free;
@@ -603,6 +616,8 @@ static int ses_intf_add(struct device *cdev,
 		err = PTR_ERR(edev);
 		goto err_free;
 	}
+
+	kfree(hdr_buf);
 
 	edev->scratch = ses_dev;
 	for (i = 0; i < components; i++)

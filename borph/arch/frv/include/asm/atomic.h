@@ -36,7 +36,7 @@
 #define smp_mb__after_atomic_inc()	barrier()
 
 #define ATOMIC_INIT(i)		{ (i) }
-#define atomic_read(v)		((v)->counter)
+#define atomic_read(v)		(*(volatile int *)&(v)->counter)
 #define atomic_set(v, i)	(((v)->counter) = (i))
 
 #ifndef CONFIG_FRV_OUTOFLINE_ATOMIC_OPS
@@ -241,7 +241,7 @@ extern uint32_t __xchg_32(uint32_t i, volatile void *v);
 #define atomic64_cmpxchg(v, old, new)	(__cmpxchg_64(old, new, &(v)->counter))
 #define atomic64_xchg(v, new)		(__xchg_64(new, &(v)->counter))
 
-static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -253,10 +253,8 @@ static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c != (u);
+	return c;
 }
 
-#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
-#include <asm-generic/atomic-long.h>
 #endif /* _ASM_ATOMIC_H */

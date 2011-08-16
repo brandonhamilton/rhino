@@ -32,7 +32,6 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -232,10 +231,9 @@ static int __devinit hecubafb_probe(struct platform_device *dev)
 
 	videomemorysize = (DPY_W*DPY_H)/8;
 
-	if (!(videomemory = vmalloc(videomemorysize)))
-		return retval;
-
-	memset(videomemory, 0, videomemorysize);
+	videomemory = vzalloc(videomemorysize);
+	if (!videomemory)
+		goto err_videomem_alloc;
 
 	info = framebuffer_alloc(sizeof(struct hecubafb_par), &dev->dev);
 	if (!info)
@@ -277,6 +275,7 @@ err_fbreg:
 	framebuffer_release(info);
 err_fballoc:
 	vfree(videomemory);
+err_videomem_alloc:
 	module_put(board->owner);
 	return retval;
 }
@@ -300,7 +299,7 @@ static int __devexit hecubafb_remove(struct platform_device *dev)
 
 static struct platform_driver hecubafb_driver = {
 	.probe	= hecubafb_probe,
-	.remove = hecubafb_remove,
+	.remove = __devexit_p(hecubafb_remove),
 	.driver	= {
 		.owner	= THIS_MODULE,
 		.name	= "hecubafb",

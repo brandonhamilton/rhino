@@ -16,6 +16,8 @@
  * Stanislav Voronyi <stas@esc.kharkov.com>	: Support for AWE 3DSE device (Jun 7 1999)
  */
 
+#include <linux/slab.h>
+
 #include "sound_config.h"
 
 #define __SB_MIXER_C__
@@ -230,7 +232,7 @@ static int detect_mixer(sb_devc * devc)
 	return 1;
 }
 
-static void change_bits(sb_devc * devc, unsigned char *regval, int dev, int chn, int newval)
+static void oss_change_bits(sb_devc *devc, unsigned char *regval, int dev, int chn, int newval)
 {
 	unsigned char mask;
 	int shift;
@@ -282,7 +284,7 @@ int sb_common_mixer_set(sb_devc * devc, int dev, int left, int right)
 		return -EINVAL;
 
 	val = sb_getmixer(devc, regoffs);
-	change_bits(devc, &val, dev, LEFT_CHN, left);
+	oss_change_bits(devc, &val, dev, LEFT_CHN, left);
 
 	if ((*devc->iomap)[dev][RIGHT_CHN].regno != regoffs)	/*
 								 * Change register
@@ -302,7 +304,7 @@ int sb_common_mixer_set(sb_devc * devc, int dev, int left, int right)
 							 * Read the new one
 							 */
 	}
-	change_bits(devc, &val, dev, RIGHT_CHN, right);
+	oss_change_bits(devc, &val, dev, RIGHT_CHN, right);
 
 	sb_setmixer(devc, regoffs, val);
 

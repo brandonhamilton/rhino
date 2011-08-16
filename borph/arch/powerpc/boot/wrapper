@@ -39,9 +39,13 @@ dts=
 cacheit=
 binary=
 gzip=.gz
+pie=
 
 # cross-compilation prefix
 CROSS=
+
+# mkimage wrapper script
+MKIMAGE=$srctree/scripts/mkuboot.sh
 
 # directory for object and other files used by this script
 object=arch/powerpc/boot
@@ -146,13 +150,18 @@ pseries)
     platformo=$object/of.o
     link_address='0x4000000'
     ;;
+maple)
+    platformo=$object/of.o
+    link_address='0x400000'
+    ;;
 pmac|chrp)
     platformo=$object/of.o
     ;;
 coff)
-    platformo=$object/of.o
+    platformo="$object/crt0.o $object/of.o"
     lds=$object/zImage.coff.lds
     link_address='0x500000'
+    pie=
     ;;
 miboot|uboot)
     # miboot and U-boot want just the bare bits, not an ELF binary
@@ -201,6 +210,7 @@ ps3)
     ksection=.kernel:vmlinux.bin
     isection=.kernel:initrd
     link_address=''
+    pie=
     ;;
 ep88xc|ep405|ep8248e)
     platformo="$object/fixed-head.o $object/$platform.o"
@@ -230,6 +240,17 @@ xpedite52*)
     link_address='0x1400000'
     platformo=$object/cuboot-85xx.o
     ;;
+gamecube|wii)
+    link_address='0x600000'
+    platformo="$object/$platform-head.o $object/$platform.o"
+    ;;
+treeboot-iss4xx-mpic)
+    platformo="$object/treeboot-iss4xx.o"
+    ;;
+epapr)
+    link_address='0x20000000'
+    pie=-pie
+    ;;
 esac
 
 vmz="$tmpdir/`basename \"$kernel\"`.$ext"
@@ -237,7 +258,7 @@ if [ -z "$cacheit" -o ! -f "$vmz$gzip" -o "$vmz$gzip" -ot "$kernel" ]; then
     ${CROSS}objcopy $objflags "$kernel" "$vmz.$$"
 
     if [ -n "$gzip" ]; then
-        gzip -f -9 "$vmz.$$"
+        gzip -n -f -9 "$vmz.$$"
     fi
 
     if [ -n "$cacheit" ]; then
@@ -263,7 +284,7 @@ membase=`${CROSS}objdump -p "$kernel" | grep -m 1 LOAD | awk '{print $7}'`
 case "$platform" in
 uboot)
     rm -f "$ofile"
-    mkimage -A ppc -O linux -T kernel -C gzip -a $membase -e $membase \
+    ${MKIMAGE} -A ppc -O linux -T kernel -C gzip -a $membase -e $membase \
 	$uboot_version -d "$vmz" "$ofile"
     if [ -z "$cacheit" ]; then
 	rm -f "$vmz"
@@ -296,9 +317,9 @@ fi
 
 if [ "$platform" != "miboot" ]; then
     if [ -n "$link_address" ] ; then
-        text_start="-Ttext $link_address --defsym _start=$link_address"
+        text_start="-Ttext $link_address"
     fi
-    ${CROSS}ld -m elf32ppc -T $lds $text_start -o "$ofile" \
+    ${CROSS}ld -m elf32ppc -T $lds $text_start $pie -o "$ofile" \
 	$platformo $tmp $object/wrapper.a
     rm $tmp
 fi
@@ -314,7 +335,7 @@ fi
 
 # post-processing needed for some platforms
 case "$platform" in
-pseries|chrp)
+pseries|chrp|maple)
     $objbin/addnote "$ofile"
     ;;
 coff)
@@ -322,8 +343,8 @@ coff)
     $objbin/hack-coff "$ofile"
     ;;
 cuboot*)
-    gzip -f -9 "$ofile"
-    mkimage -A ppc -O linux -T kernel -C gzip -a "$base" -e "$entry" \
+    gzip -n -f -9 "$ofile"
+    ${MKIMAGE} -A ppc -O linux -T kernel -C gzip -a "$base" -e "$entry" \
             $uboot_version -d "$ofile".gz "$ofile"
     ;;
 treeboot*)
@@ -369,6 +390,6 @@ ps3)
 
     odir="$(dirname "$ofile.bin")"
     rm -f "$odir/otheros.bld"
-    gzip --force -9 --stdout "$ofile.bin" > "$odir/otheros.bld"
+    gzip -n --force -9 --stdout "$ofile.bin" > "$odir/otheros.bld"
     ;;
 esac

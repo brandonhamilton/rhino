@@ -12,6 +12,7 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
+#include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/usb/atmel_usba_udc.h>
@@ -1013,6 +1014,7 @@ static struct platform_device *__initdata at32_usarts[4];
 void __init at32_map_usart(unsigned int hw_id, unsigned int line, int flags)
 {
 	struct platform_device *pdev;
+	struct atmel_uart_data *pdata;
 
 	switch (hw_id) {
 	case 0:
@@ -1042,6 +1044,8 @@ void __init at32_map_usart(unsigned int hw_id, unsigned int line, int flags)
 	}
 
 	pdev->id = line;
+	pdata = pdev->dev.platform_data;
+	pdata->num = line;
 	at32_usarts[line] = pdev;
 }
 
@@ -1325,7 +1329,7 @@ struct platform_device *__init
 at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 {
 	struct platform_device		*pdev;
-	struct mci_dma_slave		*slave;
+	struct mci_dma_data	        *slave;
 	u32				pioa_mask;
 	u32				piob_mask;
 
@@ -1344,7 +1348,9 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 				ARRAY_SIZE(atmel_mci0_resource)))
 		goto fail;
 
-	slave = kzalloc(sizeof(struct mci_dma_slave), GFP_KERNEL);
+	slave = kzalloc(sizeof(struct mci_dma_data), GFP_KERNEL);
+	if (!slave)
+		goto fail;
 
 	slave->sdata.dma_dev = &dw_dmac0_device.dev;
 	slave->sdata.reg_width = DW_DMA_SLAVE_WIDTH_32BIT;
@@ -1357,7 +1363,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 
 	if (platform_device_add_data(pdev, data,
 				sizeof(struct mci_platform_data)))
-		goto fail;
+		goto fail_free;
 
 	/* CLK line is common to both slots */
 	pioa_mask = 1 << 10;
@@ -1381,7 +1387,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 		/* Slot is unused */
 		break;
 	default:
-		goto fail;
+		goto fail_free;
 	}
 
 	select_peripheral(PIOA, pioa_mask, PERIPH_A, 0);
@@ -1408,7 +1414,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 		break;
 	default:
 		if (!data->slot[0].bus_width)
-			goto fail;
+			goto fail_free;
 
 		data->slot[1].bus_width = 0;
 		break;
@@ -1419,9 +1425,10 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 	platform_device_add(pdev);
 	return pdev;
 
+fail_free:
+	kfree(slave);
 fail:
 	data->dma_slave = NULL;
-	kfree(slave);
 	platform_device_put(pdev);
 	return NULL;
 }
@@ -1767,10 +1774,13 @@ at32_add_device_usba(unsigned int id, struct usba_platform_data *data)
 					  ARRAY_SIZE(usba0_resource)))
 		goto out_free_pdev;
 
-	if (data)
+	if (data) {
 		usba_data.pdata.vbus_pin = data->vbus_pin;
-	else
+		usba_data.pdata.vbus_pin_inverted = data->vbus_pin_inverted;
+	} else {
 		usba_data.pdata.vbus_pin = -EINVAL;
+		usba_data.pdata.vbus_pin_inverted = -EINVAL;
+	}
 
 	data = &usba_data.pdata;
 	data->num_ep = ARRAY_SIZE(at32_usba_ep);
@@ -2041,6 +2051,11 @@ at32_add_device_ac97c(unsigned int id, struct ac97c_platform_data *data,
 		rx_dws->reg_width = DW_DMA_SLAVE_WIDTH_16BIT;
 		rx_dws->cfg_hi = DWC_CFGH_SRC_PER(3);
 		rx_dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
+		rx_dws->src_master = 0;
+		rx_dws->dst_master = 1;
+		rx_dws->src_msize = DW_DMA_MSIZE_1;
+		rx_dws->dst_msize = DW_DMA_MSIZE_1;
+		rx_dws->fc = DW_DMA_FC_D_P2M;
 	}
 
 	/* Check if DMA slave interface for playback should be configured. */
@@ -2049,6 +2064,11 @@ at32_add_device_ac97c(unsigned int id, struct ac97c_platform_data *data,
 		tx_dws->reg_width = DW_DMA_SLAVE_WIDTH_16BIT;
 		tx_dws->cfg_hi = DWC_CFGH_DST_PER(4);
 		tx_dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
+		tx_dws->src_master = 0;
+		tx_dws->dst_master = 1;
+		tx_dws->src_msize = DW_DMA_MSIZE_1;
+		tx_dws->dst_msize = DW_DMA_MSIZE_1;
+		tx_dws->fc = DW_DMA_FC_D_M2P;
 	}
 
 	if (platform_device_add_data(pdev, data,
@@ -2121,6 +2141,11 @@ at32_add_device_abdac(unsigned int id, struct atmel_abdac_pdata *data)
 	dws->reg_width = DW_DMA_SLAVE_WIDTH_32BIT;
 	dws->cfg_hi = DWC_CFGH_DST_PER(2);
 	dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
+	dws->src_master = 0;
+	dws->dst_master = 1;
+	dws->src_msize = DW_DMA_MSIZE_1;
+	dws->dst_msize = DW_DMA_MSIZE_1;
+	dws->fc = DW_DMA_FC_D_M2P;
 
 	if (platform_device_add_data(pdev, data,
 				sizeof(struct atmel_abdac_pdata)))

@@ -24,6 +24,7 @@
 #include <linux/moduleparam.h>
 #include <linux/err.h>
 #include <linux/mtd/mtd.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 
 #define PRINT_PREF KERN_INFO "mtd_subpagetest: "
@@ -353,12 +354,11 @@ static int scan_for_bad_eraseblocks(void)
 {
 	int i, bad = 0;
 
-	bbt = kmalloc(ebcnt, GFP_KERNEL);
+	bbt = kzalloc(ebcnt, GFP_KERNEL);
 	if (!bbt) {
 		printk(PRINT_PREF "error: cannot allocate memory\n");
 		return -ENOMEM;
 	}
-	memset(bbt, 0 , ebcnt);
 
 	printk(PRINT_PREF "scanning for bad eraseblocks\n");
 	for (i = 0; i < ebcnt; ++i) {
@@ -394,6 +394,11 @@ static int __init mtd_subpagetest_init(void)
 	}
 
 	subpgsize = mtd->writesize >> mtd->subpage_sft;
+	tmp = mtd->size;
+	do_div(tmp, mtd->erasesize);
+	ebcnt = tmp;
+	pgcnt = mtd->erasesize / mtd->writesize;
+
 	printk(PRINT_PREF "MTD device size %llu, eraseblock size %u, "
 	       "page size %u, subpage size %u, count of eraseblocks %u, "
 	       "pages per eraseblock %u, OOB size %u\n",
@@ -412,11 +417,6 @@ static int __init mtd_subpagetest_init(void)
 		printk(PRINT_PREF "error: cannot allocate memory\n");
 		goto out;
 	}
-
-	tmp = mtd->size;
-	do_div(tmp, mtd->erasesize);
-	ebcnt = tmp;
-	pgcnt = mtd->erasesize / mtd->writesize;
 
 	err = scan_for_bad_eraseblocks();
 	if (err)

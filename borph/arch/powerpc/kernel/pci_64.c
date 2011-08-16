@@ -55,16 +55,16 @@ static int __init pcibios_init(void)
 	ppc_md.phys_mem_access_prot = pci_phys_mem_access_prot;
 
 	if (pci_probe_only)
-		ppc_pci_flags |= PPC_PCI_PROBE_ONLY;
+		pci_add_flags(PCI_PROBE_ONLY);
 
 	/* On ppc64, we always enable PCI domains and we keep domain 0
 	 * backward compatible in /proc for video cards
 	 */
-	ppc_pci_flags |= PPC_PCI_ENABLE_PROC_DOMAINS | PPC_PCI_COMPAT_DOMAIN_0;
+	pci_add_flags(PCI_ENABLE_PROC_DOMAINS | PCI_COMPAT_DOMAIN_0);
 
 	/* Scan all of the recorded PCI controllers.  */
 	list_for_each_entry_safe(hose, tmp, &hose_list, list_node) {
-		pcibios_scan_phb(hose, hose->dn);
+		pcibios_scan_phb(hose);
 		pci_bus_add_devices(hose->bus);
 	}
 
@@ -193,8 +193,7 @@ int __devinit pcibios_map_io_space(struct pci_bus *bus)
 	hose->io_resource.start += io_virt_offset;
 	hose->io_resource.end += io_virt_offset;
 
-	pr_debug("  hose->io_resource=0x%016llx...0x%016llx\n",
-		 hose->io_resource.start, hose->io_resource.end);
+	pr_debug("  hose->io_resource=%pR\n", &hose->io_resource);
 
 	return 0;
 }
@@ -224,7 +223,7 @@ long sys_pciconfig_iobase(long which, unsigned long in_bus,
 	 * G5 machines... So when something asks for bus 0 io base
 	 * (bus 0 is HT root), we return the AGP one instead.
 	 */
-	if (in_bus == 0 && machine_is_compatible("MacRISC4")) {
+	if (in_bus == 0 && of_machine_is_compatible("MacRISC4")) {
 		struct device_node *agp;
 
 		agp = of_find_compatible_node(NULL, NULL, "u3-agp");
@@ -243,10 +242,10 @@ long sys_pciconfig_iobase(long which, unsigned long in_bus,
 			break;
 		bus = NULL;
 	}
-	if (bus == NULL || bus->sysdata == NULL)
+	if (bus == NULL || bus->dev.of_node == NULL)
 		return -ENODEV;
 
-	hose_node = (struct device_node *)bus->sysdata;
+	hose_node = bus->dev.of_node;
 	hose = PCI_DN(hose_node)->phb;
 
 	switch (which) {

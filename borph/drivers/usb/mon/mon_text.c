@@ -7,6 +7,7 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/usb.h>
+#include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/mutex.h>
 #include <linux/debugfs.h>
@@ -158,11 +159,9 @@ static inline char mon_text_get_data(struct mon_event_text *ep, struct urb *urb,
 		if (src == NULL)
 			return 'Z';	/* '0' would be not as pretty. */
 	} else {
-		struct scatterlist *sg = urb->sg->sg;
+		struct scatterlist *sg = urb->sg;
 
-		/* If IOMMU coalescing occurred, we cannot trust sg_page */
-		if (urb->sg->nents != urb->num_sgs ||
-				PageHighMem(sg_page(sg)))
+		if (PageHighMem(sg_page(sg)))
 			return 'D';
 
 		/* For the text interface we copy only the first sg buffer */
@@ -180,7 +179,7 @@ static inline unsigned int mon_get_timestamp(void)
 	unsigned int stamp;
 
 	do_gettimeofday(&tval);
-	stamp = tval.tv_sec & 0xFFFF;	/* 2^32 = 4294967296. Limit to 4096s. */
+	stamp = tval.tv_sec & 0xFFF;	/* 2^32 = 4294967296. Limit to 4096s. */
 	stamp = stamp * 1000000 + tval.tv_usec;
 	return stamp;
 }
@@ -237,6 +236,9 @@ static void mon_text_event(struct mon_reader_text *rp, struct urb *urb,
 			fp++;
 			dp++;
 		}
+		/* Wasteful, but simple to understand: ISO 'C' is sparse. */
+		if (ev_type == 'C')
+			ep->length = urb->transfer_buffer_length;
 	}
 
 	ep->setup_flag = mon_text_get_setup(ep, urb, ev_type, rp->r.m_bus);
@@ -273,12 +275,12 @@ static void mon_text_error(void *data, struct urb *urb, int error)
 
 	ep->type = 'E';
 	ep->id = (unsigned long) urb;
-	ep->busnum = 0;
+	ep->busnum = urb->dev->bus->busnum;
 	ep->devnum = urb->dev->devnum;
 	ep->epnum = usb_endpoint_num(&urb->ep->desc);
 	ep->xfertype = usb_endpoint_type(&urb->ep->desc);
 	ep->is_in = usb_urb_dir_in(urb);
-	ep->tstamp = 0;
+	ep->tstamp = mon_get_timestamp();
 	ep->length = 0;
 	ep->status = error;
 
@@ -668,6 +670,9 @@ int mon_text_add(struct mon_bus *mbus, const struct usb_bus *ubus)
 	int busnum = ubus? ubus->busnum: 0;
 	int rc;
 
+	if (mon_dir == NULL)
+		return 0;
+
 	if (ubus != NULL) {
 		rc = snprintf(name, NAMESZ, "%dt", busnum);
 		if (rc <= 0 || rc >= NAMESZ)
@@ -738,12 +743,12 @@ int __init mon_text_init(void)
 
 	mondir = debugfs_create_dir("usbmon", usb_debug_root);
 	if (IS_ERR(mondir)) {
-		printk(KERN_NOTICE TAG ": debugfs is not available\n");
-		return -ENODEV;
+		/* debugfs not available, but we can use usbmon without it */
+		return 0;
 	}
 	if (mondir == NULL) {
 		printk(KERN_NOTICE TAG ": unable to create usbmon directory\n");
-		return -ENODEV;
+		return -ENOMEM;
 	}
 	mon_dir = mondir;
 	return 0;

@@ -31,9 +31,8 @@
 #include <linux/module.h>	/* Modules 			*/
 #include <linux/init.h>		/* Initdata			*/
 #include <linux/ioport.h>	/* request_region		*/
-#include <linux/delay.h>	/* udelay			*/
+#include <linux/delay.h>	/* msleep			*/
 #include <linux/videodev2.h>	/* kernel radio structs		*/
-#include <linux/version.h>	/* for KERNEL_VERSION MACRO	*/
 #include <linux/io.h>		/* outb, outb_p			*/
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -41,6 +40,7 @@
 MODULE_AUTHOR("M.Kirkwood");
 MODULE_DESCRIPTION("A driver for the RadioTrack/RadioReveal radio card.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 #ifndef CONFIG_RADIO_RTRACK_PORT
 #define CONFIG_RADIO_RTRACK_PORT -1
@@ -52,8 +52,6 @@ static int radio_nr = -1;
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the RadioTrack card (0x20f or 0x30f)");
 module_param(radio_nr, int, 0);
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 struct rtrack
 {
@@ -71,27 +69,17 @@ static struct rtrack rtrack_card;
 
 /* local things */
 
-static void sleep_delay(long n)
-{
-	/* Sleep nicely for 'n' uS */
-	int d = n / msecs_to_jiffies(1000);
-	if (!d)
-		udelay(n);
-	else
-		msleep(jiffies_to_msecs(d));
-}
-
 static void rt_decvol(struct rtrack *rt)
 {
 	outb(0x58, rt->io);		/* volume down + sigstr + on	*/
-	sleep_delay(100000);
+	msleep(100);
 	outb(0xd8, rt->io);		/* volume steady + sigstr + on	*/
 }
 
 static void rt_incvol(struct rtrack *rt)
 {
 	outb(0x98, rt->io);		/* volume up + sigstr + on	*/
-	sleep_delay(100000);
+	msleep(100);
 	outb(0xd8, rt->io);		/* volume steady + sigstr + on	*/
 }
 
@@ -120,7 +108,7 @@ static int rt_setvol(struct rtrack *rt, int vol)
 
 	if (vol == 0) {			/* volume = 0 means mute the card */
 		outb(0x48, rt->io);	/* volume down but still "on"	*/
-		sleep_delay(2000000);	/* make sure it's totally down	*/
+		msleep(2000);	/* make sure it's totally down	*/
 		outb(0xd0, rt->io);	/* volume steady, off		*/
 		rt->curvol = 0;		/* track the volume state!	*/
 		mutex_unlock(&rt->lock);
@@ -155,7 +143,7 @@ static void send_0_byte(struct rtrack *rt)
 		outb_p(128+64+16+8+  1, rt->io);  /* on + wr-enable + data low */
 		outb_p(128+64+16+8+2+1, rt->io);  /* clock */
 	}
-	sleep_delay(1000);
+	msleep(1);
 }
 
 static void send_1_byte(struct rtrack *rt)
@@ -169,7 +157,7 @@ static void send_1_byte(struct rtrack *rt)
 		outb_p(128+64+16+8+4+2+1, rt->io); /* clock */
 	}
 
-	sleep_delay(1000);
+	msleep(1);
 }
 
 static int rt_setfreq(struct rtrack *rt, unsigned long freq)
@@ -233,7 +221,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->driver, "radio-aimslab", sizeof(v->driver));
 	strlcpy(v->card, "RadioTrack", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -268,6 +255,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct rtrack *rt = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	rt_setfreq(rt, f->frequency);
 	return 0;
 }
@@ -277,6 +266,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct rtrack *rt = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = rt->curfreq;
 	return 0;
@@ -357,7 +348,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations rtrack_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops rtrack_ioctl_ops = {
@@ -408,13 +399,6 @@ static int __init rtrack_init(void)
 	rt->vdev.release = video_device_release_empty;
 	video_set_drvdata(&rt->vdev, rt);
 
-	if (video_register_device(&rt->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
-		v4l2_device_unregister(&rt->v4l2_dev);
-		release_region(rt->io, 2);
-		return -EINVAL;
-	}
-	v4l2_info(v4l2_dev, "AIMSlab RadioTrack/RadioReveal card driver.\n");
-
 	/* Set up the I/O locking */
 
 	mutex_init(&rt->lock);
@@ -423,8 +407,15 @@ static int __init rtrack_init(void)
 
 	/* this ensures that the volume is all the way down  */
 	outb(0x48, rt->io);		/* volume down but still "on"	*/
-	sleep_delay(2000000);	/* make sure it's totally down	*/
+	msleep(2000);	/* make sure it's totally down	*/
 	outb(0xc0, rt->io);		/* steady volume, mute card	*/
+
+	if (video_register_device(&rt->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
+		v4l2_device_unregister(&rt->v4l2_dev);
+		release_region(rt->io, 2);
+		return -EINVAL;
+	}
+	v4l2_info(v4l2_dev, "AIMSlab RadioTrack/RadioReveal card driver.\n");
 
 	return 0;
 }

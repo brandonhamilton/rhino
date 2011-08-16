@@ -29,6 +29,7 @@
 #include <linux/i2o.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include "core.h"
 
 #define OSM_NAME	"i2o"
@@ -539,7 +540,7 @@ static int i2o_iop_reset(struct i2o_controller *c)
 		 * which is indeterminate. We need to wait until the IOP has
 		 * rebooted before we can let the system talk to it. We read
 		 * the inbound Free_List until a message is available. If we
-		 * can't read one in the given ammount of time, we assume the
+		 * can't read one in the given amount of time, we assume the
 		 * IOP could not reboot properly.
 		 */
 		osm_debug("%s: Reset in progress, waiting for reboot...\n",
@@ -680,11 +681,11 @@ static int i2o_iop_systab_set(struct i2o_controller *c)
 		if (root && allocate_resource(root, res, sb->desired_mem_size, sb->desired_mem_size, sb->desired_mem_size, 1 << 20,	/* Unspecified, so use 1Mb and play safe */
 					      NULL, NULL) >= 0) {
 			c->mem_alloc = 1;
-			sb->current_mem_size = 1 + res->end - res->start;
+			sb->current_mem_size = resource_size(res);
 			sb->current_mem_base = res->start;
 			osm_info("%s: allocated %llu bytes of PCI memory at "
 				"0x%016llX.\n", c->name,
-				(unsigned long long)(1 + res->end - res->start),
+				(unsigned long long)resource_size(res),
 				(unsigned long long)res->start);
 		}
 	}
@@ -702,11 +703,11 @@ static int i2o_iop_systab_set(struct i2o_controller *c)
 		if (root && allocate_resource(root, res, sb->desired_io_size, sb->desired_io_size, sb->desired_io_size, 1 << 20,	/* Unspecified, so use 1Mb and play safe */
 					      NULL, NULL) >= 0) {
 			c->io_alloc = 1;
-			sb->current_io_size = 1 + res->end - res->start;
+			sb->current_io_size = resource_size(res);
 			sb->current_mem_base = res->start;
 			osm_info("%s: allocated %llu bytes of PCI I/O at "
 				"0x%016llX.\n", c->name,
-				(unsigned long long)(1 + res->end - res->start),
+				(unsigned long long)resource_size(res),
 				(unsigned long long)res->start);
 		}
 	}

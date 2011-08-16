@@ -200,7 +200,7 @@ static unsigned int oldpiix_qc_issue(struct ata_queued_cmd *qc)
 		if (ata_dma_enabled(adev))
 			oldpiix_set_dmamode(ap, adev);
 	}
-	return ata_sff_qc_issue(qc);
+	return ata_bmdma_qc_issue(qc);
 }
 
 
@@ -235,7 +235,6 @@ static struct ata_port_operations oldpiix_pata_ops = {
 
 static int oldpiix_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	static int printed_version;
 	static const struct ata_port_info info = {
 		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= ATA_PIO4,
@@ -244,11 +243,9 @@ static int oldpiix_init_one (struct pci_dev *pdev, const struct pci_device_id *e
 	};
 	const struct ata_port_info *ppi[] = { &info, NULL };
 
-	if (!printed_version++)
-		dev_printk(KERN_DEBUG, &pdev->dev,
-			   "version " DRV_VERSION "\n");
+	ata_print_version_once(&pdev->dev, DRV_VERSION);
 
-	return ata_pci_sff_init_one(pdev, ppi, &oldpiix_sht, NULL);
+	return ata_pci_bmdma_init_one(pdev, ppi, &oldpiix_sht, NULL, 0);
 }
 
 static const struct pci_device_id oldpiix_pci_tbl[] = {

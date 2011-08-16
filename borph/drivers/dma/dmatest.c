@@ -8,12 +8,14 @@
  * published by the Free Software Foundation.
  */
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/init.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/random.h>
+#include <linux/slab.h>
 #include <linux/wait.h>
 
 static unsigned int test_buf_size = 16384;
@@ -52,6 +54,11 @@ static unsigned int pq_sources = 3;
 module_param(pq_sources, uint, S_IRUGO);
 MODULE_PARM_DESC(pq_sources,
 		"Number of p+q source buffers (default: 3)");
+
+static int timeout = 3000;
+module_param(timeout, uint, S_IRUGO);
+MODULE_PARM_DESC(timeout, "Transfer Timeout in msec (default: 3000), "
+		 "Pass -1 for infinite timeout");
 
 /*
  * Initialization patterns. All bytes in the source buffer has bit 7
@@ -237,7 +244,7 @@ static int dmatest_func(void *data)
 	dma_cookie_t		cookie;
 	enum dma_status		status;
 	enum dma_ctrl_flags 	flags;
-	u8			pq_coefs[pq_sources];
+	u8			pq_coefs[pq_sources + 1];
 	int			ret;
 	int			src_cnt;
 	int			dst_cnt;
@@ -257,7 +264,7 @@ static int dmatest_func(void *data)
 	} else if (thread->type == DMA_PQ) {
 		src_cnt = pq_sources | 1; /* force odd to ensure dst = src */
 		dst_cnt = 2;
-		for (i = 0; i < pq_sources; i++)
+		for (i = 0; i < src_cnt; i++)
 			pq_coefs[i] = 1;
 	} else
 		goto err_srcs;
@@ -284,7 +291,12 @@ static int dmatest_func(void *data)
 
 	set_user_nice(current, 10);
 
-	flags = DMA_CTRL_ACK | DMA_COMPL_SKIP_DEST_UNMAP | DMA_PREP_INTERRUPT;
+	/*
+	 * src buffers are freed by the DMAEngine code with dma_unmap_single()
+	 * dst buffers are freed by ourselves below
+	 */
+	flags = DMA_CTRL_ACK | DMA_PREP_INTERRUPT
+	      | DMA_COMPL_SKIP_DEST_UNMAP | DMA_COMPL_SRC_UNMAP_SINGLE;
 
 	while (!kthread_should_stop()
 	       && !(iterations && total_tests >= iterations)) {
@@ -293,14 +305,10 @@ static int dmatest_func(void *data)
 		dma_addr_t dma_srcs[src_cnt];
 		dma_addr_t dma_dsts[dst_cnt];
 		struct completion cmp;
-		unsigned long tmo = msecs_to_jiffies(3000);
+		unsigned long tmo = msecs_to_jiffies(timeout);
 		u8 align = 0;
 
 		total_tests++;
-
-		len = dmatest_random() % test_buf_size + 1;
-		src_off = dmatest_random() % (test_buf_size - len + 1);
-		dst_off = dmatest_random() % (test_buf_size - len + 1);
 
 		/* honor alignment restrictions */
 		if (thread->type == DMA_MEMCPY)
@@ -310,7 +318,19 @@ static int dmatest_func(void *data)
 		else if (thread->type == DMA_PQ)
 			align = dev->pq_align;
 
+		if (1 << align > test_buf_size) {
+			pr_err("%u-byte buffer too small for %d-byte alignment\n",
+			       test_buf_size, 1 << align);
+			break;
+		}
+
+		len = dmatest_random() % test_buf_size + 1;
 		len = (len >> align) << align;
+		if (!len)
+			len = 1 << align;
+		src_off = dmatest_random() % (test_buf_size - len + 1);
+		dst_off = dmatest_random() % (test_buf_size - len + 1);
+
 		src_off = (src_off >> align) << align;
 		dst_off = (dst_off >> align) << align;
 
@@ -339,7 +359,7 @@ static int dmatest_func(void *data)
 		else if (thread->type == DMA_XOR)
 			tx = dev->device_prep_dma_xor(chan,
 						      dma_dsts[0] + dst_off,
-						      dma_srcs, xor_sources,
+						      dma_srcs, src_cnt,
 						      len, flags);
 		else if (thread->type == DMA_PQ) {
 			dma_addr_t dma_pq[dst_cnt];
@@ -347,7 +367,7 @@ static int dmatest_func(void *data)
 			for (i = 0; i < dst_cnt; i++)
 				dma_pq[i] = dma_dsts[i] + dst_off;
 			tx = dev->device_prep_dma_pq(chan, dma_pq, dma_srcs,
-						     pq_sources, pq_coefs,
+						     src_cnt, pq_coefs,
 						     len, flags);
 		}
 
@@ -459,7 +479,7 @@ err_srcs:
 
 	if (iterations > 0)
 		while (!kthread_should_stop()) {
-			DECLARE_WAIT_QUEUE_HEAD(wait_dmatest_exit);
+			DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wait_dmatest_exit);
 			interruptible_sleep_on(&wait_dmatest_exit);
 		}
 
@@ -531,7 +551,7 @@ static int dmatest_add_channel(struct dma_chan *chan)
 	struct dmatest_chan	*dtc;
 	struct dma_device	*dma_dev = chan->device;
 	unsigned int		thread_count = 0;
-	unsigned int		cnt;
+	int cnt;
 
 	dtc = kmalloc(sizeof(struct dmatest_chan), GFP_KERNEL);
 	if (!dtc) {
@@ -615,5 +635,5 @@ static void __exit dmatest_exit(void)
 }
 module_exit(dmatest_exit);
 
-MODULE_AUTHOR("Haavard Skinnemoen <hskinnemoen@atmel.com>");
+MODULE_AUTHOR("Haavard Skinnemoen (Atmel)");
 MODULE_LICENSE("GPL v2");

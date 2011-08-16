@@ -8,6 +8,8 @@
 #include <linux/idr.h>
 #include <linux/rculist.h>
 #include <linux/nsproxy.h>
+#include <linux/proc_fs.h>
+#include <linux/file.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 
@@ -26,6 +28,45 @@ struct net init_net;
 EXPORT_SYMBOL(init_net);
 
 #define INITIAL_NET_GEN_PTRS	13 /* +1 for len +2 for rcu_head */
+
+static int net_assign_generic(struct net *net, int id, void *data)
+{
+	struct net_generic *ng, *old_ng;
+
+	BUG_ON(!mutex_is_locked(&net_mutex));
+	BUG_ON(id == 0);
+
+	old_ng = rcu_dereference_protected(net->gen,
+					   lockdep_is_held(&net_mutex));
+	ng = old_ng;
+	if (old_ng->len >= id)
+		goto assign;
+
+	ng = kzalloc(sizeof(struct net_generic) +
+			id * sizeof(void *), GFP_KERNEL);
+	if (ng == NULL)
+		return -ENOMEM;
+
+	/*
+	 * Some synchronisation notes:
+	 *
+	 * The net_generic explores the net->gen array inside rcu
+	 * read section. Besides once set the net->gen->ptr[x]
+	 * pointer never changes (see rules in netns/generic.h).
+	 *
+	 * That said, we simply duplicate this array and schedule
+	 * the old copy for kfree after a grace period.
+	 */
+
+	ng->len = id;
+	memcpy(&ng->ptr, &old_ng->ptr, old_ng->len * sizeof(void*));
+
+	rcu_assign_pointer(net->gen, ng);
+	kfree_rcu(old_ng, rcu);
+assign:
+	ng->ptr[id - 1] = data;
+	return 0;
+}
 
 static int ops_init(const struct pernet_operations *ops, struct net *net)
 {
@@ -87,6 +128,8 @@ static __net_init int setup_net(struct net *net)
 	LIST_HEAD(net_exit_list);
 
 	atomic_set(&net->count, 1);
+	atomic_set(&net->passive, 1);
+	net->dev_base_seq = 1;
 
 #ifdef NETNS_REFCNT_DEBUG
 	atomic_set(&net->use_count, 0);
@@ -169,10 +212,20 @@ static void net_free(struct net *net)
 	kmem_cache_free(net_cachep, net);
 }
 
-static struct net *net_create(void)
+void net_drop_ns(void *p)
+{
+	struct net *ns = p;
+	if (ns && atomic_dec_and_test(&ns->passive))
+		net_free(ns);
+}
+
+struct net *copy_net_ns(unsigned long flags, struct net *old_net)
 {
 	struct net *net;
 	int rv;
+
+	if (!(flags & CLONE_NEWNET))
+		return get_net(old_net);
 
 	net = net_alloc();
 	if (!net)
@@ -186,17 +239,10 @@ static struct net *net_create(void)
 	}
 	mutex_unlock(&net_mutex);
 	if (rv < 0) {
-		net_free(net);
+		net_drop_ns(net);
 		return ERR_PTR(rv);
 	}
 	return net;
-}
-
-struct net *copy_net_ns(unsigned long flags, struct net *old_net)
-{
-	if (!(flags & CLONE_NEWNET))
-		return get_net(old_net);
-	return net_create();
 }
 
 static DEFINE_SPINLOCK(cleanup_list_lock);
@@ -249,7 +295,7 @@ static void cleanup_net(struct work_struct *work)
 	/* Finally it is safe to free my network namespace structure */
 	list_for_each_entry_safe(net, tmp, &net_exit_list, exit_list) {
 		list_del_init(&net->exit_list);
-		net_free(net);
+		net_drop_ns(net);
 	}
 }
 static DECLARE_WORK(net_cleanup_work, cleanup_net);
@@ -267,12 +313,37 @@ void __put_net(struct net *net)
 }
 EXPORT_SYMBOL_GPL(__put_net);
 
+struct net *get_net_ns_by_fd(int fd)
+{
+	struct proc_inode *ei;
+	struct file *file;
+	struct net *net;
+
+	file = proc_ns_fget(fd);
+	if (IS_ERR(file))
+		return ERR_CAST(file);
+
+	ei = PROC_I(file->f_dentry->d_inode);
+	if (ei->ns_ops == &netns_operations)
+		net = get_net(ei->ns);
+	else
+		net = ERR_PTR(-EINVAL);
+
+	fput(file);
+	return net;
+}
+
 #else
 struct net *copy_net_ns(unsigned long flags, struct net *old_net)
 {
 	if (flags & CLONE_NEWNET)
 		return ERR_PTR(-EINVAL);
 	return old_net;
+}
+
+struct net *get_net_ns_by_fd(int fd)
+{
+	return ERR_PTR(-EINVAL);
 }
 #endif
 
@@ -469,10 +540,10 @@ EXPORT_SYMBOL_GPL(register_pernet_subsys);
  *	addition run the exit method for all existing network
  *	namespaces.
  */
-void unregister_pernet_subsys(struct pernet_operations *module)
+void unregister_pernet_subsys(struct pernet_operations *ops)
 {
 	mutex_lock(&net_mutex);
-	unregister_pernet_operations(module);
+	unregister_pernet_operations(ops);
 	mutex_unlock(&net_mutex);
 }
 EXPORT_SYMBOL_GPL(unregister_pernet_subsys);
@@ -527,48 +598,38 @@ void unregister_pernet_device(struct pernet_operations *ops)
 }
 EXPORT_SYMBOL_GPL(unregister_pernet_device);
 
-static void net_generic_release(struct rcu_head *rcu)
+#ifdef CONFIG_NET_NS
+static void *netns_get(struct task_struct *task)
 {
-	struct net_generic *ng;
+	struct net *net = NULL;
+	struct nsproxy *nsproxy;
 
-	ng = container_of(rcu, struct net_generic, rcu);
-	kfree(ng);
+	rcu_read_lock();
+	nsproxy = task_nsproxy(task);
+	if (nsproxy)
+		net = get_net(nsproxy->net_ns);
+	rcu_read_unlock();
+
+	return net;
 }
 
-int net_assign_generic(struct net *net, int id, void *data)
+static void netns_put(void *ns)
 {
-	struct net_generic *ng, *old_ng;
+	put_net(ns);
+}
 
-	BUG_ON(!mutex_is_locked(&net_mutex));
-	BUG_ON(id == 0);
-
-	ng = old_ng = net->gen;
-	if (old_ng->len >= id)
-		goto assign;
-
-	ng = kzalloc(sizeof(struct net_generic) +
-			id * sizeof(void *), GFP_KERNEL);
-	if (ng == NULL)
-		return -ENOMEM;
-
-	/*
-	 * Some synchronisation notes:
-	 *
-	 * The net_generic explores the net->gen array inside rcu
-	 * read section. Besides once set the net->gen->ptr[x]
-	 * pointer never changes (see rules in netns/generic.h).
-	 *
-	 * That said, we simply duplicate this array and schedule
-	 * the old copy for kfree after a grace period.
-	 */
-
-	ng->len = id;
-	memcpy(&ng->ptr, &old_ng->ptr, old_ng->len * sizeof(void*));
-
-	rcu_assign_pointer(net->gen, ng);
-	call_rcu(&old_ng->rcu, net_generic_release);
-assign:
-	ng->ptr[id - 1] = data;
+static int netns_install(struct nsproxy *nsproxy, void *ns)
+{
+	put_net(nsproxy->net_ns);
+	nsproxy->net_ns = get_net(ns);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(net_assign_generic);
+
+const struct proc_ns_operations netns_operations = {
+	.name		= "net",
+	.type		= CLONE_NEWNET,
+	.get		= netns_get,
+	.put		= netns_put,
+	.install	= netns_install,
+};
+#endif

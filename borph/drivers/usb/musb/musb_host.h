@@ -83,8 +83,6 @@ static inline struct musb_qh *first_qh(struct list_head *q)
 
 
 extern void musb_root_disconnect(struct musb *musb);
-extern void init_queue(struct musb *musb);
-extern void free_queue(struct musb *musb);
 
 struct usb_hcd;
 
@@ -97,7 +95,6 @@ extern const struct hc_driver musb_hc_driver;
 
 static inline struct urb *next_urb(struct musb_qh *qh)
 {
-#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	struct list_head	*queue;
 
 	if (!qh)
@@ -106,9 +103,6 @@ static inline struct urb *next_urb(struct musb_qh *qh)
 	if (list_empty(queue))
 		return NULL;
 	return list_entry(queue->next, struct urb, urb_list);
-#else
-	return NULL;
-#endif
 }
 
 #endif				/* _MUSB_HOST_H */

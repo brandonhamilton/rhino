@@ -22,7 +22,6 @@
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 
@@ -197,6 +196,11 @@ clear_master_aborts(void)
 void __init
 ixp2000_pci_preinit(void)
 {
+	pci_set_flags(0);
+
+	pcibios_min_io = 0;
+	pcibios_min_mem = 0;
+
 #ifndef CONFIG_IXP2000_SUPPORT_BROKEN_PCI_IO
 	/*
 	 * Configure the PCI unit to properly byteswap I/O transactions,
@@ -210,7 +214,7 @@ ixp2000_pci_preinit(void)
 			"the needed workaround has not been configured in");
 #endif
 
-	hook_fault_code(16+6, ixp2000_pci_abort_handler, SIGBUS,
+	hook_fault_code(16+6, ixp2000_pci_abort_handler, SIGBUS, 0,
 				"PCI config cycle to non-existent device");
 }
 

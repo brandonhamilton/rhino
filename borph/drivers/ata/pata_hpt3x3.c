@@ -151,7 +151,7 @@ static struct ata_port_operations hpt3x3_port_ops = {
 	.check_atapi_dma= hpt3x3_atapi_dma,
 	.freeze		= hpt3x3_freeze,
 #endif
-	
+
 };
 
 /**
@@ -180,12 +180,11 @@ static void hpt3x3_init_chipset(struct pci_dev *dev)
  *	@id: Entry in match table
  *
  *	Perform basic initialisation. We set the device up so we access all
- *	ports via BAR4. This is neccessary to work around errata.
+ *	ports via BAR4. This is necessary to work around errata.
  */
 
 static int hpt3x3_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-	static int printed_version;
 	static const struct ata_port_info info = {
 		.flags = ATA_FLAG_SLAVE_POSS,
 		.pio_mask = ATA_PIO4,
@@ -206,8 +205,7 @@ static int hpt3x3_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	hpt3x3_init_chipset(pdev);
 
-	if (!printed_version++)
-		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
+	ata_print_version_once(&pdev->dev, DRV_VERSION);
 
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, 2);
 	if (!host)
@@ -248,7 +246,7 @@ static int hpt3x3_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		ata_port_pbar_desc(ap, 4, offset_cmd[i], "cmd");
 	}
 	pci_set_master(pdev);
-	return ata_host_activate(host, pdev->irq, ata_sff_interrupt,
+	return ata_host_activate(host, pdev->irq, ata_bmdma_interrupt,
 				 IRQF_SHARED, &hpt3x3_sht);
 }
 

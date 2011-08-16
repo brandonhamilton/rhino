@@ -10,6 +10,7 @@
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 #include <linux/rcupdate.h>
 #include <linux/mutex.h>
 
@@ -61,8 +62,7 @@ static inline struct dev_cgroup *task_devcgroup(struct task_struct *task)
 struct cgroup_subsys devices_subsys;
 
 static int devcgroup_can_attach(struct cgroup_subsys *ss,
-		struct cgroup *new_cgroup, struct task_struct *task,
-		bool threadgroup)
+		struct cgroup *new_cgroup, struct task_struct *task)
 {
 	if (current != task && !capable(CAP_SYS_ADMIN))
 			return -EPERM;
@@ -125,14 +125,6 @@ static int dev_whitelist_add(struct dev_cgroup *dev_cgroup,
 	return 0;
 }
 
-static void whitelist_item_free(struct rcu_head *rcu)
-{
-	struct dev_whitelist_item *item;
-
-	item = container_of(rcu, struct dev_whitelist_item, rcu);
-	kfree(item);
-}
-
 /*
  * called under devcgroup_mutex
  */
@@ -155,7 +147,7 @@ remove:
 		walk->access &= ~wh->access;
 		if (!walk->access) {
 			list_del_rcu(&walk->list);
-			call_rcu(&walk->rcu, whitelist_item_free);
+			kfree_rcu(walk, rcu);
 		}
 	}
 }
@@ -469,21 +461,15 @@ struct cgroup_subsys devices_subsys = {
 	.name = "devices",
 	.can_attach = devcgroup_can_attach,
 	.create = devcgroup_create,
-	.destroy  = devcgroup_destroy,
+	.destroy = devcgroup_destroy,
 	.populate = devcgroup_populate,
 	.subsys_id = devices_subsys_id,
 };
 
-int devcgroup_inode_permission(struct inode *inode, int mask)
+int __devcgroup_inode_permission(struct inode *inode, int mask)
 {
 	struct dev_cgroup *dev_cgroup;
 	struct dev_whitelist_item *wh;
-
-	dev_t device = inode->i_rdev;
-	if (!device)
-		return 0;
-	if (!S_ISBLK(inode->i_mode) && !S_ISCHR(inode->i_mode))
-		return 0;
 
 	rcu_read_lock();
 

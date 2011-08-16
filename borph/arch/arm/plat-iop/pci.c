@@ -359,7 +359,7 @@ static void __init iop3xx_atu_debug(void)
 	DBG("ATU: IOP3XX_ATUCMD=0x%04x\n", *IOP3XX_ATUCMD);
 	DBG("ATU: IOP3XX_ATUCR=0x%08x\n", *IOP3XX_ATUCR);
 
-	hook_fault_code(16+6, iop3xx_pci_abort, SIGBUS, "imprecise external abort");
+	hook_fault_code(16+6, iop3xx_pci_abort, SIGBUS, 0, "imprecise external abort");
 }
 
 /* for platforms that might be host-bus-adapters */
@@ -374,6 +374,9 @@ void __init iop3xx_pci_preinit_cond(void)
 
 void __init iop3xx_pci_preinit(void)
 {
+	pcibios_min_io = 0;
+	pcibios_min_mem = 0;
+
 	iop3xx_atu_disable();
 	iop3xx_atu_setup();
 	iop3xx_atu_debug();

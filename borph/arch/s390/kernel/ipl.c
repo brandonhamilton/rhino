@@ -15,6 +15,7 @@
 #include <linux/reboot.h>
 #include <linux/ctype.h>
 #include <linux/fs.h>
+#include <linux/gfp.h>
 #include <asm/ipl.h>
 #include <asm/smp.h>
 #include <asm/setup.h>
@@ -44,11 +45,13 @@
  * - halt
  * - power off
  * - reipl
+ * - restart
  */
 #define ON_PANIC_STR		"on_panic"
 #define ON_HALT_STR		"on_halt"
 #define ON_POFF_STR		"on_poff"
 #define ON_REIPL_STR		"on_reboot"
+#define ON_RESTART_STR		"on_restart"
 
 struct shutdown_action;
 struct shutdown_trigger {
@@ -221,7 +224,7 @@ static ssize_t sys_##_prefix##_##_name##_store(struct kobject *kobj,	\
 		const char *buf, size_t len)				\
 {									\
 	strncpy(_value, buf, sizeof(_value) - 1);			\
-	strstrip(_value);						\
+	strim(_value);							\
 	return len;							\
 }									\
 static struct kobj_attribute sys_##_prefix##_##_name##_attr =		\
@@ -402,8 +405,9 @@ static ssize_t sys_ipl_device_show(struct kobject *kobj,
 static struct kobj_attribute sys_ipl_device_attr =
 	__ATTR(device, S_IRUGO, sys_ipl_device_show, NULL);
 
-static ssize_t ipl_parameter_read(struct kobject *kobj, struct bin_attribute *attr,
-				  char *buf, loff_t off, size_t count)
+static ssize_t ipl_parameter_read(struct file *filp, struct kobject *kobj,
+				  struct bin_attribute *attr, char *buf,
+				  loff_t off, size_t count)
 {
 	return memory_read_from_buffer(buf, count, &off, IPL_PARMBLOCK_START,
 					IPL_PARMBLOCK_SIZE);
@@ -418,8 +422,9 @@ static struct bin_attribute ipl_parameter_attr = {
 	.read = &ipl_parameter_read,
 };
 
-static ssize_t ipl_scp_data_read(struct kobject *kobj, struct bin_attribute *attr,
-				 char *buf, loff_t off, size_t count)
+static ssize_t ipl_scp_data_read(struct file *filp, struct kobject *kobj,
+				 struct bin_attribute *attr, char *buf,
+				 loff_t off, size_t count)
 {
 	unsigned int size = IPL_PARMBLOCK_START->ipl_info.fcp.scp_data_len;
 	void *scp_data = &IPL_PARMBLOCK_START->ipl_info.fcp.scp_data;
@@ -472,7 +477,7 @@ static ssize_t ipl_ccw_loadparm_show(struct kobject *kobj,
 		return sprintf(page, "#unknown#\n");
 	memcpy(loadparm, &sclp_ipl_info.loadparm, LOADPARM_LEN);
 	EBCASC(loadparm, LOADPARM_LEN);
-	strstrip(loadparm);
+	strim(loadparm);
 	return sprintf(page, "%s\n", loadparm);
 }
 
@@ -553,13 +558,18 @@ out:
 	return rc;
 }
 
-static void ipl_run(struct shutdown_trigger *trigger)
+static void __ipl_run(void *unused)
 {
 	diag308(DIAG308_IPL, NULL);
 	if (MACHINE_IS_VM)
 		__cpcmd("IPL", NULL, 0, NULL);
 	else if (ipl_info.type == IPL_TYPE_CCW)
 		reipl_ccw_dev(&ipl_info.data.ccw.dev_id);
+}
+
+static void ipl_run(struct shutdown_trigger *trigger)
+{
+	smp_switch_to_ipl_cpu(__ipl_run, NULL);
 }
 
 static int __init ipl_init(void)
@@ -688,7 +698,7 @@ static struct kobj_attribute sys_reipl_ccw_vmparm_attr =
 
 /* FCP reipl device attributes */
 
-static ssize_t reipl_fcp_scpdata_read(struct kobject *kobj,
+static ssize_t reipl_fcp_scpdata_read(struct file *filp, struct kobject *kobj,
 				      struct bin_attribute *attr,
 				      char *buf, loff_t off, size_t count)
 {
@@ -698,7 +708,7 @@ static ssize_t reipl_fcp_scpdata_read(struct kobject *kobj,
 	return memory_read_from_buffer(buf, count, &off, scp_data, size);
 }
 
-static ssize_t reipl_fcp_scpdata_write(struct kobject *kobj,
+static ssize_t reipl_fcp_scpdata_write(struct file *filp, struct kobject *kobj,
 				       struct bin_attribute *attr,
 				       char *buf, loff_t off, size_t count)
 {
@@ -776,7 +786,7 @@ static void reipl_get_ascii_loadparm(char *loadparm,
 	memcpy(loadparm, ibp->ipl_info.ccw.load_parm, LOADPARM_LEN);
 	EBCASC(loadparm, LOADPARM_LEN);
 	loadparm[LOADPARM_LEN] = 0;
-	strstrip(loadparm);
+	strim(loadparm);
 }
 
 static ssize_t reipl_generic_loadparm_show(struct ipl_parameter_block *ipb,
@@ -1039,7 +1049,7 @@ static void get_ipl_string(char *dst, struct ipl_parameter_block *ipb,
 		sprintf(dst + pos, " PARM %s", vmparm);
 }
 
-static void reipl_run(struct shutdown_trigger *trigger)
+static void __reipl_run(void *unused)
 {
 	struct ccw_dev_id devid;
 	static char buf[128];
@@ -1085,6 +1095,11 @@ static void reipl_run(struct shutdown_trigger *trigger)
 		break;
 	}
 	disabled_wait((unsigned long) __builtin_return_address(0));
+}
+
+static void reipl_run(struct shutdown_trigger *trigger)
+{
+	smp_switch_to_ipl_cpu(__reipl_run, NULL);
 }
 
 static void reipl_block_ccw_init(struct ipl_parameter_block *ipb)
@@ -1369,20 +1384,18 @@ static struct kobj_attribute dump_type_attr =
 
 static struct kset *dump_kset;
 
-static void dump_run(struct shutdown_trigger *trigger)
+static void __dump_run(void *unused)
 {
 	struct ccw_dev_id devid;
 	static char buf[100];
 
 	switch (dump_method) {
 	case DUMP_METHOD_CCW_CIO:
-		smp_send_stop();
 		devid.devno = dump_block_ccw->ipl_info.ccw.devno;
 		devid.ssid  = 0;
 		reipl_ccw_dev(&devid);
 		break;
 	case DUMP_METHOD_CCW_VM:
-		smp_send_stop();
 		sprintf(buf, "STORE STATUS");
 		__cpcmd(buf, NULL, 0, NULL);
 		sprintf(buf, "IPL %X", dump_block_ccw->ipl_info.ccw.devno);
@@ -1396,10 +1409,17 @@ static void dump_run(struct shutdown_trigger *trigger)
 		diag308(DIAG308_SET, dump_block_fcp);
 		diag308(DIAG308_DUMP, NULL);
 		break;
-	case DUMP_METHOD_NONE:
-		return;
+	default:
+		break;
 	}
-	printk(KERN_EMERG "Dump failed!\n");
+}
+
+static void dump_run(struct shutdown_trigger *trigger)
+{
+	if (dump_method == DUMP_METHOD_NONE)
+		return;
+	smp_send_stop();
+	smp_switch_to_ipl_cpu(__dump_run, NULL);
 }
 
 static int __init dump_ccw_init(void)
@@ -1526,17 +1546,20 @@ static char vmcmd_on_reboot[128];
 static char vmcmd_on_panic[128];
 static char vmcmd_on_halt[128];
 static char vmcmd_on_poff[128];
+static char vmcmd_on_restart[128];
 
 DEFINE_IPL_ATTR_STR_RW(vmcmd, on_reboot, "%s\n", "%s\n", vmcmd_on_reboot);
 DEFINE_IPL_ATTR_STR_RW(vmcmd, on_panic, "%s\n", "%s\n", vmcmd_on_panic);
 DEFINE_IPL_ATTR_STR_RW(vmcmd, on_halt, "%s\n", "%s\n", vmcmd_on_halt);
 DEFINE_IPL_ATTR_STR_RW(vmcmd, on_poff, "%s\n", "%s\n", vmcmd_on_poff);
+DEFINE_IPL_ATTR_STR_RW(vmcmd, on_restart, "%s\n", "%s\n", vmcmd_on_restart);
 
 static struct attribute *vmcmd_attrs[] = {
 	&sys_vmcmd_on_reboot_attr.attr,
 	&sys_vmcmd_on_panic_attr.attr,
 	&sys_vmcmd_on_halt_attr.attr,
 	&sys_vmcmd_on_poff_attr.attr,
+	&sys_vmcmd_on_restart_attr.attr,
 	NULL,
 };
 
@@ -1558,6 +1581,8 @@ static void vmcmd_run(struct shutdown_trigger *trigger)
 		cmd = vmcmd_on_halt;
 	else if (strcmp(trigger->name, ON_POFF_STR) == 0)
 		cmd = vmcmd_on_poff;
+	else if (strcmp(trigger->name, ON_RESTART_STR) == 0)
+		cmd = vmcmd_on_restart;
 	else
 		return;
 
@@ -1577,7 +1602,7 @@ static void vmcmd_run(struct shutdown_trigger *trigger)
 static int vmcmd_init(void)
 {
 	if (!MACHINE_IS_VM)
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 	vmcmd_kset = kset_create_and_add("vmcmd", NULL, firmware_kobj);
 	if (!vmcmd_kset)
 		return -ENOMEM;
@@ -1595,7 +1620,7 @@ static void stop_run(struct shutdown_trigger *trigger)
 {
 	if (strcmp(trigger->name, ON_PANIC_STR) == 0)
 		disabled_wait((unsigned long) __builtin_return_address(0));
-	while (signal_processor(smp_processor_id(), sigp_stop) == sigp_busy)
+	while (sigp(smp_processor_id(), sigp_stop) == sigp_busy)
 		cpu_relax();
 	for (;;);
 }
@@ -1689,6 +1714,34 @@ static void do_panic(void)
 	stop_run(&on_panic_trigger);
 }
 
+/* on restart */
+
+static struct shutdown_trigger on_restart_trigger = {ON_RESTART_STR,
+	&reipl_action};
+
+static ssize_t on_restart_show(struct kobject *kobj,
+			       struct kobj_attribute *attr, char *page)
+{
+	return sprintf(page, "%s\n", on_restart_trigger.action->name);
+}
+
+static ssize_t on_restart_store(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t len)
+{
+	return set_trigger(buf, &on_restart_trigger, len);
+}
+
+static struct kobj_attribute on_restart_attr =
+	__ATTR(on_restart, 0644, on_restart_show, on_restart_store);
+
+void do_restart(void)
+{
+	smp_send_stop();
+	on_restart_trigger.action->fn(&on_restart_trigger);
+	stop_run(&on_restart_trigger);
+}
+
 /* on halt */
 
 static struct shutdown_trigger on_halt_trigger = {ON_HALT_STR, &stop_action};
@@ -1765,7 +1818,9 @@ static void __init shutdown_triggers_init(void)
 	if (sysfs_create_file(&shutdown_actions_kset->kobj,
 			      &on_poff_attr.attr))
 		goto fail;
-
+	if (sysfs_create_file(&shutdown_actions_kset->kobj,
+			      &on_restart_attr.attr))
+		goto fail;
 	return;
 fail:
 	panic("shutdown_triggers_init failed\n");
@@ -1902,7 +1957,6 @@ void __init ipl_update_parameters(void)
 void __init ipl_save_parameters(void)
 {
 	struct cio_iplinfo iplinfo;
-	unsigned int *ipl_ptr;
 	void *src, *dst;
 
 	if (cio_get_iplinfo(&iplinfo))
@@ -1913,11 +1967,10 @@ void __init ipl_save_parameters(void)
 	if (!iplinfo.is_qdio)
 		return;
 	ipl_flags |= IPL_PARMBLOCK_VALID;
-	ipl_ptr = (unsigned int *)__LC_IPL_PARMBLOCK_PTR;
-	src = (void *)(unsigned long)*ipl_ptr;
+	src = (void *)(unsigned long)S390_lowcore.ipl_parmblock_ptr;
 	dst = (void *)IPL_PARMBLOCK_ORIGIN;
 	memmove(dst, src, PAGE_SIZE);
-	*ipl_ptr = IPL_PARMBLOCK_ORIGIN;
+	S390_lowcore.ipl_parmblock_ptr = IPL_PARMBLOCK_ORIGIN;
 }
 
 static LIST_HEAD(rcall);
@@ -1943,6 +1996,12 @@ static void do_reset_calls(void)
 {
 	struct reset_call *reset;
 
+#ifdef CONFIG_64BIT
+	if (diag308_set_works) {
+		diag308_reset();
+		return;
+	}
+#endif
 	list_for_each_entry(reset, &rcall, list)
 		reset->fn();
 }

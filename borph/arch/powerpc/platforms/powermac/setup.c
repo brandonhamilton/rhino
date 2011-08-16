@@ -31,7 +31,6 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/tty.h>
 #include <linux/string.h>
@@ -52,7 +51,7 @@
 #include <linux/suspend.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <linux/lmb.h>
+#include <linux/memblock.h>
 
 #include <asm/reg.h>
 #include <asm/sections.h>
@@ -356,9 +355,6 @@ static int initializing = 1;
 static int pmac_late_init(void)
 {
 	initializing = 0;
-	/* this is udbg (which is __init) and we can later use it during
-	 * cpu hotplug (in smp_core99_kick_cpu) */
-	ppc_md.progress = NULL;
 	return 0;
 }
 machine_late_initcall(powermac, pmac_late_init);
@@ -481,7 +477,7 @@ static void __init pmac_init_early(void)
 #endif
 
 	/* SMP Init has to be done early as we need to patch up
-	 * cpu_possible_map before interrupt stacks are allocated
+	 * cpu_possible_mask before interrupt stacks are allocated
 	 * or kaboom...
 	 */
 #ifdef CONFIG_SMP
@@ -505,6 +501,15 @@ static int __init pmac_declare_of_platform_devices(void)
         np = of_find_node_by_type(NULL, "smu");
         if (np) {
 		of_platform_device_create(np, "smu", NULL);
+		of_node_put(np);
+	}
+	np = of_find_node_by_type(NULL, "fcu");
+	if (np == NULL) {
+		/* Some machines have strangely broken device-tree */
+		np = of_find_node_by_path("/u3@0,f8000000/i2c@f8001000/fan@15e");
+	}
+	if (np) {
+		of_platform_device_create(np, "temperature", NULL);
 		of_node_put(np);
 	}
 
@@ -620,7 +625,7 @@ static int __init pmac_probe(void)
 	 * driver needs that. We have to allocate it now. We allocate 4k
 	 * (1 small page) for now.
 	 */
-	smu_cmdbuf_abs = lmb_alloc_base(4096, 4096, 0x80000000UL);
+	smu_cmdbuf_abs = memblock_alloc_base(4096, 4096, 0x80000000UL);
 #endif /* CONFIG_PMAC_SMU */
 
 	return 1;
@@ -642,51 +647,6 @@ static int pmac_pci_probe_mode(struct pci_bus *bus)
 		return PCI_PROBE_NORMAL;
 	return PCI_PROBE_DEVTREE;
 }
-
-#ifdef CONFIG_HOTPLUG_CPU
-/* access per cpu vars from generic smp.c */
-DECLARE_PER_CPU(int, cpu_state);
-
-static void pmac_cpu_die(void)
-{
-	/*
-	 * turn off as much as possible, we'll be
-	 * kicked out as this will only be invoked
-	 * on core99 platforms for now ...
-	 */
-
-	printk(KERN_INFO "CPU#%d offline\n", smp_processor_id());
-	__get_cpu_var(cpu_state) = CPU_DEAD;
-	smp_wmb();
-
-	/*
-	 * during the path that leads here preemption is disabled,
-	 * reenable it now so that when coming up preempt count is
-	 * zero correctly
-	 */
-	preempt_enable();
-
-	/*
-	 * hard-disable interrupts for the non-NAP case, the NAP code
-	 * needs to re-enable interrupts (but soft-disables them)
-	 */
-	hard_irq_disable();
-
-	while (1) {
-		/* let's not take timer interrupts too often ... */
-		set_dec(0x7fffffff);
-
-		/* should always be true at this point */
-		if (cpu_has_feature(CPU_FTR_CAN_NAP))
-			power4_cpu_offline_powersave();
-		else {
-			HMT_low();
-			HMT_very_low();
-		}
-	}
-}
-#endif /* CONFIG_HOTPLUG_CPU */
-
 #endif /* CONFIG_PPC64 */
 
 define_machine(powermac) {
@@ -717,11 +677,5 @@ define_machine(powermac) {
 	.pcibios_enable_device_hook = pmac_pci_enable_device_hook,
 	.pcibios_after_init	= pmac_pcibios_after_init,
 	.phys_mem_access_prot	= pci_phys_mem_access_prot,
-#endif
-#if defined(CONFIG_HOTPLUG_CPU) && defined(CONFIG_PPC64)
-	.cpu_die		= pmac_cpu_die,
-#endif
-#if defined(CONFIG_HOTPLUG_CPU) && defined(CONFIG_PPC32)
-	.cpu_die		= generic_mach_cpu_die,
 #endif
 };

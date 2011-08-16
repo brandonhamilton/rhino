@@ -58,10 +58,11 @@
 
 #include <linux/crc32.h>
 #include <linux/err.h>
+#include <linux/slab.h>
 #include <asm/div64.h>
 #include "ubi.h"
 
-#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
+#ifdef CONFIG_MTD_UBI_DEBUG
 static void paranoid_vtbl_check(const struct ubi_device *ubi);
 #else
 #define paranoid_vtbl_check(ubi)
@@ -306,23 +307,13 @@ static int create_vtbl(struct ubi_device *ubi, struct ubi_scan_info *si,
 {
 	int err, tries = 0;
 	static struct ubi_vid_hdr *vid_hdr;
-	struct ubi_scan_volume *sv;
-	struct ubi_scan_leb *new_seb, *old_seb = NULL;
+	struct ubi_scan_leb *new_seb;
 
 	ubi_msg("create volume table (copy #%d)", copy + 1);
 
 	vid_hdr = ubi_zalloc_vid_hdr(ubi, GFP_KERNEL);
 	if (!vid_hdr)
 		return -ENOMEM;
-
-	/*
-	 * Check if there is a logical eraseblock which would have to contain
-	 * this volume table copy was found during scanning. It has to be wiped
-	 * out.
-	 */
-	sv = ubi_scan_find_sv(si, UBI_LAYOUT_VOLUME_ID);
-	if (sv)
-		old_seb = ubi_scan_find_seb(sv, copy);
 
 retry:
 	new_seb = ubi_scan_get_free_peb(ubi, si);
@@ -350,8 +341,8 @@ retry:
 		goto write_error;
 
 	/*
-	 * And add it to the scanning information. Don't delete the old
-	 * @old_seb as it will be deleted and freed in 'ubi_scan_add_used()'.
+	 * And add it to the scanning information. Don't delete the old version
+	 * of this LEB as it will be deleted and freed in 'ubi_scan_add_used()'.
 	 */
 	err = ubi_scan_add_used(ubi, si, new_seb->pnum, new_seb->ec,
 				vid_hdr, 0);
@@ -365,7 +356,7 @@ write_error:
 		 * Probably this physical eraseblock went bad, try to pick
 		 * another one.
 		 */
-		list_add_tail(&new_seb->u.list, &si->corr);
+		list_add(&new_seb->u.list, &si->erase);
 		goto retry;
 	}
 	kfree(new_seb);
@@ -413,7 +404,7 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 	 * 0 contains more recent information.
 	 *
 	 * So the plan is to first check LEB 0. Then
-	 * a. if LEB 0 is OK, it must be containing the most resent data; then
+	 * a. if LEB 0 is OK, it must be containing the most recent data; then
 	 *    we compare it with LEB 1, and if they are different, we copy LEB
 	 *    0 to LEB 1;
 	 * b. if LEB 0 is corrupted, but LEB 1 has to be OK, and we copy LEB 1
@@ -424,12 +415,11 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 
 	/* Read both LEB 0 and LEB 1 into memory */
 	ubi_rb_for_each_entry(rb, seb, &sv->root, u.rb) {
-		leb[seb->lnum] = vmalloc(ubi->vtbl_size);
+		leb[seb->lnum] = vzalloc(ubi->vtbl_size);
 		if (!leb[seb->lnum]) {
 			err = -ENOMEM;
 			goto out_free;
 		}
-		memset(leb[seb->lnum], 0, ubi->vtbl_size);
 
 		err = ubi_io_read_data(ubi, leb[seb->lnum], seb->pnum, 0,
 				       ubi->vtbl_size);
@@ -515,10 +505,9 @@ static struct ubi_vtbl_record *create_empty_lvol(struct ubi_device *ubi,
 	int i;
 	struct ubi_vtbl_record *vtbl;
 
-	vtbl = vmalloc(ubi->vtbl_size);
+	vtbl = vzalloc(ubi->vtbl_size);
 	if (!vtbl)
 		return ERR_PTR(-ENOMEM);
-	memset(vtbl, 0, ubi->vtbl_size);
 
 	for (i = 0; i < ubi->vtbl_slots; i++)
 		memcpy(&vtbl[i], &empty_vtbl_record, UBI_VTBL_RECORD_SIZE);
@@ -566,6 +555,7 @@ static int init_volumes(struct ubi_device *ubi, const struct ubi_scan_info *si,
 		vol->reserved_pebs = be32_to_cpu(vtbl[i].reserved_pebs);
 		vol->alignment = be32_to_cpu(vtbl[i].alignment);
 		vol->data_pad = be32_to_cpu(vtbl[i].data_pad);
+		vol->upd_marker = vtbl[i].upd_marker;
 		vol->vol_type = vtbl[i].vol_type == UBI_VID_DYNAMIC ?
 					UBI_DYNAMIC_VOLUME : UBI_STATIC_VOLUME;
 		vol->name_len = be16_to_cpu(vtbl[i].name_len);
@@ -660,9 +650,13 @@ static int init_volumes(struct ubi_device *ubi, const struct ubi_scan_info *si,
 	ubi->vol_count += 1;
 	vol->ubi = ubi;
 
-	if (reserved_pebs > ubi->avail_pebs)
+	if (reserved_pebs > ubi->avail_pebs) {
 		ubi_err("not enough PEBs, required %d, available %d",
 			reserved_pebs, ubi->avail_pebs);
+		if (ubi->corr_peb_count)
+			ubi_err("%d PEBs are corrupted and not used",
+				ubi->corr_peb_count);
+	}
 	ubi->rsvd_pebs += reserved_pebs;
 	ubi->avail_pebs -= reserved_pebs;
 
@@ -835,7 +829,7 @@ int ubi_read_volume_table(struct ubi_device *ubi, struct ubi_scan_info *si)
 			return PTR_ERR(ubi->vtbl);
 	}
 
-	ubi->avail_pebs = ubi->good_peb_count;
+	ubi->avail_pebs = ubi->good_peb_count - ubi->corr_peb_count;
 
 	/*
 	 * The layout volume is OK, initialize the corresponding in-RAM data
@@ -846,7 +840,7 @@ int ubi_read_volume_table(struct ubi_device *ubi, struct ubi_scan_info *si)
 		goto out_free;
 
 	/*
-	 * Get sure that the scanning information is consistent to the
+	 * Make sure that the scanning information is consistent to the
 	 * information stored in the volume table.
 	 */
 	err = check_scanning_info(ubi, si);
@@ -864,7 +858,7 @@ out_free:
 	return err;
 }
 
-#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
+#ifdef CONFIG_MTD_UBI_DEBUG
 
 /**
  * paranoid_vtbl_check - check volume table.
@@ -872,10 +866,13 @@ out_free:
  */
 static void paranoid_vtbl_check(const struct ubi_device *ubi)
 {
+	if (!ubi->dbg->chk_gen)
+		return;
+
 	if (vtbl_check(ubi, ubi->vtbl)) {
 		ubi_err("paranoid check failed");
 		BUG();
 	}
 }
 
-#endif /* CONFIG_MTD_UBI_DEBUG_PARANOID */
+#endif /* CONFIG_MTD_UBI_DEBUG */

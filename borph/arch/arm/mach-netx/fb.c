@@ -23,6 +23,7 @@
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
 #include <linux/err.h>
+#include <linux/gfp.h>
 
 #include <asm/irq.h>
 
@@ -102,7 +103,6 @@ static struct amba_device fb_device = {
 		.flags	= IORESOURCE_MEM,
 	},
 	.irq		= { NETX_IRQ_LCD, NO_IRQ },
-	.periphid	= 0x10112400,
 };
 
 int netx_fb_init(struct clcd_board *board, struct clcd_panel *panel)

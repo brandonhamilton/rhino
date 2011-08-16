@@ -38,7 +38,7 @@
 
 #define nr_syscalls ((syscall_table_size)/4)
 
-	.section	.text.entry
+	.section	.text..entry
 	.balign		4
 
 .macro LEDS val
@@ -1526,5 +1526,6 @@ sys_call_table:
 	.long sys_pwritev
 	.long sys_rt_tgsigqueueinfo	/* 335 */
 	.long sys_perf_event_open
+	.long sys_setns
 
 syscall_table_size = (. - sys_call_table)

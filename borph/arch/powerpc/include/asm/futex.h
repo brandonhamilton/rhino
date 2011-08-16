@@ -11,7 +11,7 @@
 
 #define __futex_atomic_op(insn, ret, oldval, uaddr, oparg) \
   __asm__ __volatile ( \
-	LWSYNC_ON_SMP \
+	PPC_RELEASE_BARRIER \
 "1:	lwarx	%0,0,%2\n" \
 	insn \
 	PPC405_ERR77(0, %2) \
@@ -30,7 +30,7 @@
 	: "b" (uaddr), "i" (-EFAULT), "r" (oparg) \
 	: "cr0", "memory")
 
-static inline int futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
+static inline int futex_atomic_op_inuser (int encoded_op, u32 __user *uaddr)
 {
 	int op = (encoded_op >> 28) & 7;
 	int cmp = (encoded_op >> 24) & 15;
@@ -40,7 +40,7 @@ static inline int futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
 	if (encoded_op & (FUTEX_OP_OPARG_SHIFT << 28))
 		oparg = 1 << oparg;
 
-	if (! access_ok (VERIFY_WRITE, uaddr, sizeof(int)))
+	if (! access_ok (VERIFY_WRITE, uaddr, sizeof(u32)))
 		return -EFAULT;
 
 	pagefault_disable();
@@ -82,35 +82,38 @@ static inline int futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
 }
 
 static inline int
-futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
+futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+			      u32 oldval, u32 newval)
 {
-	int prev;
+	int ret = 0;
+	u32 prev;
 
-	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(int)))
+	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
 		return -EFAULT;
 
         __asm__ __volatile__ (
-        LWSYNC_ON_SMP
-"1:     lwarx   %0,0,%2         # futex_atomic_cmpxchg_inatomic\n\
-        cmpw    0,%0,%3\n\
+        PPC_RELEASE_BARRIER
+"1:     lwarx   %1,0,%3         # futex_atomic_cmpxchg_inatomic\n\
+        cmpw    0,%1,%4\n\
         bne-    3f\n"
-        PPC405_ERR77(0,%2)
-"2:     stwcx.  %4,0,%2\n\
+        PPC405_ERR77(0,%3)
+"2:     stwcx.  %5,0,%3\n\
         bne-    1b\n"
-        ISYNC_ON_SMP
+        PPC_ACQUIRE_BARRIER
 "3:	.section .fixup,\"ax\"\n\
-4:	li	%0,%5\n\
+4:	li	%0,%6\n\
 	b	3b\n\
 	.previous\n\
 	.section __ex_table,\"a\"\n\
 	.align 3\n\
 	" PPC_LONG "1b,4b,2b,4b\n\
 	.previous" \
-        : "=&r" (prev), "+m" (*uaddr)
+        : "+r" (ret), "=&r" (prev), "+m" (*uaddr)
         : "r" (uaddr), "r" (oldval), "r" (newval), "i" (-EFAULT)
         : "cc", "memory");
 
-        return prev;
+	*uval = prev;
+        return ret;
 }
 
 #endif /* __KERNEL__ */

@@ -32,6 +32,7 @@
 
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 #include "drmP.h"
 
 #if defined(CONFIG_DEBUG_FS)
@@ -47,7 +48,6 @@ static struct drm_info_list drm_debugfs_list[] = {
 	{"queues", drm_queues_info, 0},
 	{"bufs", drm_bufs_info, 0},
 	{"gem_names", drm_gem_name_info, DRIVER_GEM},
-	{"gem_objects", drm_gem_object_info, DRIVER_GEM},
 #if DRM_DEBUG_CODE
 	{"vma", drm_vma_info, 0},
 #endif
@@ -90,7 +90,6 @@ int drm_debugfs_create_files(struct drm_info_list *files, int count,
 	struct drm_device *dev = minor->dev;
 	struct dentry *ent;
 	struct drm_info_node *tmp;
-	char name[64];
 	int i, ret;
 
 	for (i = 0; i < count; i++) {
@@ -108,6 +107,9 @@ int drm_debugfs_create_files(struct drm_info_list *files, int count,
 		ent = debugfs_create_file(files[i].name, S_IFREG | S_IRUGO,
 					  root, tmp, &drm_debugfs_fops);
 		if (!ent) {
+			char name[64];
+			strncpy(name, root->d_name.name,
+						min(root->d_name.len, 64U));
 			DRM_ERROR("Cannot create /sys/kernel/debug/dri/%s/%s\n",
 				  name, files[i].name);
 			kfree(tmp);

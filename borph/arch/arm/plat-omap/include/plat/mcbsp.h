@@ -24,11 +24,21 @@
 #ifndef __ASM_ARCH_OMAP_MCBSP_H
 #define __ASM_ARCH_OMAP_MCBSP_H
 
-#include <linux/completion.h>
 #include <linux/spinlock.h>
 
 #include <mach/hardware.h>
 #include <plat/clock.h>
+
+/* macro for building platform_device for McBSP ports */
+#define OMAP_MCBSP_PLATFORM_DEVICE(port_nr)		\
+static struct platform_device omap_mcbsp##port_nr = {	\
+	.name	= "omap-mcbsp-dai",			\
+	.id	= port_nr - 1,			\
+}
+
+#define MCBSP_CONFIG_TYPE2	0x2
+#define MCBSP_CONFIG_TYPE3	0x3
+#define MCBSP_CONFIG_TYPE4	0x4
 
 #define OMAP7XX_MCBSP1_BASE	0xfffb1000
 #define OMAP7XX_MCBSP2_BASE	0xfffb1800
@@ -41,29 +51,14 @@
 #define OMAP1610_MCBSP2_BASE	0xfffb1000
 #define OMAP1610_MCBSP3_BASE	0xe1017000
 
-#define OMAP24XX_MCBSP1_BASE	0x48074000
-#define OMAP24XX_MCBSP2_BASE	0x48076000
-#define OMAP2430_MCBSP3_BASE	0x4808c000
-#define OMAP2430_MCBSP4_BASE	0x4808e000
-#define OMAP2430_MCBSP5_BASE	0x48096000
-
-#define OMAP34XX_MCBSP1_BASE	0x48074000
-#define OMAP34XX_MCBSP2_BASE	0x49022000
-#define OMAP34XX_MCBSP3_BASE	0x49024000
-#define OMAP34XX_MCBSP4_BASE	0x49026000
-#define OMAP34XX_MCBSP5_BASE	0x48096000
-
-#define OMAP44XX_MCBSP1_BASE	0x49022000
-#define OMAP44XX_MCBSP2_BASE	0x49024000
-#define OMAP44XX_MCBSP3_BASE	0x49026000
-#define OMAP44XX_MCBSP4_BASE	0x48074000
-
-#if defined(CONFIG_ARCH_OMAP15XX) || defined(CONFIG_ARCH_OMAP16XX) || defined(CONFIG_ARCH_OMAP730) || defined(CONFIG_ARCH_OMAP850)
+#ifdef CONFIG_ARCH_OMAP1
 
 #define OMAP_MCBSP_REG_DRR2	0x00
 #define OMAP_MCBSP_REG_DRR1	0x02
 #define OMAP_MCBSP_REG_DXR2	0x04
 #define OMAP_MCBSP_REG_DXR1	0x06
+#define OMAP_MCBSP_REG_DRR	0x02
+#define OMAP_MCBSP_REG_DXR	0x06
 #define OMAP_MCBSP_REG_SPCR2	0x08
 #define OMAP_MCBSP_REG_SPCR1	0x0a
 #define OMAP_MCBSP_REG_RCR2	0x0c
@@ -96,15 +91,7 @@
 #define OMAP_MCBSP_REG_XCCR	0x00
 #define OMAP_MCBSP_REG_RCCR	0x00
 
-#define AUDIO_MCBSP_DATAWRITE	(OMAP1510_MCBSP1_BASE + OMAP_MCBSP_REG_DXR1)
-#define AUDIO_MCBSP_DATAREAD	(OMAP1510_MCBSP1_BASE + OMAP_MCBSP_REG_DRR1)
-
-#define AUDIO_MCBSP		OMAP_MCBSP1
-#define AUDIO_DMA_TX		OMAP_DMA_MCBSP1_TX
-#define AUDIO_DMA_RX		OMAP_DMA_MCBSP1_RX
-
-#elif defined(CONFIG_ARCH_OMAP24XX) || defined(CONFIG_ARCH_OMAP34XX) || \
-	defined(CONFIG_ARCH_OMAP4)
+#else
 
 #define OMAP_MCBSP_REG_DRR2	0x00
 #define OMAP_MCBSP_REG_DRR1	0x04
@@ -147,13 +134,17 @@
 #define OMAP_MCBSP_REG_WAKEUPEN	0xA8
 #define OMAP_MCBSP_REG_XCCR	0xAC
 #define OMAP_MCBSP_REG_RCCR	0xB0
+#define OMAP_MCBSP_REG_XBUFFSTAT	0xB4
+#define OMAP_MCBSP_REG_RBUFFSTAT	0xB8
+#define OMAP_MCBSP_REG_SSELCR	0xBC
 
-#define AUDIO_MCBSP_DATAWRITE	(OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DXR1)
-#define AUDIO_MCBSP_DATAREAD	(OMAP24XX_MCBSP2_BASE + OMAP_MCBSP_REG_DRR1)
-
-#define AUDIO_MCBSP		OMAP_MCBSP2
-#define AUDIO_DMA_TX		OMAP24XX_DMA_MCBSP2_TX
-#define AUDIO_DMA_RX		OMAP24XX_DMA_MCBSP2_RX
+#define OMAP_ST_REG_REV		0x00
+#define OMAP_ST_REG_SYSCONFIG	0x10
+#define OMAP_ST_REG_IRQSTATUS	0x18
+#define OMAP_ST_REG_IRQENABLE	0x1C
+#define OMAP_ST_REG_SGAINCR	0x24
+#define OMAP_ST_REG_SFIRCR	0x28
+#define OMAP_ST_REG_SSELCR	0x2C
 
 #endif
 
@@ -265,6 +256,24 @@
 #define ENAWAKEUP		0x0004
 #define SOFTRST			0x0002
 
+/********************** McBSP SSELCR bit definitions ***********************/
+#define SIDETONEEN		0x0400
+
+/********************** McBSP Sidetone SYSCONFIG bit definitions ***********/
+#define ST_AUTOIDLE		0x0001
+
+/********************** McBSP Sidetone SGAINCR bit definitions *************/
+#define ST_CH1GAIN(value)	((value<<16))	/* Bits 16:31 */
+#define ST_CH0GAIN(value)	(value)		/* Bits 0:15 */
+
+/********************** McBSP Sidetone SFIRCR bit definitions **************/
+#define ST_FIRCOEFF(value)	(value)		/* Bits 0:15 */
+
+/********************** McBSP Sidetone SSELCR bit definitions **************/
+#define ST_COEFFWRDONE		0x0004
+#define ST_COEFFWREN		0x0002
+#define ST_SIDETONEEN		0x0001
+
 /********************** McBSP DMA operating modes **************************/
 #define MCBSP_DMA_MODE_ELEMENT		0
 #define MCBSP_DMA_MODE_THRESHOLD	1
@@ -280,6 +289,18 @@
 #define REOFEN			0x0004
 #define RFSREN			0x0002
 #define RSYNCERREN		0x0001
+
+/* CLKR signal muxing options */
+#define CLKR_SRC_CLKR		0
+#define CLKR_SRC_CLKX		1
+
+/* FSR signal muxing options */
+#define FSR_SRC_FSR		0
+#define FSR_SRC_FSX		1
+
+/* McBSP functional clock sources */
+#define MCBSP_CLKS_PRCM_SRC	0
+#define MCBSP_CLKS_PAD_SRC	1
 
 /* we don't do multichannel for now */
 struct omap_mcbsp_reg_cfg {
@@ -311,18 +332,6 @@ struct omap_mcbsp_reg_cfg {
 };
 
 typedef enum {
-	OMAP_MCBSP1 = 0,
-	OMAP_MCBSP2,
-	OMAP_MCBSP3,
-	OMAP_MCBSP4,
-	OMAP_MCBSP5
-} omap_mcbsp_id;
-
-typedef int __bitwise omap_mcbsp_io_type_t;
-#define OMAP_MCBSP_IRQ_IO ((__force omap_mcbsp_io_type_t) 1)
-#define OMAP_MCBSP_POLL_IO ((__force omap_mcbsp_io_type_t) 2)
-
-typedef enum {
 	OMAP_MCBSP_WORD_8 = 0,
 	OMAP_MCBSP_WORD_12,
 	OMAP_MCBSP_WORD_16,
@@ -331,42 +340,11 @@ typedef enum {
 	OMAP_MCBSP_WORD_32,
 } omap_mcbsp_word_length;
 
-typedef enum {
-	OMAP_MCBSP_CLK_RISING = 0,
-	OMAP_MCBSP_CLK_FALLING,
-} omap_mcbsp_clk_polarity;
-
-typedef enum {
-	OMAP_MCBSP_FS_ACTIVE_HIGH = 0,
-	OMAP_MCBSP_FS_ACTIVE_LOW,
-} omap_mcbsp_fs_polarity;
-
-typedef enum {
-	OMAP_MCBSP_CLK_STP_MODE_NO_DELAY = 0,
-	OMAP_MCBSP_CLK_STP_MODE_DELAY,
-} omap_mcbsp_clk_stp_mode;
-
-
-/******* SPI specific mode **********/
-typedef enum {
-	OMAP_MCBSP_SPI_MASTER = 0,
-	OMAP_MCBSP_SPI_SLAVE,
-} omap_mcbsp_spi_mode;
-
-struct omap_mcbsp_spi_cfg {
-	omap_mcbsp_spi_mode		spi_mode;
-	omap_mcbsp_clk_polarity		rx_clock_polarity;
-	omap_mcbsp_clk_polarity		tx_clock_polarity;
-	omap_mcbsp_fs_polarity		fsx_polarity;
-	u8				clk_div;
-	omap_mcbsp_clk_stp_mode		clk_stp_mode;
-	omap_mcbsp_word_length		word_length;
-};
-
 /* Platform specific configuration */
 struct omap_mcbsp_ops {
 	void (*request)(unsigned int);
 	void (*free)(unsigned int);
+	int (*set_clks_src)(u8, u8);
 };
 
 struct omap_mcbsp_platform_data {
@@ -374,67 +352,79 @@ struct omap_mcbsp_platform_data {
 	u8 dma_rx_sync, dma_tx_sync;
 	u16 rx_irq, tx_irq;
 	struct omap_mcbsp_ops *ops;
-#ifdef CONFIG_ARCH_OMAP34XX
-	u16 buffer_size;
+#ifdef CONFIG_ARCH_OMAP3
+	/* Sidetone block for McBSP 2 and 3 */
+	unsigned long phys_base_st;
 #endif
+	u16 buffer_size;
+	unsigned int mcbsp_config_type;
+};
+
+struct omap_mcbsp_st_data {
+	void __iomem *io_base_st;
+	bool running;
+	bool enabled;
+	s16 taps[128];	/* Sidetone filter coefficients */
+	int nr_taps;	/* Number of filter coefficients in use */
+	s16 ch0gain;
+	s16 ch1gain;
 };
 
 struct omap_mcbsp {
 	struct device *dev;
 	unsigned long phys_base;
+	unsigned long phys_dma_base;
 	void __iomem *io_base;
 	u8 id;
 	u8 free;
-	omap_mcbsp_word_length rx_word_length;
-	omap_mcbsp_word_length tx_word_length;
 
-	omap_mcbsp_io_type_t io_type; /* IRQ or poll */
-	/* IRQ based TX/RX */
 	int rx_irq;
 	int tx_irq;
 
 	/* DMA stuff */
 	u8 dma_rx_sync;
-	short dma_rx_lch;
 	u8 dma_tx_sync;
-	short dma_tx_lch;
-
-	/* Completion queues */
-	struct completion tx_irq_completion;
-	struct completion rx_irq_completion;
-	struct completion tx_dma_completion;
-	struct completion rx_dma_completion;
 
 	/* Protect the field .free, while checking if the mcbsp is in use */
 	spinlock_t lock;
 	struct omap_mcbsp_platform_data *pdata;
-	struct clk *iclk;
 	struct clk *fclk;
-	u8 clk_active;
-
-	/* Flags to check whether Tx and/or Rx have been started or not. */
-	/* They will be checked before disabling the clocks. */
-	u8 tx_started;
-	u8 rx_started;
-
-#ifdef CONFIG_ARCH_OMAP34XX
+#ifdef CONFIG_ARCH_OMAP3
+	struct omap_mcbsp_st_data *st_data;
 	int dma_op_mode;
 	u16 max_tx_thres;
 	u16 max_rx_thres;
 #endif
+	void *reg_cache;
+	unsigned int mcbsp_config_type;
 };
+
+/**
+ * omap_mcbsp_dev_attr - OMAP McBSP device attributes for omap_hwmod
+ * @sidetone: name of the sidetone device
+ */
+struct omap_mcbsp_dev_attr {
+	const char *sidetone;
+};
+
 extern struct omap_mcbsp **mcbsp_ptr;
-extern int omap_mcbsp_count;
+extern int omap_mcbsp_count, omap_mcbsp_cache_size;
+
+#define omap_mcbsp_check_valid_id(id)	(id < omap_mcbsp_count)
+#define id_to_mcbsp_ptr(id)		mcbsp_ptr[id];
 
 int omap_mcbsp_init(void);
-void omap_mcbsp_register_board_cfg(struct omap_mcbsp_platform_data *config,
-					int size);
+void omap_mcbsp_register_board_cfg(struct resource *res, int res_count,
+			struct omap_mcbsp_platform_data *config, int size);
 void omap_mcbsp_config(unsigned int id, const struct omap_mcbsp_reg_cfg * config);
-#ifdef CONFIG_ARCH_OMAP34XX
+#ifdef CONFIG_ARCH_OMAP3
 void omap_mcbsp_set_tx_threshold(unsigned int id, u16 threshold);
 void omap_mcbsp_set_rx_threshold(unsigned int id, u16 threshold);
 u16 omap_mcbsp_get_max_tx_threshold(unsigned int id);
 u16 omap_mcbsp_get_max_rx_threshold(unsigned int id);
+u16 omap_mcbsp_get_fifo_size(unsigned int id);
+u16 omap_mcbsp_get_tx_delay(unsigned int id);
+u16 omap_mcbsp_get_rx_delay(unsigned int id);
 int omap_mcbsp_get_dma_op_mode(unsigned int id);
 #else
 static inline void omap_mcbsp_set_tx_threshold(unsigned int id, u16 threshold)
@@ -443,29 +433,41 @@ static inline void omap_mcbsp_set_rx_threshold(unsigned int id, u16 threshold)
 { }
 static inline u16 omap_mcbsp_get_max_tx_threshold(unsigned int id) { return 0; }
 static inline u16 omap_mcbsp_get_max_rx_threshold(unsigned int id) { return 0; }
+static inline u16 omap_mcbsp_get_fifo_size(unsigned int id) { return 0; }
+static inline u16 omap_mcbsp_get_tx_delay(unsigned int id) { return 0; }
+static inline u16 omap_mcbsp_get_rx_delay(unsigned int id) { return 0; }
 static inline int omap_mcbsp_get_dma_op_mode(unsigned int id) { return 0; }
 #endif
 int omap_mcbsp_request(unsigned int id);
 void omap_mcbsp_free(unsigned int id);
-void omap_mcbsp_disable_clks(unsigned int id);
-void omap_mcbsp_enable_clks(unsigned int id);
 void omap_mcbsp_start(unsigned int id, int tx, int rx);
 void omap_mcbsp_stop(unsigned int id, int tx, int rx);
-void omap_mcbsp_xmit_word(unsigned int id, u32 word);
-u32 omap_mcbsp_recv_word(unsigned int id);
 
-int omap_mcbsp_xmit_buffer(unsigned int id, dma_addr_t buffer, unsigned int length);
-int omap_mcbsp_recv_buffer(unsigned int id, dma_addr_t buffer, unsigned int length);
-int omap_mcbsp_spi_master_xmit_word_poll(unsigned int id, u32 word);
-int omap_mcbsp_spi_master_recv_word_poll(unsigned int id, u32 * word);
+/* McBSP functional clock source changing function */
+extern int omap2_mcbsp_set_clks_src(u8 id, u8 fck_src_id);
 
+/* McBSP signal muxing API */
+void omap2_mcbsp1_mux_clkr_src(u8 mux);
+void omap2_mcbsp1_mux_fsr_src(u8 mux);
 
-/* SPI specific API */
-void omap_mcbsp_set_spi_mode(unsigned int id, const struct omap_mcbsp_spi_cfg * spi_cfg);
+int omap_mcbsp_dma_ch_params(unsigned int id, unsigned int stream);
+int omap_mcbsp_dma_reg_params(unsigned int id, unsigned int stream);
 
-/* Polled read/write functions */
-int omap_mcbsp_pollread(unsigned int id, u16 * buf);
-int omap_mcbsp_pollwrite(unsigned int id, u16 buf);
-int omap_mcbsp_set_io_type(unsigned int id, omap_mcbsp_io_type_t io_type);
+#ifdef CONFIG_ARCH_OMAP3
+/* Sidetone specific API */
+int omap_st_set_chgain(unsigned int id, int channel, s16 chgain);
+int omap_st_get_chgain(unsigned int id, int channel, s16 *chgain);
+int omap_st_enable(unsigned int id);
+int omap_st_disable(unsigned int id);
+int omap_st_is_enabled(unsigned int id);
+#else
+static inline int omap_st_set_chgain(unsigned int id, int channel,
+				     s16 chgain) { return 0; }
+static inline int omap_st_get_chgain(unsigned int id, int channel,
+				     s16 *chgain) { return 0; }
+static inline int omap_st_enable(unsigned int id) { return 0; }
+static inline int omap_st_disable(unsigned int id) { return 0; }
+static inline int omap_st_is_enabled(unsigned int id) {  return 0; }
+#endif
 
 #endif

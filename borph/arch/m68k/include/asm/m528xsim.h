@@ -11,12 +11,18 @@
 #define	m528xsim_h
 /****************************************************************************/
 
+#define	CPU_NAME		"COLDFIRE(m528x)"
+#define	CPU_INSTR_PER_JIFFY	3
+#define	MCF_BUSCLK		MCF_CLK
+
+#include <asm/m52xxacr.h>
 
 /*
  *	Define the 5280/5282 SIM register set addresses.
  */
-#define	MCFICM_INTC0		0x0c00		/* Base for Interrupt Ctrl 0 */
-#define	MCFICM_INTC1		0x0d00		/* Base for Interrupt Ctrl 0 */
+#define	MCFICM_INTC0		(MCF_IPSBAR + 0x0c00)	/* Base for Interrupt Ctrl 0 */
+#define	MCFICM_INTC1		(MCF_IPSBAR + 0x0d00)	/* Base for Interrupt Ctrl 0 */
+
 #define	MCFINTC_IPRH		0x00		/* Interrupt pending 32-63 */
 #define	MCFINTC_IPRL		0x04		/* Interrupt pending 1-31 */
 #define	MCFINTC_IMRH		0x08		/* Interrupt mask 32-63 */
@@ -29,16 +35,38 @@
 
 #define	MCFINT_VECBASE		64		/* Vector base number */
 #define	MCFINT_UART0		13		/* Interrupt number for UART0 */
+#define	MCFINT_QSPI		18		/* Interrupt number for QSPI */
 #define	MCFINT_PIT1		55		/* Interrupt number for PIT1 */
 
 /*
  *	SDRAM configuration registers.
  */
-#define	MCFSIM_DCR		0x44		/* SDRAM control */
-#define	MCFSIM_DACR0		0x48		/* SDRAM base address 0 */
-#define	MCFSIM_DMR0		0x4c		/* SDRAM address mask 0 */
-#define	MCFSIM_DACR1		0x50		/* SDRAM base address 1 */
-#define	MCFSIM_DMR1		0x54		/* SDRAM address mask 1 */
+#define	MCFSIM_DCR		(MCF_IPSBAR + 0x00000044) /* Control */
+#define	MCFSIM_DACR0		(MCF_IPSBAR + 0x00000048) /* Base address 0 */
+#define	MCFSIM_DMR0		(MCF_IPSBAR + 0x0000004c) /* Address mask 0 */
+#define	MCFSIM_DACR1		(MCF_IPSBAR + 0x00000050) /* Base address 1 */
+#define	MCFSIM_DMR1		(MCF_IPSBAR + 0x00000054) /* Address mask 1 */
+
+/*
+ *	DMA unit base addresses.
+ */
+#define	MCFDMA_BASE0		(MCF_IPSBAR + 0x00000100)
+#define	MCFDMA_BASE1		(MCF_IPSBAR + 0x00000140)
+#define	MCFDMA_BASE2		(MCF_IPSBAR + 0x00000180)
+#define	MCFDMA_BASE3		(MCF_IPSBAR + 0x000001C0)
+
+/*
+ *	UART module.
+ */
+#define	MCFUART_BASE1		(MCF_IPSBAR + 0x00000200)
+#define	MCFUART_BASE2		(MCF_IPSBAR + 0x00000240)
+#define	MCFUART_BASE3		(MCF_IPSBAR + 0x00000280)
+
+/*
+ *	FEC ethernet module.
+ */
+#define	MCFFEC_BASE		(MCF_IPSBAR + 0x00001000)
+#define	MCFFEC_SIZE		0x800
 
 /*
  * 	GPIO registers
@@ -151,6 +179,14 @@
 #define MCFGPIO_PUAPAR		(MCF_IPSBAR + 0x0010005C)
 
 /*
+ * PIT timer base addresses.
+ */
+#define	MCFPIT_BASE1		(MCF_IPSBAR + 0x00150000)
+#define	MCFPIT_BASE2		(MCF_IPSBAR + 0x00160000)
+#define	MCFPIT_BASE3		(MCF_IPSBAR + 0x00170000)
+#define	MCFPIT_BASE4		(MCF_IPSBAR + 0x00180000)
+
+/*
  * 	Edge Port registers
  */
 #define MCFEPORT_EPPAR		(MCF_IPSBAR + 0x00130000)
@@ -249,70 +285,4 @@
 #define MCF5282_I2C_I2SR_RXAK   (0x01)  // received acknowledge
 
 
-
-/*********************************************************************
-*
-* Queued Serial Peripheral Interface (QSPI) Module
-*
-*********************************************************************/
-/* Derek - 21 Feb 2005 */
-/* change to the format used in I2C */
-/* Read/Write access macros for general use */
-#define MCF5282_QSPI_QMR        MCF_IPSBAR + 0x0340
-#define MCF5282_QSPI_QDLYR      MCF_IPSBAR + 0x0344
-#define MCF5282_QSPI_QWR        MCF_IPSBAR + 0x0348
-#define MCF5282_QSPI_QIR        MCF_IPSBAR + 0x034C
-#define MCF5282_QSPI_QAR        MCF_IPSBAR + 0x0350
-#define MCF5282_QSPI_QDR        MCF_IPSBAR + 0x0354
-#define MCF5282_QSPI_QCR        MCF_IPSBAR + 0x0354
-
-/* Bit level definitions and macros */
-#define MCF5282_QSPI_QMR_MSTR                           (0x8000)
-#define MCF5282_QSPI_QMR_DOHIE                          (0x4000)
-#define MCF5282_QSPI_QMR_BITS_16                        (0x0000)
-#define MCF5282_QSPI_QMR_BITS_8                         (0x2000)
-#define MCF5282_QSPI_QMR_BITS_9                         (0x2400)
-#define MCF5282_QSPI_QMR_BITS_10                        (0x2800)
-#define MCF5282_QSPI_QMR_BITS_11                        (0x2C00)
-#define MCF5282_QSPI_QMR_BITS_12                        (0x3000)
-#define MCF5282_QSPI_QMR_BITS_13                        (0x3400)
-#define MCF5282_QSPI_QMR_BITS_14                        (0x3800)
-#define MCF5282_QSPI_QMR_BITS_15                        (0x3C00)
-#define MCF5282_QSPI_QMR_CPOL                           (0x0200)
-#define MCF5282_QSPI_QMR_CPHA                           (0x0100)
-#define MCF5282_QSPI_QMR_BAUD(x)                        (((x)&0x00FF))
-
-#define MCF5282_QSPI_QDLYR_SPE                          (0x80)
-#define MCF5282_QSPI_QDLYR_QCD(x)                       (((x)&0x007F)<<8)
-#define MCF5282_QSPI_QDLYR_DTL(x)                       (((x)&0x00FF))
-
-#define MCF5282_QSPI_QWR_HALT                           (0x8000)
-#define MCF5282_QSPI_QWR_WREN                           (0x4000)
-#define MCF5282_QSPI_QWR_WRTO                           (0x2000)
-#define MCF5282_QSPI_QWR_CSIV                           (0x1000)
-#define MCF5282_QSPI_QWR_ENDQP(x)                       (((x)&0x000F)<<8)
-#define MCF5282_QSPI_QWR_CPTQP(x)                       (((x)&0x000F)<<4)
-#define MCF5282_QSPI_QWR_NEWQP(x)                       (((x)&0x000F))
-
-#define MCF5282_QSPI_QIR_WCEFB                          (0x8000)
-#define MCF5282_QSPI_QIR_ABRTB                          (0x4000)
-#define MCF5282_QSPI_QIR_ABRTL                          (0x1000)
-#define MCF5282_QSPI_QIR_WCEFE                          (0x0800)
-#define MCF5282_QSPI_QIR_ABRTE                          (0x0400)
-#define MCF5282_QSPI_QIR_SPIFE                          (0x0100)
-#define MCF5282_QSPI_QIR_WCEF                           (0x0008)
-#define MCF5282_QSPI_QIR_ABRT                           (0x0004)
-#define MCF5282_QSPI_QIR_SPIF                           (0x0001)
-
-#define MCF5282_QSPI_QAR_ADDR(x)                        (((x)&0x003F))
-
-#define MCF5282_QSPI_QDR_COMMAND(x)                     (((x)&0xFF00))
-#define MCF5282_QSPI_QCR_DATA(x)                        (((x)&0x00FF)<<8)
-#define MCF5282_QSPI_QCR_CONT                           (0x8000)
-#define MCF5282_QSPI_QCR_BITSE                          (0x4000)
-#define MCF5282_QSPI_QCR_DT                             (0x2000)
-#define MCF5282_QSPI_QCR_DSCK                           (0x1000)
-#define MCF5282_QSPI_QCR_CS                             (((x)&0x000F)<<8)
-
-/****************************************************************************/
 #endif	/* m528xsim_h */

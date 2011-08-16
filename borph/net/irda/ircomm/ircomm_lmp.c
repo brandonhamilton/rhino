@@ -31,6 +31,7 @@
  ********************************************************************/
 
 #include <linux/init.h>
+#include <linux/gfp.h>
 
 #include <net/irda/irda.h>
 #include <net/irda/irlmp.h>
@@ -74,7 +75,6 @@ static int ircomm_lmp_connect_response(struct ircomm_cb *self,
 				       struct sk_buff *userdata)
 {
 	struct sk_buff *tx_skb;
-	int ret;
 
 	IRDA_DEBUG(0, "%s()\n", __func__ );
 
@@ -99,9 +99,7 @@ static int ircomm_lmp_connect_response(struct ircomm_cb *self,
 		tx_skb = userdata;
 	}
 
-	ret = irlmp_connect_response(self->lsap, tx_skb);
-
-	return 0;
+	return irlmp_connect_response(self->lsap, tx_skb);
 }
 
 static int ircomm_lmp_disconnect_request(struct ircomm_cb *self,

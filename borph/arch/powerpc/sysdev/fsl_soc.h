@@ -30,10 +30,14 @@ struct platform_diu_data_ops {
 	void (*set_pixel_clock) (unsigned int pixclock);
 	ssize_t (*show_monitor_port) (int monitor_port, char *buf);
 	int (*set_sysfs_monitor_port) (int val);
+	void (*release_bootmem) (void);
 };
 
 extern struct platform_diu_data_ops diu_ops;
 #endif
+
+void fsl_hv_restart(char *cmd);
+void fsl_hv_halt(void);
 
 #endif
 #endif

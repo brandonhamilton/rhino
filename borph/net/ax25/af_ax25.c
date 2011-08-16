@@ -25,6 +25,7 @@
 #include <linux/string.h>
 #include <linux/sockios.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
@@ -1102,7 +1103,7 @@ done:
 out:
 	release_sock(sk);
 
-	return 0;
+	return err;
 }
 
 /*
@@ -1280,7 +1281,7 @@ static int __must_check ax25_connect(struct socket *sock,
 		DEFINE_WAIT(wait);
 
 		for (;;) {
-			prepare_to_wait(sk->sk_sleep, &wait,
+			prepare_to_wait(sk_sleep(sk), &wait,
 					TASK_INTERRUPTIBLE);
 			if (sk->sk_state != TCP_SYN_SENT)
 				break;
@@ -1293,7 +1294,7 @@ static int __must_check ax25_connect(struct socket *sock,
 			err = -ERESTARTSYS;
 			break;
 		}
-		finish_wait(sk->sk_sleep, &wait);
+		finish_wait(sk_sleep(sk), &wait);
 
 		if (err)
 			goto out_release;
@@ -1345,7 +1346,7 @@ static int ax25_accept(struct socket *sock, struct socket *newsock, int flags)
 	 *	hooked into the SABM we saved
 	 */
 	for (;;) {
-		prepare_to_wait(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
+		prepare_to_wait(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
 		skb = skb_dequeue(&sk->sk_receive_queue);
 		if (skb)
 			break;
@@ -1363,7 +1364,7 @@ static int ax25_accept(struct socket *sock, struct socket *newsock, int flags)
 		err = -ERESTARTSYS;
 		break;
 	}
-	finish_wait(sk->sk_sleep, &wait);
+	finish_wait(sk_sleep(sk), &wait);
 
 	if (err)
 		goto out;
@@ -1391,6 +1392,7 @@ static int ax25_getname(struct socket *sock, struct sockaddr *uaddr,
 	ax25_cb *ax25;
 	int err = 0;
 
+	memset(fsa, 0, sizeof(*fsa));
 	lock_sock(sk);
 	ax25 = ax25_sk(sk);
 
@@ -1402,7 +1404,6 @@ static int ax25_getname(struct socket *sock, struct sockaddr *uaddr,
 
 		fsa->fsa_ax25.sax25_family = AF_AX25;
 		fsa->fsa_ax25.sax25_call   = ax25->dest_addr;
-		fsa->fsa_ax25.sax25_ndigis = 0;
 
 		if (ax25->digipeat != NULL) {
 			ndigi = ax25->digipeat->ndigi;
@@ -1537,8 +1538,6 @@ static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
 	}
 
 	/* Build a packet */
-	SOCK_DEBUG(sk, "AX.25: sendto: Addresses built. Building packet.\n");
-
 	/* Assume the worst case */
 	size = len + ax25->ax25_dev->dev->hard_header_len;
 
@@ -1547,8 +1546,6 @@ static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
 		goto out;
 
 	skb_reserve(skb, size - len);
-
-	SOCK_DEBUG(sk, "AX.25: Appending user data\n");
 
 	/* User data follows immediately after the AX.25 data */
 	if (memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len)) {
@@ -1562,8 +1559,6 @@ static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
 	/* Add the PID if one is not supplied by the user in the skb */
 	if (!ax25->pidincl)
 		*skb_push(skb, 1) = sk->sk_protocol;
-
-	SOCK_DEBUG(sk, "AX.25: Transmitting buffer\n");
 
 	if (sk->sk_type == SOCK_SEQPACKET) {
 		/* Connected mode sockets go via the LAPB machine */
@@ -1582,21 +1577,13 @@ static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	skb_push(skb, 1 + ax25_addr_size(dp));
 
-	SOCK_DEBUG(sk, "Building AX.25 Header (dp=%p).\n", dp);
-
-	if (dp != NULL)
-		SOCK_DEBUG(sk, "Num digipeaters=%d\n", dp->ndigi);
+	/* Building AX.25 Header */
 
 	/* Build an AX.25 header */
 	lv = ax25_addr_build(skb->data, &ax25->source_addr, &sax.sax25_call,
 			     dp, AX25_COMMAND, AX25_MODULUS);
 
-	SOCK_DEBUG(sk, "Built header (%d bytes)\n",lv);
-
 	skb_set_transport_header(skb, lv);
-
-	SOCK_DEBUG(sk, "base=%p pos=%p\n",
-		   skb->data, skb_transport_header(skb));
 
 	*skb_transport_header(skb) = AX25_UI;
 
@@ -1863,25 +1850,13 @@ static int ax25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 static void *ax25_info_start(struct seq_file *seq, loff_t *pos)
 	__acquires(ax25_list_lock)
 {
-	struct ax25_cb *ax25;
-	struct hlist_node *node;
-	int i = 0;
-
 	spin_lock_bh(&ax25_list_lock);
-	ax25_for_each(ax25, node, &ax25_list) {
-		if (i == *pos)
-			return ax25;
-		++i;
-	}
-	return NULL;
+	return seq_hlist_start(&ax25_list, *pos);
 }
 
 static void *ax25_info_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	++*pos;
-
-	return hlist_entry( ((struct ax25_cb *)v)->ax25_node.next,
-			    struct ax25_cb, ax25_node);
+	return seq_hlist_next(v, &ax25_list, pos);
 }
 
 static void ax25_info_stop(struct seq_file *seq, void *v)
@@ -1892,7 +1867,7 @@ static void ax25_info_stop(struct seq_file *seq, void *v)
 
 static int ax25_info_show(struct seq_file *seq, void *v)
 {
-	ax25_cb *ax25 = v;
+	ax25_cb *ax25 = hlist_entry(v, struct ax25_cb, ax25_node);
 	char buf[11];
 	int k;
 

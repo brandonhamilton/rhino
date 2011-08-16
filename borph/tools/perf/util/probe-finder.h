@@ -1,9 +1,13 @@
 #ifndef _PROBE_FINDER_H
 #define _PROBE_FINDER_H
 
-#define MAX_PATH_LEN 256
-#define MAX_PROBE_BUFFER 1024
-#define MAX_PROBES 128
+#include <stdbool.h>
+#include "util.h"
+#include "probe-event.h"
+
+#define MAX_PATH_LEN		 256
+#define MAX_PROBE_BUFFER	1024
+#define MAX_PROBES		 128
 
 static inline int is_c_varname(const char *name)
 {
@@ -11,47 +15,94 @@ static inline int is_c_varname(const char *name)
 	return isalpha(name[0]) || name[0] == '_';
 }
 
-struct probe_point {
-	/* Inputs */
-	char	*file;		/* File name */
-	int	line;		/* Line number */
+#ifdef DWARF_SUPPORT
 
-	char	*function;	/* Function name */
-	int	offset;		/* Offset bytes */
+#include "dwarf-aux.h"
 
-	int	nr_args;	/* Number of arguments */
-	char	**args;		/* Arguments */
+/* TODO: export debuginfo data structure even if no dwarf support */
 
-	int	retprobe;	/* Return probe */
-
-	/* Output */
-	int	found;		/* Number of found probe points */
-	char	*probes[MAX_PROBES];	/* Output buffers (will be allocated)*/
+/* debug information structure */
+struct debuginfo {
+	Dwarf		*dbg;
+	Dwfl		*dwfl;
+	Dwarf_Addr	bias;
 };
 
-#ifndef NO_LIBDWARF
-extern int find_probepoint(int fd, struct probe_point *pp);
+extern struct debuginfo *debuginfo__new(const char *path);
+extern struct debuginfo *debuginfo__new_online_kernel(unsigned long addr);
+extern void debuginfo__delete(struct debuginfo *self);
 
-#include <libdwarf/dwarf.h>
-#include <libdwarf/libdwarf.h>
+/* Find probe_trace_events specified by perf_probe_event from debuginfo */
+extern int debuginfo__find_trace_events(struct debuginfo *self,
+					struct perf_probe_event *pev,
+					struct probe_trace_event **tevs,
+					int max_tevs);
+
+/* Find a perf_probe_point from debuginfo */
+extern int debuginfo__find_probe_point(struct debuginfo *self,
+				       unsigned long addr,
+				       struct perf_probe_point *ppt);
+
+/* Find a line range */
+extern int debuginfo__find_line_range(struct debuginfo *self,
+				      struct line_range *lr);
+
+/* Find available variables */
+extern int debuginfo__find_available_vars_at(struct debuginfo *self,
+					     struct perf_probe_event *pev,
+					     struct variable_list **vls,
+					     int max_points, bool externs);
 
 struct probe_finder {
-	struct probe_point	*pp;	/* Target probe point */
+	struct perf_probe_event	*pev;		/* Target probe event */
+
+	/* Callback when a probe point is found */
+	int (*callback)(Dwarf_Die *sp_die, struct probe_finder *pf);
 
 	/* For function searching */
-	Dwarf_Addr	addr;		/* Address */
-	Dwarf_Unsigned	fno;		/* File number */
-	Dwarf_Unsigned	lno;		/* Line number */
-	Dwarf_Off	inl_offs;	/* Inline offset */
-	Dwarf_Die	cu_die;		/* Current CU */
+	int			lno;		/* Line number */
+	Dwarf_Addr		addr;		/* Address */
+	const char		*fname;		/* Real file name */
+	Dwarf_Die		cu_die;		/* Current CU */
+	Dwarf_Die		sp_die;
+	struct list_head	lcache;		/* Line cache for lazy match */
 
 	/* For variable searching */
-	Dwarf_Addr	cu_base;	/* Current CU base address */
-	Dwarf_Locdesc	fbloc;		/* Location of Current Frame Base */
-	const char	*var;		/* Current variable name */
-	char		*buf;		/* Current output buffer */
-	int		len;		/* Length of output buffer */
+#if _ELFUTILS_PREREQ(0, 142)
+	Dwarf_CFI		*cfi;		/* Call Frame Information */
+#endif
+	Dwarf_Op		*fb_ops;	/* Frame base attribute */
+	struct perf_probe_arg	*pvar;		/* Current target variable */
+	struct probe_trace_arg	*tvar;		/* Current result variable */
 };
-#endif /* NO_LIBDWARF */
+
+struct trace_event_finder {
+	struct probe_finder	pf;
+	struct probe_trace_event *tevs;		/* Found trace events */
+	int			ntevs;		/* Number of trace events */
+	int			max_tevs;	/* Max number of trace events */
+};
+
+struct available_var_finder {
+	struct probe_finder	pf;
+	struct variable_list	*vls;		/* Found variable lists */
+	int			nvls;		/* Number of variable lists */
+	int			max_vls;	/* Max no. of variable lists */
+	bool			externs;	/* Find external vars too */
+	bool			child;		/* Search child scopes */
+};
+
+struct line_finder {
+	struct line_range	*lr;		/* Target line range */
+
+	const char		*fname;		/* File name */
+	int			lno_s;		/* Start line number */
+	int			lno_e;		/* End line number */
+	Dwarf_Die		cu_die;		/* Current CU */
+	Dwarf_Die		sp_die;
+	int			found;
+};
+
+#endif /* DWARF_SUPPORT */
 
 #endif /*_PROBE_FINDER_H */

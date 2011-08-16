@@ -481,8 +481,6 @@ enum
 	NET_IPV4_CONF_PROMOTE_SECONDARIES=20,
 	NET_IPV4_CONF_ARP_ACCEPT=21,
 	NET_IPV4_CONF_ARP_NOTIFY=22,
-	NET_IPV4_CONF_ACCEPT_LOCAL=23,
-	__NET_IPV4_CONF_MAX
 };
 
 /* /proc/sys/net/ipv4/netfilter */
@@ -598,7 +596,6 @@ enum {
 	NET_NEIGH_GC_THRESH3=16,
 	NET_NEIGH_RETRANS_TIME_MS=17,
 	NET_NEIGH_REACHABLE_TIME_MS=18,
-	__NET_NEIGH_MAX
 };
 
 /* /proc/sys/net/dccp */
@@ -933,6 +930,7 @@ enum
 
 #ifdef __KERNEL__
 #include <linux/list.h>
+#include <linux/rcupdate.h>
 
 /* For the /proc/sys support */
 struct ctl_table;
@@ -983,6 +981,8 @@ extern int proc_doulongvec_minmax(struct ctl_table *, int,
 				  void __user *, size_t *, loff_t *);
 extern int proc_doulongvec_ms_jiffies_minmax(struct ctl_table *table, int,
 				      void __user *, size_t *, loff_t *);
+extern int proc_do_large_bitmap(struct ctl_table *, int,
+				void __user *, size_t *, loff_t *);
 
 /*
  * Register a set of sysctl names by calling register_sysctl_table
@@ -1038,10 +1038,15 @@ struct ctl_table_root {
    struct ctl_table trees. */
 struct ctl_table_header
 {
-	struct ctl_table *ctl_table;
-	struct list_head ctl_entry;
-	int used;
-	int count;
+	union {
+		struct {
+			struct ctl_table *ctl_table;
+			struct list_head ctl_entry;
+			int used;
+			int count;
+		};
+		struct rcu_head rcu;
+	};
 	struct completion *unregistering;
 	struct ctl_table *ctl_table_arg;
 	struct ctl_table_root *root;

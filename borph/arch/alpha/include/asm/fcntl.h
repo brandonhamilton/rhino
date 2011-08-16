@@ -16,7 +16,7 @@
 #define O_NOATIME	04000000
 #define O_CLOEXEC	010000000 /* set close_on_exec */
 /*
- * Before Linux 2.6.32 only O_DSYNC semantics were implemented, but using
+ * Before Linux 2.6.33 only O_DSYNC semantics were implemented, but using
  * the O_SYNC flag.  We continue to use the existing numerical value
  * for O_DSYNC semantics now, but using the correct symbolic name for it.
  * This new value is used to request true Posix O_SYNC semantics.  It is
@@ -30,6 +30,8 @@
  */
 #define __O_SYNC	020000000
 #define O_SYNC		(__O_SYNC|O_DSYNC)
+
+#define O_PATH		040000000
 
 #define F_GETLK		7
 #define F_SETLK		8

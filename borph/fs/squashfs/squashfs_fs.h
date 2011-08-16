@@ -4,7 +4,7 @@
  * Squashfs
  *
  * Copyright (c) 2002, 2003, 2004, 2005, 2006, 2007, 2008
- * Phillip Lougher <phillip@lougher.demon.co.uk>
+ * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -46,6 +46,7 @@
 #define SQUASHFS_NAME_LEN		256
 
 #define SQUASHFS_INVALID_FRAG		(0xffffffffU)
+#define SQUASHFS_INVALID_XATTR		(0xffffffffU)
 #define SQUASHFS_INVALID_BLK		(-1LL)
 
 /* Filesystem flags */
@@ -56,6 +57,7 @@
 #define SQUASHFS_ALWAYS_FRAG		5
 #define SQUASHFS_DUPLICATE		6
 #define SQUASHFS_EXPORT			7
+#define SQUASHFS_COMP_OPT		10
 
 #define SQUASHFS_BIT(flag, bit)		((flag >> bit) & 1)
 
@@ -80,6 +82,9 @@
 #define SQUASHFS_EXPORTABLE(flags)		SQUASHFS_BIT(flags, \
 						SQUASHFS_EXPORT)
 
+#define SQUASHFS_COMP_OPTS(flags)		SQUASHFS_BIT(flags, \
+						SQUASHFS_COMP_OPT)
+
 /* Max number of types and file types */
 #define SQUASHFS_DIR_TYPE		1
 #define SQUASHFS_REG_TYPE		2
@@ -95,6 +100,13 @@
 #define SQUASHFS_LCHRDEV_TYPE		12
 #define SQUASHFS_LFIFO_TYPE		13
 #define SQUASHFS_LSOCKET_TYPE		14
+
+/* Xattr types */
+#define SQUASHFS_XATTR_USER             0
+#define SQUASHFS_XATTR_TRUSTED          1
+#define SQUASHFS_XATTR_SECURITY         2
+#define SQUASHFS_XATTR_VALUE_OOL        256
+#define SQUASHFS_XATTR_PREFIX_MASK      0xff
 
 /* Flag whether block is compressed or uncompressed, bit is set if block is
  * uncompressed */
@@ -174,6 +186,24 @@
 
 #define SQUASHFS_ID_BLOCK_BYTES(A)	(SQUASHFS_ID_BLOCKS(A) *\
 					sizeof(u64))
+/* xattr id lookup table defines */
+#define SQUASHFS_XATTR_BYTES(A)		((A) * sizeof(struct squashfs_xattr_id))
+
+#define SQUASHFS_XATTR_BLOCK(A)		(SQUASHFS_XATTR_BYTES(A) / \
+					SQUASHFS_METADATA_SIZE)
+
+#define SQUASHFS_XATTR_BLOCK_OFFSET(A)	(SQUASHFS_XATTR_BYTES(A) % \
+					SQUASHFS_METADATA_SIZE)
+
+#define SQUASHFS_XATTR_BLOCKS(A)	((SQUASHFS_XATTR_BYTES(A) + \
+					SQUASHFS_METADATA_SIZE - 1) / \
+					SQUASHFS_METADATA_SIZE)
+
+#define SQUASHFS_XATTR_BLOCK_BYTES(A)	(SQUASHFS_XATTR_BLOCKS(A) *\
+					sizeof(u64))
+#define SQUASHFS_XATTR_BLK(A)		((unsigned int) ((A) >> 16))
+
+#define SQUASHFS_XATTR_OFFSET(A)	((unsigned int) ((A) & 0xffff))
 
 /* cached data constants for filesystem */
 #define SQUASHFS_CACHED_BLKS		8
@@ -182,8 +212,6 @@
 
 #define SQUASHFS_MAX_FILE_SIZE		(1LL << \
 					(SQUASHFS_MAX_FILE_SIZE_LOG - 2))
-
-#define SQUASHFS_MARKER_BYTE		0xff
 
 /* meta index cache */
 #define SQUASHFS_META_INDEXES	(SQUASHFS_METADATA_SIZE / sizeof(unsigned int))
@@ -211,7 +239,10 @@ struct meta_index {
 /*
  * definitions for structures on disk
  */
-#define ZLIB_COMPRESSION	 1
+#define ZLIB_COMPRESSION	1
+#define LZMA_COMPRESSION	2
+#define LZO_COMPRESSION		3
+#define XZ_COMPRESSION		4
 
 struct squashfs_super_block {
 	__le32			s_magic;
@@ -228,7 +259,7 @@ struct squashfs_super_block {
 	__le64			root_inode;
 	__le64			bytes_used;
 	__le64			id_table_start;
-	__le64			xattr_table_start;
+	__le64			xattr_id_table_start;
 	__le64			inode_table_start;
 	__le64			directory_table_start;
 	__le64			fragment_table_start;
@@ -248,7 +279,7 @@ struct squashfs_base_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 };
 
 struct squashfs_ipc_inode {
@@ -257,8 +288,19 @@ struct squashfs_ipc_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			nlink;
+};
+
+struct squashfs_lipc_inode {
+	__le16			inode_type;
+	__le16			mode;
+	__le16			uid;
+	__le16			guid;
+	__le32			mtime;
+	__le32			inode_number;
+	__le32			nlink;
+	__le32			xattr;
 };
 
 struct squashfs_dev_inode {
@@ -267,9 +309,21 @@ struct squashfs_dev_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			nlink;
 	__le32			rdev;
+};
+
+struct squashfs_ldev_inode {
+	__le16			inode_type;
+	__le16			mode;
+	__le16			uid;
+	__le16			guid;
+	__le32			mtime;
+	__le32			inode_number;
+	__le32			nlink;
+	__le32			rdev;
+	__le32			xattr;
 };
 
 struct squashfs_symlink_inode {
@@ -278,7 +332,7 @@ struct squashfs_symlink_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			nlink;
 	__le32			symlink_size;
 	char			symlink[0];
@@ -290,7 +344,7 @@ struct squashfs_reg_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			start_block;
 	__le32			fragment;
 	__le32			offset;
@@ -304,7 +358,7 @@ struct squashfs_lreg_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le64			start_block;
 	__le64			file_size;
 	__le64			sparse;
@@ -321,7 +375,7 @@ struct squashfs_dir_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			start_block;
 	__le32			nlink;
 	__le16			file_size;
@@ -335,7 +389,7 @@ struct squashfs_ldir_inode {
 	__le16			uid;
 	__le16			guid;
 	__le32			mtime;
-	__le32	 		inode_number;
+	__le32			inode_number;
 	__le32			nlink;
 	__le32			file_size;
 	__le32			start_block;
@@ -349,12 +403,14 @@ struct squashfs_ldir_inode {
 union squashfs_inode {
 	struct squashfs_base_inode		base;
 	struct squashfs_dev_inode		dev;
+	struct squashfs_ldev_inode		ldev;
 	struct squashfs_symlink_inode		symlink;
 	struct squashfs_reg_inode		reg;
 	struct squashfs_lreg_inode		lreg;
 	struct squashfs_dir_inode		dir;
 	struct squashfs_ldir_inode		ldir;
 	struct squashfs_ipc_inode		ipc;
+	struct squashfs_lipc_inode		lipc;
 };
 
 struct squashfs_dir_entry {
@@ -375,6 +431,29 @@ struct squashfs_fragment_entry {
 	__le64			start_block;
 	__le32			size;
 	unsigned int		unused;
+};
+
+struct squashfs_xattr_entry {
+	__le16			type;
+	__le16			size;
+	char			data[0];
+};
+
+struct squashfs_xattr_val {
+	__le32			vsize;
+	char			value[0];
+};
+
+struct squashfs_xattr_id {
+	__le64			xattr;
+	__le32			count;
+	__le32			size;
+};
+
+struct squashfs_xattr_id_table {
+	__le64			xattr_table_start;
+	__le32			xattr_ids;
+	__le32			unused;
 };
 
 #endif

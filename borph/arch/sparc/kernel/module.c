@@ -9,28 +9,25 @@
 #include <linux/elf.h>
 #include <linux/vmalloc.h>
 #include <linux/fs.h>
+#include <linux/gfp.h>
 #include <linux/string.h>
 #include <linux/ctype.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 
 #include <asm/processor.h>
 #include <asm/spitfire.h>
 
 #ifdef CONFIG_SPARC64
+
+#include <linux/jump_label.h>
+
 static void *module_map(unsigned long size)
 {
-	struct vm_struct *area;
-
-	size = PAGE_ALIGN(size);
-	if (!size || size > MODULES_LEN)
+	if (PAGE_ALIGN(size) > MODULES_LEN)
 		return NULL;
-
-	area = __get_vm_area(size, VM_ALLOC, MODULES_VADDR, MODULES_END);
-	if (!area)
-		return NULL;
-
-	return __vmalloc_area(area, GFP_KERNEL, PAGE_KERNEL);
+	return __vmalloc_node_range(size, 1, MODULES_VADDR, MODULES_END,
+				GFP_KERNEL, PAGE_KERNEL, -1,
+				__builtin_return_address(0));
 }
 
 static char *dot2underscore(char *name)
@@ -71,12 +68,6 @@ void *module_alloc(unsigned long size)
 	return ret;
 }
 
-/* Free memory returned from module_core_alloc/module_init_alloc */
-void module_free(struct module *mod, void *module_region)
-{
-	vfree(module_region);
-}
-
 /* Make generic code ignore STT_REGISTER dummy undefined symbols.  */
 int module_frob_arch_sections(Elf_Ehdr *hdr,
 			      Elf_Shdr *sechdrs,
@@ -108,17 +99,6 @@ int module_frob_arch_sections(Elf_Ehdr *hdr,
 		}
 	}
 	return 0;
-}
-
-int apply_relocate(Elf_Shdr *sechdrs,
-		   const char *strtab,
-		   unsigned int symindex,
-		   unsigned int relsec,
-		   struct module *me)
-{
-	printk(KERN_ERR "module %s: non-ADD RELOCATION unsupported\n",
-	       me->name);
-	return -ENOEXEC;
 }
 
 int apply_relocate_add(Elf_Shdr *sechdrs,
@@ -217,7 +197,7 @@ int apply_relocate_add(Elf_Shdr *sechdrs,
 			       me->name,
 			       (int) (ELF_R_TYPE(rel[i].r_info) & 0xff));
 			return -ENOEXEC;
-		};
+		}
 	}
 	return 0;
 }
@@ -227,6 +207,9 @@ int module_finalize(const Elf_Ehdr *hdr,
 		    const Elf_Shdr *sechdrs,
 		    struct module *me)
 {
+	/* make jump label nops */
+	jump_label_apply_nops(me);
+
 	/* Cheetah's I-cache is fully coherent.  */
 	if (tlb_type == spitfire) {
 		unsigned long va;
@@ -239,15 +222,4 @@ int module_finalize(const Elf_Ehdr *hdr,
 
 	return 0;
 }
-#else
-int module_finalize(const Elf_Ehdr *hdr,
-                    const Elf_Shdr *sechdrs,
-                    struct module *me)
-{
-        return 0;
-}
 #endif /* CONFIG_SPARC64 */
-
-void module_arch_cleanup(struct module *mod)
-{
-}

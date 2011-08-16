@@ -86,6 +86,11 @@ static struct w1_family w1_therm_family_DS1822 = {
 	.fops = &w1_therm_fops,
 };
 
+static struct w1_family w1_therm_family_DS28EA00 = {
+	.fid = W1_THERM_DS28EA00,
+	.fops = &w1_therm_fops,
+};
+
 struct w1_therm_family_converter
 {
 	u8			broken;
@@ -111,13 +116,16 @@ static struct w1_therm_family_converter w1_therm_families[] = {
 		.f		= &w1_therm_family_DS18B20,
 		.convert 	= w1_DS18B20_convert_temp
 	},
+	{
+		.f		= &w1_therm_family_DS28EA00,
+		.convert	= w1_DS18B20_convert_temp
+	},
 };
 
 static inline int w1_DS18B20_convert_temp(u8 rom[9])
 {
-	int t = ((s16)rom[1] << 8) | rom[0];
-	t = t*1000/16;
-	return t;
+	s16 t = le16_to_cpup((__le16 *)rom);
+	return t*1000/16;
 }
 
 static inline int w1_DS18S20_convert_temp(u8 rom[9])

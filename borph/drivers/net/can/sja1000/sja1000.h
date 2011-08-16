@@ -47,6 +47,7 @@
 #ifndef SJA1000_DEV_H
 #define SJA1000_DEV_H
 
+#include <linux/irqreturn.h>
 #include <linux/can/dev.h>
 #include <linux/can/platform/sja1000.h>
 
@@ -167,6 +168,7 @@ struct sja1000_priv {
 
 	void __iomem *reg_base;	 /* ioremap'ed address to registers */
 	unsigned long irq_flags; /* for request_irq() */
+	spinlock_t cmdreg_lock;  /* lock for concurrent cmd register writes */
 
 	u16 flags;		/* custom mode flags */
 	u8 ocr;			/* output control register */

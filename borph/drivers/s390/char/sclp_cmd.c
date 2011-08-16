@@ -308,6 +308,13 @@ struct assign_storage_sccb {
 	u16 rn;
 } __packed;
 
+int arch_get_memory_phys_device(unsigned long start_pfn)
+{
+	if (!rzm)
+		return 0;
+	return PFN_PHYS(start_pfn) >> ilog2(rzm);
+}
+
 static unsigned long long rn2addr(u16 rn)
 {
 	return (unsigned long long) (rn - 1) * rzm;
@@ -511,6 +518,8 @@ static void __init insert_increment(u16 rn, int standby, int assigned)
 		return;
 	new_incr->rn = rn;
 	new_incr->standby = standby;
+	if (!standby)
+		new_incr->usecount = 1;
 	last_rn = 0;
 	prev = &sclp_mem_list;
 	list_for_each_entry(incr, &sclp_mem_list, list) {

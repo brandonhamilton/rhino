@@ -1,7 +1,7 @@
 /*
- * PCIE AER software error injection support.
+ * PCIe AER software error injection support.
  *
- * Debuging PCIE AER code is quite difficult because it is hard to
+ * Debuging PCIe AER code is quite difficult because it is hard to
  * trigger various real hardware errors. Software based error
  * injection can fake almost all kinds of errors with the help of a
  * user space helper tool aer-inject, which can be gotten from:
@@ -21,10 +21,15 @@
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/stddef.h>
 #include "aerdrv.h"
+
+/* Override the existing corrected and uncorrected error masks */
+static int aer_mask_override;
+module_param(aer_mask_override, bool, 0);
 
 struct aer_error_inj {
 	u8 bus;
@@ -167,7 +172,7 @@ static u32 *find_pci_config_dword(struct aer_error *err, int where,
 		target = &err->root_status;
 		rw1cs = 1;
 		break;
-	case PCI_ERR_ROOT_COR_SRC:
+	case PCI_ERR_ROOT_ERR_SRC:
 		target = &err->source_id;
 		break;
 	}
@@ -321,7 +326,7 @@ static int aer_inject(struct aer_error_inj *einj)
 	unsigned long flags;
 	unsigned int devfn = PCI_DEVFN(einj->dev, einj->fn);
 	int pos_cap_err, rp_pos_cap_err;
-	u32 sever;
+	u32 sever, cor_mask, uncor_mask, cor_mask_orig = 0, uncor_mask_orig = 0;
 	int ret = 0;
 
 	dev = pci_get_domain_bus_and_slot((int)einj->domain, einj->bus, devfn);
@@ -339,6 +344,9 @@ static int aer_inject(struct aer_error_inj *einj)
 		goto out_put;
 	}
 	pci_read_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_SEVER, &sever);
+	pci_read_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK, &cor_mask);
+	pci_read_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
+			      &uncor_mask);
 
 	rp_pos_cap_err = pci_find_ext_capability(rpdev, PCI_EXT_CAP_ID_ERR);
 	if (!rp_pos_cap_err) {
@@ -357,6 +365,18 @@ static int aer_inject(struct aer_error_inj *einj)
 		goto out_put;
 	}
 
+	if (aer_mask_override) {
+		cor_mask_orig = cor_mask;
+		cor_mask &= !(einj->cor_status);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
+				       cor_mask);
+
+		uncor_mask_orig = uncor_mask;
+		uncor_mask &= !(einj->uncor_status);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
+				       uncor_mask);
+	}
+
 	spin_lock_irqsave(&inject_lock, flags);
 
 	err = __find_aer_error_by_dev(dev);
@@ -373,6 +393,23 @@ static int aer_inject(struct aer_error_inj *einj)
 	err->header_log1 = einj->header_log1;
 	err->header_log2 = einj->header_log2;
 	err->header_log3 = einj->header_log3;
+
+	if (!aer_mask_override && einj->cor_status &&
+	    !(einj->cor_status & ~cor_mask)) {
+		ret = -EINVAL;
+		printk(KERN_WARNING "The correctable error(s) is masked "
+				"by device\n");
+		spin_unlock_irqrestore(&inject_lock, flags);
+		goto out_put;
+	}
+	if (!aer_mask_override && einj->uncor_status &&
+	    !(einj->uncor_status & ~uncor_mask)) {
+		ret = -EINVAL;
+		printk(KERN_WARNING "The uncorrectable error(s) is masked "
+				"by device\n");
+		spin_unlock_irqrestore(&inject_lock, flags);
+		goto out_put;
+	}
 
 	rperr = __find_aer_error_by_dev(rpdev);
 	if (!rperr) {
@@ -406,6 +443,13 @@ static int aer_inject(struct aer_error_inj *einj)
 	}
 	spin_unlock_irqrestore(&inject_lock, flags);
 
+	if (aer_mask_override) {
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
+				       cor_mask_orig);
+		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
+				       uncor_mask_orig);
+	}
+
 	ret = pci_bus_set_aer_ops(dev->bus);
 	if (ret)
 		goto out_put;
@@ -413,8 +457,14 @@ static int aer_inject(struct aer_error_inj *einj)
 	if (ret)
 		goto out_put;
 
-	if (find_aer_device(rpdev, &edev))
+	if (find_aer_device(rpdev, &edev)) {
+		if (!get_service_data(edev)) {
+			printk(KERN_WARNING "AER service is not initialized\n");
+			ret = -EINVAL;
+			goto out_put;
+		}
 		aer_irq(-1, edev);
+	}
 	else
 		ret = -EINVAL;
 out_put:
@@ -447,6 +497,7 @@ static ssize_t aer_inject_write(struct file *filp, const char __user *ubuf,
 static const struct file_operations aer_inject_fops = {
 	.write = aer_inject_write,
 	.owner = THIS_MODULE,
+	.llseek = noop_llseek,
 };
 
 static struct miscdevice aer_inject_device = {
@@ -484,5 +535,5 @@ static void __exit aer_inject_exit(void)
 module_init(aer_inject_init);
 module_exit(aer_inject_exit);
 
-MODULE_DESCRIPTION("PCIE AER software error injector");
+MODULE_DESCRIPTION("PCIe AER software error injector");
 MODULE_LICENSE("GPL");

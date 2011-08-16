@@ -44,6 +44,7 @@
 #include <linux/usb/otg.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
+#include <linux/prefetch.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -54,7 +55,6 @@
 
 #include <plat/dma.h>
 #include <plat/usb.h>
-#include <plat/control.h>
 
 #include "omap_udc.h"
 
@@ -1375,6 +1375,10 @@ static int omap_pullup(struct usb_gadget *gadget, int is_on)
 	return 0;
 }
 
+static int omap_udc_start(struct usb_gadget_driver *driver,
+		int (*bind)(struct usb_gadget *));
+static int omap_udc_stop(struct usb_gadget_driver *driver);
+
 static struct usb_gadget_ops omap_gadget_ops = {
 	.get_frame		= omap_get_frame,
 	.wakeup			= omap_wakeup,
@@ -1382,6 +1386,8 @@ static struct usb_gadget_ops omap_gadget_ops = {
 	.vbus_session		= omap_vbus_session,
 	.vbus_draw		= omap_vbus_draw,
 	.pullup			= omap_pullup,
+	.start			= omap_udc_start,
+	.stop			= omap_udc_stop,
 };
 
 /*-------------------------------------------------------------------------*/
@@ -2102,7 +2108,8 @@ static inline int machine_without_vbus_sense(void)
 		);
 }
 
-int usb_gadget_register_driver (struct usb_gadget_driver *driver)
+static int omap_udc_start(struct usb_gadget_driver *driver,
+		int (*bind)(struct usb_gadget *))
 {
 	int		status = -ENODEV;
 	struct omap_ep	*ep;
@@ -2114,8 +2121,7 @@ int usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	if (!driver
 			// FIXME if otg, check:  driver->is_otg
 			|| driver->speed < USB_SPEED_FULL
-			|| !driver->bind
-			|| !driver->setup)
+			|| !bind || !driver->setup)
 		return -EINVAL;
 
 	spin_lock_irqsave(&udc->lock, flags);
@@ -2145,7 +2151,7 @@ int usb_gadget_register_driver (struct usb_gadget_driver *driver)
 	if (udc->dc_clk != NULL)
 		omap_udc_enable_clock(1);
 
-	status = driver->bind (&udc->gadget);
+	status = bind(&udc->gadget);
 	if (status) {
 		DBG("bind to %s --> %d\n", driver->driver.name, status);
 		udc->gadget.dev.driver = NULL;
@@ -2186,9 +2192,8 @@ done:
 		omap_udc_enable_clock(0);
 	return status;
 }
-EXPORT_SYMBOL(usb_gadget_register_driver);
 
-int usb_gadget_unregister_driver (struct usb_gadget_driver *driver)
+static int omap_udc_stop(struct usb_gadget_driver *driver)
 {
 	unsigned long	flags;
 	int		status = -ENODEV;
@@ -2222,8 +2227,6 @@ int usb_gadget_unregister_driver (struct usb_gadget_driver *driver)
 	DBG("unregistered driver '%s'\n", driver->driver.name);
 	return status;
 }
-EXPORT_SYMBOL(usb_gadget_unregister_driver);
-
 
 /*-------------------------------------------------------------------------*/
 
@@ -2309,21 +2312,12 @@ static char *trx_mode(unsigned m, int enabled)
 static int proc_otg_show(struct seq_file *s)
 {
 	u32		tmp;
-	u32		trans;
-	char		*ctrl_name;
+	u32		trans = 0;
+	char		*ctrl_name = "(UNKNOWN)";
 
+	/* XXX This needs major revision for OMAP2+ */
 	tmp = omap_readl(OTG_REV);
-	if (cpu_is_omap24xx()) {
-		/*
-		 * REVISIT: Not clear how this works on OMAP2.  trans
-		 * is ANDed to produce bits 7 and 8, which might make
-		 * sense for USB_TRANSCEIVER_CTRL on OMAP1,
-		 * but with CONTROL_DEVCONF, these bits have something to
-		 * do with the frame adjustment counter and McBSP2.
-		 */
-		ctrl_name = "control_devconf";
-		trans = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0);
-	} else {
+	if (cpu_class_is_omap1()) {
 		ctrl_name = "tranceiver_ctrl";
 		trans = omap_readw(USB_TRANSCEIVER_CTRL);
 	}
@@ -3000,9 +2994,16 @@ known:
 
 	create_proc_file();
 	status = device_add(&udc->gadget.dev);
+	if (status)
+		goto cleanup4;
+
+	status = usb_add_gadget_udc(&pdev->dev, &udc->gadget);
 	if (!status)
 		return status;
 	/* If fail, fall through */
+cleanup4:
+	remove_proc_file();
+
 #ifdef	USE_ISO
 cleanup3:
 	free_irq(pdev->resource[2].start, udc);
@@ -3038,6 +3039,8 @@ static int __exit omap_udc_remove(struct platform_device *pdev)
 
 	if (!udc)
 		return -ENODEV;
+
+	usb_del_gadget_udc(&udc->gadget);
 	if (udc->driver)
 		return -EBUSY;
 

@@ -12,7 +12,7 @@
 #endif
 
 NL_PACKET(primary, 1,
-       NL_BIT(		1,	T_MAY_IGNORE,	overwrite_peer)
+       NL_BIT(		1,	T_MAY_IGNORE,	primary_force)
 )
 
 NL_PACKET(secondary, 2, )
@@ -56,6 +56,9 @@ NL_PACKET(net_conf, 5,
 	NL_INTEGER(	39,	T_MAY_IGNORE,	rr_conflict)
 	NL_INTEGER(	40,	T_MAY_IGNORE,	ping_timeo)
 	NL_INTEGER(	67,	T_MAY_IGNORE,	rcvbuf_size)
+	NL_INTEGER(	81,	T_MAY_IGNORE,	on_congestion)
+	NL_INTEGER(	82,	T_MAY_IGNORE,	cong_fill)
+	NL_INTEGER(	83,	T_MAY_IGNORE,	cong_extents)
 	  /* 59 addr_family was available in GIT, never released */
 	NL_BIT(		60,	T_MANDATORY,	mind_af)
 	NL_BIT(		27,	T_MAY_IGNORE,	want_lose)
@@ -63,22 +66,38 @@ NL_PACKET(net_conf, 5,
 	NL_BIT(		41,	T_MAY_IGNORE,	always_asbp)
 	NL_BIT(		61,	T_MAY_IGNORE,	no_cork)
 	NL_BIT(		62,	T_MANDATORY,	auto_sndbuf_size)
+	NL_BIT(		70,	T_MANDATORY,	dry_run)
 )
 
-NL_PACKET(disconnect, 6, )
+NL_PACKET(disconnect, 6,
+	NL_BIT(		84,	T_MAY_IGNORE,	force)
+)
 
 NL_PACKET(resize, 7,
 	NL_INT64(		29,	T_MAY_IGNORE,	resize_size)
+	NL_BIT(			68,	T_MAY_IGNORE,	resize_force)
+	NL_BIT(			69,	T_MANDATORY,	no_resync)
 )
 
 NL_PACKET(syncer_conf, 8,
 	NL_INTEGER(	30,	T_MAY_IGNORE,	rate)
 	NL_INTEGER(	31,	T_MAY_IGNORE,	after)
 	NL_INTEGER(	32,	T_MAY_IGNORE,	al_extents)
+/*	NL_INTEGER(     71,	T_MAY_IGNORE,	dp_volume)
+ *	NL_INTEGER(     72,	T_MAY_IGNORE,	dp_interval)
+ *	NL_INTEGER(     73,	T_MAY_IGNORE,	throttle_th)
+ *	NL_INTEGER(     74,	T_MAY_IGNORE,	hold_off_th)
+ * feature will be reimplemented differently with 8.3.9 */
 	NL_STRING(      52,     T_MAY_IGNORE,   verify_alg,     SHARED_SECRET_MAX)
 	NL_STRING(      51,     T_MAY_IGNORE,   cpu_mask,       32)
 	NL_STRING(	64,	T_MAY_IGNORE,	csums_alg,	SHARED_SECRET_MAX)
 	NL_BIT(         65,     T_MAY_IGNORE,   use_rle)
+	NL_INTEGER(	75,	T_MAY_IGNORE,	on_no_data)
+	NL_INTEGER(	76,	T_MAY_IGNORE,	c_plan_ahead)
+	NL_INTEGER(     77,	T_MAY_IGNORE,	c_delay_target)
+	NL_INTEGER(     78,	T_MAY_IGNORE,	c_fill_target)
+	NL_INTEGER(     79,	T_MAY_IGNORE,	c_max_rate)
+	NL_INTEGER(     80,	T_MAY_IGNORE,	c_min_rate)
 )
 
 NL_PACKET(invalidate, 9, )
@@ -129,9 +148,13 @@ NL_PACKET(new_c_uuid, 26,
        NL_BIT(		63,	T_MANDATORY,	clear_bm)
 )
 
+#ifdef NL_RESPONSE
+NL_RESPONSE(return_code_only, 27)
+#endif
+
 #undef NL_PACKET
 #undef NL_INTEGER
 #undef NL_INT64
 #undef NL_BIT
 #undef NL_STRING
-
+#undef NL_RESPONSE

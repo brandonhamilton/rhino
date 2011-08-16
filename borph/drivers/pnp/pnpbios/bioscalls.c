@@ -11,7 +11,6 @@
 #include <linux/pnp.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
-#include <linux/slab.h>
 #include <linux/kmod.h>
 #include <linux/completion.h>
 #include <linux/spinlock.h>
@@ -220,7 +219,7 @@ void pnpbios_print_status(const char *module, u16 status)
 		       module);
 		break;
 	case PNP_HARDWARE_ERROR:
-		printk(KERN_ERR "PnPBIOS: %s: a hardware failure has occured\n",
+		printk(KERN_ERR "PnPBIOS: %s: a hardware failure has occurred\n",
 		       module);
 		break;
 	default:

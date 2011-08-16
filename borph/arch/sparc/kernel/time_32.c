@@ -35,6 +35,7 @@
 #include <linux/platform_device.h>
 
 #include <asm/oplib.h>
+#include <asm/timex.h>
 #include <asm/timer.h>
 #include <asm/system.h>
 #include <asm/irq.h>
@@ -51,7 +52,6 @@ DEFINE_SPINLOCK(rtc_lock);
 EXPORT_SYMBOL(rtc_lock);
 
 static int set_rtc_mmss(unsigned long);
-static int sbus_do_settimeofday(struct timespec *tv);
 
 unsigned long profile_pc(struct pt_regs *regs)
 {
@@ -76,40 +76,29 @@ EXPORT_SYMBOL(profile_pc);
 
 __volatile__ unsigned int *master_l10_counter;
 
+u32 (*do_arch_gettimeoffset)(void);
+
+int update_persistent_clock(struct timespec now)
+{
+	return set_rtc_mmss(now.tv_sec);
+}
+
 /*
  * timer_interrupt() needs to keep up the real-time clock,
- * as well as call the "do_timer()" routine every clocktick
+ * as well as call the "xtime_update()" routine every clocktick
  */
 
 #define TICK_SIZE (tick_nsec / 1000)
 
 static irqreturn_t timer_interrupt(int dummy, void *dev_id)
 {
-	/* last time the cmos clock got updated */
-	static long last_rtc_update;
-
 #ifndef CONFIG_SMP
 	profile_tick(CPU_PROFILING);
 #endif
 
-	/* Protect counter clear so that do_gettimeoffset works */
-	write_seqlock(&xtime_lock);
-
 	clear_clock_irq();
 
-	do_timer(1);
-
-	/* Determine when to update the Mostek clock. */
-	if (ntp_synced() &&
-	    xtime.tv_sec > last_rtc_update + 660 &&
-	    (xtime.tv_nsec / 1000) >= 500000 - ((unsigned) TICK_SIZE) / 2 &&
-	    (xtime.tv_nsec / 1000) <= 500000 + ((unsigned) TICK_SIZE) / 2) {
-	  if (set_rtc_mmss(xtime.tv_sec) == 0)
-	    last_rtc_update = xtime.tv_sec;
-	  else
-	    last_rtc_update = xtime.tv_sec - 600; /* do it again in 60 s */
-	}
-	write_sequnlock(&xtime_lock);
+	xtime_update(1);
 
 #ifndef CONFIG_SMP
 	update_process_times(user_mode(get_irq_regs()));
@@ -148,12 +137,16 @@ static struct platform_device m48t59_rtc = {
 	},
 };
 
-static int __devinit clock_probe(struct of_device *op, const struct of_device_id *match)
+static int __devinit clock_probe(struct platform_device *op)
 {
-	struct device_node *dp = op->node;
+	struct device_node *dp = op->dev.of_node;
 	const char *model = of_get_property(dp, "model", NULL);
 
 	if (!model)
+		return -ENODEV;
+
+	/* Only the primary RTC has an address property */
+	if (!of_find_property(dp, "address", NULL))
 		return -ENODEV;
 
 	m48t59_rtc.resource = &op->resource[0];
@@ -175,18 +168,19 @@ static int __devinit clock_probe(struct of_device *op, const struct of_device_id
 	return 0;
 }
 
-static struct of_device_id __initdata clock_match[] = {
+static struct of_device_id clock_match[] = {
 	{
 		.name = "eeprom",
 	},
 	{},
 };
 
-static struct of_platform_driver clock_driver = {
-	.match_table	= clock_match,
+static struct platform_driver clock_driver = {
 	.probe		= clock_probe,
-	.driver		= {
-		.name	= "rtc",
+	.driver = {
+		.name = "rtc",
+		.owner = THIS_MODULE,
+		.of_match_table = clock_match,
 	},
 };
 
@@ -194,37 +188,16 @@ static struct of_platform_driver clock_driver = {
 /* Probe for the mostek real time clock chip. */
 static int __init clock_init(void)
 {
-	return of_register_driver(&clock_driver, &of_platform_bus_type);
+	return platform_driver_register(&clock_driver);
 }
-
 /* Must be after subsys_initcall() so that busses are probed.  Must
  * be before device_initcall() because things like the RTC driver
  * need to see the clock registers.
  */
 fs_initcall(clock_init);
 
-static void __init sbus_time_init(void)
-{
 
-	BTFIXUPSET_CALL(bus_do_settimeofday, sbus_do_settimeofday, BTFIXUPCALL_NORM);
-	btfixup();
-
-	sparc_init_timers(timer_interrupt);
-}
-
-void __init time_init(void)
-{
-#ifdef CONFIG_PCI
-	extern void pci_time_init(void);
-	if (pcic_present()) {
-		pci_time_init();
-		return;
-	}
-#endif
-	sbus_time_init();
-}
-
-static inline unsigned long do_gettimeoffset(void)
+u32 sbus_do_gettimeoffset(void)
 {
 	unsigned long val = *master_l10_counter;
 	unsigned long usec = (val >> 10) & 0x1fffff;
@@ -233,85 +206,34 @@ static inline unsigned long do_gettimeoffset(void)
 	if (val & 0x80000000)
 		usec += 1000000 / HZ;
 
-	return usec;
+	return usec * 1000;
 }
 
-/* Ok, my cute asm atomicity trick doesn't work anymore.
- * There are just too many variables that need to be protected
- * now (both members of xtime, et al.)
- */
-void do_gettimeofday(struct timeval *tv)
+
+u32 arch_gettimeoffset(void)
 {
-	unsigned long flags;
-	unsigned long seq;
-	unsigned long usec, sec;
-	unsigned long max_ntp_tick = tick_usec - tickadj;
-
-	do {
-		seq = read_seqbegin_irqsave(&xtime_lock, flags);
-		usec = do_gettimeoffset();
-
-		/*
-		 * If time_adjust is negative then NTP is slowing the clock
-		 * so make sure not to go into next possible interval.
-		 * Better to lose some accuracy than have time go backwards..
-		 */
-		if (unlikely(time_adjust < 0))
-			usec = min(usec, max_ntp_tick);
-
-		sec = xtime.tv_sec;
-		usec += (xtime.tv_nsec / 1000);
-	} while (read_seqretry_irqrestore(&xtime_lock, seq, flags));
-
-	while (usec >= 1000000) {
-		usec -= 1000000;
-		sec++;
-	}
-
-	tv->tv_sec = sec;
-	tv->tv_usec = usec;
+	if (unlikely(!do_arch_gettimeoffset))
+		return 0;
+	return do_arch_gettimeoffset();
 }
 
-EXPORT_SYMBOL(do_gettimeofday);
-
-int do_settimeofday(struct timespec *tv)
+static void __init sbus_time_init(void)
 {
-	int ret;
+	do_arch_gettimeoffset = sbus_do_gettimeoffset;
 
-	write_seqlock_irq(&xtime_lock);
-	ret = bus_do_settimeofday(tv);
-	write_sequnlock_irq(&xtime_lock);
-	clock_was_set();
-	return ret;
+	btfixup();
+
+	sparc_irq_config.init_timers(timer_interrupt);
 }
 
-EXPORT_SYMBOL(do_settimeofday);
-
-static int sbus_do_settimeofday(struct timespec *tv)
+void __init time_init(void)
 {
-	time_t wtm_sec, sec = tv->tv_sec;
-	long wtm_nsec, nsec = tv->tv_nsec;
-
-	if ((unsigned long)tv->tv_nsec >= NSEC_PER_SEC)
-		return -EINVAL;
-
-	/*
-	 * This is revolting. We need to set "xtime" correctly. However, the
-	 * value in this location is the value at the most recent update of
-	 * wall time.  Discover what correction gettimeofday() would have
-	 * made, and then undo it!
-	 */
-	nsec -= 1000 * do_gettimeoffset();
-
-	wtm_sec  = wall_to_monotonic.tv_sec + (xtime.tv_sec - sec);
-	wtm_nsec = wall_to_monotonic.tv_nsec + (xtime.tv_nsec - nsec);
-
-	set_normalized_timespec(&xtime, sec, nsec);
-	set_normalized_timespec(&wall_to_monotonic, wtm_sec, wtm_nsec);
-
-	ntp_clear();
-	return 0;
+	if (pcic_present())
+		pci_time_init();
+	else
+		sbus_time_init();
 }
+
 
 static int set_rtc_mmss(unsigned long secs)
 {

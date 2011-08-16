@@ -21,6 +21,8 @@
 
 #define THREAD_SIZE		8192
 
+#define __HAVE_ARCH_TASK_STRUCT_ALLOCATOR
+
 /*
  * low level task data that entry.S needs immediate access to
  * - this struct should fit entirely inside of one cache line
@@ -84,16 +86,11 @@ register struct thread_info *__current_thread_info asm("gr15");
 
 /* thread information allocation */
 #ifdef CONFIG_DEBUG_STACK_USAGE
-#define alloc_thread_info(tsk)					\
-	({							\
-		struct thread_info *ret;			\
-								\
-		ret = kzalloc(THREAD_SIZE, GFP_KERNEL);		\
-								\
-		ret;						\
-	})
+#define alloc_thread_info_node(tsk, node)			\
+		kzalloc_node(THREAD_SIZE, GFP_KERNEL, node)
 #else
-#define alloc_thread_info(tsk)	kmalloc(THREAD_SIZE, GFP_KERNEL)
+#define alloc_thread_info_node(tsk, node)			\
+		kmalloc_node(THREAD_SIZE, GFP_KERNEL, node)
 #endif
 
 #define free_thread_info(info)	kfree(info)
@@ -113,7 +110,7 @@ register struct thread_info *__current_thread_info asm("gr15");
 #define TIF_SINGLESTEP		4	/* restore singlestep on return to user mode */
 #define TIF_RESTORE_SIGMASK	5	/* restore signal mask in do_signal() */
 #define TIF_POLLING_NRFLAG	16	/* true if poll_idle() is polling TIF_NEED_RESCHED */
-#define TIF_MEMDIE		17	/* OOM killer killed process */
+#define TIF_MEMDIE		17	/* is terminating due to OOM killer */
 #define TIF_FREEZE		18	/* freezing for suspend */
 
 #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)

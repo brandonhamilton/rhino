@@ -22,11 +22,13 @@
 #include <linux/clk.h>
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
+#include <linux/spi/pxa2xx_spi.h>
 #include <linux/smc91x.h>
 #include <linux/i2c.h>
 #include <linux/leds.h>
 #include <linux/mfd/da903x.h>
 #include <linux/i2c/max732x.h>
+#include <linux/i2c/pxa-i2c.h>
 
 #include <asm/types.h>
 #include <asm/setup.h>
@@ -41,12 +43,9 @@
 
 #include <mach/pxa300.h>
 #include <mach/pxafb.h>
-#include <mach/ssp.h>
 #include <mach/mmc.h>
-#include <mach/pxa2xx_spi.h>
-#include <mach/pxa27x_keypad.h>
+#include <plat/pxa27x_keypad.h>
 #include <mach/littleton.h>
-#include <plat/i2c.h>
 #include <plat/pxa3xx_nand.h>
 
 #include "generic.h"
@@ -110,6 +109,12 @@ static mfp_cfg_t littleton_mfp_cfg[] __initdata = {
 	GPIO7_MMC1_CLK,
 	GPIO8_MMC1_CMD,
 	GPIO15_GPIO, /* card detect */
+
+	/* UART3 */
+	GPIO107_UART3_CTS,
+	GPIO108_UART3_RTS,
+	GPIO109_UART3_TXD,
+	GPIO110_UART3_RXD,
 };
 
 static struct resource smc91x_resources[] = {
@@ -180,7 +185,7 @@ static struct pxafb_mach_info littleton_lcd_info = {
 
 static void littleton_init_lcd(void)
 {
-	set_pxa_fb_info(&littleton_lcd_info);
+	pxa_set_fb_info(NULL, &littleton_lcd_info);
 }
 #else
 static inline void littleton_init_lcd(void) {};
@@ -266,7 +271,7 @@ static inline void littleton_init_keypad(void) {}
 
 #if defined(CONFIG_MMC_PXA) || defined(CONFIG_MMC_PXA_MODULE)
 static struct pxamci_platform_data littleton_mci_platform_data = {
-	.detect_delay		= 20,
+	.detect_delay_ms	= 200,
 	.ocr_mask		= MMC_VDD_32_33 | MMC_VDD_33_34,
 	.gpio_card_detect	= GPIO_MMC1_CARD_DETECT,
 	.gpio_card_ro		= -1,
@@ -432,11 +437,11 @@ static void __init littleton_init(void)
 }
 
 MACHINE_START(LITTLETON, "Marvell Form Factor Development Platform (aka Littleton)")
-	.phys_io	= 0x40000000,
 	.boot_params	= 0xa0000100,
-	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
-	.map_io		= pxa_map_io,
+	.map_io		= pxa3xx_map_io,
+	.nr_irqs	= LITTLETON_NR_IRQS,
 	.init_irq	= pxa3xx_init_irq,
+	.handle_irq	= pxa3xx_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= littleton_init,
 MACHINE_END

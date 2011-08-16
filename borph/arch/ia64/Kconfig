@@ -1,10 +1,3 @@
-#
-# For a description of the syntax of this configuration file,
-# see Documentation/kbuild/kconfig-language.txt.
-#
-
-mainmenu "IA-64 Linux Kernel Configuration"
-
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
@@ -29,6 +22,13 @@ config IA64
 	select HAVE_KVM
 	select HAVE_ARCH_TRACEHOOK
 	select HAVE_DMA_API_DEBUG
+	select HAVE_GENERIC_HARDIRQS
+	select GENERIC_IRQ_PROBE
+	select GENERIC_PENDING_IRQ if SMP
+	select IRQ_PER_CPU
+	select GENERIC_IRQ_SHOW
+	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select ARCH_HAVE_NMI_SAFE_CMPXCHG
 	default y
 	help
 	  The Itanium Processor Family is Intel's 64-bit successor to
@@ -53,11 +53,20 @@ config MMU
 	bool
 	default y
 
+config ARCH_DMA_ADDR_T_64BIT
+	def_bool y
+
+config NEED_DMA_MAP_STATE
+	def_bool y
+
+config NEED_SG_DMA_LENGTH
+	def_bool y
+
 config SWIOTLB
        bool
 
-config IOMMU_HELPER
-       bool
+config STACKTRACE_SUPPORT
+	def_bool y
 
 config GENERIC_LOCKBREAK
 	def_bool n
@@ -71,15 +80,7 @@ config HUGETLB_PAGE_SIZE_VARIABLE
 	depends on HUGETLB_PAGE
 	default y
 
-config GENERIC_FIND_NEXT_BIT
-	bool
-	default y
-
 config GENERIC_CALIBRATE_DELAY
-	bool
-	default y
-
-config GENERIC_TIME
 	bool
 	default y
 
@@ -88,6 +89,9 @@ config GENERIC_TIME_VSYSCALL
 	default y
 
 config HAVE_SETUP_PER_CPU_AREA
+	def_bool y
+
+config GENERIC_GPIO
 	def_bool y
 
 config DMI
@@ -101,6 +105,9 @@ config EFI
 config GENERIC_IOMAP
 	bool
 	default y
+
+config ARCH_CLOCKSOURCE_DATA
+	def_bool y
 
 config SCHED_OMIT_FRAME_POINTER
 	bool
@@ -411,11 +418,11 @@ config PERMIT_BSP_REMOVE
 	support. 
 
 config FORCE_CPEI_RETARGET
-	bool "Force assumption that CPEI can be re-targetted"
+	bool "Force assumption that CPEI can be re-targeted"
 	depends on PERMIT_BSP_REMOVE
 	default n
 	---help---
-	Say Y if you need to force the assumption that CPEI can be re-targetted to
+	Say Y if you need to force the assumption that CPEI can be re-targeted to
 	any cpu in the system. This hint is available via ACPI 3.0 specifications.
 	Tiger4 systems are capable of re-directing CPEI to any CPU other than BSP.
 	This option it useful to enable this feature on older BIOS's as well.
@@ -495,26 +502,16 @@ config HAVE_ARCH_NODEDATA_EXTENSION
 	def_bool y
 	depends on NUMA
 
+config USE_PERCPU_NUMA_NODE_ID
+	def_bool y
+	depends on NUMA
+
+config HAVE_MEMORYLESS_NODES
+	def_bool NUMA
+
 config ARCH_PROC_KCORE_TEXT
 	def_bool y
 	depends on PROC_KCORE
-
-config IA32_SUPPORT
-	bool "Support for Linux/x86 binaries"
-	help
-	  IA-64 processors can execute IA-32 (X86) instructions.  By
-	  saying Y here, the kernel will include IA-32 system call
-	  emulation support which makes it possible to transparently
-	  run IA-32 Linux binaries on an IA-64 Linux system.
-	  If in doubt, say Y.
-
-config COMPAT
-	bool
-	depends on IA32_SUPPORT
-	default y
-
-config COMPAT_FOR_U64_ALIGNMENT
-	def_bool COMPAT
 
 config IA64_MCA_RECOVERY
 	tristate "MCA recovery from errors other than TLB."
@@ -638,27 +635,6 @@ source "drivers/pci/hotplug/Kconfig"
 
 source "drivers/pcmcia/Kconfig"
 
-config DMAR
-        bool "Support for DMA Remapping Devices (EXPERIMENTAL)"
-        depends on IA64_GENERIC && ACPI && EXPERIMENTAL
-	help
-	  DMA remapping (DMAR) devices support enables independent address
-	  translations for Direct Memory Access (DMA) from devices.
-	  These DMA remapping devices are reported via ACPI tables
-	  and include PCI device scope covered by these DMA
-	  remapping devices.
-
-config DMAR_DEFAULT_ON
-	def_bool y
-	prompt "Enable DMA Remapping Devices by default"
-	depends on DMAR
-	help
-	  Selecting this option will enable a DMAR device at boot time if
-	  one is found. If this option is not selected, DMAR support can
-	  be enabled by passing intel_iommu=on to the kernel. It is
-	  recommended you say N here while the DMAR code remains
-	  experimental.
-
 endmenu
 
 endif
@@ -690,28 +666,5 @@ source "arch/ia64/kvm/Kconfig"
 
 source "lib/Kconfig"
 
-#
-# Use the generic interrupt handling code in kernel/irq/:
-#
-config GENERIC_HARDIRQS
-	bool
-	default y
-
-config GENERIC_IRQ_PROBE
-	bool
-	default y
-
-config GENERIC_PENDING_IRQ
-	bool
-	depends on GENERIC_HARDIRQS && SMP
-	default y
-
-config IRQ_PER_CPU
-	bool
-	default y
-
 config IOMMU_HELPER
 	def_bool (IA64_HP_ZX1 || IA64_HP_ZX1_SWIOTLB || IA64_GENERIC || SWIOTLB)
-
-config IOMMU_API
-	def_bool (DMAR)

@@ -94,11 +94,10 @@ static struct hwrng pasemi_rng = {
 	.data_read	= pasemi_rng_data_read,
 };
 
-static int __devinit rng_probe(struct of_device *ofdev,
-			       const struct of_device_id *match)
+static int __devinit rng_probe(struct platform_device *ofdev)
 {
 	void __iomem *rng_regs;
-	struct device_node *rng_np = ofdev->node;
+	struct device_node *rng_np = ofdev->dev.of_node;
 	struct resource res;
 	int err = 0;
 
@@ -123,7 +122,7 @@ static int __devinit rng_probe(struct of_device *ofdev,
 	return err;
 }
 
-static int __devexit rng_remove(struct of_device *dev)
+static int __devexit rng_remove(struct platform_device *dev)
 {
 	void __iomem *rng_regs = (void __iomem *)pasemi_rng.priv;
 
@@ -139,22 +138,25 @@ static struct of_device_id rng_match[] = {
 	{ },
 };
 
-static struct of_platform_driver rng_driver = {
-	.name		= "pasemi-rng",
-	.match_table	= rng_match,
+static struct platform_driver rng_driver = {
+	.driver = {
+		.name = "pasemi-rng",
+		.owner = THIS_MODULE,
+		.of_match_table = rng_match,
+	},
 	.probe		= rng_probe,
 	.remove		= rng_remove,
 };
 
 static int __init rng_init(void)
 {
-	return of_register_platform_driver(&rng_driver);
+	return platform_driver_register(&rng_driver);
 }
 module_init(rng_init);
 
 static void __exit rng_exit(void)
 {
-	of_unregister_platform_driver(&rng_driver);
+	platform_driver_unregister(&rng_driver);
 }
 module_exit(rng_exit);
 

@@ -1164,7 +1164,7 @@
           }
           chip->port = pci_resource_start(pci, 0);
           if (request_irq(pci->irq, snd_mychip_interrupt,
-                          IRQF_SHARED, "My Chip", chip)) {
+                          IRQF_SHARED, KBUILD_MODNAME, chip)) {
                   printk(KERN_ERR "cannot grab irq %d\n", pci->irq);
                   snd_mychip_free(chip);
                   return -EBUSY;
@@ -1197,7 +1197,7 @@
 
   /* pci_driver definition */
   static struct pci_driver driver = {
-          .name = "My Own Chip",
+          .name = KBUILD_MODNAME,
           .id_table = snd_mychip_ids,
           .probe = snd_mychip_probe,
           .remove = __devexit_p(snd_mychip_remove),
@@ -1340,7 +1340,7 @@
           <programlisting>
 <![CDATA[
   if (request_irq(pci->irq, snd_mychip_interrupt,
-                  IRQF_SHARED, "My Chip", chip)) {
+                  IRQF_SHARED, KBUILD_MODNAME, chip)) {
           printk(KERN_ERR "cannot grab irq %d\n", pci->irq);
           snd_mychip_free(chip);
           return -EBUSY;
@@ -1616,7 +1616,7 @@
           <programlisting>
 <![CDATA[
   static struct pci_driver driver = {
-          .name = "My Own Chip",
+          .name = KBUILD_MODNAME,
           .id_table = snd_mychip_ids,
           .probe = snd_mychip_probe,
           .remove = __devexit_p(snd_mychip_remove),
@@ -4784,7 +4784,7 @@ struct _snd_pcm_runtime {
         FM registers can be directly accessed through the direct-FM API,
       defined in <filename>&lt;sound/asound_fm.h&gt;</filename>. In
       ALSA native mode, FM registers are accessed through
-      the Hardware-Dependant Device direct-FM extension API, whereas in
+      the Hardware-Dependent Device direct-FM extension API, whereas in
       OSS compatible mode, FM registers can be accessed with the OSS
       direct-FM compatible API in <filename>/dev/dmfmX</filename> device. 
       </para>
@@ -5518,34 +5518,41 @@ struct _snd_pcm_runtime {
 ]]>
         </programlisting>
       </informalexample>
+
+      For the raw data, <structfield>size</structfield> field must be
+      set properly.  This specifies the maximum size of the proc file access.
     </para>
 
     <para>
-      The callback is much more complicated than the text-file
-      version. You need to use a low-level I/O functions such as
+      The read/write callbacks of raw mode are more direct than the text mode.
+      You need to use a low-level I/O functions such as
       <function>copy_from/to_user()</function> to transfer the
       data.
 
       <informalexample>
         <programlisting>
 <![CDATA[
-  static long my_file_io_read(struct snd_info_entry *entry,
+  static ssize_t my_file_io_read(struct snd_info_entry *entry,
                               void *file_private_data,
                               struct file *file,
                               char *buf,
-                              unsigned long count,
-                              unsigned long pos)
+                              size_t count,
+                              loff_t pos)
   {
-          long size = count;
-          if (pos + size > local_max_size)
-                  size = local_max_size - pos;
-          if (copy_to_user(buf, local_data + pos, size))
+          if (copy_to_user(buf, local_data + pos, count))
                   return -EFAULT;
-          return size;
+          return count;
   }
 ]]>
         </programlisting>
       </informalexample>
+
+      If the size of the info entry has been set up properly,
+      <structfield>count</structfield> and <structfield>pos</structfield> are
+      guaranteed to fit within 0 and the given size.
+      You don't have to check the range in the callbacks unless any
+      other condition is required.
+
     </para>
 
   </chapter>
@@ -5809,7 +5816,7 @@ struct _snd_pcm_runtime {
         <programlisting>
 <![CDATA[
   static struct pci_driver driver = {
-          .name = "My Chip",
+          .name = KBUILD_MODNAME,
           .id_table = snd_my_ids,
           .probe = snd_my_probe,
           .remove = __devexit_p(snd_my_remove),

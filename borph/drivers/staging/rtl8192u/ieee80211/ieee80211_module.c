@@ -46,7 +46,6 @@
 #include <linux/slab.h>
 #include <linux/tcp.h>
 #include <linux/types.h>
-#include <linux/version.h>
 #include <linux/wireless.h>
 #include <linux/etherdevice.h>
 #include <asm/uaccess.h>
@@ -65,17 +64,14 @@ static inline int ieee80211_networks_allocate(struct ieee80211_device *ieee)
 	if (ieee->networks)
 		return 0;
 
-	ieee->networks = kmalloc(
-		MAX_NETWORK_COUNT * sizeof(struct ieee80211_network),
+	ieee->networks = kcalloc(
+		MAX_NETWORK_COUNT, sizeof(struct ieee80211_network),
 		GFP_KERNEL);
 	if (!ieee->networks) {
 		printk(KERN_WARNING "%s: Out of memory allocating beacons\n",
 		       ieee->dev->name);
 		return -ENOMEM;
 	}
-
-	memset(ieee->networks, 0,
-	       MAX_NETWORK_COUNT * sizeof(struct ieee80211_network));
 
 	return 0;
 }
@@ -161,7 +157,7 @@ struct net_device *alloc_ieee80211(int sizeof_priv)
 
 	ieee80211_softmac_init(ieee);
 
-	ieee->pHTInfo = (RT_HIGH_THROUGHPUT*)kzalloc(sizeof(RT_HIGH_THROUGHPUT), GFP_KERNEL);
+	ieee->pHTInfo = kzalloc(sizeof(RT_HIGH_THROUGHPUT), GFP_KERNEL);
 	if (ieee->pHTInfo == NULL)
 	{
 		IEEE80211_DEBUG(IEEE80211_DL_ERR, "can't alloc memory for HTInfo\n");
@@ -201,11 +197,8 @@ void free_ieee80211(struct net_device *dev)
 	int i;
 	//struct list_head *p, *q;
 //	del_timer_sync(&ieee->SwBwTimer);
-	if (ieee->pHTInfo != NULL)
-	{
-		kfree(ieee->pHTInfo);
-		ieee->pHTInfo = NULL;
-	}
+	kfree(ieee->pHTInfo);
+	ieee->pHTInfo = NULL;
 	RemoveAllTS(ieee);
 	ieee80211_softmac_free(ieee);
 	del_timer_sync(&ieee->crypt_deinit_timer);
@@ -260,7 +253,7 @@ static int store_debug_level(struct file *file, const char *buffer,
 			     unsigned long count, void *data)
 {
 	char buf[] = "0x00000000";
-	unsigned long len = min(sizeof(buf) - 1, count);
+	unsigned long len = min_t(unsigned long, sizeof(buf) - 1, count);
 	char *p = (char *)buf;
 	unsigned long val;
 
@@ -289,7 +282,7 @@ int __init ieee80211_debug_init(void)
 
 	ieee80211_debug_level = debug;
 
-	ieee80211_proc = create_proc_entry(DRV_NAME, S_IFDIR, init_net.proc_net);
+	ieee80211_proc = proc_mkdir(DRV_NAME, init_net.proc_net);
 	if (ieee80211_proc == NULL) {
 		IEEE80211_ERROR("Unable to create " DRV_NAME
 				" proc directory\n");

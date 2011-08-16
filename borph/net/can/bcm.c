@@ -43,6 +43,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/hrtimer.h>
 #include <linux/list.h>
 #include <linux/proc_fs.h>
@@ -56,8 +57,16 @@
 #include <linux/can.h>
 #include <linux/can/core.h>
 #include <linux/can/bcm.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/net_namespace.h>
+
+/*
+ * To send multiple CAN frame content within TX_SETUP or to filter
+ * CAN messages with multiplex index within RX_SETUP, the number of
+ * different filters is limited to 256 due to the one byte index value.
+ */
+#define MAX_NFRAMES 256
 
 /* use of last_frames[index].can_dlc */
 #define RX_RECV    0x40 /* received data for this element */
@@ -88,16 +97,16 @@ struct bcm_op {
 	struct list_head list;
 	int ifindex;
 	canid_t can_id;
-	int flags;
+	u32 flags;
 	unsigned long frames_abs, frames_filtered;
 	struct timeval ival1, ival2;
 	struct hrtimer timer, thrtimer;
 	struct tasklet_struct tsklet, thrtsklet;
 	ktime_t rx_stamp, kt_ival1, kt_ival2, kt_lastmsg;
 	int rx_ifindex;
-	int count;
-	int nframes;
-	int currframe;
+	u32 count;
+	u32 nframes;
+	u32 currframe;
 	struct can_frame *frames;
 	struct can_frame *last_frames;
 	struct can_frame sframe;
@@ -117,7 +126,7 @@ struct bcm_sock {
 	struct list_head tx_ops;
 	unsigned long dropped_usr_msgs;
 	struct proc_dir_entry *bcm_proc_read;
-	char procname [9]; /* pointer printed in ASCII with \0 */
+	char procname [32]; /* inode number in decimal with \0 */
 };
 
 static inline struct bcm_sock *bcm_sk(const struct sock *sk)
@@ -157,9 +166,9 @@ static int bcm_proc_show(struct seq_file *m, void *v)
 	struct bcm_sock *bo = bcm_sk(sk);
 	struct bcm_op *op;
 
-	seq_printf(m, ">>> socket %p", sk->sk_socket);
-	seq_printf(m, " / sk %p", sk);
-	seq_printf(m, " / bo %p", bo);
+	seq_printf(m, ">>> socket %pK", sk->sk_socket);
+	seq_printf(m, " / sk %pK", sk);
+	seq_printf(m, " / bo %pK", bo);
 	seq_printf(m, " / dropped %lu", bo->dropped_usr_msgs);
 	seq_printf(m, " / bound %s", bcm_proc_getifname(ifname, bo->ifindex));
 	seq_printf(m, " <<<\n");
@@ -174,7 +183,7 @@ static int bcm_proc_show(struct seq_file *m, void *v)
 
 		seq_printf(m, "rx_op: %03X %-5s ",
 				op->can_id, bcm_proc_getifname(ifname, op->ifindex));
-		seq_printf(m, "[%d]%c ", op->nframes,
+		seq_printf(m, "[%u]%c ", op->nframes,
 				(op->flags & RX_CHECK_DLC)?'d':' ');
 		if (op->kt_ival1.tv64)
 			seq_printf(m, "timeo=%lld ",
@@ -197,7 +206,7 @@ static int bcm_proc_show(struct seq_file *m, void *v)
 
 	list_for_each_entry(op, &bo->tx_ops, list) {
 
-		seq_printf(m, "tx_op: %03X %s [%d] ",
+		seq_printf(m, "tx_op: %03X %s [%u] ",
 				op->can_id,
 				bcm_proc_getifname(ifname, op->ifindex),
 				op->nframes);
@@ -282,7 +291,7 @@ static void bcm_send_to_user(struct bcm_op *op, struct bcm_msg_head *head,
 	struct can_frame *firstframe;
 	struct sockaddr_can *addr;
 	struct sock *sk = op->sk;
-	int datalen = head->nframes * CFSIZ;
+	unsigned int datalen = head->nframes * CFSIZ;
 	int err;
 
 	skb = alloc_skb(sizeof(*head) + datalen, gfp_any());
@@ -379,7 +388,7 @@ static void bcm_tx_timeout_tsklet(unsigned long data)
 }
 
 /*
- * bcm_tx_timeout_handler - performes cyclic CAN frame transmissions
+ * bcm_tx_timeout_handler - performs cyclic CAN frame transmissions
  */
 static enum hrtimer_restart bcm_tx_timeout_handler(struct hrtimer *hrtimer)
 {
@@ -467,7 +476,7 @@ rx_changed_settime:
  * bcm_rx_cmp_to_index - (bit)compares the currently received data to formerly
  *                       received data stored in op->last_frames[]
  */
-static void bcm_rx_cmp_to_index(struct bcm_op *op, int index,
+static void bcm_rx_cmp_to_index(struct bcm_op *op, unsigned int index,
 				const struct can_frame *rxdata)
 {
 	/*
@@ -553,7 +562,8 @@ static enum hrtimer_restart bcm_rx_timeout_handler(struct hrtimer *hrtimer)
 /*
  * bcm_rx_do_flush - helper for bcm_rx_thr_flush
  */
-static inline int bcm_rx_do_flush(struct bcm_op *op, int update, int index)
+static inline int bcm_rx_do_flush(struct bcm_op *op, int update,
+				  unsigned int index)
 {
 	if ((op->last_frames) && (op->last_frames[index].can_dlc & RX_THR)) {
 		if (update)
@@ -574,7 +584,7 @@ static int bcm_rx_thr_flush(struct bcm_op *op, int update)
 	int updated = 0;
 
 	if (op->nframes > 1) {
-		int i;
+		unsigned int i;
 
 		/* for MUX filter we start at index 1 */
 		for (i = 1; i < op->nframes; i++)
@@ -623,7 +633,7 @@ static void bcm_rx_handler(struct sk_buff *skb, void *data)
 {
 	struct bcm_op *op = (struct bcm_op *)data;
 	const struct can_frame *rxframe = (struct can_frame *)skb->data;
-	int i;
+	unsigned int i;
 
 	/* disable timeout */
 	hrtimer_cancel(&op->timer);
@@ -712,8 +722,6 @@ static void bcm_remove_op(struct bcm_op *op)
 		kfree(op->last_frames);
 
 	kfree(op);
-
-	return;
 }
 
 static void bcm_rx_unreg(struct net_device *dev, struct bcm_op *op)
@@ -823,14 +831,15 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 {
 	struct bcm_sock *bo = bcm_sk(sk);
 	struct bcm_op *op;
-	int i, err;
+	unsigned int i;
+	int err;
 
 	/* we need a real device to send frames */
 	if (!ifindex)
 		return -ENODEV;
 
-	/* we need at least one can_frame */
-	if (msg_head->nframes < 1)
+	/* check nframes boundaries - we need at least one can_frame */
+	if (msg_head->nframes < 1 || msg_head->nframes > MAX_NFRAMES)
 		return -EINVAL;
 
 	/* check the given can_id */
@@ -993,6 +1002,10 @@ static int bcm_rx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		/* ignore trailing garbage */
 		msg_head->nframes = 0;
 	}
+
+	/* the first element contains the mux-mask => MAX_NFRAMES + 1  */
+	if (msg_head->nframes > MAX_NFRAMES + 1)
+		return -EINVAL;
 
 	if ((msg_head->flags & RX_RTR_FRAME) &&
 	    ((msg_head->nframes != 1) ||
@@ -1244,6 +1257,9 @@ static int bcm_sendmsg(struct kiocb *iocb, struct socket *sock,
 		struct sockaddr_can *addr =
 			(struct sockaddr_can *)msg->msg_name;
 
+		if (msg->msg_namelen < sizeof(*addr))
+			return -EINVAL;
+
 		if (addr->can_family != AF_CAN)
 			return -EINVAL;
 
@@ -1412,8 +1428,13 @@ static int bcm_init(struct sock *sk)
 static int bcm_release(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
-	struct bcm_sock *bo = bcm_sk(sk);
+	struct bcm_sock *bo;
 	struct bcm_op *op, *next;
+
+	if (sk == NULL)
+		return 0;
+
+	bo = bcm_sk(sk);
 
 	/* remove bcm_ops, timer, rx_unregister(), etc. */
 
@@ -1478,6 +1499,9 @@ static int bcm_connect(struct socket *sock, struct sockaddr *uaddr, int len,
 	struct sock *sk = sock->sk;
 	struct bcm_sock *bo = bcm_sk(sk);
 
+	if (len < sizeof(*addr))
+		return -EINVAL;
+
 	if (bo->bound)
 		return -EISCONN;
 
@@ -1506,7 +1530,7 @@ static int bcm_connect(struct socket *sock, struct sockaddr *uaddr, int len,
 
 	if (proc_dir) {
 		/* unique socket address as filename */
-		sprintf(bo->procname, "%p", sock);
+		sprintf(bo->procname, "%lu", sock_i_ino(sk));
 		bo->bcm_proc_read = proc_create_data(bo->procname, 0644,
 						     proc_dir,
 						     &bcm_proc_fops, sk);
@@ -1551,7 +1575,7 @@ static int bcm_recvmsg(struct kiocb *iocb, struct socket *sock,
 	return size;
 }
 
-static struct proto_ops bcm_ops __read_mostly = {
+static const struct proto_ops bcm_ops = {
 	.family        = PF_CAN,
 	.release       = bcm_release,
 	.bind          = sock_no_bind,
@@ -1560,7 +1584,7 @@ static struct proto_ops bcm_ops __read_mostly = {
 	.accept        = sock_no_accept,
 	.getname       = sock_no_getname,
 	.poll          = datagram_poll,
-	.ioctl         = NULL,		/* use can_ioctl() from af_can.c */
+	.ioctl         = can_ioctl,	/* use can_ioctl() from af_can.c */
 	.listen        = sock_no_listen,
 	.shutdown      = sock_no_shutdown,
 	.setsockopt    = sock_no_setsockopt,
@@ -1578,7 +1602,7 @@ static struct proto bcm_proto __read_mostly = {
 	.init       = bcm_init,
 };
 
-static struct can_proto bcm_can_proto __read_mostly = {
+static const struct can_proto bcm_can_proto = {
 	.type       = SOCK_DGRAM,
 	.protocol   = CAN_BCM,
 	.ops        = &bcm_ops,

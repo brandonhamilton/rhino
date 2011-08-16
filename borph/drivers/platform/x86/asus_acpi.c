@@ -30,11 +30,15 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/backlight.h>
 #include <acpi/acpi_drivers.h>
 #include <acpi/acpi_bus.h>
@@ -466,6 +470,7 @@ MODULE_DEVICE_TABLE(acpi, asus_device_ids);
 static struct acpi_driver asus_hotk_driver = {
 	.name = "asus_acpi",
 	.class = ACPI_HOTK_CLASS,
+	.owner = THIS_MODULE,
 	.ids = asus_device_ids,
 	.flags = ACPI_DRIVER_ALL_NOTIFY_EVENTS,
 	.ops = {
@@ -512,26 +517,12 @@ static int read_acpi_int(acpi_handle handle, const char *method, int *val)
 	return (status == AE_OK) && (out_obj.type == ACPI_TYPE_INTEGER);
 }
 
-/*
- * We write our info in page, we begin at offset off and cannot write more
- * than count bytes. We set eof to 1 if we handle those 2 values. We return the
- * number of bytes written in page
- */
-static int
-proc_read_info(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int asus_info_proc_show(struct seq_file *m, void *v)
 {
-	int len = 0;
 	int temp;
-	char buf[16];		/* enough for all info */
-	/*
-	 * We use the easy way, we don't care of off and count,
-	 * so we don't set eof to 1
-	 */
 
-	len += sprintf(page, ACPI_HOTK_NAME " " ASUS_ACPI_VERSION "\n");
-	len += sprintf(page + len, "Model reference    : %s\n",
-		       hotk->methods->name);
+	seq_printf(m, ACPI_HOTK_NAME " " ASUS_ACPI_VERSION "\n");
+	seq_printf(m, "Model reference    : %s\n", hotk->methods->name);
 	/*
 	 * The SFUN method probably allows the original driver to get the list
 	 * of features supported by a given model. For now, 0x0100 or 0x0800
@@ -539,8 +530,7 @@ proc_read_info(char *page, char **start, off_t off, int count, int *eof,
 	 * The significance of others is yet to be found.
 	 */
 	if (read_acpi_int(hotk->handle, "SFUN", &temp))
-		len +=
-		    sprintf(page + len, "SFUN value         : 0x%04x\n", temp);
+		seq_printf(m, "SFUN value         : 0x%04x\n", temp);
 	/*
 	 * Another value for userspace: the ASYM method returns 0x02 for
 	 * battery low and 0x04 for battery critical, its readings tend to be
@@ -549,29 +539,33 @@ proc_read_info(char *page, char **start, off_t off, int count, int *eof,
 	 * silently ignored.
 	 */
 	if (read_acpi_int(hotk->handle, "ASYM", &temp))
-		len +=
-		    sprintf(page + len, "ASYM value         : 0x%04x\n", temp);
+		seq_printf(m, "ASYM value         : 0x%04x\n", temp);
 	if (asus_info) {
-		snprintf(buf, 16, "%d", asus_info->length);
-		len += sprintf(page + len, "DSDT length        : %s\n", buf);
-		snprintf(buf, 16, "%d", asus_info->checksum);
-		len += sprintf(page + len, "DSDT checksum      : %s\n", buf);
-		snprintf(buf, 16, "%d", asus_info->revision);
-		len += sprintf(page + len, "DSDT revision      : %s\n", buf);
-		snprintf(buf, 7, "%s", asus_info->oem_id);
-		len += sprintf(page + len, "OEM id             : %s\n", buf);
-		snprintf(buf, 9, "%s", asus_info->oem_table_id);
-		len += sprintf(page + len, "OEM table id       : %s\n", buf);
-		snprintf(buf, 16, "%x", asus_info->oem_revision);
-		len += sprintf(page + len, "OEM revision       : 0x%s\n", buf);
-		snprintf(buf, 5, "%s", asus_info->asl_compiler_id);
-		len += sprintf(page + len, "ASL comp vendor id : %s\n", buf);
-		snprintf(buf, 16, "%x", asus_info->asl_compiler_revision);
-		len += sprintf(page + len, "ASL comp revision  : 0x%s\n", buf);
+		seq_printf(m, "DSDT length        : %d\n", asus_info->length);
+		seq_printf(m, "DSDT checksum      : %d\n", asus_info->checksum);
+		seq_printf(m, "DSDT revision      : %d\n", asus_info->revision);
+		seq_printf(m, "OEM id             : %.*s\n", ACPI_OEM_ID_SIZE, asus_info->oem_id);
+		seq_printf(m, "OEM table id       : %.*s\n", ACPI_OEM_TABLE_ID_SIZE, asus_info->oem_table_id);
+		seq_printf(m, "OEM revision       : 0x%x\n", asus_info->oem_revision);
+		seq_printf(m, "ASL comp vendor id : %.*s\n", ACPI_NAME_SIZE, asus_info->asl_compiler_id);
+		seq_printf(m, "ASL comp revision  : 0x%x\n", asus_info->asl_compiler_revision);
 	}
 
-	return len;
+	return 0;
 }
+
+static int asus_info_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, asus_info_proc_show, NULL);
+}
+
+static const struct file_operations asus_info_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= asus_info_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 /*
  * /proc handlers
@@ -589,8 +583,7 @@ static int read_led(const char *ledname, int ledmask)
 		if (read_acpi_int(NULL, ledname, &led_status))
 			return led_status;
 		else
-			printk(KERN_WARNING "Asus ACPI: Error reading LED "
-			       "status\n");
+			pr_warn("Error reading LED status\n");
 	}
 	return (hotk->status & ledmask) ? 1 : 0;
 }
@@ -629,8 +622,7 @@ write_led(const char __user *buffer, unsigned long count,
 		led_out = !led_out;
 
 	if (!write_acpi_int(hotk->handle, ledname, led_out, NULL))
-		printk(KERN_WARNING "Asus ACPI: LED (%s) write failed\n",
-		       ledname);
+		pr_warn("LED (%s) write failed\n", ledname);
 
 	return rv;
 }
@@ -638,34 +630,48 @@ write_led(const char __user *buffer, unsigned long count,
 /*
  * Proc handlers for MLED
  */
-static int
-proc_read_mled(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int mled_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n",
-		       read_led(hotk->methods->mled_status, MLED_ON));
+	seq_printf(m, "%d\n", read_led(hotk->methods->mled_status, MLED_ON));
+	return 0;
 }
 
-static int
-proc_write_mled(struct file *file, const char __user *buffer,
-		unsigned long count, void *data)
+static int mled_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mled_proc_show, NULL);
+}
+
+static ssize_t mled_proc_write(struct file *file, const char __user *buffer,
+		size_t count, loff_t *pos)
 {
 	return write_led(buffer, count, hotk->methods->mt_mled, MLED_ON, 1);
 }
 
+static const struct file_operations mled_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= mled_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= mled_proc_write,
+};
+
 /*
  * Proc handlers for LED display
  */
-static int
-proc_read_ledd(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int ledd_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "0x%08x\n", hotk->ledd_status);
+	seq_printf(m, "0x%08x\n", hotk->ledd_status);
+	return 0;
 }
 
-static int
-proc_write_ledd(struct file *file, const char __user *buffer,
-		unsigned long count, void *data)
+static int ledd_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ledd_proc_show, NULL);
+}
+
+static ssize_t ledd_proc_write(struct file *file, const char __user *buffer,
+		size_t count, loff_t *pos)
 {
 	int rv, value;
 
@@ -673,68 +679,110 @@ proc_write_ledd(struct file *file, const char __user *buffer,
 	if (rv > 0) {
 		if (!write_acpi_int
 		    (hotk->handle, hotk->methods->mt_ledd, value, NULL))
-			printk(KERN_WARNING
-			       "Asus ACPI: LED display write failed\n");
+			pr_warn("LED display write failed\n");
 		else
 			hotk->ledd_status = (u32) value;
 	}
 	return rv;
 }
 
+static const struct file_operations ledd_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= ledd_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= ledd_proc_write,
+};
+
 /*
  * Proc handlers for WLED
  */
-static int
-proc_read_wled(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int wled_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n",
-		       read_led(hotk->methods->wled_status, WLED_ON));
+	seq_printf(m, "%d\n", read_led(hotk->methods->wled_status, WLED_ON));
+	return 0;
 }
 
-static int
-proc_write_wled(struct file *file, const char __user *buffer,
-		unsigned long count, void *data)
+static int wled_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, wled_proc_show, NULL);
+}
+
+static ssize_t wled_proc_write(struct file *file, const char __user *buffer,
+		size_t count, loff_t *pos)
 {
 	return write_led(buffer, count, hotk->methods->mt_wled, WLED_ON, 0);
 }
 
+static const struct file_operations wled_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= wled_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= wled_proc_write,
+};
+
 /*
  * Proc handlers for Bluetooth
  */
-static int
-proc_read_bluetooth(char *page, char **start, off_t off, int count, int *eof,
-		    void *data)
+static int bluetooth_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n", read_led(hotk->methods->bt_status, BT_ON));
+	seq_printf(m, "%d\n", read_led(hotk->methods->bt_status, BT_ON));
+	return 0;
 }
 
-static int
-proc_write_bluetooth(struct file *file, const char __user *buffer,
-		     unsigned long count, void *data)
+static int bluetooth_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, bluetooth_proc_show, NULL);
+}
+
+static ssize_t bluetooth_proc_write(struct file *file,
+		const char __user *buffer, size_t count, loff_t *pos)
 {
 	/* Note: mt_bt_switch controls both internal Bluetooth adapter's
 	   presence and its LED */
 	return write_led(buffer, count, hotk->methods->mt_bt_switch, BT_ON, 0);
 }
 
+static const struct file_operations bluetooth_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= bluetooth_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= bluetooth_proc_write,
+};
+
 /*
  * Proc handlers for TLED
  */
-static int
-proc_read_tled(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int tled_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n",
-		       read_led(hotk->methods->tled_status, TLED_ON));
+	seq_printf(m, "%d\n", read_led(hotk->methods->tled_status, TLED_ON));
+	return 0;
 }
 
-static int
-proc_write_tled(struct file *file, const char __user *buffer,
-		unsigned long count, void *data)
+static int tled_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, tled_proc_show, NULL);
+}
+
+static ssize_t tled_proc_write(struct file *file, const char __user *buffer,
+		size_t count, loff_t *pos)
 {
 	return write_led(buffer, count, hotk->methods->mt_tled, TLED_ON, 0);
 }
+
+static const struct file_operations tled_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= tled_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= tled_proc_write,
+};
 
 static int get_lcd_state(void)
 {
@@ -789,8 +837,7 @@ static int get_lcd_state(void)
 	} else {
 		/* We don't have to check anything if we are here */
 		if (!read_acpi_int(NULL, hotk->methods->lcd_status, &lcd))
-			printk(KERN_WARNING
-			       "Asus ACPI: Error reading LCD status\n");
+			pr_warn("Error reading LCD status\n");
 
 		if (hotk->model == L2D)
 			lcd = ~lcd;
@@ -822,22 +869,25 @@ static int set_lcd_state(int value)
 			   the exact behaviour is simulated here */
 		}
 		if (ACPI_FAILURE(status))
-			printk(KERN_WARNING "Asus ACPI: Error switching LCD\n");
+			pr_warn("Error switching LCD\n");
 	}
 	return 0;
 
 }
 
-static int
-proc_read_lcd(char *page, char **start, off_t off, int count, int *eof,
-	      void *data)
+static int lcd_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n", get_lcd_state());
+	seq_printf(m, "%d\n", get_lcd_state());
+	return 0;
 }
 
-static int
-proc_write_lcd(struct file *file, const char __user *buffer,
-	       unsigned long count, void *data)
+static int lcd_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, lcd_proc_show, NULL);
+}
+
+static ssize_t lcd_proc_write(struct file *file, const char __user *buffer,
+	       size_t count, loff_t *pos)
 {
 	int rv, value;
 
@@ -847,6 +897,15 @@ proc_write_lcd(struct file *file, const char __user *buffer,
 	return rv;
 }
 
+static const struct file_operations lcd_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= lcd_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= lcd_proc_write,
+};
+
 static int read_brightness(struct backlight_device *bd)
 {
 	int value;
@@ -854,13 +913,11 @@ static int read_brightness(struct backlight_device *bd)
 	if (hotk->methods->brightness_get) {	/* SPLV/GPLV laptop */
 		if (!read_acpi_int(hotk->handle, hotk->methods->brightness_get,
 				   &value))
-			printk(KERN_WARNING
-			       "Asus ACPI: Error reading brightness\n");
+			pr_warn("Error reading brightness\n");
 	} else if (hotk->methods->brightness_status) {	/* For D1 for example */
 		if (!read_acpi_int(NULL, hotk->methods->brightness_status,
 				   &value))
-			printk(KERN_WARNING
-			       "Asus ACPI: Error reading brightness\n");
+			pr_warn("Error reading brightness\n");
 	} else			/* No GPLV method */
 		value = hotk->brightness;
 	return value;
@@ -877,10 +934,10 @@ static int set_brightness(int value)
 	/* SPLV laptop */
 	if (hotk->methods->brightness_set) {
 		if (!write_acpi_int(hotk->handle, hotk->methods->brightness_set,
-				    value, NULL))
-			printk(KERN_WARNING
-			       "Asus ACPI: Error changing brightness\n");
+				    value, NULL)) {
+			pr_warn("Error changing brightness\n");
 			ret = -EIO;
+		}
 		goto out;
 	}
 
@@ -892,10 +949,10 @@ static int set_brightness(int value)
 					      hotk->methods->brightness_down,
 					      NULL, NULL);
 		(value > 0) ? value-- : value++;
-		if (ACPI_FAILURE(status))
-			printk(KERN_WARNING
-			       "Asus ACPI: Error changing brightness\n");
+		if (ACPI_FAILURE(status)) {
+			pr_warn("Error changing brightness\n");
 			ret = -EIO;
+		}
 	}
 out:
 	return ret;
@@ -906,16 +963,19 @@ static int set_brightness_status(struct backlight_device *bd)
 	return set_brightness(bd->props.brightness);
 }
 
-static int
-proc_read_brn(char *page, char **start, off_t off, int count, int *eof,
-	      void *data)
+static int brn_proc_show(struct seq_file *m, void *v)
 {
-	return sprintf(page, "%d\n", read_brightness(NULL));
+	seq_printf(m, "%d\n", read_brightness(NULL));
+	return 0;
 }
 
-static int
-proc_write_brn(struct file *file, const char __user *buffer,
-	       unsigned long count, void *data)
+static int brn_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, brn_proc_show, NULL);
+}
+
+static ssize_t brn_proc_write(struct file *file, const char __user *buffer,
+	       size_t count, loff_t *pos)
 {
 	int rv, value;
 
@@ -928,12 +988,21 @@ proc_write_brn(struct file *file, const char __user *buffer,
 	return rv;
 }
 
+static const struct file_operations brn_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= brn_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= brn_proc_write,
+};
+
 static void set_display(int value)
 {
 	/* no sanity check needed for now */
 	if (!write_acpi_int(hotk->handle, hotk->methods->display_set,
 			    value, NULL))
-		printk(KERN_WARNING "Asus ACPI: Error setting display\n");
+		pr_warn("Error setting display\n");
 	return;
 }
 
@@ -941,17 +1010,20 @@ static void set_display(int value)
  * Now, *this* one could be more user-friendly, but so far, no-one has
  * complained. The significance of bits is the same as in proc_write_disp()
  */
-static int
-proc_read_disp(char *page, char **start, off_t off, int count, int *eof,
-	       void *data)
+static int disp_proc_show(struct seq_file *m, void *v)
 {
 	int value = 0;
 
 	if (!read_acpi_int(hotk->handle, hotk->methods->display_get, &value))
-		printk(KERN_WARNING
-		       "Asus ACPI: Error reading display status\n");
+		pr_warn("Error reading display status\n");
 	value &= 0x07;	/* needed for some models, shouldn't hurt others */
-	return sprintf(page, "%d\n", value);
+	seq_printf(m, "%d\n", value);
+	return 0;
+}
+
+static int disp_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, disp_proc_show, NULL);
 }
 
 /*
@@ -960,9 +1032,8 @@ proc_read_disp(char *page, char **start, off_t off, int count, int *eof,
  * (bitwise) of these will suffice. I never actually tested 3 displays hooked
  * up simultaneously, so be warned. See the acpi4asus README for more info.
  */
-static int
-proc_write_disp(struct file *file, const char __user *buffer,
-		unsigned long count, void *data)
+static ssize_t disp_proc_write(struct file *file, const char __user *buffer,
+		size_t count, loff_t *pos)
 {
 	int rv, value;
 
@@ -972,25 +1043,27 @@ proc_write_disp(struct file *file, const char __user *buffer,
 	return rv;
 }
 
-typedef int (proc_readfunc) (char *page, char **start, off_t off, int count,
-			     int *eof, void *data);
-typedef int (proc_writefunc) (struct file *file, const char __user *buffer,
-			      unsigned long count, void *data);
+static const struct file_operations disp_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= disp_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= disp_proc_write,
+};
 
 static int
-asus_proc_add(char *name, proc_writefunc *writefunc,
-		     proc_readfunc *readfunc, mode_t mode,
+asus_proc_add(char *name, const struct file_operations *proc_fops, mode_t mode,
 		     struct acpi_device *device)
 {
-	struct proc_dir_entry *proc =
-	    create_proc_entry(name, mode, acpi_device_dir(device));
+	struct proc_dir_entry *proc;
+
+	proc = proc_create_data(name, mode, acpi_device_dir(device),
+				proc_fops, acpi_driver_data(device));
 	if (!proc) {
-		printk(KERN_WARNING "  Unable to create %s fs entry\n", name);
+		pr_warn("  Unable to create %s fs entry\n", name);
 		return -1;
 	}
-	proc->write_proc = writefunc;
-	proc->read_proc = readfunc;
-	proc->data = acpi_driver_data(device);
 	proc->uid = asus_uid;
 	proc->gid = asus_gid;
 	return 0;
@@ -1001,58 +1074,45 @@ static int asus_hotk_add_fs(struct acpi_device *device)
 	struct proc_dir_entry *proc;
 	mode_t mode;
 
-	/*
-	 * If parameter uid or gid is not changed, keep the default setting for
-	 * our proc entries (-rw-rw-rw-) else, it means we care about security,
-	 * and then set to -rw-rw----
-	 */
-
 	if ((asus_uid == 0) && (asus_gid == 0)) {
-		mode = S_IFREG | S_IRUGO | S_IWUGO;
+		mode = S_IFREG | S_IRUGO | S_IWUSR | S_IWGRP;
 	} else {
 		mode = S_IFREG | S_IRUSR | S_IRGRP | S_IWUSR | S_IWGRP;
-		printk(KERN_WARNING "  asus_uid and asus_gid parameters are "
-		       "deprecated, use chown and chmod instead!\n");
+		pr_warn("  asus_uid and asus_gid parameters are "
+			"deprecated, use chown and chmod instead!\n");
 	}
 
 	acpi_device_dir(device) = asus_proc_dir;
 	if (!acpi_device_dir(device))
 		return -ENODEV;
 
-	proc = create_proc_entry(PROC_INFO, mode, acpi_device_dir(device));
+	proc = proc_create(PROC_INFO, mode, acpi_device_dir(device),
+			   &asus_info_proc_fops);
 	if (proc) {
-		proc->read_proc = proc_read_info;
-		proc->data = acpi_driver_data(device);
 		proc->uid = asus_uid;
 		proc->gid = asus_gid;
 	} else {
-		printk(KERN_WARNING "  Unable to create " PROC_INFO
-		       " fs entry\n");
+		pr_warn("  Unable to create " PROC_INFO " fs entry\n");
 	}
 
 	if (hotk->methods->mt_wled) {
-		asus_proc_add(PROC_WLED, &proc_write_wled, &proc_read_wled,
-			      mode, device);
+		asus_proc_add(PROC_WLED, &wled_proc_fops, mode, device);
 	}
 
 	if (hotk->methods->mt_ledd) {
-		asus_proc_add(PROC_LEDD, &proc_write_ledd, &proc_read_ledd,
-			      mode, device);
+		asus_proc_add(PROC_LEDD, &ledd_proc_fops, mode, device);
 	}
 
 	if (hotk->methods->mt_mled) {
-		asus_proc_add(PROC_MLED, &proc_write_mled, &proc_read_mled,
-			      mode, device);
+		asus_proc_add(PROC_MLED, &mled_proc_fops, mode, device);
 	}
 
 	if (hotk->methods->mt_tled) {
-		asus_proc_add(PROC_TLED, &proc_write_tled, &proc_read_tled,
-			      mode, device);
+		asus_proc_add(PROC_TLED, &tled_proc_fops, mode, device);
 	}
 
 	if (hotk->methods->mt_bt_switch) {
-		asus_proc_add(PROC_BT, &proc_write_bluetooth,
-			      &proc_read_bluetooth, mode, device);
+		asus_proc_add(PROC_BT, &bluetooth_proc_fops, mode, device);
 	}
 
 	/*
@@ -1060,19 +1120,16 @@ static int asus_hotk_add_fs(struct acpi_device *device)
 	 * accessible from the keyboard
 	 */
 	if (hotk->methods->mt_lcd_switch && hotk->methods->lcd_status) {
-		asus_proc_add(PROC_LCD, &proc_write_lcd, &proc_read_lcd, mode,
-			      device);
+		asus_proc_add(PROC_LCD, &lcd_proc_fops, mode, device);
 	}
 
 	if ((hotk->methods->brightness_up && hotk->methods->brightness_down) ||
 	    (hotk->methods->brightness_get && hotk->methods->brightness_set)) {
-		asus_proc_add(PROC_BRN, &proc_write_brn, &proc_read_brn, mode,
-			      device);
+		asus_proc_add(PROC_BRN, &brn_proc_fops, mode, device);
 	}
 
 	if (hotk->methods->display_set) {
-		asus_proc_add(PROC_DISP, &proc_write_disp, &proc_read_disp,
-			      mode, device);
+		asus_proc_add(PROC_DISP, &disp_proc_fops, mode, device);
 	}
 
 	return 0;
@@ -1157,9 +1214,8 @@ static int asus_model_match(char *model)
 	else if (strncmp(model, "M2N", 3) == 0 ||
 		 strncmp(model, "M3N", 3) == 0 ||
 		 strncmp(model, "M5N", 3) == 0 ||
-		 strncmp(model, "M6N", 3) == 0 ||
 		 strncmp(model, "S1N", 3) == 0 ||
-		 strncmp(model, "S5N", 3) == 0 || strncmp(model, "W1N", 3) == 0)
+		 strncmp(model, "S5N", 3) == 0)
 		return xxN;
 	else if (strncmp(model, "M1", 2) == 0)
 		return M1A;
@@ -1219,20 +1275,19 @@ static int asus_hotk_get_info(void)
 	 */
 	status = acpi_get_table(ACPI_SIG_DSDT, 1, &asus_info);
 	if (ACPI_FAILURE(status))
-		printk(KERN_WARNING "  Couldn't get the DSDT table header\n");
+		pr_warn("  Couldn't get the DSDT table header\n");
 
 	/* We have to write 0 on init this far for all ASUS models */
 	if (!write_acpi_int(hotk->handle, "INIT", 0, &buffer)) {
-		printk(KERN_ERR "  Hotkey initialization failed\n");
+		pr_err("  Hotkey initialization failed\n");
 		return -ENODEV;
 	}
 
 	/* This needs to be called for some laptops to init properly */
 	if (!read_acpi_int(hotk->handle, "BSTS", &bsts_result))
-		printk(KERN_WARNING "  Error calling BSTS\n");
+		pr_warn("  Error calling BSTS\n");
 	else if (bsts_result)
-		printk(KERN_NOTICE "  BSTS called, 0x%02x returned\n",
-		       bsts_result);
+		pr_notice("  BSTS called, 0x%02x returned\n", bsts_result);
 
 	/*
 	 * Try to match the object returned by INIT to the specific model.
@@ -1260,22 +1315,21 @@ static int asus_hotk_get_info(void)
 		if (asus_info &&
 		    strncmp(asus_info->oem_table_id, "ODEM", 4) == 0) {
 			hotk->model = P30;
-			printk(KERN_NOTICE
-			       "  Samsung P30 detected, supported\n");
+			pr_notice("  Samsung P30 detected, supported\n");
+			hotk->methods = &model_conf[hotk->model];
+			kfree(model);
+			return 0;
 		} else {
 			hotk->model = M2E;
-			printk(KERN_NOTICE "  unsupported model %s, trying "
-			       "default values\n", string);
-			printk(KERN_NOTICE
-			       "  send /proc/acpi/dsdt to the developers\n");
+			pr_notice("  unsupported model %s, trying default values\n",
+				  string);
+			pr_notice("  send /proc/acpi/dsdt to the developers\n");
 			kfree(model);
 			return -ENODEV;
 		}
-		hotk->methods = &model_conf[hotk->model];
-		return AE_OK;
 	}
 	hotk->methods = &model_conf[hotk->model];
-	printk(KERN_NOTICE "  %s model detected, supported\n", string);
+	pr_notice("  %s model detected, supported\n", string);
 
 	/* Sort of per-model blacklist */
 	if (strncmp(string, "L2B", 3) == 0)
@@ -1306,7 +1360,7 @@ static int asus_hotk_get_info(void)
 
 	kfree(model);
 
-	return AE_OK;
+	return 0;
 }
 
 static int asus_hotk_check(void)
@@ -1320,7 +1374,7 @@ static int asus_hotk_check(void)
 	if (hotk->device->status.present) {
 		result = asus_hotk_get_info();
 	} else {
-		printk(KERN_ERR "  Hotkey device not present, aborting\n");
+		pr_err("  Hotkey device not present, aborting\n");
 		return -EINVAL;
 	}
 
@@ -1334,11 +1388,7 @@ static int asus_hotk_add(struct acpi_device *device)
 	acpi_status status = AE_OK;
 	int result;
 
-	if (!device)
-		return -EINVAL;
-
-	printk(KERN_NOTICE "Asus Laptop ACPI Extras version %s\n",
-	       ASUS_ACPI_VERSION);
+	pr_notice("Asus Laptop ACPI Extras version %s\n", ASUS_ACPI_VERSION);
 
 	hotk = kzalloc(sizeof(struct asus_hotk), GFP_KERNEL);
 	if (!hotk)
@@ -1366,15 +1416,14 @@ static int asus_hotk_add(struct acpi_device *device)
 		    acpi_evaluate_object(NULL, hotk->methods->brightness_down,
 					 NULL, NULL);
 		if (ACPI_FAILURE(status))
-			printk(KERN_WARNING "  Error changing brightness\n");
+			pr_warn("  Error changing brightness\n");
 		else {
 			status =
 			    acpi_evaluate_object(NULL,
 						 hotk->methods->brightness_up,
 						 NULL, NULL);
 			if (ACPI_FAILURE(status))
-				printk(KERN_WARNING "  Strange, error changing"
-				       " brightness\n");
+				pr_warn("  Strange, error changing brightness\n");
 		}
 	}
 
@@ -1392,9 +1441,6 @@ end:
 
 static int asus_hotk_remove(struct acpi_device *device, int type)
 {
-	if (!device || !acpi_driver_data(device))
-		return -EINVAL;
-
 	asus_hotk_remove_fs(device);
 
 	kfree(hotk);
@@ -1402,7 +1448,7 @@ static int asus_hotk_remove(struct acpi_device *device, int type)
 	return 0;
 }
 
-static struct backlight_ops asus_backlight_data = {
+static const struct backlight_ops asus_backlight_data = {
 	.get_brightness = read_brightness,
 	.update_status  = set_brightness_status,
 };
@@ -1420,21 +1466,18 @@ static void asus_acpi_exit(void)
 
 static int __init asus_acpi_init(void)
 {
+	struct backlight_properties props;
 	int result;
 
-	if (acpi_disabled)
-		return -ENODEV;
+	result = acpi_bus_register_driver(&asus_hotk_driver);
+	if (result < 0)
+		return result;
 
 	asus_proc_dir = proc_mkdir(PROC_ASUS, acpi_root_dir);
 	if (!asus_proc_dir) {
-		printk(KERN_ERR "Asus ACPI: Unable to create /proc entry\n");
+		pr_err("Unable to create /proc entry\n");
+		acpi_bus_unregister_driver(&asus_hotk_driver);
 		return -ENODEV;
-	}
-
-	result = acpi_bus_register_driver(&asus_hotk_driver);
-	if (result < 0) {
-		remove_proc_entry(PROC_ASUS, acpi_root_dir);
-		return result;
 	}
 
 	/*
@@ -1450,15 +1493,18 @@ static int __init asus_acpi_init(void)
 		return -ENODEV;
 	}
 
+	memset(&props, 0, sizeof(struct backlight_properties));
+	props.type = BACKLIGHT_PLATFORM;
+	props.max_brightness = 15;
 	asus_backlight_device = backlight_device_register("asus", NULL, NULL,
-							  &asus_backlight_data);
+							  &asus_backlight_data,
+							  &props);
 	if (IS_ERR(asus_backlight_device)) {
-		printk(KERN_ERR "Could not register asus backlight device\n");
+		pr_err("Could not register asus backlight device\n");
 		asus_backlight_device = NULL;
 		asus_acpi_exit();
 		return -ENODEV;
 	}
-	asus_backlight_device->props.max_brightness = 15;
 
 	return 0;
 }

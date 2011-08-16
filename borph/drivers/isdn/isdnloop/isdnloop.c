@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/sched.h>
 #include "isdnloop.h"
@@ -953,7 +954,7 @@ isdnloop_parse_cmd(isdnloop_card * card)
 /*
  * Put command-strings into the of the 'card'. In reality, execute them
  * right in place by calling isdnloop_parse_cmd(). Also copy every
- * command to the read message ringbuffer, preceeding it with a '>'.
+ * command to the read message ringbuffer, preceding it with a '>'.
  * These mesagges can be read at /dev/isdnctrl.
  *
  * Parameter:

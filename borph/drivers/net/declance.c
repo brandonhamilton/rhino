@@ -326,15 +326,18 @@ static void load_csrs(struct lance_private *lp)
  */
 static void cp_to_buf(const int type, void *to, const void *from, int len)
 {
-	unsigned short *tp, *fp, clen;
-	unsigned char *rtp, *rfp;
+	unsigned short *tp;
+	const unsigned short *fp;
+	unsigned short clen;
+	unsigned char *rtp;
+	const unsigned char *rfp;
 
 	if (type == PMAD_LANCE) {
 		memcpy(to, from, len);
 	} else if (type == PMAX_LANCE) {
 		clen = len >> 1;
-		tp = (unsigned short *) to;
-		fp = (unsigned short *) from;
+		tp = to;
+		fp = from;
 
 		while (clen--) {
 			*tp++ = *fp++;
@@ -342,8 +345,8 @@ static void cp_to_buf(const int type, void *to, const void *from, int len)
 		}
 
 		clen = len & 1;
-		rtp = (unsigned char *) tp;
-		rfp = (unsigned char *) fp;
+		rtp = tp;
+		rfp = fp;
 		while (clen--) {
 			*rtp++ = *rfp++;
 		}
@@ -352,8 +355,8 @@ static void cp_to_buf(const int type, void *to, const void *from, int len)
 		 * copy 16 Byte chunks
 		 */
 		clen = len >> 4;
-		tp = (unsigned short *) to;
-		fp = (unsigned short *) from;
+		tp = to;
+		fp = from;
 		while (clen--) {
 			*tp++ = *fp++;
 			*tp++ = *fp++;
@@ -382,15 +385,18 @@ static void cp_to_buf(const int type, void *to, const void *from, int len)
 
 static void cp_from_buf(const int type, void *to, const void *from, int len)
 {
-	unsigned short *tp, *fp, clen;
-	unsigned char *rtp, *rfp;
+	unsigned short *tp;
+	const unsigned short *fp;
+	unsigned short clen;
+	unsigned char *rtp;
+	const unsigned char *rfp;
 
 	if (type == PMAD_LANCE) {
 		memcpy(to, from, len);
 	} else if (type == PMAX_LANCE) {
 		clen = len >> 1;
-		tp = (unsigned short *) to;
-		fp = (unsigned short *) from;
+		tp = to;
+		fp = from;
 		while (clen--) {
 			*tp++ = *fp++;
 			fp++;
@@ -398,8 +404,8 @@ static void cp_from_buf(const int type, void *to, const void *from, int len)
 
 		clen = len & 1;
 
-		rtp = (unsigned char *) tp;
-		rfp = (unsigned char *) fp;
+		rtp = tp;
+		rfp = fp;
 
 		while (clen--) {
 			*rtp++ = *rfp++;
@@ -410,8 +416,8 @@ static void cp_from_buf(const int type, void *to, const void *from, int len)
 		 * copy 16 Byte chunks
 		 */
 		clen = len >> 4;
-		tp = (unsigned short *) to;
-		fp = (unsigned short *) from;
+		tp = to;
+		fp = from;
 		while (clen--) {
 			*tp++ = *fp++;
 			*tp++ = *fp++;
@@ -874,7 +880,7 @@ static inline int lance_reset(struct net_device *dev)
 
 	lance_init_ring(dev);
 	load_csrs(lp);
-	dev->trans_start = jiffies;
+	dev->trans_start = jiffies; /* prevent tx timeout */
 	status = init_restart_lance(lp);
 	return status;
 }
@@ -930,7 +936,6 @@ static int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_unlock_irqrestore(&lp->lock, flags);
 
-	dev->trans_start = jiffies;
 	dev_kfree_skb(skb);
 
  	return NETDEV_TX_OK;
@@ -940,9 +945,7 @@ static void lance_load_multicast(struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
 	volatile u16 *ib = (volatile u16 *)dev->mem_start;
-	struct dev_mc_list *dmi = dev->mc_list;
-	char *addrs;
-	int i;
+	struct netdev_hw_addr *ha;
 	u32 crc;
 
 	/* set all multicast bits */
@@ -960,19 +963,11 @@ static void lance_load_multicast(struct net_device *dev)
 	*lib_ptr(ib, filter[3], lp->type) = 0;
 
 	/* Add addresses */
-	for (i = 0; i < dev->mc_count; i++) {
-		addrs = dmi->dmi_addr;
-		dmi = dmi->next;
-
-		/* multicast address? */
-		if (!(*addrs & 1))
-			continue;
-
-		crc = ether_crc_le(ETH_ALEN, addrs);
+	netdev_for_each_mc_addr(ha, dev) {
+		crc = ether_crc_le(ETH_ALEN, ha->addr);
 		crc = crc >> 26;
 		*lib_ptr(ib, filter[crc >> 4], lp->type) |= 1 << (crc & 0xf);
 	}
-	return;
 }
 
 static void lance_set_multicast(struct net_device *dev)
@@ -1026,7 +1021,7 @@ static const struct net_device_ops lance_netdev_ops = {
 	.ndo_set_mac_address	= eth_mac_addr,
 };
 
-static int __init dec_lance_probe(struct device *bdev, const int type)
+static int __devinit dec_lance_probe(struct device *bdev, const int type)
 {
 	static unsigned version_printed;
 	static const char fmt[] = "declance%d";
@@ -1259,7 +1254,7 @@ static int __init dec_lance_probe(struct device *bdev, const int type)
 	 */
 	init_timer(&lp->multicast_timer);
 	lp->multicast_timer.data = (unsigned long) dev;
-	lp->multicast_timer.function = &lance_set_multicast_retry;
+	lp->multicast_timer.function = lance_set_multicast_retry;
 
 	ret = register_netdev(dev);
 	if (ret) {
@@ -1330,7 +1325,7 @@ static void __exit dec_lance_platform_remove(void)
 }
 
 #ifdef CONFIG_TC
-static int __init dec_lance_tc_probe(struct device *dev);
+static int __devinit dec_lance_tc_probe(struct device *dev);
 static int __exit dec_lance_tc_remove(struct device *dev);
 
 static const struct tc_device_id dec_lance_tc_table[] = {
@@ -1349,7 +1344,7 @@ static struct tc_driver dec_lance_tc_driver = {
 	},
 };
 
-static int __init dec_lance_tc_probe(struct device *dev)
+static int __devinit dec_lance_tc_probe(struct device *dev)
 {
         int status = dec_lance_probe(dev, PMAD_LANCE);
         if (!status)

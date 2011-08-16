@@ -32,8 +32,8 @@ static time_t key_gc_next_run = LONG_MAX;
 static time_t key_gc_new_timer;
 
 /*
- * Schedule a garbage collection run
- * - precision isn't particularly important
+ * Schedule a garbage collection run.
+ * - time precision isn't particularly important
  */
 void key_schedule_gc(time_t gc_at)
 {
@@ -61,8 +61,9 @@ static void key_gc_timer_func(unsigned long data)
 }
 
 /*
- * Garbage collect pointers from a keyring
- * - return true if we altered the keyring
+ * Garbage collect pointers from a keyring.
+ *
+ * Return true if we altered the keyring.
  */
 static bool key_gc_keyring(struct key *keyring, time_t limit)
 	__releases(key_serial_lock)
@@ -77,9 +78,10 @@ static bool key_gc_keyring(struct key *keyring, time_t limit)
 		goto dont_gc;
 
 	/* scan the keyring looking for dead keys */
+	rcu_read_lock();
 	klist = rcu_dereference(keyring->payload.subscriptions);
 	if (!klist)
-		goto dont_gc;
+		goto unlock_dont_gc;
 
 	for (loop = klist->nkeys - 1; loop >= 0; loop--) {
 		key = klist->keys[loop];
@@ -88,11 +90,14 @@ static bool key_gc_keyring(struct key *keyring, time_t limit)
 			goto do_gc;
 	}
 
+unlock_dont_gc:
+	rcu_read_unlock();
 dont_gc:
 	kleave(" = false");
 	return false;
 
 do_gc:
+	rcu_read_unlock();
 	key_gc_cursor = keyring->serial;
 	key_get(keyring);
 	spin_unlock(&key_serial_lock);
@@ -103,9 +108,8 @@ do_gc:
 }
 
 /*
- * Garbage collector for keys
- * - this involves scanning the keyrings for dead, expired and revoked keys
- *   that have overstayed their welcome
+ * Garbage collector for keys.  This involves scanning the keyrings for dead,
+ * expired and revoked keys that have overstayed their welcome
  */
 static void key_garbage_collector(struct work_struct *work)
 {

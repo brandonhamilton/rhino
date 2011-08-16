@@ -4,9 +4,10 @@
 #ifndef __NET_NET_NAMESPACE_H
 #define __NET_NET_NAMESPACE_H
 
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <linux/list.h>
+#include <linux/sysctl.h>
 
 #include <net/netns/core.h>
 #include <net/netns/mib.h>
@@ -27,20 +28,26 @@ struct sock;
 struct ctl_table_header;
 struct net_generic;
 struct sock;
+struct netns_ipvs;
 
 
 #define NETDEV_HASHBITS    8
 #define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
 
 struct net {
+	atomic_t		passive;	/* To decided when the network
+						 * namespace should be freed.
+						 */
 	atomic_t		count;		/* To decided when the network
-						 *  namespace should be freed.
+						 *  namespace should be shut down.
 						 */
 #ifdef NETNS_REFCNT_DEBUG
 	atomic_t		use_count;	/* To track references we
 						 * destroy on demand
 						 */
 #endif
+	spinlock_t		rules_mod_lock;
+
 	struct list_head	list;		/* list of network namespaces */
 	struct list_head	cleanup_list;	/* namespaces on death row */
 	struct list_head	exit_list;	/* Use only net_mutex */
@@ -52,19 +59,19 @@ struct net {
 	struct ctl_table_set	sysctls;
 #endif
 
-	struct net_device       *loopback_dev;          /* The loopback */
+	struct sock 		*rtnl;			/* rtnetlink socket */
+	struct sock		*genl_sock;
 
 	struct list_head 	dev_base_head;
 	struct hlist_head 	*dev_name_head;
 	struct hlist_head	*dev_index_head;
+	unsigned int		dev_base_seq;	/* protected by rtnl_mutex */
 
 	/* core fib_rules */
 	struct list_head	rules_ops;
-	spinlock_t		rules_mod_lock;
 
-	struct sock 		*rtnl;			/* rtnetlink socket */
-	struct sock		*genl_sock;
 
+	struct net_device       *loopback_dev;          /* The loopback */
 	struct netns_core	core;
 	struct netns_mib	mib;
 	struct netns_packet	packet;
@@ -81,14 +88,19 @@ struct net {
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	struct netns_ct		ct;
 #endif
-#endif
-#ifdef CONFIG_XFRM
-	struct netns_xfrm	xfrm;
+	struct sock		*nfnl;
+	struct sock		*nfnl_stash;
 #endif
 #ifdef CONFIG_WEXT_CORE
 	struct sk_buff_head	wext_nlevents;
 #endif
-	struct net_generic	*gen;
+	struct net_generic __rcu	*gen;
+
+	/* Note : following structs are cache line aligned */
+#ifdef CONFIG_XFRM
+	struct netns_xfrm	xfrm;
+#endif
+	struct netns_ipvs	*ipvs;
 };
 
 
@@ -98,14 +110,9 @@ struct net {
 extern struct net init_net;
 
 #ifdef CONFIG_NET
-#define INIT_NET_NS(net_ns) .net_ns = &init_net,
-
 extern struct net *copy_net_ns(unsigned long flags, struct net *net_ns);
 
 #else /* CONFIG_NET */
-
-#define INIT_NET_NS(net_ns)
-
 static inline struct net *copy_net_ns(unsigned long flags, struct net *net_ns)
 {
 	/* There is nothing to copy so this is a noop */
@@ -117,6 +124,7 @@ static inline struct net *copy_net_ns(unsigned long flags, struct net *net_ns)
 extern struct list_head net_namespace_list;
 
 extern struct net *get_net_ns_by_pid(pid_t pid);
+extern struct net *get_net_ns_by_fd(int pid);
 
 #ifdef CONFIG_NET_NS
 extern void __put_net(struct net *net);
@@ -150,6 +158,9 @@ int net_eq(const struct net *net1, const struct net *net2)
 {
 	return net1 == net2;
 }
+
+extern void net_drop_ns(void *);
+
 #else
 
 static inline struct net *get_net(struct net *net)
@@ -171,6 +182,8 @@ int net_eq(const struct net *net1, const struct net *net2)
 {
 	return 1;
 }
+
+#define net_drop_ns NULL
 #endif
 
 

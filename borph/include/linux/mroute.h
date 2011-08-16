@@ -27,7 +27,8 @@
 #define MRT_DEL_MFC	(MRT_BASE+5)	/* Delete a multicast forwarding entry	*/
 #define MRT_VERSION	(MRT_BASE+6)	/* Get the kernel multicast version	*/
 #define MRT_ASSERT	(MRT_BASE+7)	/* Activate PIM assert mode		*/
-#define MRT_PIM		(MRT_BASE+8)	/* enable PIM code	*/
+#define MRT_PIM		(MRT_BASE+8)	/* enable PIM code			*/
+#define MRT_TABLE	(MRT_BASE+9)	/* Specify mroute table ID		*/
 
 #define SIOCGETVIFCNT	SIOCPROTOPRIVATE	/* IP protocol privates */
 #define SIOCGETSGCNT	(SIOCPROTOPRIVATE+1)
@@ -149,6 +150,7 @@ static inline int ip_mroute_opt(int opt)
 extern int ip_mroute_setsockopt(struct sock *, int, char __user *, unsigned int);
 extern int ip_mroute_getsockopt(struct sock *, int, char __user *, int __user *);
 extern int ipmr_ioctl(struct sock *sk, int cmd, void __user *arg);
+extern int ipmr_compat_ioctl(struct sock *sk, unsigned int cmd, void __user *arg);
 extern int ip_mr_init(void);
 #else
 static inline
@@ -191,10 +193,7 @@ struct vif_device {
 #define VIFF_STATIC 0x8000
 
 struct mfc_cache {
-	struct mfc_cache *next;			/* Next entry on cache line 	*/
-#ifdef CONFIG_NET_NS
-	struct net *mfc_net;
-#endif
+	struct list_head list;
 	__be32 mfc_mcastgrp;			/* Group the entry belongs to 	*/
 	__be32 mfc_origin;			/* Source of packet 		*/
 	vifi_t mfc_parent;			/* Source interface		*/
@@ -215,19 +214,8 @@ struct mfc_cache {
 			unsigned char ttls[MAXVIFS];	/* TTL thresholds		*/
 		} res;
 	} mfc_un;
+	struct rcu_head	rcu;
 };
-
-static inline
-struct net *mfc_net(const struct mfc_cache *mfc)
-{
-	return read_pnet(&mfc->mfc_net);
-}
-
-static inline
-void mfc_net_set(struct mfc_cache *mfc, struct net *net)
-{
-	write_pnet(&mfc->mfc_net, hold_net(net));
-}
 
 #define MFC_STATIC		1
 #define MFC_NOTIFY		2
@@ -256,6 +244,7 @@ void mfc_net_set(struct mfc_cache *mfc, struct net *net)
 #ifdef __KERNEL__
 struct rtmsg;
 extern int ipmr_get_route(struct net *net, struct sk_buff *skb,
+			  __be32 saddr, __be32 daddr,
 			  struct rtmsg *rtm, int nowait);
 #endif
 

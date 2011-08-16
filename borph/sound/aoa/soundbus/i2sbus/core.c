@@ -7,6 +7,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
@@ -220,9 +221,9 @@ static int i2sbus_add_dev(struct macio_dev *macio,
 
 	mutex_init(&dev->lock);
 	spin_lock_init(&dev->low_lock);
-	dev->sound.ofdev.node = np;
-	dev->sound.ofdev.dma_mask = macio->ofdev.dma_mask;
-	dev->sound.ofdev.dev.dma_mask = &dev->sound.ofdev.dma_mask;
+	dev->sound.ofdev.archdata.dma_mask = macio->ofdev.archdata.dma_mask;
+	dev->sound.ofdev.dev.of_node = np;
+	dev->sound.ofdev.dev.dma_mask = &dev->sound.ofdev.archdata.dma_mask;
 	dev->sound.ofdev.dev.parent = &macio->ofdev.dev;
 	dev->sound.ofdev.dev.release = i2sbus_release_dev;
 	dev->sound.attach_codec = i2sbus_attach_codec;
@@ -261,8 +262,7 @@ static int i2sbus_add_dev(struct macio_dev *macio,
 		 */
 		dev->allocated_resource[i] =
 			request_mem_region(dev->resources[i].start,
-					   dev->resources[i].end -
-					   dev->resources[i].start + 1,
+					   resource_size(&dev->resources[i]),
 					   dev->rnames[i]);
 		if (!dev->allocated_resource[i]) {
 			printk(KERN_ERR "i2sbus: failed to claim resource %d!\n", i);
@@ -271,19 +271,19 @@ static int i2sbus_add_dev(struct macio_dev *macio,
 	}
 
 	r = &dev->resources[aoa_resource_i2smmio];
-	rlen = r->end - r->start + 1;
+	rlen = resource_size(r);
 	if (rlen < sizeof(struct i2s_interface_regs))
 		goto err;
 	dev->intfregs = ioremap(r->start, rlen);
 
 	r = &dev->resources[aoa_resource_txdbdma];
-	rlen = r->end - r->start + 1;
+	rlen = resource_size(r);
 	if (rlen < sizeof(struct dbdma_regs))
 		goto err;
 	dev->out.dbdma = ioremap(r->start, rlen);
 
 	r = &dev->resources[aoa_resource_rxdbdma];
-	rlen = r->end - r->start + 1;
+	rlen = resource_size(r);
 	if (rlen < sizeof(struct dbdma_regs))
 		goto err;
 	dev->in.dbdma = ioremap(r->start, rlen);
@@ -345,7 +345,7 @@ static int i2sbus_probe(struct macio_dev* dev, const struct of_device_id *match)
 		return -ENODEV;
 	}
 
-	while ((np = of_get_next_child(dev->ofdev.node, np))) {
+	while ((np = of_get_next_child(dev->ofdev.dev.of_node, np))) {
 		if (of_device_is_compatible(np, "i2sbus") ||
 		    of_device_is_compatible(np, "i2s-modem")) {
 			got += i2sbus_add_dev(dev, control, np);
@@ -436,9 +436,11 @@ static int i2sbus_shutdown(struct macio_dev* dev)
 }
 
 static struct macio_driver i2sbus_drv = {
-	.name = "soundbus-i2s",
-	.owner = THIS_MODULE,
-	.match_table = i2sbus_match,
+	.driver = {
+		.name = "soundbus-i2s",
+		.owner = THIS_MODULE,
+		.of_match_table = i2sbus_match,
+	},
 	.probe = i2sbus_probe,
 	.remove = i2sbus_remove,
 #ifdef CONFIG_PM

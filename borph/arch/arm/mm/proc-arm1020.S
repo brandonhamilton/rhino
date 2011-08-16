@@ -64,7 +64,7 @@
 /*
  * This is the size at which it becomes more efficient to
  * clean the whole cache, rather than using the individual
- * cache line maintainence instructions.
+ * cache line maintenance instructions.
  */
 #define CACHE_DLIMIT	32768
 
@@ -79,15 +79,11 @@ ENTRY(cpu_arm1020_proc_init)
  * cpu_arm1020_proc_fin()
  */
 ENTRY(cpu_arm1020_proc_fin)
-	stmfd	sp!, {lr}
-	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
-	msr	cpsr_c, ip
-	bl	arm1020_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000 		@ ...i............
 	bic	r0, r0, #0x000e 		@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	ldmfd	sp!, {pc}
+	mov	pc, lr
 
 /*
  * cpu_arm1020_reset(loc)
@@ -123,6 +119,20 @@ ENTRY(cpu_arm1020_do_idle)
 /* ================================= CACHE ================================ */
 
 	.align	5
+
+/*
+ *	flush_icache_all()
+ *
+ *	Unconditionally clean and invalidate the entire icache.
+ */
+ENTRY(arm1020_flush_icache_all)
+#ifndef CONFIG_CPU_ICACHE_DISABLE
+	mov	r0, #0
+	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
+#endif
+	mov	pc, lr
+ENDPROC(arm1020_flush_icache_all)
+
 /*
  *	flush_user_cache_all()
  *
@@ -231,17 +241,18 @@ ENTRY(arm1020_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_page(void *page)
+ *	flush_kern_dcache_area(void *addr, size_t size)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- page	- page aligned address
+ *	- addr	- kernel address
+ *	- size	- region size
  */
-ENTRY(arm1020_flush_kern_dcache_page)
+ENTRY(arm1020_flush_kern_dcache_area)
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
-	add	r1, r0, #PAGE_SZ
+	add	r1, r0, r1
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
 	add	r0, r0, #CACHE_DLINESIZE
@@ -264,7 +275,7 @@ ENTRY(arm1020_flush_kern_dcache_page)
  *
  * (same as v4wb)
  */
-ENTRY(arm1020_dma_inv_range)
+arm1020_dma_inv_range:
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
 	tst	r0, #CACHE_DLINESIZE - 1
@@ -294,7 +305,7 @@ ENTRY(arm1020_dma_inv_range)
  *
  * (same as v4wb)
  */
-ENTRY(arm1020_dma_clean_range)
+arm1020_dma_clean_range:
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
 	bic	r0, r0, #CACHE_DLINESIZE - 1
@@ -329,16 +340,32 @@ ENTRY(arm1020_dma_flush_range)
 	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-ENTRY(arm1020_cache_fns)
-	.long	arm1020_flush_kern_cache_all
-	.long	arm1020_flush_user_cache_all
-	.long	arm1020_flush_user_cache_range
-	.long	arm1020_coherent_kern_range
-	.long	arm1020_coherent_user_range
-	.long	arm1020_flush_kern_dcache_page
-	.long	arm1020_dma_inv_range
-	.long	arm1020_dma_clean_range
-	.long	arm1020_dma_flush_range
+/*
+ *	dma_map_area(start, size, dir)
+ *	- start	- kernel virtual start address
+ *	- size	- size of region
+ *	- dir	- DMA direction
+ */
+ENTRY(arm1020_dma_map_area)
+	add	r1, r1, r0
+	cmp	r2, #DMA_TO_DEVICE
+	beq	arm1020_dma_clean_range
+	bcs	arm1020_dma_inv_range
+	b	arm1020_dma_flush_range
+ENDPROC(arm1020_dma_map_area)
+
+/*
+ *	dma_unmap_area(start, size, dir)
+ *	- start	- kernel virtual start address
+ *	- size	- size of region
+ *	- dir	- DMA direction
+ */
+ENTRY(arm1020_dma_unmap_area)
+	mov	pc, lr
+ENDPROC(arm1020_dma_unmap_area)
+
+	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
+	define_cache_functions arm1020
 
 	.align	5
 ENTRY(cpu_arm1020_dcache_clean_area)
@@ -409,7 +436,7 @@ ENTRY(cpu_arm1020_set_pte_ext)
 #endif /* CONFIG_MMU */
 	mov	pc, lr
 
-	__INIT
+	__CPUINIT
 
 	.type	__arm1020_setup, #function
 __arm1020_setup:
@@ -441,35 +468,14 @@ arm1020_crval:
 	crval	clear=0x0000593f, mmuset=0x00003935, ucset=0x00001930
 
 	__INITDATA
+	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
+	define_processor_functions arm1020, dabort=v4t_early_abort, pabort=legacy_pabort
 
-/*
- * Purpose : Function pointers used to access above functions - all calls
- *	     come through these
- */
-	.type	arm1020_processor_functions, #object
-arm1020_processor_functions:
-	.word	v4t_early_abort
-	.word	legacy_pabort
-	.word	cpu_arm1020_proc_init
-	.word	cpu_arm1020_proc_fin
-	.word	cpu_arm1020_reset
-	.word	cpu_arm1020_do_idle
-	.word	cpu_arm1020_dcache_clean_area
-	.word	cpu_arm1020_switch_mm
-	.word	cpu_arm1020_set_pte_ext
-	.size	arm1020_processor_functions, . - arm1020_processor_functions
 
 	.section ".rodata"
 
-	.type	cpu_arch_name, #object
-cpu_arch_name:
-	.asciz	"armv5t"
-	.size	cpu_arch_name, . - cpu_arch_name
-
-	.type	cpu_elf_name, #object
-cpu_elf_name:
-	.asciz	"v5"
-	.size	cpu_elf_name, . - cpu_elf_name
+	string	cpu_arch_name, "armv5t"
+	string	cpu_elf_name, "v5"
 
 	.type	cpu_arm1020_name, #object
 cpu_arm1020_name:

@@ -25,6 +25,7 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/kref.h>
+#include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/usb.h>
 #include <linux/usb/tmc.h>
@@ -48,7 +49,7 @@
  */
 #define USBTMC_MAX_READS_TO_CLEAR_BULK_IN	100
 
-static struct usb_device_id usbtmc_devices[] = {
+static const struct usb_device_id usbtmc_devices[] = {
 	{ USB_INTERFACE_INFO(USB_CLASS_APP_SPEC, 3, 0), },
 	{ USB_INTERFACE_INFO(USB_CLASS_APP_SPEC, 3, 1), },
 	{ 0, } /* terminating entry */
@@ -482,7 +483,7 @@ static ssize_t usbtmc_read(struct file *filp, char __user *buf,
 		}
 
 		done += n_characters;
-		/* Terminate if end-of-message bit recieved from device */
+		/* Terminate if end-of-message bit received from device */
 		if ((buffer[8] &  0x01) && (actual >= n_characters + 12))
 			remaining = 0;
 		else
@@ -986,6 +987,7 @@ static const struct file_operations fops = {
 	.open		= usbtmc_open,
 	.release	= usbtmc_release,
 	.unlocked_ioctl	= usbtmc_ioctl,
+	.llseek		= default_llseek,
 };
 
 static struct usb_class_driver usbtmc_class = {

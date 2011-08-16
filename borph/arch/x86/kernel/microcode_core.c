@@ -12,7 +12,7 @@
  *	Software Developer's Manual
  *	Order Number 253668 or free download from:
  *
- *	http://developer.intel.com/design/pentium4/manuals/253668.htm
+ *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
  *
  *	For more information, go to http://www.urbanmyth.org/microcode
  *
@@ -82,6 +82,7 @@
 #include <linux/cpu.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/syscore_ops.h>
 
 #include <asm/microcode.h>
 #include <asm/processor.h>
@@ -201,9 +202,9 @@ static int do_microcode_update(const void __user *buf, size_t size)
 	return error;
 }
 
-static int microcode_open(struct inode *unused1, struct file *unused2)
+static int microcode_open(struct inode *inode, struct file *file)
 {
-	return capable(CAP_SYS_RAWIO) ? 0 : -EPERM;
+	return capable(CAP_SYS_RAWIO) ? nonseekable_open(inode, file) : -EPERM;
 }
 
 static ssize_t microcode_write(struct file *file, const char __user *buf,
@@ -232,6 +233,7 @@ static const struct file_operations microcode_fops = {
 	.owner			= THIS_MODULE,
 	.write			= microcode_write,
 	.open			= microcode_open,
+	.llseek		= no_llseek,
 };
 
 static struct miscdevice microcode_dev = {
@@ -260,6 +262,7 @@ static void microcode_dev_exit(void)
 }
 
 MODULE_ALIAS_MISCDEV(MICROCODE_MINOR);
+MODULE_ALIAS("devname:cpu/microcode");
 #else
 #define microcode_dev_init()	0
 #define microcode_dev_exit()	do { } while (0)
@@ -394,7 +397,7 @@ static enum ucode_state microcode_update_cpu(int cpu)
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
 	enum ucode_state ustate;
 
-	if (uci->valid && uci->mc)
+	if (uci->valid)
 		ustate = microcode_resume_cpu(cpu);
 	else
 		ustate = microcode_init_cpu(cpu);
@@ -415,8 +418,10 @@ static int mc_sysdev_add(struct sys_device *sys_dev)
 	if (err)
 		return err;
 
-	if (microcode_init_cpu(cpu) == UCODE_ERROR)
-		err = -EINVAL;
+	if (microcode_init_cpu(cpu) == UCODE_ERROR) {
+		sysfs_remove_group(&sys_dev->kobj, &mc_attr_group);
+		return -EINVAL;
+	}
 
 	return err;
 }
@@ -434,33 +439,25 @@ static int mc_sysdev_remove(struct sys_device *sys_dev)
 	return 0;
 }
 
-static int mc_sysdev_resume(struct sys_device *dev)
-{
-	int cpu = dev->id;
-	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
-
-	if (!cpu_online(cpu))
-		return 0;
-
-	/*
-	 * All non-bootup cpus are still disabled,
-	 * so only CPU 0 will apply ucode here.
-	 *
-	 * Moreover, there can be no concurrent
-	 * updates from any other places at this point.
-	 */
-	WARN_ON(cpu != 0);
-
-	if (uci->valid && uci->mc)
-		microcode_ops->apply_microcode(cpu);
-
-	return 0;
-}
-
 static struct sysdev_driver mc_sysdev_driver = {
 	.add			= mc_sysdev_add,
 	.remove			= mc_sysdev_remove,
-	.resume			= mc_sysdev_resume,
+};
+
+/**
+ * mc_bp_resume - Update boot CPU microcode during resume.
+ */
+static void mc_bp_resume(void)
+{
+	int cpu = smp_processor_id();
+	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+
+	if (uci->valid && uci->mc)
+		microcode_ops->apply_microcode(cpu);
+}
+
+static struct syscore_ops mc_syscore_ops = {
+	.resume			= mc_bp_resume,
 };
 
 static __cpuinit int
@@ -521,9 +518,6 @@ static int __init microcode_init(void)
 		return PTR_ERR(microcode_pdev);
 	}
 
-	if (microcode_ops->init)
-		microcode_ops->init(&microcode_pdev->dev);
-
 	get_online_cpus();
 	mutex_lock(&microcode_mutex);
 
@@ -541,6 +535,7 @@ static int __init microcode_init(void)
 	if (error)
 		return error;
 
+	register_syscore_ops(&mc_syscore_ops);
 	register_hotcpu_notifier(&mc_cpu_notifier);
 
 	pr_info("Microcode Update Driver: v" MICROCODE_VERSION
@@ -555,6 +550,7 @@ static void __exit microcode_exit(void)
 	microcode_dev_exit();
 
 	unregister_hotcpu_notifier(&mc_cpu_notifier);
+	unregister_syscore_ops(&mc_syscore_ops);
 
 	get_online_cpus();
 	mutex_lock(&microcode_mutex);
@@ -565,9 +561,6 @@ static void __exit microcode_exit(void)
 	put_online_cpus();
 
 	platform_device_unregister(microcode_pdev);
-
-	if (microcode_ops->fini)
-		microcode_ops->fini();
 
 	microcode_ops = NULL;
 

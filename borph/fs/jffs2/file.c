@@ -2,6 +2,7 @@
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
  * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright © 2004-2010 David Woodhouse <dwmw2@infradead.org>
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
@@ -10,7 +11,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/time.h>
 #include <linux/pagemap.h>
@@ -27,13 +27,20 @@ static int jffs2_write_begin(struct file *filp, struct address_space *mapping,
 			struct page **pagep, void **fsdata);
 static int jffs2_readpage (struct file *filp, struct page *pg);
 
-int jffs2_fsync(struct file *filp, struct dentry *dentry, int datasync)
+int jffs2_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = filp->f_mapping->host;
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(inode->i_sb);
+	int ret;
 
+	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	if (ret)
+		return ret;
+
+	mutex_lock(&inode->i_mutex);
 	/* Trigger GC to flush any pending writes for this inode */
 	jffs2_flush_wbuf_gc(c, inode->i_ino);
+	mutex_unlock(&inode->i_mutex);
 
 	return 0;
 }
@@ -56,7 +63,7 @@ const struct file_operations jffs2_file_operations =
 
 const struct inode_operations jffs2_file_inode_operations =
 {
-	.check_acl =	jffs2_check_acl,
+	.get_acl =	jffs2_get_acl,
 	.setattr =	jffs2_setattr,
 	.setxattr =	jffs2_setxattr,
 	.getxattr =	jffs2_getxattr,

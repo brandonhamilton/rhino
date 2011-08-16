@@ -38,7 +38,6 @@
 
 #include <linux/i2c.h>
 #include <linux/i2c/twl.h>
-#include <plat/board.h>
 
 #if defined(CONFIG_ARCH_OMAP2) || defined(CONFIG_ARCH_OMAP3)
 #include <plat/cpu.h>
@@ -58,13 +57,6 @@
  */
 
 #define DRIVER_NAME			"twl"
-
-#if defined(CONFIG_TWL4030_BCI_BATTERY) || \
-	defined(CONFIG_TWL4030_BCI_BATTERY_MODULE)
-#define twl_has_bci()		true
-#else
-#define twl_has_bci()		false
-#endif
 
 #if defined(CONFIG_KEYBOARD_TWL4030) || defined(CONFIG_KEYBOARD_TWL4030_MODULE)
 #define twl_has_keypad()	true
@@ -103,7 +95,8 @@
 #define twl_has_rtc()	false
 #endif
 
-#if defined(CONFIG_TWL4030_USB) || defined(CONFIG_TWL4030_USB_MODULE)
+#if defined(CONFIG_TWL4030_USB) || defined(CONFIG_TWL4030_USB_MODULE) ||\
+	defined(CONFIG_TWL6030_USB) || defined(CONFIG_TWL6030_USB_MODULE)
 #define twl_has_usb()	true
 #else
 #define twl_has_usb()	false
@@ -116,10 +109,17 @@
 #define twl_has_watchdog()        false
 #endif
 
-#if defined(CONFIG_TWL4030_CODEC) || defined(CONFIG_TWL4030_CODEC_MODULE)
+#if defined(CONFIG_TWL4030_CODEC) || defined(CONFIG_TWL4030_CODEC_MODULE) ||\
+	defined(CONFIG_TWL6040_CORE) || defined(CONFIG_TWL6040_CORE_MODULE)
 #define twl_has_codec()	true
 #else
 #define twl_has_codec()	false
+#endif
+
+#if defined(CONFIG_CHARGER_TWL4030) || defined(CONFIG_CHARGER_TWL4030_MODULE)
+#define twl_has_bci()	true
+#else
+#define twl_has_bci()	false
 #endif
 
 /* Triton Core internal information (BEGIN) */
@@ -130,7 +130,7 @@
 #define TWL_NUM_SLAVES		4
 
 #if defined(CONFIG_INPUT_TWL4030_PWRBUTTON) \
-	|| defined(CONFIG_INPUT_TWL4030_PWBUTTON_MODULE)
+	|| defined(CONFIG_INPUT_TWL4030_PWRBUTTON_MODULE)
 #define twl_has_pwrbutton()	true
 #else
 #define twl_has_pwrbutton()	false
@@ -198,6 +198,7 @@
 #define TWL6030_BASEADD_GASGAUGE	0x00C0
 #define TWL6030_BASEADD_PIH		0x00D0
 #define TWL6030_BASEADD_CHARGER		0x00E0
+#define TWL6025_BASEADD_CHARGER		0x00DA
 
 /* subchip/slave 2 0x4A - DFT */
 #define TWL6030_BASEADD_DIEID		0x00C0
@@ -205,15 +206,10 @@
 /* subchip/slave 3 0x4B - AUDIO */
 #define TWL6030_BASEADD_AUDIO		0x0000
 #define TWL6030_BASEADD_RSV		0x0000
+#define TWL6030_BASEADD_ZERO		0x0000
 
 /* Few power values */
 #define R_CFG_BOOT			0x05
-#define R_PROTECT_KEY			0x0E
-
-/* access control values for R_PROTECT_KEY */
-#define KEY_UNLOCK1			0xce
-#define KEY_UNLOCK2			0xec
-#define KEY_LOCK			0x00
 
 /* some fields in R_CFG_BOOT */
 #define HFCLK_FREQ_19p2_MHZ		(1 << 0)
@@ -233,6 +229,9 @@
 
 /* is driver active, bound to a chip? */
 static bool inuse;
+
+/* TWL IDCODE Register value */
+static u32 twl_idcode;
 
 static unsigned int twl_id;
 unsigned int twl_rev(void)
@@ -261,7 +260,7 @@ struct twl_mapping {
 	unsigned char sid;	/* Slave ID */
 	unsigned char base;	/* base address */
 };
-struct twl_mapping *twl_map;
+static struct twl_mapping *twl_map;
 
 static struct twl_mapping twl4030_map[TWL4030_MODULE_LAST + 1] = {
 	/*
@@ -320,9 +319,11 @@ static struct twl_mapping twl6030_map[] = {
 	{ SUB_CHIP_ID1, TWL6030_BASEADD_CHARGER },
 	{ SUB_CHIP_ID1, TWL6030_BASEADD_GASGAUGE },
 	{ SUB_CHIP_ID1, TWL6030_BASEADD_PWM },
-	{ SUB_CHIP_ID2, TWL6030_BASEADD_RSV },
-	{ SUB_CHIP_ID2, TWL6030_BASEADD_RSV },
+	{ SUB_CHIP_ID0, TWL6030_BASEADD_ZERO },
+	{ SUB_CHIP_ID1, TWL6030_BASEADD_ZERO },
 
+	{ SUB_CHIP_ID2, TWL6030_BASEADD_ZERO },
+	{ SUB_CHIP_ID2, TWL6030_BASEADD_ZERO },
 	{ SUB_CHIP_ID2, TWL6030_BASEADD_RSV },
 	{ SUB_CHIP_ID2, TWL6030_BASEADD_RSV },
 	{ SUB_CHIP_ID2, TWL6030_BASEADD_RSV },
@@ -331,6 +332,7 @@ static struct twl_mapping twl6030_map[] = {
 
 	{ SUB_CHIP_ID0, TWL6030_BASEADD_RTC },
 	{ SUB_CHIP_ID0, TWL6030_BASEADD_MEM },
+	{ SUB_CHIP_ID1, TWL6025_BASEADD_CHARGER },
 };
 
 /*----------------------------------------------------------------------*/
@@ -490,6 +492,58 @@ EXPORT_SYMBOL(twl_i2c_read_u8);
 
 /*----------------------------------------------------------------------*/
 
+/**
+ * twl_read_idcode_register - API to read the IDCODE register.
+ *
+ * Unlocks the IDCODE register and read the 32 bit value.
+ */
+static int twl_read_idcode_register(void)
+{
+	int err;
+
+	err = twl_i2c_write_u8(TWL4030_MODULE_INTBR, TWL_EEPROM_R_UNLOCK,
+						REG_UNLOCK_TEST_REG);
+	if (err) {
+		pr_err("TWL4030 Unable to unlock IDCODE registers -%d\n", err);
+		goto fail;
+	}
+
+	err = twl_i2c_read(TWL4030_MODULE_INTBR, (u8 *)(&twl_idcode),
+						REG_IDCODE_7_0, 4);
+	if (err) {
+		pr_err("TWL4030: unable to read IDCODE -%d\n", err);
+		goto fail;
+	}
+
+	err = twl_i2c_write_u8(TWL4030_MODULE_INTBR, 0x0, REG_UNLOCK_TEST_REG);
+	if (err)
+		pr_err("TWL4030 Unable to relock IDCODE registers -%d\n", err);
+fail:
+	return err;
+}
+
+/**
+ * twl_get_type - API to get TWL Si type.
+ *
+ * Api to get the TWL Si type from IDCODE value.
+ */
+int twl_get_type(void)
+{
+	return TWL_SIL_TYPE(twl_idcode);
+}
+EXPORT_SYMBOL_GPL(twl_get_type);
+
+/**
+ * twl_get_version - API to get TWL Si version.
+ *
+ * Api to get the TWL Si version from IDCODE value.
+ */
+int twl_get_version(void)
+{
+	return TWL_SIL_REV(twl_idcode);
+}
+EXPORT_SYMBOL_GPL(twl_get_version);
+
 static struct device *
 add_numbered_child(unsigned chip, const char *name, int num,
 		void *pdata, unsigned pdata_len,
@@ -552,7 +606,7 @@ static inline struct device *add_child(unsigned chip, const char *name,
 static struct device *
 add_regulator_linked(int num, struct regulator_init_data *pdata,
 		struct regulator_consumer_supply *consumers,
-		unsigned num_consumers)
+		unsigned num_consumers, unsigned long features)
 {
 	unsigned sub_chip_id;
 	/* regulator framework demands init_data ... */
@@ -564,6 +618,8 @@ add_regulator_linked(int num, struct regulator_init_data *pdata,
 		pdata->num_consumer_supplies = num_consumers;
 	}
 
+	pdata->driver_data = (void *)features;
+
 	/* NOTE:  we currently ignore regulator IRQs, e.g. for short circuits */
 	sub_chip_id = twl_map[TWL_MODULE_PM_MASTER].sid;
 	return add_numbered_child(sub_chip_id, "twl_reg", num,
@@ -571,9 +627,10 @@ add_regulator_linked(int num, struct regulator_init_data *pdata,
 }
 
 static struct device *
-add_regulator(int num, struct regulator_init_data *pdata)
+add_regulator(int num, struct regulator_init_data *pdata,
+		unsigned long features)
 {
-	return add_regulator_linked(num, pdata, NULL, 0);
+	return add_regulator_linked(num, pdata, NULL, 0, features);
 }
 
 /*
@@ -587,18 +644,6 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 {
 	struct device	*child;
 	unsigned sub_chip_id;
-
-	if (twl_has_bci() && pdata->bci &&
-	    !(features & (TPS_SUBSET | TWL5031))) {
-		child = add_child(3, "twl4030_bci",
-				pdata->bci, sizeof(*pdata->bci),
-				false,
-				/* irq0 = CHG_PRES, irq1 = BCI */
-				pdata->irq_base + BCI_PRES_INTR_OFFSET,
-				pdata->irq_base + BCI_INTR_OFFSET);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-	}
 
 	if (twl_has_gpio() && pdata->gpio) {
 		child = add_child(SUB_CHIP_ID1, "twl4030_gpio",
@@ -665,17 +710,20 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 			};
 
 			child = add_regulator_linked(TWL4030_REG_VUSB1V5,
-						      &usb_fixed, &usb1v5, 1);
+						      &usb_fixed, &usb1v5, 1,
+						      features);
 			if (IS_ERR(child))
 				return PTR_ERR(child);
 
 			child = add_regulator_linked(TWL4030_REG_VUSB1V8,
-						      &usb_fixed, &usb1v8, 1);
+						      &usb_fixed, &usb1v8, 1,
+						      features);
 			if (IS_ERR(child))
 				return PTR_ERR(child);
 
 			child = add_regulator_linked(TWL4030_REG_VUSB3V1,
-						      &usb_fixed, &usb3v1, 1);
+						      &usb_fixed, &usb3v1, 1,
+						      features);
 			if (IS_ERR(child))
 				return PTR_ERR(child);
 
@@ -698,23 +746,88 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 			usb3v1.dev = child;
 		}
 	}
+	if (twl_has_usb() && pdata->usb && twl_class_is_6030()) {
 
-	if (twl_has_watchdog()) {
+		static struct regulator_consumer_supply usb3v3;
+		int regulator;
+
+		if (twl_has_regulator()) {
+			/* this is a template that gets copied */
+			struct regulator_init_data usb_fixed = {
+				.constraints.valid_modes_mask =
+					REGULATOR_MODE_NORMAL
+					| REGULATOR_MODE_STANDBY,
+				.constraints.valid_ops_mask =
+					REGULATOR_CHANGE_MODE
+					| REGULATOR_CHANGE_STATUS,
+			};
+
+			if (features & TWL6025_SUBCLASS) {
+				usb3v3.supply =	"ldousb";
+				regulator = TWL6025_REG_LDOUSB;
+			} else {
+				usb3v3.supply = "vusb";
+				regulator = TWL6030_REG_VUSB;
+			}
+			child = add_regulator_linked(regulator, &usb_fixed,
+							&usb3v3, 1,
+							features);
+			if (IS_ERR(child))
+				return PTR_ERR(child);
+		}
+
+		pdata->usb->features = features;
+
+		child = add_child(0, "twl6030_usb",
+			pdata->usb, sizeof(*pdata->usb),
+			true,
+			/* irq1 = VBUS_PRES, irq0 = USB ID */
+			pdata->irq_base + USBOTG_INTR_OFFSET,
+			pdata->irq_base + USB_PRES_INTR_OFFSET);
+
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+		/* we need to connect regulators to this transceiver */
+		if (twl_has_regulator() && child)
+			usb3v3.dev = child;
+	} else if (twl_has_regulator() && twl_class_is_6030()) {
+		if (features & TWL6025_SUBCLASS)
+			child = add_regulator(TWL6025_REG_LDOUSB,
+						pdata->ldousb, features);
+		else
+			child = add_regulator(TWL6030_REG_VUSB,
+						pdata->vusb, features);
+
+			if (IS_ERR(child))
+					return PTR_ERR(child);
+	}
+
+	if (twl_has_watchdog() && twl_class_is_4030()) {
 		child = add_child(0, "twl4030_wdt", NULL, 0, false, 0, 0);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
 
-	if (twl_has_pwrbutton()) {
+	if (twl_has_pwrbutton() && twl_class_is_4030()) {
 		child = add_child(1, "twl4030_pwrbutton",
 				NULL, 0, true, pdata->irq_base + 8 + 0, 0);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
 
-	if (twl_has_codec() && pdata->codec) {
-		child = add_child(1, "twl4030_codec",
-				pdata->codec, sizeof(*pdata->codec),
+	if (twl_has_codec() && pdata->audio && twl_class_is_4030()) {
+		sub_chip_id = twl_map[TWL_MODULE_AUDIO_VOICE].sid;
+		child = add_child(sub_chip_id, "twl4030-audio",
+				pdata->audio, sizeof(*pdata->audio),
+				false, 0, 0);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+	}
+
+	if (twl_has_codec() && pdata->audio && twl_class_is_6030()) {
+		sub_chip_id = twl_map[TWL_MODULE_AUDIO_VOICE].sid;
+		child = add_child(sub_chip_id, "twl6040",
+				pdata->audio, sizeof(*pdata->audio),
 				false, 0, 0);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
@@ -722,46 +835,55 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 
 	/* twl4030 regulators */
 	if (twl_has_regulator() && twl_class_is_4030()) {
-		child = add_regulator(TWL4030_REG_VPLL1, pdata->vpll1);
+		child = add_regulator(TWL4030_REG_VPLL1, pdata->vpll1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VIO, pdata->vio);
+		child = add_regulator(TWL4030_REG_VIO, pdata->vio,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VDD1, pdata->vdd1);
+		child = add_regulator(TWL4030_REG_VDD1, pdata->vdd1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VDD2, pdata->vdd2);
+		child = add_regulator(TWL4030_REG_VDD2, pdata->vdd2,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VMMC1, pdata->vmmc1);
+		child = add_regulator(TWL4030_REG_VMMC1, pdata->vmmc1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VDAC, pdata->vdac);
+		child = add_regulator(TWL4030_REG_VDAC, pdata->vdac,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
 		child = add_regulator((features & TWL4030_VAUX2)
 					? TWL4030_REG_VAUX2_4030
 					: TWL4030_REG_VAUX2,
-				pdata->vaux2);
+				pdata->vaux2, features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VINTANA1, pdata->vintana1);
+		child = add_regulator(TWL4030_REG_VINTANA1, pdata->vintana1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VINTANA2, pdata->vintana2);
+		child = add_regulator(TWL4030_REG_VINTANA2, pdata->vintana2,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VINTDIG, pdata->vintdig);
+		child = add_regulator(TWL4030_REG_VINTDIG, pdata->vintdig,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
@@ -769,82 +891,161 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 	/* maybe add LDOs that are omitted on cost-reduced parts */
 	if (twl_has_regulator() && !(features & TPS_SUBSET)
 	  && twl_class_is_4030()) {
-		child = add_regulator(TWL4030_REG_VPLL2, pdata->vpll2);
+		child = add_regulator(TWL4030_REG_VPLL2, pdata->vpll2,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VMMC2, pdata->vmmc2);
+		child = add_regulator(TWL4030_REG_VMMC2, pdata->vmmc2,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VSIM, pdata->vsim);
+		child = add_regulator(TWL4030_REG_VSIM, pdata->vsim,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VAUX1, pdata->vaux1);
+		child = add_regulator(TWL4030_REG_VAUX1, pdata->vaux1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VAUX3, pdata->vaux3);
+		child = add_regulator(TWL4030_REG_VAUX3, pdata->vaux3,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL4030_REG_VAUX4, pdata->vaux4);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL4030_REG_VUSB1V5, pdata->vusb1v5);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL4030_REG_VUSB1V8, pdata->vusb1v8);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
-
-		child = add_regulator(TWL4030_REG_VUSB3V1, pdata->vusb3v1);
+		child = add_regulator(TWL4030_REG_VAUX4, pdata->vaux4,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
 
 	/* twl6030 regulators */
+	if (twl_has_regulator() && twl_class_is_6030() &&
+			!(features & TWL6025_SUBCLASS)) {
+		child = add_regulator(TWL6030_REG_VMMC, pdata->vmmc,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VPP, pdata->vpp,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VUSIM, pdata->vusim,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VCXIO, pdata->vcxio,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VDAC, pdata->vdac,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VAUX1_6030, pdata->vaux1,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VAUX2_6030, pdata->vaux2,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_VAUX3_6030, pdata->vaux3,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_CLK32KG, pdata->clk32kg,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+	}
+
+	/* 6030 and 6025 share this regulator */
 	if (twl_has_regulator() && twl_class_is_6030()) {
-		child = add_regulator(TWL6030_REG_VMMC, pdata->vmmc);
+		child = add_regulator(TWL6030_REG_VANA, pdata->vana,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+	}
+
+	/* twl6025 regulators */
+	if (twl_has_regulator() && twl_class_is_6030() &&
+			(features & TWL6025_SUBCLASS)) {
+		child = add_regulator(TWL6025_REG_LDO5, pdata->ldo5,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VPP, pdata->vpp);
+		child = add_regulator(TWL6025_REG_LDO1, pdata->ldo1,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VUSIM, pdata->vusim);
+		child = add_regulator(TWL6025_REG_LDO7, pdata->ldo7,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VANA, pdata->vana);
+		child = add_regulator(TWL6025_REG_LDO6, pdata->ldo6,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VCXIO, pdata->vcxio);
+		child = add_regulator(TWL6025_REG_LDOLN, pdata->ldoln,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VDAC, pdata->vdac);
+		child = add_regulator(TWL6025_REG_LDO2, pdata->ldo2,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VUSB, pdata->vusb);
+		child = add_regulator(TWL6025_REG_LDO4, pdata->ldo4,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VAUX1_6030, pdata->vaux1);
+		child = add_regulator(TWL6025_REG_LDO3, pdata->ldo3,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VAUX2_6030, pdata->vaux2);
+		child = add_regulator(TWL6025_REG_SMPS3, pdata->smps3,
+					features);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 
-		child = add_regulator(TWL6030_REG_VAUX3_6030, pdata->vaux3);
+		child = add_regulator(TWL6025_REG_SMPS4, pdata->smps4,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6025_REG_VIO, pdata->vio6025,
+					features);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+	}
+
+	if (twl_has_bci() && pdata->bci &&
+			!(features & (TPS_SUBSET | TWL5031))) {
+		child = add_child(3, "twl4030_bci",
+				pdata->bci, sizeof(*pdata->bci), false,
+				/* irq0 = CHG_PRES, irq1 = BCI */
+				pdata->irq_base + BCI_PRES_INTR_OFFSET,
+				pdata->irq_base + BCI_INTR_OFFSET);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
@@ -863,8 +1064,8 @@ static inline int __init protect_pm_master(void)
 {
 	int e = 0;
 
-	e = twl_i2c_write_u8(TWL_MODULE_PM_MASTER, KEY_LOCK,
-			R_PROTECT_KEY);
+	e = twl_i2c_write_u8(TWL4030_MODULE_PM_MASTER, 0,
+			TWL4030_PM_MASTER_PROTECT_KEY);
 	return e;
 }
 
@@ -872,10 +1073,13 @@ static inline int __init unprotect_pm_master(void)
 {
 	int e = 0;
 
-	e |= twl_i2c_write_u8(TWL_MODULE_PM_MASTER, KEY_UNLOCK1,
-			R_PROTECT_KEY);
-	e |= twl_i2c_write_u8(TWL_MODULE_PM_MASTER, KEY_UNLOCK2,
-			R_PROTECT_KEY);
+	e |= twl_i2c_write_u8(TWL4030_MODULE_PM_MASTER,
+			TWL4030_PM_MASTER_KEY_CFG1,
+			TWL4030_PM_MASTER_PROTECT_KEY);
+	e |= twl_i2c_write_u8(TWL4030_MODULE_PM_MASTER,
+			TWL4030_PM_MASTER_KEY_CFG2,
+			TWL4030_PM_MASTER_PROTECT_KEY);
+
 	return e;
 }
 
@@ -971,38 +1175,15 @@ static int twl_remove(struct i2c_client *client)
 	return 0;
 }
 
-#define TWL4030_VAUX2_1P8V 0x5
-#define ENABLE_VAUX2_DEV_GRP 0x20
-
-/* Enable USB GPIOs on new OMAP3EVM */
-static void usb_gpio_settings(void)
-{
-	unsigned char val;
-
-	if (get_omap3_evm_rev() < OMAP3EVM_BOARD_GEN_2)
-		return;
-
-	/* Enable TWL GPIO Module */
-	twl_i2c_write_u8(TWL4030_MODULE_GPIO, 0x04, REG_GPIO_CTRL);
-
-	/* Configure GPIO-6 as output */
-	twl_i2c_read_u8(TWL4030_MODULE_GPIO, &val, REG_GPIODATADIR1);
-	val |= 0x4;
-	twl_i2c_write_u8(TWL4030_MODULE_GPIO, val, REG_GPIODATADIR1);
-
-	/* Set GPIO6 = 1 */
-	twl_i2c_read_u8(TWL4030_MODULE_GPIO, &val, REG_GPIODATAOUT1);
-	val |= 0x40;
-	twl_i2c_write_u8(TWL4030_MODULE_GPIO, val, REG_GPIODATAOUT1);
-}
-
 /* NOTE:  this driver only handles a single twl4030/tps659x0 chip */
-static int __init
+static int __devinit
 twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	int				status;
 	unsigned			i;
 	struct twl4030_platform_data	*pdata = client->dev.platform_data;
+	u8 temp;
+	int ret = 0;
 
 	if (!pdata) {
 		dev_dbg(&client->dev, "no platform data?\n");
@@ -1049,6 +1230,12 @@ twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	/* setup clock framework */
 	clocks_init(&client->dev, pdata->clock);
 
+	/* read TWL IDCODE Register */
+	if (twl_id == TWL4030_CLASS_ID) {
+		ret = twl_read_idcode_register();
+		WARN(ret < 0, "Error: reading twl_idcode register value\n");
+	}
+
 	/* load power event scripts */
 	if (twl_has_power() && pdata->power)
 		twl4030_power_init(pdata->power);
@@ -1070,9 +1257,19 @@ twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 			goto fail;
 	}
 
-	status = add_children(pdata, id->driver_data);
+	/* Disable TWL4030/TWL5030 I2C Pull-up on I2C1 and I2C4(SR) interface.
+	 * Program I2C_SCL_CTRL_PU(bit 0)=0, I2C_SDA_CTRL_PU (bit 2)=0,
+	 * SR_I2C_SCL_CTRL_PU(bit 4)=0 and SR_I2C_SDA_CTRL_PU(bit 6)=0.
+	 */
 
-	usb_gpio_settings();
+	if (twl_class_is_4030()) {
+		twl_i2c_read_u8(TWL4030_MODULE_INTBR, &temp, REG_GPPUPDCTR1);
+		temp &= ~(SR_I2C_SDA_CTRL_PU | SR_I2C_SCL_CTRL_PU | \
+		I2C_SDA_CTRL_PU | I2C_SCL_CTRL_PU);
+		twl_i2c_write_u8(TWL4030_MODULE_INTBR, temp, REG_GPPUPDCTR1);
+	}
+
+	status = add_children(pdata, id->driver_data);
 fail:
 	if (status < 0)
 		twl_remove(client);
@@ -1086,7 +1283,10 @@ static const struct i2c_device_id twl_ids[] = {
 	{ "tps65950", 0 },		/* catalog version of twl5030 */
 	{ "tps65930", TPS_SUBSET },	/* fewer LDOs and DACs; no charger */
 	{ "tps65920", TPS_SUBSET },	/* fewer LDOs; no codec or charger */
+	{ "tps65921", TPS_SUBSET },	/* fewer LDOs; no codec, no LED
+					   and vibrator. Charger in USB module*/
 	{ "twl6030", TWL6030_CLASS },	/* "Phoenix power chip" */
+	{ "twl6025", TWL6030_CLASS | TWL6025_SUBCLASS }, /* "Phoenix lite" */
 	{ /* end of list */ },
 };
 MODULE_DEVICE_TABLE(i2c, twl_ids);

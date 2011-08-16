@@ -201,7 +201,7 @@ extern void ppp_unregister_compressor (struct compressor *cp);
 #define LAST	255
 
 #define MAXCODE(b)	((1 << (b)) - 1)
-#define BADCODEM1	MAXCODE(MAX_BSD_BITS);
+#define BADCODEM1	MAXCODE(MAX_BSD_BITS)
 
 #define BSD_HASH(prefix,suffix,hshift) ((((unsigned long)(suffix))<<(hshift)) \
 					 ^ (unsigned long)(prefix))
@@ -429,7 +429,7 @@ static void *bsd_alloc (unsigned char *options, int opt_len, int decomp)
 	if (!db->lens)
 	  {
 	    bsd_free (db);
-	    return (NULL);
+	    return NULL;
 	  }
       }
 /*

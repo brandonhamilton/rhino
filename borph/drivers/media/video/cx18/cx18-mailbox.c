@@ -2,7 +2,7 @@
  *  cx18 mailbox functions
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
- *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
+ *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "cx18-mailbox.h"
 #include "cx18-queue.h"
 #include "cx18-streams.h"
+#include "cx18-alsa-pcm.h" /* FIXME make configurable */
 
 static const char *rpu_str[] = { "APU", "CPU", "EPU", "HPU" };
 
@@ -80,6 +81,7 @@ static const struct cx18_api_info api_info[] = {
 	API_ENTRY(CPU, CX18_CPU_SET_SLICED_VBI_PARAM,           0),
 	API_ENTRY(CPU, CX18_CPU_SET_USERDATA_PLACE_HOLDER,      0),
 	API_ENTRY(CPU, CX18_CPU_GET_ENC_PTS,                    0),
+	API_ENTRY(CPU, CX18_CPU_SET_VFC_PARAM,                  0),
 	API_ENTRY(CPU, CX18_CPU_DE_SET_MDL_ACK,			0),
 	API_ENTRY(CPU, CX18_CPU_DE_SET_MDL,			API_FAST),
 	API_ENTRY(CPU, CX18_CPU_DE_RELEASE_MDL,			API_SLOW),
@@ -135,7 +137,7 @@ static void cx18_mdl_send_to_dvb(struct cx18_stream *s, struct cx18_mdl *mdl)
 {
 	struct cx18_buffer *buf;
 
-	if (!s->dvb.enabled || mdl->bytesused == 0)
+	if (s->dvb == NULL || !s->dvb->enabled || mdl->bytesused == 0)
 		return;
 
 	/* We ignore mdl and buf readpos accounting here - it doesn't matter */
@@ -145,7 +147,7 @@ static void cx18_mdl_send_to_dvb(struct cx18_stream *s, struct cx18_mdl *mdl)
 		buf = list_first_entry(&mdl->buf_list, struct cx18_buffer,
 				       list);
 		if (buf->bytesused)
-			dvb_dmx_swfilter(&s->dvb.demux,
+			dvb_dmx_swfilter(&s->dvb->demux,
 					 buf->buf, buf->bytesused);
 		return;
 	}
@@ -153,7 +155,89 @@ static void cx18_mdl_send_to_dvb(struct cx18_stream *s, struct cx18_mdl *mdl)
 	list_for_each_entry(buf, &mdl->buf_list, list) {
 		if (buf->bytesused == 0)
 			break;
-		dvb_dmx_swfilter(&s->dvb.demux, buf->buf, buf->bytesused);
+		dvb_dmx_swfilter(&s->dvb->demux, buf->buf, buf->bytesused);
+	}
+}
+
+static void cx18_mdl_send_to_videobuf(struct cx18_stream *s,
+	struct cx18_mdl *mdl)
+{
+	struct cx18_videobuf_buffer *vb_buf;
+	struct cx18_buffer *buf;
+	u8 *p;
+	u32 offset = 0;
+	int dispatch = 0;
+
+	if (mdl->bytesused == 0)
+		return;
+
+	/* Acquire a videobuf buffer, clone to and and release it */
+	spin_lock(&s->vb_lock);
+	if (list_empty(&s->vb_capture))
+		goto out;
+
+	vb_buf = list_first_entry(&s->vb_capture, struct cx18_videobuf_buffer,
+		vb.queue);
+
+	p = videobuf_to_vmalloc(&vb_buf->vb);
+	if (!p)
+		goto out;
+
+	offset = vb_buf->bytes_used;
+	list_for_each_entry(buf, &mdl->buf_list, list) {
+		if (buf->bytesused == 0)
+			break;
+
+		if ((offset + buf->bytesused) <= vb_buf->vb.bsize) {
+			memcpy(p + offset, buf->buf, buf->bytesused);
+			offset += buf->bytesused;
+			vb_buf->bytes_used += buf->bytesused;
+		}
+	}
+
+	/* If we've filled the buffer as per the callers res then dispatch it */
+	if (vb_buf->bytes_used >= (vb_buf->vb.width * vb_buf->vb.height * 2)) {
+		dispatch = 1;
+		vb_buf->bytes_used = 0;
+	}
+
+	if (dispatch) {
+		vb_buf->vb.ts = ktime_to_timeval(ktime_get());
+		list_del(&vb_buf->vb.queue);
+		vb_buf->vb.state = VIDEOBUF_DONE;
+		wake_up(&vb_buf->vb.done);
+	}
+
+	mod_timer(&s->vb_timeout, msecs_to_jiffies(2000) + jiffies);
+
+out:
+	spin_unlock(&s->vb_lock);
+}
+
+static void cx18_mdl_send_to_alsa(struct cx18 *cx, struct cx18_stream *s,
+				  struct cx18_mdl *mdl)
+{
+	struct cx18_buffer *buf;
+
+	if (mdl->bytesused == 0)
+		return;
+
+	/* We ignore mdl and buf readpos accounting here - it doesn't matter */
+
+	/* The likely case */
+	if (list_is_singular(&mdl->buf_list)) {
+		buf = list_first_entry(&mdl->buf_list, struct cx18_buffer,
+				       list);
+		if (buf->bytesused)
+			cx->pcm_announce_callback(cx->alsa, buf->buf,
+						  buf->bytesused);
+		return;
+	}
+
+	list_for_each_entry(buf, &mdl->buf_list, list) {
+		if (buf->bytesused == 0)
+			break;
+		cx->pcm_announce_callback(cx->alsa, buf->buf, buf->bytesused);
 	}
 }
 
@@ -223,11 +307,24 @@ static void epu_dma_done(struct cx18 *cx, struct cx18_in_work_order *order)
 		CX18_DEBUG_HI_DMA("%s recv bytesused = %d\n",
 				  s->name, mdl->bytesused);
 
-		if (s->type != CX18_ENC_STREAM_TYPE_TS)
-			cx18_enqueue(s, mdl, &s->q_full);
-		else {
+		if (s->type == CX18_ENC_STREAM_TYPE_TS) {
 			cx18_mdl_send_to_dvb(s, mdl);
 			cx18_enqueue(s, mdl, &s->q_free);
+		} else if (s->type == CX18_ENC_STREAM_TYPE_PCM) {
+			/* Pass the data to cx18-alsa */
+			if (cx->pcm_announce_callback != NULL) {
+				cx18_mdl_send_to_alsa(cx, s, mdl);
+				cx18_enqueue(s, mdl, &s->q_free);
+			} else {
+				cx18_enqueue(s, mdl, &s->q_full);
+			}
+		} else if (s->type == CX18_ENC_STREAM_TYPE_YUV) {
+			cx18_mdl_send_to_videobuf(s, mdl);
+			cx18_enqueue(s, mdl, &s->q_free);
+		} else {
+			cx18_enqueue(s, mdl, &s->q_full);
+			if (s->type == CX18_ENC_STREAM_TYPE_IDX)
+				cx18_stream_rotate_idx_mdls(cx);
 		}
 	}
 	/* Put as many MDLs as possible back into fw use */
@@ -677,9 +774,8 @@ static int cx18_set_filter_param(struct cx18_stream *s)
 int cx18_api_func(void *priv, u32 cmd, int in, int out,
 		u32 data[CX2341X_MBOX_MAX_DATA])
 {
-	struct cx18_api_func_private *api_priv = priv;
-	struct cx18 *cx = api_priv->cx;
-	struct cx18_stream *s = api_priv->s;
+	struct cx18_stream *s = priv;
+	struct cx18 *cx = s->cx;
 
 	switch (cmd) {
 	case CX2341X_ENC_SET_OUTPUT_PORT:

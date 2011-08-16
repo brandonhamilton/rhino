@@ -3,8 +3,10 @@ TODO
 
 1. BORPH kernel
   1.1 Driver for the power monitoring subsystem
-  	1.1.1 Integration with lm-sensors
+        1.1.1 Check nitialization of power chip within omap kernel  
+	1.1.1 Integration with lm-sensors
   1.2 FMC interface
+  1.3 Fix sound driver (not recognized in latest kernel)
   1.3 DMA support for FPGA IO
 
 2. Testing and configuration

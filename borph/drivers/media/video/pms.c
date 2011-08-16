@@ -25,13 +25,11 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
-#include <linux/version.h>
 #include <linux/mutex.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 
 #include <linux/videodev2.h>
@@ -40,7 +38,7 @@
 #include <media/v4l2-device.h>
 
 MODULE_LICENSE("GPL");
-
+MODULE_VERSION("0.0.4");
 
 #define MOTOROLA	1
 #define PHILIPS2	2               /* SAA7191 */
@@ -62,7 +60,6 @@ struct pms {
 	int depth;
 	int input;
 	s32 brightness, saturation, hue, contrast;
-	unsigned long in_use;
 	struct mutex lock;
 	int i2c_count;
 	struct i2c_info i2cinfo[64];
@@ -680,7 +677,6 @@ static int pms_querycap(struct file *file, void  *priv,
 	strlcpy(vcap->driver, dev->v4l2_dev.name, sizeof(vcap->driver));
 	strlcpy(vcap->card, "Mediavision PMS", sizeof(vcap->card));
 	strlcpy(vcap->bus_info, "ISA", sizeof(vcap->bus_info));
-	vcap->version = KERNEL_VERSION(0, 0, 3);
 	vcap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE;
 	return 0;
 }
@@ -932,26 +928,9 @@ static ssize_t pms_read(struct file *file, char __user *buf,
 	return len;
 }
 
-static int pms_exclusive_open(struct file *file)
-{
-	struct pms *dev = video_drvdata(file);
-
-	return test_and_set_bit(0, &dev->in_use) ? -EBUSY : 0;
-}
-
-static int pms_exclusive_release(struct file *file)
-{
-	struct pms *dev = video_drvdata(file);
-
-	clear_bit(0, &dev->in_use);
-	return 0;
-}
-
 static const struct v4l2_file_operations pms_fops = {
 	.owner		= THIS_MODULE,
-	.open           = pms_exclusive_open,
-	.release        = pms_exclusive_release,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 	.read           = pms_read,
 };
 

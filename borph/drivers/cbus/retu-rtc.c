@@ -36,442 +36,252 @@
 #include <linux/device.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/completion.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
-#include <linux/workqueue.h>
+#include <linux/rtc.h>
 
 #include "cbus.h"
 #include "retu.h"
 
-static struct mutex retu_rtc_mutex;
-static u16 retu_rtc_alarm_expired;
-static u16 retu_rtc_reset_occurred;
+struct retu_rtc {
+	/* device lock */
+	struct mutex		mutex;
+	struct device		*dev;
+	struct rtc_device	*rtc;
 
-static DECLARE_COMPLETION(retu_rtc_exited);
-static DECLARE_COMPLETION(retu_rtc_sync);
+	u16			alarm_expired;
+	int			irq_rtcs;
+	int			irq_rtca;
+};
 
-static void retu_rtc_barrier(void);
-
-static void retu_rtc_device_release(struct device *dev)
-{
-	complete(&retu_rtc_exited);
-}
-
-static ssize_t retu_rtc_time_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
-{
-	u16 dsr, hmr, dsr2;
-
-	mutex_lock(&retu_rtc_mutex);
-
-	do {
-		u16 dummy;
-
-		/*
-		 * Not being in_interrupt() for a retu rtc IRQ, we need to
-		 * read twice for consistency..
-		 */
-		dummy	= retu_read_reg(RETU_REG_RTCDSR);
-		dsr	= retu_read_reg(RETU_REG_RTCDSR);
-
-		dummy	= retu_read_reg(RETU_REG_RTCHMR);
-		hmr	= retu_read_reg(RETU_REG_RTCHMR);
-
-		dummy	= retu_read_reg(RETU_REG_RTCDSR);
-		dsr2	= retu_read_reg(RETU_REG_RTCDSR);
-	} while ((dsr != dsr2));
-
-	mutex_unlock(&retu_rtc_mutex);
-
-	/*
-	 * Format a 32-bit date-string for userspace
-	 *
-	 * days | hours | minutes | seconds
-	 *
-	 * 8 bits for each.
-	 *
-	 * This mostly sucks because days and seconds are tracked in RTCDSR
-	 * while hours and minutes are tracked in RTCHMR. And yes, there
-	 * really are no words that can describe an 8 bit day register (or
-	 * rather, none that will be reprinted here).
-	 */
-	return sprintf(buf, "0x%08x\n", (((dsr >> 8) & 0xff) << 24) |
-				        (((hmr >> 8) & 0x1f) << 16) |
-					 ((hmr & 0x3f) << 8) | (dsr & 0x3f));
-}
-
-static ssize_t retu_rtc_time_store(struct device *dev, struct device_attribute *attr,
-				   const char *buf, size_t count)
-{
-	mutex_lock(&retu_rtc_mutex);
-	/*
-	 * Writing anything to the day counter forces it to 0
-	 * The seconds counter would be cleared by resetting the minutes counter,
-	 * however this won't happen, since we are using the hh:mm counters as
-	 * a set of free running counters and the day counter as a multiple
-	 * overflow holder.
-	 */
-
-	/* Reset day counter, but keep Temperature Shutdown state */
-	retu_write_reg(RETU_REG_RTCDSR,
-		       retu_read_reg(RETU_REG_RTCDSR) & (1 << 6));
-
-	mutex_unlock(&retu_rtc_mutex);
-
-	return count;
-}
-
-static DEVICE_ATTR(time, S_IRUGO | S_IWUSR, retu_rtc_time_show,
-		   retu_rtc_time_store);
-
-
-static ssize_t retu_rtc_reset_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	/*
-	 * Returns the status of the rtc
-	 *
-	 * 0: no reset has occurred or the status has been cleared
-	 * 1: a reset has occurred
-	 *
-	 * RTC needs to be reset only when both main battery
-	 * _AND_ backup battery are discharged
-	 */
-	return sprintf(buf, "%u\n", retu_rtc_reset_occurred);
-}
-
-static void retu_rtc_do_reset(void)
+static void retu_rtc_do_reset(struct retu_rtc *rtc)
 {
 	u16 ccr1;
 
-	ccr1 = retu_read_reg(RETU_REG_CC1);
+	ccr1 = retu_read_reg(rtc->dev, RETU_REG_CC1);
 	/* RTC in reset */
-	retu_write_reg(RETU_REG_CC1, ccr1 | 0x0001);
+	retu_write_reg(rtc->dev, RETU_REG_CC1, ccr1 | 0x0001);
 	/* RTC in normal operating mode */
-	retu_write_reg(RETU_REG_CC1, ccr1 & ~0x0001);
+	retu_write_reg(rtc->dev, RETU_REG_CC1, ccr1 & ~0x0001);
 
-	retu_rtc_barrier();
 	/* Disable alarm and RTC WD */
-	retu_write_reg(RETU_REG_RTCHMAR, 0x7f3f);
+	retu_write_reg(rtc->dev, RETU_REG_RTCHMAR, 0x7f3f);
 	/* Set Calibration register to default value */
-	retu_write_reg(RETU_REG_RTCCALR, 0x00c0);
+	retu_write_reg(rtc->dev, RETU_REG_RTCCALR, 0x00c0);
 
-	retu_rtc_alarm_expired = 0;
-	retu_rtc_reset_occurred = 1;
+	rtc->alarm_expired = 0;
 }
 
-static ssize_t retu_rtc_reset_store(struct device *dev, struct device_attribute *attr,
-				    const char *buf, size_t count)
+static irqreturn_t retu_rtc_interrupt(int irq, void *_rtc)
 {
-	unsigned choice;
+	struct retu_rtc		*rtc = _rtc;
 
-	if(sscanf(buf, "%u", &choice) != 1)
-		return count;
-	mutex_lock(&retu_rtc_mutex);
-	if (choice == 0)
-		retu_rtc_reset_occurred = 0;
-	else if (choice == 1)
-		retu_rtc_do_reset();
-	mutex_unlock(&retu_rtc_mutex);
-	return count;
+	mutex_lock(&rtc->mutex);
+	rtc->alarm_expired = 1;
+	retu_write_reg(rtc->dev, RETU_REG_RTCHMAR, (24 << 8) | 60);
+	mutex_unlock(&rtc->mutex);
+
+	return IRQ_HANDLED;
 }
 
-static DEVICE_ATTR(reset, S_IRUGO | S_IWUSR, retu_rtc_reset_show,
-		   retu_rtc_reset_store);
-
-static ssize_t retu_rtc_alarm_show(struct device *dev, struct device_attribute *attr,
-				   char *buf)
+static int retu_rtc_init_irq(struct retu_rtc *rtc)
 {
-	u16 chmar;
-	ssize_t retval;
-
-	mutex_lock(&retu_rtc_mutex);
-	/*
-	 * Format a 16-bit date-string for userspace
-	 *
-	 * hours | minutes
-	 * 8 bits for each.
-	 */
-	chmar = retu_read_reg(RETU_REG_RTCHMAR);
-	/* No shifting needed, only masking unrelated bits */
-	retval = sprintf(buf, "0x%04x\n", chmar & 0x1f3f);
-	mutex_unlock(&retu_rtc_mutex);
-
-	return retval;
-}
-
-static ssize_t retu_rtc_alarm_store(struct device *dev, struct device_attribute *attr,
-				    const char *buf, size_t count)
-{
-	u16 chmar;
-	unsigned alrm;
-	unsigned hours;
-	unsigned minutes;
-
-	mutex_lock(&retu_rtc_mutex);
-
-	if(sscanf(buf, "%x", &alrm) != 1)
-		return count;
-	hours = (alrm >> 8) & 0x001f;
-	minutes = (alrm >> 0) & 0x003f;
-	if ((hours < 24 && minutes < 60) || (hours == 24 && minutes == 60)) {
-		/*
-		 * OK, the time format for the alarm is valid (including the
-		 * disabling values)
-		 */
-		/* Keeps the RTC watchdog status */
-		chmar = retu_read_reg(RETU_REG_RTCHMAR) & 0x6000;
-		chmar |= alrm & 0x1f3f;	/* Stores the requested alarm */
-		retu_rtc_barrier();
-		retu_write_reg(RETU_REG_RTCHMAR, chmar);
-		/* If the alarm is being disabled */
-		if (hours == 24 && minutes == 60) {
-			/* disable the interrupt */
-			retu_disable_irq(RETU_INT_RTCA);
-			retu_rtc_alarm_expired = 0;
-		} else
-			/* enable the interrupt */
-			retu_enable_irq(RETU_INT_RTCA);
-	}
-	mutex_unlock(&retu_rtc_mutex);
-
-	return count;
-}
-
-static DEVICE_ATTR(alarm, S_IRUGO | S_IWUSR, retu_rtc_alarm_show,
-		   retu_rtc_alarm_store);
-
-static ssize_t retu_rtc_alarm_expired_show(struct device *dev, struct device_attribute *attr,
-					   char *buf)
-{
-	ssize_t retval;
-
-	retval = sprintf(buf, "%u\n", retu_rtc_alarm_expired);
-
-	return retval;
-}
-
-static ssize_t retu_rtc_alarm_expired_store(struct device *dev, struct device_attribute *attr,
-					    const char *buf, size_t count)
-{
-	retu_rtc_alarm_expired = 0;
-
-	return count;
-}
-
-static DEVICE_ATTR(alarm_expired, S_IRUGO | S_IWUSR, retu_rtc_alarm_expired_show,
-		   retu_rtc_alarm_expired_store);
-
-
-static ssize_t retu_rtc_cal_show(struct device *dev, struct device_attribute *attr,
-				 char *buf)
-{
-	u16 rtccalr1;
-
-	mutex_lock(&retu_rtc_mutex);
-	rtccalr1 = retu_read_reg(RETU_REG_RTCCALR);
-	mutex_unlock(&retu_rtc_mutex);
-
-	/*
-	 * Shows the status of the Calibration Register.
-	 *
-	 * Default, after power loss: 0x0000
-	 * Default, for R&D: 0x00C0
-	 * Default, for factory: 0x00??
-	 *
-	 */
-	return sprintf(buf, "0x%04x\n", rtccalr1 & 0x00ff);
-}
-
-static ssize_t retu_rtc_cal_store(struct device *dev, struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	unsigned calibration_value;
-
-	if (sscanf(buf, "%x", &calibration_value) != 1)
-		return count;
-
-	mutex_lock(&retu_rtc_mutex);
-	retu_rtc_barrier();
-	retu_write_reg(RETU_REG_RTCCALR, calibration_value & 0x00ff);
-	mutex_unlock(&retu_rtc_mutex);
-
-	return count;
-}
-
-static DEVICE_ATTR(cal, S_IRUGO | S_IWUSR, retu_rtc_cal_show,
-		   retu_rtc_cal_store);
-
-static struct platform_device retu_rtc_device;
-
-static void retu_rtca_disable(void)
-{
-	retu_disable_irq(RETU_INT_RTCA);
-	retu_rtc_alarm_expired = 1;
-	retu_rtc_barrier();
-	retu_write_reg(RETU_REG_RTCHMAR, (24 << 8) | 60);
-}
-
-static void retu_rtca_expired(struct work_struct *unused)
-{
-	retu_rtca_disable();
-	sysfs_notify(&retu_rtc_device.dev.kobj, NULL, "alarm_expired");
-}
-
-DECLARE_WORK(retu_rtca_work, retu_rtca_expired);
-
-/*
- * RTCHMR RTCHMAR RTCCAL must be accessed within 0.9 s since the seconds
- * interrupt has been signaled in the IDR register
- */
-static void retu_rtcs_interrupt(unsigned long unused)
-{
-	retu_ack_irq(RETU_INT_RTCS);
-	complete_all(&retu_rtc_sync);
-}
-
-static void retu_rtca_interrupt(unsigned long unused)
-{
-	retu_ack_irq(RETU_INT_RTCA);
-	schedule_work(&retu_rtca_work);
-}
-
-static int retu_rtc_init_irq(void)
-{
+	int irq;
 	int ret;
 
-	ret = retu_request_irq(RETU_INT_RTCS, retu_rtcs_interrupt, 0, "RTCS");
+	irq = platform_get_irq(to_platform_device(rtc->dev), 0);
+	rtc->irq_rtcs = irq;
+
+	irq = platform_get_irq(to_platform_device(rtc->dev), 1);
+	rtc->irq_rtca = irq;
+
+	ret = request_threaded_irq(rtc->irq_rtcs, NULL, retu_rtc_interrupt,
+			0, "RTCS", rtc);
 	if (ret != 0)
 		return ret;
-	/*
-	 * We will take care of enabling and disabling the interrupt
-	 * elsewhere, so leave it off by default..
-	 */
-	retu_disable_irq(RETU_INT_RTCS);
 
-	ret = retu_request_irq(RETU_INT_RTCA, retu_rtca_interrupt, 0, "RTCA");
+	ret = request_threaded_irq(rtc->irq_rtca, NULL, retu_rtc_interrupt,
+			0, "RTCA", rtc);
 	if (ret != 0) {
-		retu_free_irq(RETU_INT_RTCS);
+		free_irq(rtc->irq_rtcs, rtc);
 		return ret;
 	}
-	retu_disable_irq(RETU_INT_RTCA);
 
 	return 0;
 }
 
-
-static int __devinit retu_rtc_probe(struct device *dev)
+static int retu_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 {
-	int r;
+	struct retu_rtc		*rtc = dev_get_drvdata(dev);
+	u16			chmar;
 
-	retu_rtc_alarm_expired = retu_read_reg(RETU_REG_IDR) &
-					       (0x1 << RETU_INT_RTCA);
+	mutex_lock(&rtc->mutex);
 
-	if ((r = retu_rtc_init_irq()) != 0)
-		return r;
+	chmar = ((alm->time.tm_hour & 0x1f) << 8) | (alm->time.tm_min & 0x3f);
+	retu_write_reg(rtc->dev, RETU_REG_RTCHMAR, chmar);
 
-	mutex_init(&retu_rtc_mutex);
+	mutex_unlock(&rtc->mutex);
 
-	/* If the calibration register is zero, we've probably lost
-	 * power */
-	if (retu_read_reg(RETU_REG_RTCCALR) & 0x00ff)
-		retu_rtc_reset_occurred = 0;
-	else
-		retu_rtc_do_reset();
+	return 0;
+}
 
-	if ((r = device_create_file(dev, &dev_attr_time)) != 0)
-		return r;
-	else if ((r = device_create_file(dev, &dev_attr_reset)) != 0)
-		goto err_unregister_time;
-	else if ((r = device_create_file(dev, &dev_attr_alarm)) != 0)
-		goto err_unregister_reset;
-	else if ((r = device_create_file(dev, &dev_attr_alarm_expired)) != 0)
-		goto err_unregister_alarm;
-	else if ((r = device_create_file(dev, &dev_attr_cal)) != 0)
-		goto err_unregister_alarm_expired;
-	else
-		return r;
+static int retu_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alm)
+{
+	struct retu_rtc		*rtc = dev_get_drvdata(dev);
+	u16			chmar;
 
-err_unregister_alarm_expired:
-	device_remove_file(dev, &dev_attr_alarm_expired);
-err_unregister_alarm:
-	device_remove_file(dev, &dev_attr_alarm);
-err_unregister_reset:
-	device_remove_file(dev, &dev_attr_reset);
-err_unregister_time:
-	device_remove_file(dev, &dev_attr_time);
+	mutex_lock(&rtc->mutex);
+
+	chmar = retu_read_reg(rtc->dev, RETU_REG_RTCHMAR);
+
+	alm->time.tm_hour	= (chmar >> 8) & 0x1f;
+	alm->time.tm_min	= chmar & 0x3f;
+	alm->enabled		= !!rtc->alarm_expired;
+
+	mutex_unlock(&rtc->mutex);
+
+	return 0;
+}
+
+static int retu_rtc_set_time(struct device *dev, struct rtc_time *tm)
+{
+	struct retu_rtc		*rtc = dev_get_drvdata(dev);
+	u16			dsr;
+	u16			hmr;
+
+	dsr = ((tm->tm_mday & 0xff) << 8) | (tm->tm_hour & 0xff);
+	hmr = ((tm->tm_min & 0xff) << 8) | (tm->tm_sec & 0xff);
+
+	mutex_lock(&rtc->mutex);
+
+	retu_write_reg(rtc->dev, RETU_REG_RTCDSR, dsr);
+	retu_write_reg(rtc->dev, RETU_REG_RTCHMR, hmr);
+
+	mutex_unlock(&rtc->mutex);
+
+	return 0;
+}
+
+static int retu_rtc_read_time(struct device *dev, struct rtc_time *tm)
+{
+	struct retu_rtc		*rtc = dev_get_drvdata(dev);
+	u16			dsr;
+	u16			hmr;
+
+	/*
+	 * DSR holds days and hours
+	 * HMR hols minutes and seconds
+	 *
+	 * both are 16 bit registers with 8-bit for each field.
+	 */
+
+	mutex_lock(&rtc->mutex);
+
+	dsr	= retu_read_reg(rtc->dev, RETU_REG_RTCDSR);
+	hmr	= retu_read_reg(rtc->dev, RETU_REG_RTCHMR);
+
+	tm->tm_sec	= hmr & 0xff;
+	tm->tm_min	= hmr >> 8;
+	tm->tm_hour	= dsr & 0xff;
+	tm->tm_mday	= dsr >> 8;
+
+	mutex_unlock(&rtc->mutex);
+
+	return 0;
+}
+
+static struct rtc_class_ops retu_rtc_ops = {
+	.read_time		= retu_rtc_read_time,
+	.set_time		= retu_rtc_set_time,
+	.read_alarm		= retu_rtc_read_alarm,
+	.set_alarm		= retu_rtc_set_alarm,
+};
+
+static int __init retu_rtc_probe(struct platform_device *pdev)
+{
+	struct retu_rtc		*rtc;
+	int			r;
+
+	rtc = kzalloc(sizeof(*rtc), GFP_KERNEL);
+	if (!rtc) {
+		dev_err(&pdev->dev, "not enough memory\n");
+		r = -ENOMEM;
+		goto err0;
+	}
+
+	rtc->dev = &pdev->dev;
+	platform_set_drvdata(pdev, rtc);
+	mutex_init(&rtc->mutex);
+
+	rtc->alarm_expired = retu_read_reg(rtc->dev, RETU_REG_IDR) &
+		(0x1 << RETU_INT_RTCA);
+
+	r = retu_rtc_init_irq(rtc);
+	if (r < 0) {
+		dev_err(&pdev->dev, "failed to request retu irq\n");
+		goto err1;
+	}
+
+	/* If the calibration register is zero, we've probably lost power */
+	if (!(retu_read_reg(rtc->dev, RETU_REG_RTCCALR) & 0x00ff))
+		retu_rtc_do_reset(rtc);
+
+	rtc->rtc = rtc_device_register(pdev->name, &pdev->dev, &
+			retu_rtc_ops, THIS_MODULE);
+	if (IS_ERR(rtc->rtc)) {
+		dev_err(&pdev->dev, "can't register RTC device\n");
+		goto err2;
+	}
+
+	return 0;
+
+err2:
+	free_irq(rtc->irq_rtcs, rtc);
+	free_irq(rtc->irq_rtca, rtc);
+
+err1:
+	kfree(rtc);
+
+err0:
 	return r;
 }
 
-static int __devexit retu_rtc_remove(struct device *dev)
+static int __devexit retu_rtc_remove(struct platform_device *pdev)
 {
-	retu_disable_irq(RETU_INT_RTCS);
-	retu_free_irq(RETU_INT_RTCS);
-	retu_free_irq(RETU_INT_RTCA);
-	device_remove_file(dev, &dev_attr_cal);
-	device_remove_file(dev, &dev_attr_alarm_expired);
-	device_remove_file(dev, &dev_attr_alarm);
-	device_remove_file(dev, &dev_attr_reset);
-	device_remove_file(dev, &dev_attr_time);
+	struct retu_rtc		*rtc = platform_get_drvdata(pdev);
+
+	free_irq(rtc->irq_rtcs, rtc);
+	free_irq(rtc->irq_rtca, rtc);
+	rtc_device_unregister(rtc->rtc);
+	kfree(rtc);
+
 	return 0;
 }
 
-static struct device_driver retu_rtc_driver = {
-	.name		= "retu-rtc",
-	.bus		= &platform_bus_type,
-	.probe		= retu_rtc_probe,
-	.remove		= __devexit_p(retu_rtc_remove),
-};
-
-static struct platform_device retu_rtc_device = {
-	.name		= "retu-rtc",
-	.id		= -1,
-	.dev		= {
-		.release	= retu_rtc_device_release,
+static struct platform_driver retu_rtc_driver = {
+	.remove		= __exit_p(retu_rtc_remove),
+	.driver		= {
+		.name	= "retu-rtc",
 	},
 };
 
-/* This function provides syncronization with the RTCS interrupt handler */
-static void retu_rtc_barrier(void)
-{
-	INIT_COMPLETION(retu_rtc_sync);
-	retu_ack_irq(RETU_INT_RTCS);
-	retu_enable_irq(RETU_INT_RTCS);
-	wait_for_completion(&retu_rtc_sync);
-	retu_disable_irq(RETU_INT_RTCS);
-}
-
 static int __init retu_rtc_init(void)
 {
-	int ret;
-
-	init_completion(&retu_rtc_exited);
-
-	if ((ret = driver_register(&retu_rtc_driver)) != 0)
-		return ret;
-
-	if ((ret = platform_device_register(&retu_rtc_device)) != 0)
-		goto err_unregister_driver;
-
-	return 0;
-
-err_unregister_driver:
-	driver_unregister(&retu_rtc_driver);
-	return ret;
+	return platform_driver_probe(&retu_rtc_driver, retu_rtc_probe);
 }
+module_init(retu_rtc_init);
 
 static void __exit retu_rtc_exit(void)
 {
-	platform_device_unregister(&retu_rtc_device);
-	driver_unregister(&retu_rtc_driver);
-
-	wait_for_completion(&retu_rtc_exited);
+	platform_driver_unregister(&retu_rtc_driver);
 }
-
-module_init(retu_rtc_init);
 module_exit(retu_rtc_exit);
 
 MODULE_DESCRIPTION("Retu RTC");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Paul Mundt and Igor Stoppa");
+MODULE_AUTHOR("Paul Mundt");
+MODULE_AUTHOR("Igor Stoppa");
+MODULE_AUTHOR("Felipe Balbi <felipe.balbi@nokia.com>");
+

@@ -89,11 +89,10 @@ int pasemi_device_ready(struct mtd_info *mtd)
 	return !!(inl(lpcctl) & LBICTRL_LPCCTL_NR);
 }
 
-static int __devinit pasemi_nand_probe(struct of_device *ofdev,
-				      const struct of_device_id *match)
+static int __devinit pasemi_nand_probe(struct platform_device *ofdev)
 {
 	struct pci_dev *pdev;
-	struct device_node *np = ofdev->node;
+	struct device_node *np = ofdev->dev.of_node;
 	struct resource res;
 	struct nand_chip *chip;
 	int err = 0;
@@ -107,7 +106,7 @@ static int __devinit pasemi_nand_probe(struct of_device *ofdev,
 	if (pasemi_nand_mtd)
 		return -ENODEV;
 
-	pr_debug("pasemi_nand at %llx-%llx\n", res.start, res.end);
+	pr_debug("pasemi_nand at %pR\n", &res);
 
 	/* Allocate memory for MTD device structure and private data */
 	pasemi_nand_mtd = kzalloc(sizeof(struct mtd_info) +
@@ -158,13 +157,13 @@ static int __devinit pasemi_nand_probe(struct of_device *ofdev,
 	/* Enable the following for a flash based bad block table */
 	chip->options = NAND_USE_FLASH_BBT | NAND_NO_AUTOINCR;
 
-	/* Scan to find existance of the device */
+	/* Scan to find existence of the device */
 	if (nand_scan(pasemi_nand_mtd, 1)) {
 		err = -ENXIO;
 		goto out_lpc;
 	}
 
-	if (add_mtd_device(pasemi_nand_mtd)) {
+	if (mtd_device_register(pasemi_nand_mtd, NULL, 0)) {
 		printk(KERN_ERR "pasemi_nand: Unable to register MTD device\n");
 		err = -ENODEV;
 		goto out_lpc;
@@ -185,7 +184,7 @@ static int __devinit pasemi_nand_probe(struct of_device *ofdev,
 	return err;
 }
 
-static int __devexit pasemi_nand_remove(struct of_device *ofdev)
+static int __devexit pasemi_nand_remove(struct platform_device *ofdev)
 {
 	struct nand_chip *chip;
 
@@ -209,7 +208,7 @@ static int __devexit pasemi_nand_remove(struct of_device *ofdev)
 	return 0;
 }
 
-static struct of_device_id pasemi_nand_match[] =
+static const struct of_device_id pasemi_nand_match[] =
 {
 	{
 		.compatible   = "pasemi,localbus-nand",
@@ -219,23 +218,26 @@ static struct of_device_id pasemi_nand_match[] =
 
 MODULE_DEVICE_TABLE(of, pasemi_nand_match);
 
-static struct of_platform_driver pasemi_nand_driver =
+static struct platform_driver pasemi_nand_driver =
 {
-	.name		= (char*)driver_name,
-	.match_table	= pasemi_nand_match,
+	.driver = {
+		.name = (char*)driver_name,
+		.owner = THIS_MODULE,
+		.of_match_table = pasemi_nand_match,
+	},
 	.probe		= pasemi_nand_probe,
 	.remove		= pasemi_nand_remove,
 };
 
 static int __init pasemi_nand_init(void)
 {
-	return of_register_platform_driver(&pasemi_nand_driver);
+	return platform_driver_register(&pasemi_nand_driver);
 }
 module_init(pasemi_nand_init);
 
 static void __exit pasemi_nand_exit(void)
 {
-	of_unregister_platform_driver(&pasemi_nand_driver);
+	platform_driver_unregister(&pasemi_nand_driver);
 }
 module_exit(pasemi_nand_exit);
 

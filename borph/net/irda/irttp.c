@@ -28,6 +28,7 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 
 #include <asm/byteorder.h>
 #include <asm/unaligned.h>
@@ -349,7 +350,7 @@ static int irttp_param_max_sdu_size(void *instance, irda_param_t *param,
 {
 	struct tsap_cb *self;
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return -1;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return -1;);
@@ -549,22 +550,30 @@ EXPORT_SYMBOL(irttp_close_tsap);
  */
 int irttp_udata_request(struct tsap_cb *self, struct sk_buff *skb)
 {
+	int ret;
+
 	IRDA_ASSERT(self != NULL, return -1;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return -1;);
 	IRDA_ASSERT(skb != NULL, return -1;);
 
 	IRDA_DEBUG(4, "%s()\n", __func__);
 
+	/* Take shortcut on zero byte packets */
+	if (skb->len == 0) {
+		ret = 0;
+		goto err;
+	}
+
 	/* Check that nothing bad happens */
-	if ((skb->len == 0) || (!self->connected)) {
-		IRDA_DEBUG(1, "%s(), No data, or not connected\n",
-			   __func__);
+	if (!self->connected) {
+		IRDA_WARNING("%s(), Not connected\n", __func__);
+		ret = -ENOTCONN;
 		goto err;
 	}
 
 	if (skb->len > self->max_seg_size) {
-		IRDA_DEBUG(1, "%s(), UData is too large for IrLAP!\n",
-			   __func__);
+		IRDA_ERROR("%s(), UData is too large for IrLAP!\n", __func__);
+		ret = -EMSGSIZE;
 		goto err;
 	}
 
@@ -575,7 +584,7 @@ int irttp_udata_request(struct tsap_cb *self, struct sk_buff *skb)
 
 err:
 	dev_kfree_skb(skb);
-	return -1;
+	return ret;
 }
 EXPORT_SYMBOL(irttp_udata_request);
 
@@ -598,9 +607,15 @@ int irttp_data_request(struct tsap_cb *self, struct sk_buff *skb)
 	IRDA_DEBUG(2, "%s() : queue len = %d\n", __func__,
 		   skb_queue_len(&self->tx_queue));
 
+	/* Take shortcut on zero byte packets */
+	if (skb->len == 0) {
+		ret = 0;
+		goto err;
+	}
+
 	/* Check that nothing bad happens */
-	if ((skb->len == 0) || (!self->connected)) {
-		IRDA_WARNING("%s: No data, or not connected\n", __func__);
+	if (!self->connected) {
+		IRDA_WARNING("%s: Not connected\n", __func__);
 		ret = -ENOTCONN;
 		goto err;
 	}
@@ -864,7 +879,7 @@ static int irttp_udata_indication(void *instance, void *sap,
 
 	IRDA_DEBUG(4, "%s()\n", __func__);
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return -1;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return -1;);
@@ -899,7 +914,7 @@ static int irttp_data_indication(void *instance, void *sap,
 	unsigned long flags;
 	int n;
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	n = skb->data[0] & 0x7f;     /* Extract the credits */
 
@@ -981,7 +996,7 @@ static void irttp_status_indication(void *instance,
 
 	IRDA_DEBUG(4, "%s()\n", __func__);
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return;);
@@ -1010,7 +1025,7 @@ static void irttp_flow_indication(void *instance, void *sap, LOCAL_FLOW flow)
 {
 	struct tsap_cb *self;
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return;);
@@ -1178,7 +1193,7 @@ EXPORT_SYMBOL(irttp_connect_request);
 /*
  * Function irttp_connect_confirm (handle, qos, skb)
  *
- *    Sevice user confirms TSAP connection with peer.
+ *    Service user confirms TSAP connection with peer.
  *
  */
 static void irttp_connect_confirm(void *instance, void *sap,
@@ -1193,7 +1208,7 @@ static void irttp_connect_confirm(void *instance, void *sap,
 
 	IRDA_DEBUG(4, "%s()\n", __func__);
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return;);
@@ -1277,13 +1292,13 @@ static void irttp_connect_indication(void *instance, void *sap,
 	__u8 plen;
 	__u8 n;
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return;);
 	IRDA_ASSERT(skb != NULL, return;);
 
-	lsap = (struct lsap_cb *) sap;
+	lsap = sap;
 
 	self->max_seg_size = max_seg_size - TTP_HEADER;
 	self->max_header_size = max_header_size+TTP_HEADER;
@@ -1587,7 +1602,7 @@ static void irttp_disconnect_indication(void *instance, void *sap,
 
 	IRDA_DEBUG(4, "%s()\n", __func__);
 
-	self = (struct tsap_cb *) instance;
+	self = instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == TTP_TSAP_MAGIC, return;);
@@ -1852,23 +1867,23 @@ static int irttp_seq_show(struct seq_file *seq, void *v)
 		   self->remote_credit);
 	seq_printf(seq, "send credit: %d\n",
 		   self->send_credit);
-	seq_printf(seq, "  tx packets: %ld, ",
+	seq_printf(seq, "  tx packets: %lu, ",
 		   self->stats.tx_packets);
-	seq_printf(seq, "rx packets: %ld, ",
+	seq_printf(seq, "rx packets: %lu, ",
 		   self->stats.rx_packets);
-	seq_printf(seq, "tx_queue len: %d ",
+	seq_printf(seq, "tx_queue len: %u ",
 		   skb_queue_len(&self->tx_queue));
-	seq_printf(seq, "rx_queue len: %d\n",
+	seq_printf(seq, "rx_queue len: %u\n",
 		   skb_queue_len(&self->rx_queue));
 	seq_printf(seq, "  tx_sdu_busy: %s, ",
 		   self->tx_sdu_busy? "TRUE":"FALSE");
 	seq_printf(seq, "rx_sdu_busy: %s\n",
 		   self->rx_sdu_busy? "TRUE":"FALSE");
-	seq_printf(seq, "  max_seg_size: %d, ",
+	seq_printf(seq, "  max_seg_size: %u, ",
 		   self->max_seg_size);
-	seq_printf(seq, "tx_max_sdu_size: %d, ",
+	seq_printf(seq, "tx_max_sdu_size: %u, ",
 		   self->tx_max_sdu_size);
-	seq_printf(seq, "rx_max_sdu_size: %d\n",
+	seq_printf(seq, "rx_max_sdu_size: %u\n",
 		   self->rx_max_sdu_size);
 
 	seq_printf(seq, "  Used by (%s)\n\n",

@@ -1,6 +1,7 @@
 /* ATM driver model support. */
 
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/kobject.h>
 #include <linux/atmdev.h>
@@ -42,19 +43,28 @@ static ssize_t show_atmaddress(struct device *cdev,
 
 	spin_lock_irqsave(&adev->lock, flags);
 	list_for_each_entry(aaddr, &adev->local, entry) {
-		for(i = 0, j = 0; i < ATM_ESA_LEN; ++i, ++j) {
+		for (i = 0, j = 0; i < ATM_ESA_LEN; ++i, ++j) {
 			if (j == *fmt) {
 				pos += sprintf(pos, ".");
 				++fmt;
 				j = 0;
 			}
-			pos += sprintf(pos, "%02x", aaddr->addr.sas_addr.prv[i]);
+			pos += sprintf(pos, "%02x",
+				       aaddr->addr.sas_addr.prv[i]);
 		}
 		pos += sprintf(pos, "\n");
 	}
 	spin_unlock_irqrestore(&adev->lock, flags);
 
 	return pos - buf;
+}
+
+static ssize_t show_atmindex(struct device *cdev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct atm_dev *adev = to_atm_dev(cdev);
+
+	return sprintf(buf, "%d\n", adev->number);
 }
 
 static ssize_t show_carrier(struct device *cdev,
@@ -78,17 +88,17 @@ static ssize_t show_link_rate(struct device *cdev,
 
 	/* show the link rate, not the data rate */
 	switch (adev->link_rate) {
-		case ATM_OC3_PCR:
-			link_rate = 155520000;
-			break;
-		case ATM_OC12_PCR:
-			link_rate = 622080000;
-			break;
-		case ATM_25_PCR:
-			link_rate = 25600000;
-			break;
-		default:
-			link_rate = adev->link_rate * 8 * 53;
+	case ATM_OC3_PCR:
+		link_rate = 155520000;
+		break;
+	case ATM_OC12_PCR:
+		link_rate = 622080000;
+		break;
+	case ATM_25_PCR:
+		link_rate = 25600000;
+		break;
+	default:
+		link_rate = adev->link_rate * 8 * 53;
 	}
 	pos += sprintf(pos, "%d\n", link_rate);
 
@@ -97,6 +107,7 @@ static ssize_t show_link_rate(struct device *cdev,
 
 static DEVICE_ATTR(address, S_IRUGO, show_address, NULL);
 static DEVICE_ATTR(atmaddress, S_IRUGO, show_atmaddress, NULL);
+static DEVICE_ATTR(atmindex, S_IRUGO, show_atmindex, NULL);
 static DEVICE_ATTR(carrier, S_IRUGO, show_carrier, NULL);
 static DEVICE_ATTR(type, S_IRUGO, show_type, NULL);
 static DEVICE_ATTR(link_rate, S_IRUGO, show_link_rate, NULL);
@@ -104,6 +115,7 @@ static DEVICE_ATTR(link_rate, S_IRUGO, show_link_rate, NULL);
 static struct device_attribute *atm_attrs[] = {
 	&dev_attr_atmaddress,
 	&dev_attr_address,
+	&dev_attr_atmindex,
 	&dev_attr_carrier,
 	&dev_attr_type,
 	&dev_attr_link_rate,
@@ -141,12 +153,13 @@ static struct class atm_class = {
 	.dev_uevent		= atm_uevent,
 };
 
-int atm_register_sysfs(struct atm_dev *adev)
+int atm_register_sysfs(struct atm_dev *adev, struct device *parent)
 {
 	struct device *cdev = &adev->class_dev;
 	int i, j, err;
 
 	cdev->class = &atm_class;
+	cdev->parent = parent;
 	dev_set_drvdata(cdev, adev);
 
 	dev_set_name(cdev, "%s%d", adev->type, adev->number);

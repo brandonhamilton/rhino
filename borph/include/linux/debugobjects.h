@@ -20,19 +20,24 @@ struct debug_obj_descr;
  * struct debug_obj - representaion of an tracked object
  * @node:	hlist node to link the object into the tracker list
  * @state:	tracked object state
+ * @astate:	current active state
  * @object:	pointer to the real object
  * @descr:	pointer to an object type specific debug description structure
  */
 struct debug_obj {
 	struct hlist_node	node;
 	enum debug_obj_state	state;
+	unsigned int		astate;
 	void			*object;
 	struct debug_obj_descr	*descr;
 };
 
 /**
  * struct debug_obj_descr - object type specific debug description structure
+ *
  * @name:		name of the object typee
+ * @debug_hint:		function returning address, which have associated
+ *			kernel symbol, to allow identify the object
  * @fixup_init:		fixup function, which is called when the init check
  *			fails
  * @fixup_activate:	fixup function, which is called when the activate check
@@ -44,7 +49,7 @@ struct debug_obj {
  */
 struct debug_obj_descr {
 	const char		*name;
-
+	void *(*debug_hint)	(void *addr);
 	int (*fixup_init)	(void *addr, enum debug_obj_state state);
 	int (*fixup_activate)	(void *addr, enum debug_obj_state state);
 	int (*fixup_destroy)	(void *addr, enum debug_obj_state state);
@@ -59,6 +64,15 @@ extern void debug_object_activate  (void *addr, struct debug_obj_descr *descr);
 extern void debug_object_deactivate(void *addr, struct debug_obj_descr *descr);
 extern void debug_object_destroy   (void *addr, struct debug_obj_descr *descr);
 extern void debug_object_free      (void *addr, struct debug_obj_descr *descr);
+
+/*
+ * Active state:
+ * - Set at 0 upon initialization.
+ * - Must return to 0 before deactivation.
+ */
+extern void
+debug_object_active_state(void *addr, struct debug_obj_descr *descr,
+			  unsigned int expect, unsigned int next);
 
 extern void debug_objects_early_init(void);
 extern void debug_objects_mem_init(void);

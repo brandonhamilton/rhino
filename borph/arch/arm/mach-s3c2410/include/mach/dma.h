@@ -19,7 +19,7 @@
 #define MAX_DMA_TRANSFER_SIZE   0x100000 /* Data Unit is half word  */
 
 /* We use `virtual` dma channels to hide the fact we have only a limited
- * number of DMA channels, and not of all of them (dependant on the device)
+ * number of DMA channels, and not of all of them (dependent on the device)
  * can be attached to any DMA source. We therefore let the DMA core handle
  * the allocation of hardware channels to clients.
 */
@@ -54,7 +54,7 @@ enum dma_ch {
 #define DMACH_LOW_LEVEL	(1<<28)	/* use this to specifiy hardware ch no */
 
 /* we have 4 dma channels */
-#ifndef CONFIG_CPU_S3C2443
+#if !defined(CONFIG_CPU_S3C2443) && !defined(CONFIG_CPU_S3C2416)
 #define S3C_DMA_CHANNELS		(4)
 #else
 #define S3C_DMA_CHANNELS		(6)

@@ -73,7 +73,7 @@ MODULE_PARM_DESC(mpu_port, "MPU-401 port.");
 module_param_array(fm_port, long, NULL, 0444);
 MODULE_PARM_DESC(fm_port, "FM port.");
 module_param_array(soft_ac3, bool, NULL, 0444);
-MODULE_PARM_DESC(soft_ac3, "Sofware-conversion of raw SPDIF packets (model 033 only).");
+MODULE_PARM_DESC(soft_ac3, "Software-conversion of raw SPDIF packets (model 033 only).");
 #ifdef SUPPORT_JOYSTICK
 module_param_array(joystick_port, int, NULL, 0444);
 MODULE_PARM_DESC(joystick_port, "Joystick port address.");
@@ -656,8 +656,8 @@ out:
 }
 
 /*
- * Program pll register bits, I assume that the 8 registers 0xf8 upto 0xff
- * are mapped onto the 8 ADC/DAC sampling frequency which can be choosen
+ * Program pll register bits, I assume that the 8 registers 0xf8 up to 0xff
+ * are mapped onto the 8 ADC/DAC sampling frequency which can be chosen
  * at the register CM_REG_FUNCTRL1 (0x04).
  * Problem: other ways are also possible (any information about that?)
  */
@@ -666,7 +666,7 @@ static void snd_cmipci_set_pll(struct cmipci *cm, unsigned int rate, unsigned in
 	unsigned int reg = CM_REG_PLL + slot;
 	/*
 	 * Guess that this programs at reg. 0x04 the pos 15:13/12:10
-	 * for DSFC/ASFC (000 upto 111).
+	 * for DSFC/ASFC (000 up to 111).
 	 */
 
 	/* FIXME: Init (Do we've to set an other register first before programming?) */
@@ -941,13 +941,21 @@ static snd_pcm_uframes_t snd_cmipci_pcm_pointer(struct cmipci *cm, struct cmipci
 						struct snd_pcm_substream *substream)
 {
 	size_t ptr;
-	unsigned int reg;
+	unsigned int reg, rem, tries;
+
 	if (!rec->running)
 		return 0;
 #if 1 // this seems better..
 	reg = rec->ch ? CM_REG_CH1_FRAME2 : CM_REG_CH0_FRAME2;
-	ptr = rec->dma_size - (snd_cmipci_read_w(cm, reg) + 1);
-	ptr >>= rec->shift;
+	for (tries = 0; tries < 3; tries++) {
+		rem = snd_cmipci_read_w(cm, reg);
+		if (rem < rec->dma_size)
+			goto ok;
+	} 
+	printk(KERN_ERR "cmipci: invalid PCM pointer: %#x\n", rem);
+	return SNDRV_PCM_POS_XRUN;
+ok:
+	ptr = (rec->dma_size - (rem + 1)) >> rec->shift;
 #else
 	reg = rec->ch ? CM_REG_CH1_FRAME1 : CM_REG_CH0_FRAME1;
 	ptr = snd_cmipci_read(cm, reg) - rec->offset;
@@ -2499,14 +2507,12 @@ static int snd_cmipci_line_in_mode_info(struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_info *uinfo)
 {
 	struct cmipci *cm = snd_kcontrol_chip(kcontrol);
-	static char *texts[3] = { "Line-In", "Rear Output", "Bass Output" };
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	uinfo->count = 1;
-	uinfo->value.enumerated.items = cm->chip_version >= 39 ? 3 : 2;
-	if (uinfo->value.enumerated.item >= uinfo->value.enumerated.items)
-		uinfo->value.enumerated.item = uinfo->value.enumerated.items - 1;
-	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
-	return 0;
+	static const char *const texts[3] = {
+		"Line-In", "Rear Output", "Bass Output"
+	};
+
+	return snd_ctl_enum_info(uinfo, 1,
+				 cm->chip_version >= 39 ? 3 : 2, texts);
 }
 
 static inline unsigned int get_line_in_mode(struct cmipci *cm)
@@ -2556,14 +2562,9 @@ static int snd_cmipci_line_in_mode_put(struct snd_kcontrol *kcontrol,
 static int snd_cmipci_mic_in_mode_info(struct snd_kcontrol *kcontrol,
 				       struct snd_ctl_elem_info *uinfo)
 {
-	static char *texts[2] = { "Mic-In", "Center/LFE Output" };
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-	uinfo->count = 1;
-	uinfo->value.enumerated.items = 2;
-	if (uinfo->value.enumerated.item >= uinfo->value.enumerated.items)
-		uinfo->value.enumerated.item = uinfo->value.enumerated.items - 1;
-	strcpy(uinfo->value.enumerated.name, texts[uinfo->value.enumerated.item]);
-	return 0;
+	static const char *const texts[2] = { "Mic-In", "Center/LFE Output" };
+
+	return snd_ctl_enum_info(uinfo, 1, 2, texts);
 }
 
 static int snd_cmipci_mic_in_mode_get(struct snd_kcontrol *kcontrol,
@@ -2796,7 +2797,7 @@ static inline void snd_cmipci_proc_init(struct cmipci *cm) {}
 #endif
 
 
-static struct pci_device_id snd_cmipci_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_cmipci_ids) = {
 	{PCI_VDEVICE(CMEDIA, PCI_DEVICE_ID_CMEDIA_CM8338A), 0},
 	{PCI_VDEVICE(CMEDIA, PCI_DEVICE_ID_CMEDIA_CM8338B), 0},
 	{PCI_VDEVICE(CMEDIA, PCI_DEVICE_ID_CMEDIA_CM8738), 0},
@@ -3018,7 +3019,7 @@ static int __devinit snd_cmipci_create(struct snd_card *card, struct pci_dev *pc
 	int integrated_midi = 0;
 	char modelstr[16];
 	int pcm_index, pcm_spdif_index;
-	static struct pci_device_id intel_82437vx[] = {
+	static DEFINE_PCI_DEVICE_TABLE(intel_82437vx) = {
 		{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82437VX) },
 		{ },
 	};
@@ -3052,7 +3053,7 @@ static int __devinit snd_cmipci_create(struct snd_card *card, struct pci_dev *pc
 	cm->iobase = pci_resource_start(pci, 0);
 
 	if (request_irq(pci->irq, snd_cmipci_interrupt,
-			IRQF_SHARED, card->driver, cm)) {
+			IRQF_SHARED, KBUILD_MODNAME, cm)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_cmipci_free(cm);
 		return -EBUSY;
@@ -3397,7 +3398,7 @@ static int snd_cmipci_resume(struct pci_dev *pci)
 #endif /* CONFIG_PM */
 
 static struct pci_driver driver = {
-	.name = "C-Media PCI",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_cmipci_ids,
 	.probe = snd_cmipci_probe,
 	.remove = __devexit_p(snd_cmipci_remove),

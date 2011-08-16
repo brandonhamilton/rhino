@@ -44,6 +44,9 @@
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
+#include <linux/slab.h>
+#include <asm/unaligned.h>
 #include <asm/uaccess.h>
 
 #define PPP_VERSION	"2.4.2"
@@ -96,9 +99,9 @@ static void ppp_sync_flush_output(struct syncppp *ap);
 static void ppp_sync_input(struct syncppp *ap, const unsigned char *buf,
 			   char *flags, int count);
 
-static struct ppp_channel_ops sync_ops = {
-	ppp_sync_send,
-	ppp_sync_ioctl
+static const struct ppp_channel_ops sync_ops = {
+	.start_xmit = ppp_sync_send,
+	.ioctl      = ppp_sync_ioctl,
 };
 
 /*
@@ -176,7 +179,7 @@ ppp_print_buffer (const char *name, const __u8 *buf, int count)
  * way to fix this is to use a rwlock in the tty struct, but for now
  * we use a single global rwlock for all ttys in ppp line discipline.
  *
- * FIXME: Fixed in tty_io nowdays.
+ * FIXME: Fixed in tty_io nowadays.
  */
 static DEFINE_RWLOCK(disc_data_lock);
 
@@ -562,7 +565,7 @@ ppp_sync_txmunge(struct syncppp *ap, struct sk_buff *skb)
 	int islcp;
 
 	data  = skb->data;
-	proto = (data[0] << 8) + data[1];
+	proto = get_unaligned_be16(data);
 
 	/* LCP packets with codes between 1 (configure-request)
 	 * and 7 (code-reject) must be sent as though no options

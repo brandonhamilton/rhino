@@ -7,6 +7,7 @@
  *  published by the Free Software Foundation.
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/kobject.h>
@@ -214,7 +215,7 @@ static struct attribute_group xen_compilation_group = {
 	.attrs = xen_compile_attrs,
 };
 
-int __init static xen_compilation_init(void)
+static int __init xen_compilation_init(void)
 {
 	return sysfs_create_group(hypervisor_kobj, &xen_compilation_group);
 }
@@ -426,7 +427,7 @@ static ssize_t hyp_sysfs_store(struct kobject *kobj,
 	return 0;
 }
 
-static struct sysfs_ops hyp_sysfs_ops = {
+static const struct sysfs_ops hyp_sysfs_ops = {
 	.show = hyp_sysfs_show,
 	.store = hyp_sysfs_store,
 };

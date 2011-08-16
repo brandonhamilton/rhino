@@ -2,7 +2,7 @@
  *  cx18 mailbox functions
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
- *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
+ *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -80,11 +80,6 @@ struct cx18_mailbox {
 };
 
 struct cx18_stream;
-
-struct cx18_api_func_private {
-	struct cx18 *cx;
-	struct cx18_stream *s;
-};
 
 int cx18_api(struct cx18 *cx, u32 cmd, int args, u32 data[]);
 int cx18_vapi_result(struct cx18 *cx, u32 data[MAX_MB_ARGUMENTS], u32 cmd,

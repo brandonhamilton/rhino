@@ -25,6 +25,7 @@
 #include <linux/errno.h>
 #include <linux/time.h>
 #include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/gpio.h>
 #include <linux/io.h>
 
@@ -60,10 +61,10 @@ static void s3c2410_pm_prepare(void)
 		__raw_writel(calc, phys_to_virt(H1940_SUSPEND_CHECKSUM));
 	}
 
-	/* the RX3715 uses similar code and the same H1940 and the
+	/* RX3715 and RX1950 use similar to H1940 code and the
 	 * same offsets for resume and checksum pointers */
 
-	if (machine_is_rx3715()) {
+	if (machine_is_rx3715() || machine_is_rx1950()) {
 		void *base = phys_to_virt(H1940_SUSPEND_CHECK);
 		unsigned long ptr;
 		unsigned long calc = 0;
@@ -79,9 +80,20 @@ static void s3c2410_pm_prepare(void)
 	if ( machine_is_aml_m5900() )
 		s3c2410_gpio_setpin(S3C2410_GPF(2), 1);
 
+	if (machine_is_rx1950()) {
+		/* According to S3C2442 user's manual, page 7-17,
+		 * when the system is operating in NAND boot mode,
+		 * the hardware pin configuration - EINT[23:21] –
+		 * must be set as input for starting up after
+		 * wakeup from sleep mode
+		 */
+		s3c_gpio_cfgpin(S3C2410_GPG(13), S3C2410_GPIO_INPUT);
+		s3c_gpio_cfgpin(S3C2410_GPG(14), S3C2410_GPIO_INPUT);
+		s3c_gpio_cfgpin(S3C2410_GPG(15), S3C2410_GPIO_INPUT);
+	}
 }
 
-static int s3c2410_pm_resume(struct sys_device *dev)
+static void s3c2410_pm_resume(void)
 {
 	unsigned long tmp;
 
@@ -93,9 +105,11 @@ static int s3c2410_pm_resume(struct sys_device *dev)
 
 	if ( machine_is_aml_m5900() )
 		s3c2410_gpio_setpin(S3C2410_GPF(2), 0);
-
-	return 0;
 }
+
+struct syscore_ops s3c2410_pm_syscore_ops = {
+	.resume		= s3c2410_pm_resume,
+};
 
 static int s3c2410_pm_add(struct sys_device *dev)
 {
@@ -108,7 +122,6 @@ static int s3c2410_pm_add(struct sys_device *dev)
 #if defined(CONFIG_CPU_S3C2410)
 static struct sysdev_driver s3c2410_pm_driver = {
 	.add		= s3c2410_pm_add,
-	.resume		= s3c2410_pm_resume,
 };
 
 /* register ourselves */
@@ -122,7 +135,6 @@ arch_initcall(s3c2410_pm_drvinit);
 
 static struct sysdev_driver s3c2410a_pm_driver = {
 	.add		= s3c2410_pm_add,
-	.resume		= s3c2410_pm_resume,
 };
 
 static int __init s3c2410a_pm_drvinit(void)
@@ -136,7 +148,6 @@ arch_initcall(s3c2410a_pm_drvinit);
 #if defined(CONFIG_CPU_S3C2440)
 static struct sysdev_driver s3c2440_pm_driver = {
 	.add		= s3c2410_pm_add,
-	.resume		= s3c2410_pm_resume,
 };
 
 static int __init s3c2440_pm_drvinit(void)
@@ -150,7 +161,6 @@ arch_initcall(s3c2440_pm_drvinit);
 #if defined(CONFIG_CPU_S3C2442)
 static struct sysdev_driver s3c2442_pm_driver = {
 	.add		= s3c2410_pm_add,
-	.resume		= s3c2410_pm_resume,
 };
 
 static int __init s3c2442_pm_drvinit(void)

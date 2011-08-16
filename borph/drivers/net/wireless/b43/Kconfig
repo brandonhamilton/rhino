@@ -26,6 +26,16 @@ config B43
 	  This driver can be built as a module (recommended) that will be called "b43".
 	  If unsure, say M.
 
+config B43_BCMA
+	bool "Support for BCMA bus"
+	depends on B43 && BCMA
+	default y
+
+config B43_SSB
+	bool
+	depends on B43 && SSB
+	default y
+
 # Auto-select SSB PCI-HOST support, if possible
 config B43_PCI_AUTOSELECT
 	bool
@@ -78,23 +88,30 @@ config B43_SDIO
 
 	  If unsure, say N.
 
-# Data transfers to the device via PIO
-# This is only needed on PCMCIA and SDIO devices. All others can do DMA properly.
+#Data transfers to the device via PIO. We want it as a fallback even
+# if we can do DMA.
+config B43_BCMA_PIO
+	bool
+	depends on B43_BCMA
+	select BCMA_BLOCKIO
+	default y
+
 config B43_PIO
 	bool
-	depends on B43 && (B43_SDIO || B43_PCMCIA || B43_FORCE_PIO)
+	depends on B43
 	select SSB_BLOCKIO
 	default y
 
-config B43_NPHY
-	bool "Pre IEEE 802.11n support (BROKEN)"
-	depends on B43 && EXPERIMENTAL && BROKEN
+config B43_PHY_N
+	bool "Support for 802.11n (N-PHY) devices (EXPERIMENTAL)"
+	depends on B43 && EXPERIMENTAL
 	---help---
-	  Support for the IEEE 802.11n draft.
+	  Support for the N-PHY.
 
-	  THIS IS BROKEN AND DOES NOT WORK YET.
+	  This enables support for devices with N-PHY.
 
-	  SAY N.
+	  Say N if you expect high stability and performance. Saying Y will not
+	  affect other devices support and may provide support for basic needs.
 
 config B43_PHY_LP
 	bool "Support for low-power (LP-PHY) devices (EXPERIMENTAL)"
@@ -105,6 +122,22 @@ config B43_PHY_LP
 	  The LP-PHY is a low-power PHY built into some notebooks
 	  and embedded devices. It supports 802.11a/g
 	  (802.11a support is optional, and currently disabled).
+
+config B43_PHY_HT
+	bool "Support for HT-PHY devices (BROKEN)"
+	depends on B43 && BROKEN
+	---help---
+	  Support for the HT-PHY.
+
+	  Say N, this is BROKEN and crashes driver.
+
+config B43_PHY_LCN
+	bool "Support for LCN-PHY devices (BROKEN)"
+	depends on B43 && BROKEN
+	---help---
+	  Support for the LCN-PHY.
+
+	  Say N, this is BROKEN and crashes driver.
 
 # This config option automatically enables b43 LEDS support,
 # if it's possible.

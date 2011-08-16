@@ -10,6 +10,7 @@
  */
 
 #include <linux/tifm.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/idr.h>
 
@@ -328,7 +329,7 @@ static int __init tifm_init(void)
 {
 	int rc;
 
-	workqueue = create_freezeable_workqueue("tifm");
+	workqueue = create_freezable_workqueue("tifm");
 	if (!workqueue)
 		return -ENOMEM;
 

@@ -9,10 +9,23 @@
 #include <linux/sysctl.h>
 #include <linux/in6.h>
 #include <linux/ipv6.h>
+#include <linux/slab.h>
 #include <net/ndisc.h>
 #include <net/ipv6.h>
 #include <net/addrconf.h>
 #include <net/inet_frag.h>
+
+static struct ctl_table empty[1];
+
+static ctl_table ipv6_static_skeleton[] = {
+	{
+		.procname	= "neigh",
+		.maxlen		= 0,
+		.mode		= 0555,
+		.child		= empty,
+	},
+	{ }
+};
 
 static ctl_table ipv6_table_template[] = {
 	{
@@ -55,7 +68,7 @@ struct ctl_path net_ipv6_ctl_path[] = {
 };
 EXPORT_SYMBOL_GPL(net_ipv6_ctl_path);
 
-static int ipv6_sysctl_net_init(struct net *net)
+static int __net_init ipv6_sysctl_net_init(struct net *net)
 {
 	struct ctl_table *ipv6_table;
 	struct ctl_table *ipv6_route_table;
@@ -98,7 +111,7 @@ out_ipv6_table:
 	goto out;
 }
 
-static void ipv6_sysctl_net_exit(struct net *net)
+static void __net_exit ipv6_sysctl_net_exit(struct net *net)
 {
 	struct ctl_table *ipv6_table;
 	struct ctl_table *ipv6_route_table;
@@ -151,8 +164,7 @@ static struct ctl_table_header *ip6_base;
 
 int ipv6_static_sysctl_register(void)
 {
-	static struct ctl_table empty[1];
-	ip6_base = register_sysctl_paths(net_ipv6_ctl_path, empty);
+	ip6_base = register_sysctl_paths(net_ipv6_ctl_path, ipv6_static_skeleton);
 	if (ip6_base == NULL)
 		return -ENOMEM;
 	return 0;

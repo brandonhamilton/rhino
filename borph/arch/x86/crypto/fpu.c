@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <asm/i387.h>
 
 struct crypto_fpu_ctx {
@@ -149,18 +150,12 @@ static struct crypto_template crypto_fpu_tmpl = {
 	.module = THIS_MODULE,
 };
 
-static int __init crypto_fpu_module_init(void)
+int __init crypto_fpu_init(void)
 {
 	return crypto_register_template(&crypto_fpu_tmpl);
 }
 
-static void __exit crypto_fpu_module_exit(void)
+void __exit crypto_fpu_exit(void)
 {
 	crypto_unregister_template(&crypto_fpu_tmpl);
 }
-
-module_init(crypto_fpu_module_init);
-module_exit(crypto_fpu_module_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("FPU block cipher wrapper");

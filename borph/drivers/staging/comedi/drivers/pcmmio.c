@@ -77,6 +77,7 @@ Configuration Options:
 */
 
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include "../comedidev.h"
 #include "pcm_common.h"
 #include <linux/pci.h>		/* for PCI devices */
@@ -144,10 +145,6 @@ Configuration Options:
 #define PAGE_ENAB 2
 #define PAGE_INT_ID 3
 
-typedef int (*comedi_insn_fn_t) (struct comedi_device *,
-				 struct comedi_subdevice *,
-				 struct comedi_insn *, unsigned int *);
-
 static int ai_rinsn(struct comedi_device *, struct comedi_subdevice *,
 		    struct comedi_insn *, unsigned int *);
 static int ao_rinsn(struct comedi_device *, struct comedi_subdevice *,
@@ -170,7 +167,18 @@ struct pcmmio_board {
 	const int n_ai_chans;
 	const int n_ao_chans;
 	const struct comedi_lrange *ai_range_table, *ao_range_table;
-	comedi_insn_fn_t ai_rinsn, ao_rinsn, ao_winsn;
+	int (*ai_rinsn) (struct comedi_device *dev,
+			struct comedi_subdevice *s,
+			struct comedi_insn *insn,
+			unsigned int *data);
+	int (*ao_rinsn) (struct comedi_device *dev,
+			struct comedi_subdevice *s,
+			struct comedi_insn *insn,
+			unsigned int *data);
+	int (*ao_winsn) (struct comedi_device *dev,
+			struct comedi_subdevice *s,
+			struct comedi_insn *insn,
+			unsigned int *data);
 };
 
 static const struct comedi_lrange ranges_ai = {
@@ -550,7 +558,7 @@ static int pcmmio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 	if (irq[0]) {
 		printk("irq: %u ", irq[0]);
-		if (irq[1] && thisboard->dio_num_asics == 2)
+		if (thisboard->dio_num_asics == 2 && irq[1])
 			printk("second ASIC irq: %u ", irq[1]);
 	} else {
 		printk("(IRQ mode disabled) ");
@@ -725,7 +733,7 @@ static int pcmmio_dio_insn_config(struct comedi_device *dev,
 		break;
 
 	case INSN_CONFIG_DIO_QUERY:
-		/* retreive from shadow register */
+		/* retrieve from shadow register */
 		data[1] =
 		    (s->io_bits & (1 << chan)) ? COMEDI_OUTPUT : COMEDI_INPUT;
 		return insn->n;
@@ -1271,7 +1279,7 @@ static int wait_dac_ready(unsigned long iobase)
 	   "no busy waiting" policy. The fact is that the hardware is
 	   normally so fast that we usually only need one time through the loop
 	   anyway. The longer timeout is for rare occasions and for detecting
-	   non-existant hardware.  */
+	   non-existent hardware.  */
 
 	while (retry--) {
 		if (inb(iobase + 3) & 0x80)
@@ -1332,4 +1340,19 @@ static int ao_winsn(struct comedi_device *dev, struct comedi_subdevice *s,
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-COMEDI_INITCLEANUP(driver);
+static int __init driver_init_module(void)
+{
+	return comedi_driver_register(&driver);
+}
+
+static void __exit driver_cleanup_module(void)
+{
+	comedi_driver_unregister(&driver);
+}
+
+module_init(driver_init_module);
+module_exit(driver_cleanup_module);
+
+MODULE_AUTHOR("Comedi http://www.comedi.org");
+MODULE_DESCRIPTION("Comedi low-level driver");
+MODULE_LICENSE("GPL");

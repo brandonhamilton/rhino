@@ -41,6 +41,7 @@
 #include <linux/tty.h>
 #include <linux/kmod.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 
 #include <asm/ioctls.h>
 #include <asm/uaccess.h>
@@ -261,7 +262,7 @@ static void irda_task_timer_expired(void *data)
 
 	IRDA_DEBUG(2, "%s()\n", __func__);
 
-	task = (struct irda_task *) data;
+	task = data;
 
 	irda_task_kick(task);
 }

@@ -1,9 +1,17 @@
-config CS5535_CLOCK_EVENT_SRC
-	tristate "CS5535/CS5536 high-res timer (MFGPT) events"
-	depends on GENERIC_TIME && GENERIC_CLOCKEVENTS && CS5535_MFGPT
-	help
-	  This driver provides a clock event source based on the MFGPT
-	  timer(s) in the CS5535 and CS5536 companion chips.
-	  MFGPTs have a better resolution and max interval than the
-	  generic PIT, and are suitable for use as high-res timers.
+config CLKSRC_I8253
+	bool
 
+config CLKEVT_I8253
+	bool
+
+config I8253_LOCK
+	bool
+
+config CLKBLD_I8253
+	def_bool y if CLKSRC_I8253 || CLKEVT_I8253 || I8253_LOCK
+
+config CLKSRC_MMIO
+	bool
+
+config DW_APB_TIMER
+	bool

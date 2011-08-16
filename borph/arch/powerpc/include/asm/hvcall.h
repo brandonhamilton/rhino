@@ -29,6 +29,10 @@
 #define H_LONG_BUSY_ORDER_100_SEC	9905  /* Long busy, hint that 100sec \
 						 is a good time to retry */
 #define H_LONG_BUSY_END_RANGE		9905  /* End of long busy range */
+
+/* Internal value used in book3s_hv kvm support; not returned to guests */
+#define H_TOO_HARD	9999
+
 #define H_HARDWARE	-1	/* Hardware error */
 #define H_FUNCTION	-2	/* Function not supported */
 #define H_PRIVILEGE	-3	/* Caller not privileged */
@@ -74,6 +78,7 @@
 #define H_NOT_ENOUGH_RESOURCES -44
 #define H_R_STATE       -45
 #define H_RESCINDEND    -46
+#define H_MULTI_THREADS_ACTIVE -9005
 
 
 /* Long Busy is a condition that can be returned by the firmware
@@ -99,8 +104,10 @@
 #define H_PAGE_SET_ACTIVE	H_PAGE_STATE_CHANGE
 #define H_AVPN			(1UL<<(63-32))	/* An avpn is provided as a sanity test */
 #define H_ANDCOND		(1UL<<(63-33))
+#define H_LOCAL			(1UL<<(63-35))
 #define H_ICACHE_INVALIDATE	(1UL<<(63-40))	/* icbi, etc.  (ignored for IO pages) */
 #define H_ICACHE_SYNCHRONIZE	(1UL<<(63-41))	/* dcbst, icbi, etc (ignored for IO pages */
+#define H_COALESCE_CAND	(1UL<<(63-42))	/* page is a good candidate for coalescing */
 #define H_ZERO_PAGE		(1UL<<(63-48))	/* zero the page before mapping (ignored for IO pages) */
 #define H_COPY_PAGE		(1UL<<(63-49))
 #define H_N			(1UL<<(63-61))
@@ -121,7 +128,7 @@
 #define H_DABRX_KERNEL		(1UL<<(63-62))
 #define H_DABRX_USER		(1UL<<(63-63))
 
-/* Each control block has to be on a 4K bondary */
+/* Each control block has to be on a 4K boundary */
 #define H_CB_ALIGNMENT          4096
 
 /* pSeries hypervisor opcodes */
@@ -228,9 +235,13 @@
 #define H_JOIN			0x298
 #define H_VASI_STATE            0x2A4
 #define H_ENABLE_CRQ		0x2B0
+#define H_GET_EM_PARMS		0x2B8
 #define H_SET_MPP		0x2D0
 #define H_GET_MPP		0x2D4
-#define MAX_HCALL_OPCODE	H_GET_MPP
+#define H_HOME_NODE_ASSOCIATIVITY 0x2EC
+#define H_BEST_ENERGY		0x2F4
+#define H_GET_MPP_X		0x314
+#define MAX_HCALL_OPCODE	H_GET_MPP_X
 
 #ifndef __ASSEMBLY__
 
@@ -281,6 +292,7 @@ long plpar_hcall_raw(unsigned long opcode, unsigned long *retbuf, ...);
  */
 #define PLPAR_HCALL9_BUFSIZE 9
 long plpar_hcall9(unsigned long opcode, unsigned long *retbuf, ...);
+long plpar_hcall9_raw(unsigned long opcode, unsigned long *retbuf, ...);
 
 /* For hcall instrumentation.  One structure per-hcall, per-CPU */
 struct hcall_stats {
@@ -306,6 +318,16 @@ struct hvcall_mpp_data {
 };
 
 int h_get_mpp(struct hvcall_mpp_data *);
+
+struct hvcall_mpp_x_data {
+	unsigned long coalesced_bytes;
+	unsigned long pool_coalesced_bytes;
+	unsigned long pool_purr_cycles;
+	unsigned long pool_spurr_cycles;
+	unsigned long reserved[3];
+};
+
+int h_get_mpp_x(struct hvcall_mpp_x_data *mpp_x_data);
 
 #ifdef CONFIG_PPC_PSERIES
 extern int CMO_PrPSP;

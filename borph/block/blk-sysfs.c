@@ -2,6 +2,7 @@
  * Functions related to sysfs handling
  */
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -65,14 +66,14 @@ queue_requests_store(struct request_queue *q, const char *page, size_t count)
 
 	if (rl->count[BLK_RW_SYNC] >= q->nr_requests) {
 		blk_set_queue_full(q, BLK_RW_SYNC);
-	} else if (rl->count[BLK_RW_SYNC]+1 <= q->nr_requests) {
+	} else {
 		blk_clear_queue_full(q, BLK_RW_SYNC);
 		wake_up(&rl->wait[BLK_RW_SYNC]);
 	}
 
 	if (rl->count[BLK_RW_ASYNC] >= q->nr_requests) {
 		blk_set_queue_full(q, BLK_RW_ASYNC);
-	} else if (rl->count[BLK_RW_ASYNC]+1 <= q->nr_requests) {
+	} else {
 		blk_clear_queue_full(q, BLK_RW_ASYNC);
 		wake_up(&rl->wait[BLK_RW_ASYNC]);
 	}
@@ -106,6 +107,24 @@ static ssize_t queue_max_sectors_show(struct request_queue *q, char *page)
 	return queue_var_show(max_sectors_kb, (page));
 }
 
+static ssize_t queue_max_segments_show(struct request_queue *q, char *page)
+{
+	return queue_var_show(queue_max_segments(q), (page));
+}
+
+static ssize_t queue_max_integrity_segments_show(struct request_queue *q, char *page)
+{
+	return queue_var_show(q->limits.max_integrity_segments, (page));
+}
+
+static ssize_t queue_max_segment_size_show(struct request_queue *q, char *page)
+{
+	if (blk_queue_cluster(q))
+		return queue_var_show(queue_max_segment_size(q), (page));
+
+	return queue_var_show(PAGE_CACHE_SIZE, (page));
+}
+
 static ssize_t queue_logical_block_size_show(struct request_queue *q, char *page)
 {
 	return queue_var_show(queue_logical_block_size(q), page);
@@ -133,7 +152,8 @@ static ssize_t queue_discard_granularity_show(struct request_queue *q, char *pag
 
 static ssize_t queue_discard_max_show(struct request_queue *q, char *page)
 {
-	return queue_var_show(q->limits.max_discard_sectors << 9, page);
+	return sprintf(page, "%llu\n",
+		       (unsigned long long)q->limits.max_discard_sectors << 9);
 }
 
 static ssize_t queue_discard_zeroes_data_show(struct request_queue *q, char *page)
@@ -166,30 +186,41 @@ static ssize_t queue_max_hw_sectors_show(struct request_queue *q, char *page)
 	return queue_var_show(max_hw_sectors_kb, (page));
 }
 
-static ssize_t queue_nonrot_show(struct request_queue *q, char *page)
-{
-	return queue_var_show(!blk_queue_nonrot(q), page);
+#define QUEUE_SYSFS_BIT_FNS(name, flag, neg)				\
+static ssize_t								\
+queue_show_##name(struct request_queue *q, char *page)			\
+{									\
+	int bit;							\
+	bit = test_bit(QUEUE_FLAG_##flag, &q->queue_flags);		\
+	return queue_var_show(neg ? !bit : bit, page);			\
+}									\
+static ssize_t								\
+queue_store_##name(struct request_queue *q, const char *page, size_t count) \
+{									\
+	unsigned long val;						\
+	ssize_t ret;							\
+	ret = queue_var_store(&val, page, count);			\
+	if (neg)							\
+		val = !val;						\
+									\
+	spin_lock_irq(q->queue_lock);					\
+	if (val)							\
+		queue_flag_set(QUEUE_FLAG_##flag, q);			\
+	else								\
+		queue_flag_clear(QUEUE_FLAG_##flag, q);			\
+	spin_unlock_irq(q->queue_lock);					\
+	return ret;							\
 }
 
-static ssize_t queue_nonrot_store(struct request_queue *q, const char *page,
-				  size_t count)
-{
-	unsigned long nm;
-	ssize_t ret = queue_var_store(&nm, page, count);
-
-	spin_lock_irq(q->queue_lock);
-	if (nm)
-		queue_flag_clear(QUEUE_FLAG_NONROT, q);
-	else
-		queue_flag_set(QUEUE_FLAG_NONROT, q);
-	spin_unlock_irq(q->queue_lock);
-
-	return ret;
-}
+QUEUE_SYSFS_BIT_FNS(nonrot, NONROT, 1);
+QUEUE_SYSFS_BIT_FNS(random, ADD_RANDOM, 0);
+QUEUE_SYSFS_BIT_FNS(iostats, IO_STAT, 0);
+#undef QUEUE_SYSFS_BIT_FNS
 
 static ssize_t queue_nomerges_show(struct request_queue *q, char *page)
 {
-	return queue_var_show(blk_queue_nomerges(q), page);
+	return queue_var_show((blk_queue_nomerges(q) << 1) |
+			       blk_queue_noxmerges(q), page);
 }
 
 static ssize_t queue_nomerges_store(struct request_queue *q, const char *page,
@@ -199,10 +230,12 @@ static ssize_t queue_nomerges_store(struct request_queue *q, const char *page,
 	ssize_t ret = queue_var_store(&nm, page, count);
 
 	spin_lock_irq(q->queue_lock);
-	if (nm)
+	queue_flag_clear(QUEUE_FLAG_NOMERGES, q);
+	queue_flag_clear(QUEUE_FLAG_NOXMERGES, q);
+	if (nm == 2)
 		queue_flag_set(QUEUE_FLAG_NOMERGES, q);
-	else
-		queue_flag_clear(QUEUE_FLAG_NOMERGES, q);
+	else if (nm)
+		queue_flag_set(QUEUE_FLAG_NOXMERGES, q);
 	spin_unlock_irq(q->queue_lock);
 
 	return ret;
@@ -211,8 +244,9 @@ static ssize_t queue_nomerges_store(struct request_queue *q, const char *page,
 static ssize_t queue_rq_affinity_show(struct request_queue *q, char *page)
 {
 	bool set = test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags);
+	bool force = test_bit(QUEUE_FLAG_SAME_FORCE, &q->queue_flags);
 
-	return queue_var_show(set, page);
+	return queue_var_show(set << force, page);
 }
 
 static ssize_t
@@ -224,33 +258,16 @@ queue_rq_affinity_store(struct request_queue *q, const char *page, size_t count)
 
 	ret = queue_var_store(&val, page, count);
 	spin_lock_irq(q->queue_lock);
-	if (val)
+	if (val) {
 		queue_flag_set(QUEUE_FLAG_SAME_COMP, q);
-	else
-		queue_flag_clear(QUEUE_FLAG_SAME_COMP,  q);
+		if (val == 2)
+			queue_flag_set(QUEUE_FLAG_SAME_FORCE, q);
+	} else {
+		queue_flag_clear(QUEUE_FLAG_SAME_COMP, q);
+		queue_flag_clear(QUEUE_FLAG_SAME_FORCE, q);
+	}
 	spin_unlock_irq(q->queue_lock);
 #endif
-	return ret;
-}
-
-static ssize_t queue_iostats_show(struct request_queue *q, char *page)
-{
-	return queue_var_show(blk_queue_io_stat(q), page);
-}
-
-static ssize_t queue_iostats_store(struct request_queue *q, const char *page,
-				   size_t count)
-{
-	unsigned long stats;
-	ssize_t ret = queue_var_store(&stats, page, count);
-
-	spin_lock_irq(q->queue_lock);
-	if (stats)
-		queue_flag_set(QUEUE_FLAG_IO_STAT, q);
-	else
-		queue_flag_clear(QUEUE_FLAG_IO_STAT, q);
-	spin_unlock_irq(q->queue_lock);
-
 	return ret;
 }
 
@@ -275,6 +292,21 @@ static struct queue_sysfs_entry queue_max_sectors_entry = {
 static struct queue_sysfs_entry queue_max_hw_sectors_entry = {
 	.attr = {.name = "max_hw_sectors_kb", .mode = S_IRUGO },
 	.show = queue_max_hw_sectors_show,
+};
+
+static struct queue_sysfs_entry queue_max_segments_entry = {
+	.attr = {.name = "max_segments", .mode = S_IRUGO },
+	.show = queue_max_segments_show,
+};
+
+static struct queue_sysfs_entry queue_max_integrity_segments_entry = {
+	.attr = {.name = "max_integrity_segments", .mode = S_IRUGO },
+	.show = queue_max_integrity_segments_show,
+};
+
+static struct queue_sysfs_entry queue_max_segment_size_entry = {
+	.attr = {.name = "max_segment_size", .mode = S_IRUGO },
+	.show = queue_max_segment_size_show,
 };
 
 static struct queue_sysfs_entry queue_iosched_entry = {
@@ -325,8 +357,8 @@ static struct queue_sysfs_entry queue_discard_zeroes_data_entry = {
 
 static struct queue_sysfs_entry queue_nonrot_entry = {
 	.attr = {.name = "rotational", .mode = S_IRUGO | S_IWUSR },
-	.show = queue_nonrot_show,
-	.store = queue_nonrot_store,
+	.show = queue_show_nonrot,
+	.store = queue_store_nonrot,
 };
 
 static struct queue_sysfs_entry queue_nomerges_entry = {
@@ -343,8 +375,14 @@ static struct queue_sysfs_entry queue_rq_affinity_entry = {
 
 static struct queue_sysfs_entry queue_iostats_entry = {
 	.attr = {.name = "iostats", .mode = S_IRUGO | S_IWUSR },
-	.show = queue_iostats_show,
-	.store = queue_iostats_store,
+	.show = queue_show_iostats,
+	.store = queue_store_iostats,
+};
+
+static struct queue_sysfs_entry queue_random_entry = {
+	.attr = {.name = "add_random", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_show_random,
+	.store = queue_store_random,
 };
 
 static struct attribute *default_attrs[] = {
@@ -352,6 +390,9 @@ static struct attribute *default_attrs[] = {
 	&queue_ra_entry.attr,
 	&queue_max_hw_sectors_entry.attr,
 	&queue_max_sectors_entry.attr,
+	&queue_max_segments_entry.attr,
+	&queue_max_integrity_segments_entry.attr,
+	&queue_max_segment_size_entry.attr,
 	&queue_iosched_entry.attr,
 	&queue_hw_sector_size_entry.attr,
 	&queue_logical_block_size_entry.attr,
@@ -365,6 +406,7 @@ static struct attribute *default_attrs[] = {
 	&queue_nomerges_entry.attr,
 	&queue_rq_affinity_entry.attr,
 	&queue_iostats_entry.attr,
+	&queue_random_entry.attr,
 	NULL,
 };
 
@@ -447,7 +489,7 @@ static void blk_release_queue(struct kobject *kobj)
 	kmem_cache_free(blk_requestq_cachep, q);
 }
 
-static struct sysfs_ops queue_sysfs_ops = {
+static const struct sysfs_ops queue_sysfs_ops = {
 	.show	= queue_attr_show,
 	.store	= queue_attr_store,
 };
@@ -462,7 +504,6 @@ int blk_register_queue(struct gendisk *disk)
 {
 	int ret;
 	struct device *dev = disk_to_dev(disk);
-
 	struct request_queue *q = disk->queue;
 
 	if (WARN_ON(!q))
@@ -473,8 +514,10 @@ int blk_register_queue(struct gendisk *disk)
 		return ret;
 
 	ret = kobject_add(&q->kobj, kobject_get(&dev->kobj), "%s", "queue");
-	if (ret < 0)
+	if (ret < 0) {
+		blk_trace_remove_sysfs(dev);
 		return ret;
+	}
 
 	kobject_uevent(&q->kobj, KOBJ_ADD);
 
@@ -485,7 +528,8 @@ int blk_register_queue(struct gendisk *disk)
 	if (ret) {
 		kobject_uevent(&q->kobj, KOBJ_REMOVE);
 		kobject_del(&q->kobj);
-		blk_trace_remove_sysfs(disk_to_dev(disk));
+		blk_trace_remove_sysfs(dev);
+		kobject_put(&dev->kobj);
 		return ret;
 	}
 

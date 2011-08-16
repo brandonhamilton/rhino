@@ -57,17 +57,15 @@ typedef struct
  */
 SYSCALL_DEFINE3(sigsuspend, int, history0, int, history1, old_sigset_t, mask)
 {
-	mask &= _BLOCKABLE;
-	spin_lock_irq(&current->sighand->siglock);
+	sigset_t blocked;
+
 	current->saved_sigmask = current->blocked;
-	siginitset(&current->blocked, mask);
-	recalc_sigpending();
-	spin_unlock_irq(&current->sighand->siglock);
-
-	current->state = TASK_INTERRUPTIBLE;
+	mask &= _BLOCKABLE;
+	siginitset(&blocked, mask);
+	set_current_blocked(&blocked);
+	set_current_state(TASK_INTERRUPTIBLE);
 	schedule();
-	set_thread_flag(TIF_RESTORE_SIGMASK);
-
+	set_restore_sigmask();
 	return -ERESTARTNOHAND;
 }
 
@@ -172,18 +170,11 @@ SYSCALL_DEFINE0(sigreturn)
 		goto badframe;
 	if (__copy_from_user(&set.sig, &frame->sc.oldmask, _SIGMASK_COPY_SIZE))
 		goto badframe;
-
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	spin_lock_irq(&current->sighand->siglock);
-	current->blocked = set;
-	recalc_sigpending();
-	spin_unlock_irq(&current->sighand->siglock);
-
+	set_current_blocked(&set);
 	if (restore_sigregs(regs, &frame->sregs))
 		goto badframe;
-
 	return regs->gprs[2];
-
 badframe:
 	force_sig(SIGSEGV, current);
 	return 0;
@@ -199,21 +190,14 @@ SYSCALL_DEFINE0(rt_sigreturn)
 		goto badframe;
 	if (__copy_from_user(&set.sig, &frame->uc.uc_sigmask, sizeof(set)))
 		goto badframe;
-
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	spin_lock_irq(&current->sighand->siglock);
-	current->blocked = set;
-	recalc_sigpending();
-	spin_unlock_irq(&current->sighand->siglock);
-
+	set_current_blocked(&set);
 	if (restore_sigregs(regs, &frame->uc.uc_mcontext))
 		goto badframe;
-
 	if (do_sigaltstack(&frame->uc.uc_stack, NULL,
 			   regs->gprs[15]) == -EFAULT)
 		goto badframe;
 	return regs->gprs[2];
-
 badframe:
 	force_sig(SIGSEGV, current);
 	return 0;
@@ -313,6 +297,7 @@ static int setup_frame(int sig, struct k_sigaction *ka,
 	   To avoid breaking binary compatibility, they are passed as args. */
 	regs->gprs[4] = current->thread.trap_no;
 	regs->gprs[5] = current->thread.prot_addr;
+	regs->gprs[6] = task_thread_info(current)->last_break;
 
 	/* Place signal number on stack to allow backtrace from handler.  */
 	if (__put_user(regs->gprs[2], (int __user *) &frame->signo))
@@ -376,6 +361,7 @@ static int setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 	regs->gprs[2] = map_signal(sig);
 	regs->gprs[3] = (unsigned long) &frame->info;
 	regs->gprs[4] = (unsigned long) &frame->uc;
+	regs->gprs[5] = task_thread_info(current)->last_break;
 	return 0;
 
 give_sigsegv:
@@ -383,14 +369,11 @@ give_sigsegv:
 	return -EFAULT;
 }
 
-/*
- * OK, we're invoking a handler
- */	
-
-static int
-handle_signal(unsigned long sig, struct k_sigaction *ka,
-	      siginfo_t *info, sigset_t *oldset, struct pt_regs * regs)
+static int handle_signal(unsigned long sig, struct k_sigaction *ka,
+			 siginfo_t *info, sigset_t *oldset,
+			 struct pt_regs *regs)
 {
+	sigset_t blocked;
 	int ret;
 
 	/* Set up the stack frame */
@@ -398,17 +381,13 @@ handle_signal(unsigned long sig, struct k_sigaction *ka,
 		ret = setup_rt_frame(sig, ka, info, oldset, regs);
 	else
 		ret = setup_frame(sig, ka, oldset, regs);
-
-	if (ret == 0) {
-		spin_lock_irq(&current->sighand->siglock);
-		sigorsets(&current->blocked,&current->blocked,&ka->sa.sa_mask);
-		if (!(ka->sa.sa_flags & SA_NODEFER))
-			sigaddset(&current->blocked,sig);
-		recalc_sigpending();
-		spin_unlock_irq(&current->sighand->siglock);
-	}
-
-	return ret;
+	if (ret)
+		return ret;
+	sigorsets(&blocked, &current->blocked, &ka->sa.sa_mask);
+	if (!(ka->sa.sa_flags & SA_NODEFER))
+		sigaddset(&blocked, sig);
+	set_current_blocked(&blocked);
+	return 0;
 }
 
 /*
@@ -500,18 +479,10 @@ void do_signal(struct pt_regs *regs)
 				clear_thread_flag(TIF_RESTORE_SIGMASK);
 
 			/*
-			 * If we would have taken a single-step trap
-			 * for a normal instruction, act like we took
-			 * one for the handler setup.
-			 */
-			if (current->thread.per_info.single_step)
-				set_thread_flag(TIF_SINGLE_STEP);
-
-			/*
 			 * Let tracing know that we've done the handler setup.
 			 */
 			tracehook_signal_handler(signr, &info, &ka, regs,
-					 test_thread_flag(TIF_SINGLE_STEP));
+					test_thread_flag(TIF_SINGLE_STEP));
 		}
 		return;
 	}

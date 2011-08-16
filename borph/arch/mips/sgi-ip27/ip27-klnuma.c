@@ -54,10 +54,7 @@ void __init setup_replication_mask(void)
 
 static __init void set_ktext_source(nasid_t client_nasid, nasid_t server_nasid)
 {
-	cnodeid_t client_cnode;
 	kern_vars_t *kvp;
-
-	client_cnode = NASID_TO_COMPACT_NODEID(client_nasid);
 
 	kvp = &hub_data(client_nasid)->kern_vars;
 
@@ -133,4 +130,3 @@ pfn_t node_getfirstfree(cnodeid_t cnode)
 		return (KDM_TO_PHYS(PAGE_ALIGN(SYMMON_STK_ADDR(nasid, 0))) >>
 								PAGE_SHIFT);
 }
-

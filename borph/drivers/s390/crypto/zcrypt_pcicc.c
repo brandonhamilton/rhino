@@ -28,8 +28,9 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/gfp.h>
 #include <linux/err.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <asm/uaccess.h>
 
 #include "ap_bus.h"
@@ -373,6 +374,8 @@ static int convert_type86(struct zcrypt_device *zdev,
 			zdev->max_mod_size = PCICC_MAX_MOD_SIZE_OLD;
 			return -EAGAIN;
 		}
+		if (service_rc == 8 && service_rs == 72)
+			return -EINVAL;
 		zdev->online = 0;
 		return -EAGAIN;	/* repeat the request on a different device. */
 	}
@@ -576,6 +579,7 @@ static int zcrypt_pcicc_probe(struct ap_device *ap_dev)
 	zdev->min_mod_size = PCICC_MIN_MOD_SIZE;
 	zdev->max_mod_size = PCICC_MAX_MOD_SIZE;
 	zdev->speed_rating = PCICC_SPEED_RATING;
+	zdev->max_exp_bit_length = PCICC_MAX_MOD_SIZE;
 	ap_dev->reply = &zdev->reply;
 	ap_dev->private = zdev;
 	rc = zcrypt_device_register(zdev);

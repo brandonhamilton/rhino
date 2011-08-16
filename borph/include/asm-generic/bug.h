@@ -25,7 +25,10 @@ struct bug_entry {
 };
 #endif		/* __ASSEMBLY__ */
 
-#define BUGFLAG_WARNING	(1<<0)
+#define BUGFLAG_WARNING		(1 << 0)
+#define BUGFLAG_TAINT(taint)	(BUGFLAG_WARNING | ((taint) << 8))
+#define BUG_GET_TAINT(bug)	((bug)->flags >> 8)
+
 #endif	/* CONFIG_GENERIC_BUG */
 
 /*
@@ -56,17 +59,25 @@ struct bug_entry {
  * appear at runtime.  Use the versions with printk format strings
  * to provide better diagnostics.
  */
-#ifndef __WARN
+#ifndef __WARN_TAINT
 #ifndef __ASSEMBLY__
 extern void warn_slowpath_fmt(const char *file, const int line,
 		const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+extern void warn_slowpath_fmt_taint(const char *file, const int line,
+				    unsigned taint, const char *fmt, ...)
+	__attribute__((format(printf, 4, 5)));
 extern void warn_slowpath_null(const char *file, const int line);
 #define WANT_WARN_ON_SLOWPATH
 #endif
 #define __WARN()		warn_slowpath_null(__FILE__, __LINE__)
 #define __WARN_printf(arg...)	warn_slowpath_fmt(__FILE__, __LINE__, arg)
+#define __WARN_printf_taint(taint, arg...)				\
+	warn_slowpath_fmt_taint(__FILE__, __LINE__, taint, arg)
 #else
+#define __WARN()		__WARN_TAINT(TAINT_WARN)
 #define __WARN_printf(arg...)	do { printk(arg); __WARN(); } while (0)
+#define __WARN_printf_taint(taint, arg...)				\
+	do { printk(arg); __WARN_TAINT(taint); } while (0)
 #endif
 
 #ifndef WARN_ON
@@ -86,6 +97,13 @@ extern void warn_slowpath_null(const char *file, const int line);
 	unlikely(__ret_warn_on);					\
 })
 #endif
+
+#define WARN_TAINT(condition, taint, format...) ({			\
+	int __ret_warn_on = !!(condition);				\
+	if (unlikely(__ret_warn_on))					\
+		__WARN_printf_taint(taint, format);			\
+	unlikely(__ret_warn_on);					\
+})
 
 #else /* !CONFIG_BUG */
 #ifndef HAVE_ARCH_BUG
@@ -110,6 +128,8 @@ extern void warn_slowpath_null(const char *file, const int line);
 })
 #endif
 
+#define WARN_TAINT(condition, taint, format...) WARN_ON(condition)
+
 #endif
 
 #define WARN_ON_ONCE(condition)	({				\
@@ -132,13 +152,53 @@ extern void warn_slowpath_null(const char *file, const int line);
 	unlikely(__ret_warn_once);				\
 })
 
-#define WARN_ON_RATELIMIT(condition, state)			\
-		WARN_ON((condition) && __ratelimit(state))
+#define WARN_TAINT_ONCE(condition, taint, format...)	({	\
+	static bool __warned;					\
+	int __ret_warn_once = !!(condition);			\
+								\
+	if (unlikely(__ret_warn_once))				\
+		if (WARN_TAINT(!__warned, taint, format))	\
+			__warned = true;			\
+	unlikely(__ret_warn_once);				\
+})
 
+/*
+ * WARN_ON_SMP() is for cases that the warning is either
+ * meaningless for !SMP or may even cause failures.
+ * This is usually used for cases that we have
+ * WARN_ON(!spin_is_locked(&lock)) checks, as spin_is_locked()
+ * returns 0 for uniprocessor settings.
+ * It can also be used with values that are only defined
+ * on SMP:
+ *
+ * struct foo {
+ *  [...]
+ * #ifdef CONFIG_SMP
+ *	int bar;
+ * #endif
+ * };
+ *
+ * void func(struct foo *zoot)
+ * {
+ *	WARN_ON_SMP(!zoot->bar);
+ *
+ * For CONFIG_SMP, WARN_ON_SMP() should act the same as WARN_ON(),
+ * and should be a nop and return false for uniprocessor.
+ *
+ * if (WARN_ON_SMP(x)) returns true only when CONFIG_SMP is set
+ * and x is true.
+ */
 #ifdef CONFIG_SMP
 # define WARN_ON_SMP(x)			WARN_ON(x)
 #else
-# define WARN_ON_SMP(x)			do { } while (0)
+/*
+ * Use of ({0;}) because WARN_ON_SMP(x) may be used either as
+ * a stand alone line statement or as a condition in an if ()
+ * statement.
+ * A simple "0" would cause gcc to give a "statement has no effect"
+ * warning.
+ */
+# define WARN_ON_SMP(x)			({0;})
 #endif
 
 #endif

@@ -117,8 +117,8 @@
  *	NOTE: only one mode value must be given for every card.
  *	-> See hfc_multi.h for HFC_IO_MODE_* values
  *	By default, the IO mode is pci memory IO (MEMIO).
- *	Some cards requre specific IO mode, so it cannot be changed.
- *	It may be usefull to set IO mode to register io (REGIO) to solve
+ *	Some cards require specific IO mode, so it cannot be changed.
+ *	It may be useful to set IO mode to register io (REGIO) to solve
  *	PCI bridge problems.
  *	If unsure, don't give this parameter.
  *
@@ -152,7 +152,9 @@
 
 #define HFC_MULTI_VERSION	"2.03"
 
+#include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/mISDNhw.h>
@@ -902,7 +904,7 @@ vpm_echocan_off(struct hfc_multi *hc, int ch)
 /*
  * Speech Design resync feature
  * NOTE: This is called sometimes outside interrupt handler.
- * We must lock irqsave, so no other interrupt (other card) will occurr!
+ * We must lock irqsave, so no other interrupt (other card) will occur!
  * Also multiple interrupts may nest, so must lock each access (lists, card)!
  */
 static inline void
@@ -2846,7 +2848,7 @@ mode_hfcmulti(struct hfc_multi *hc, int ch, int protocol, int slot_tx,
 	int conf;
 
 	if (ch < 0 || ch > 31)
-		return EINVAL;
+		return -EINVAL;
 	oslot_tx = hc->chan[ch].slot_tx;
 	oslot_rx = hc->chan[ch].slot_rx;
 	conf = hc->chan[ch].conf;
@@ -3152,7 +3154,7 @@ static void
 hfcmulti_pcm(struct hfc_multi *hc, int ch, int slot_tx, int bank_tx,
     int slot_rx, int bank_rx)
 {
-	if (slot_rx < 0 || slot_rx < 0 || bank_tx < 0 || bank_rx < 0) {
+	if (slot_tx < 0 || slot_rx < 0 || bank_tx < 0 || bank_rx < 0) {
 		/* disable PCM */
 		mode_hfcmulti(hc, ch, hc->chan[ch].protocol, -1, 0, -1, 0);
 		return;
@@ -4267,7 +4269,7 @@ init_card(struct hfc_multi *hc)
 		goto error;
 	/*
 	 * Finally enable IRQ output
-	 * this is only allowed, if an IRQ routine is allready
+	 * this is only allowed, if an IRQ routine is already
 	 * established for this HFC, so don't do that earlier
 	 */
 	spin_lock_irqsave(&hc->lock, flags);
@@ -5211,7 +5213,7 @@ static void __devexit hfc_remove_pci(struct pci_dev *pdev)
 		spin_unlock_irqrestore(&HFClock, flags);
 	}  else {
 		if (debug)
-			printk(KERN_DEBUG "%s: drvdata allready removed\n",
+			printk(KERN_DEBUG "%s: drvdata already removed\n",
 			    __func__);
 	}
 }
@@ -5265,6 +5267,8 @@ static const struct hm_map hfcm_map[] = {
 /*31*/	{VENDOR_CCD, "XHFC-4S Speech Design", 5, 4, 0, 0, 0, 0,
 		HFC_IO_MODE_EMBSD, XHFC_IRQ},
 /*32*/	{VENDOR_JH, "HFC-8S (junghanns)", 8, 8, 1, 0, 0, 0, 0, 0},
+/*33*/	{VENDOR_BN, "HFC-2S Beronet Card PCIe", 4, 2, 1, 3, 0, DIP_4S, 0, 0},
+/*34*/	{VENDOR_BN, "HFC-4S Beronet Card PCIe", 4, 4, 1, 2, 0, DIP_4S, 0, 0},
 };
 
 #undef H
@@ -5300,6 +5304,10 @@ static struct pci_device_id hfmultipci_ids[] __devinitdata = {
 		PCI_SUBDEVICE_ID_CCD_OV4S, 0, 0, H(28)}, /* OpenVox 4 */
 	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC4S, PCI_VENDOR_ID_CCD,
 		PCI_SUBDEVICE_ID_CCD_OV2S, 0, 0, H(29)}, /* OpenVox 2 */
+	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC4S, PCI_VENDOR_ID_CCD,
+		0xb761, 0, 0, H(33)}, /* BN2S PCIe */
+	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC4S, PCI_VENDOR_ID_CCD,
+		0xb762, 0, 0, H(34)}, /* BN4S PCIe */
 
 	/* Cards with HFC-8S Chip */
 	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC8S, PCI_VENDOR_ID_CCD,
@@ -5347,12 +5355,9 @@ static struct pci_device_id hfmultipci_ids[] __devinitdata = {
 	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFCE1, PCI_VENDOR_ID_CCD,
 		PCI_SUBDEVICE_ID_CCD_JHSE1, 0, 0, H(25)}, /* Junghanns E1 */
 
-	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC4S, PCI_ANY_ID, PCI_ANY_ID,
-		0, 0, 0},
-	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFC8S, PCI_ANY_ID, PCI_ANY_ID,
-		0, 0, 0},
-	{ PCI_VENDOR_ID_CCD, PCI_DEVICE_ID_CCD_HFCE1, PCI_ANY_ID, PCI_ANY_ID,
-		0, 0, 0},
+	{ PCI_VDEVICE(CCD, PCI_DEVICE_ID_CCD_HFC4S), 0 },
+	{ PCI_VDEVICE(CCD, PCI_DEVICE_ID_CCD_HFC8S), 0 },
+	{ PCI_VDEVICE(CCD, PCI_DEVICE_ID_CCD_HFCE1), 0 },
 	{0, }
 };
 #undef H

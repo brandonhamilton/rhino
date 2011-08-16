@@ -14,6 +14,13 @@ SECTIONS
   /DISCARD/ : {
     *(.ARM.exidx*)
     *(.ARM.extab*)
+    /*
+     * Discard any r/w data - this produces a link error if we have any,
+     * which is required for PIC decompression.  Local data generates
+     * GOTOFF relocations, which prevents it being relocated independently
+     * of the text/got segments.
+     */
+    *(.data)
   }
 
   . = TEXT_START;
@@ -26,21 +33,24 @@ SECTIONS
     *(.text.*)
     *(.fixup)
     *(.gnu.warning)
+    *(.glue_7t)
+    *(.glue_7)
+  }
+  .rodata : {
     *(.rodata)
     *(.rodata.*)
-    *(.glue_7)
-    *(.glue_7t)
+  }
+  .piggydata : {
     *(.piggydata)
-    . = ALIGN(4);
   }
 
+  . = ALIGN(4);
   _etext = .;
 
+  .got.plt		: { *(.got.plt) }
   _got_start = .;
   .got			: { *(.got) }
   _got_end = .;
-  .got.plt		: { *(.got.plt) }
-  .data			: { *(.data) }
   _edata = .;
 
   . = BSS_START;
@@ -48,7 +58,8 @@ SECTIONS
   .bss			: { *(.bss) }
   _end = .;
 
-  .stack (NOLOAD)	: { *(.stack) }
+  . = ALIGN(8);		/* the stack must be 64-bit aligned */
+  .stack		: { *(.stack) }
 
   .stab 0		: { *(.stab) }
   .stabstr 0		: { *(.stabstr) }

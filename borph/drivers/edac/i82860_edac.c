@@ -13,11 +13,10 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
-#include <linux/slab.h>
 #include <linux/edac.h>
 #include "edac_core.h"
 
-#define  I82860_REVISION " Ver: 2.0.2 " __DATE__
+#define  I82860_REVISION " Ver: 2.0.2"
 #define EDAC_MOD_STR	"i82860_edac"
 
 #define i82860_printk(level, fmt, arg...) \

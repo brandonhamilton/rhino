@@ -66,7 +66,6 @@
 
 #include <linux/sched.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -85,11 +84,27 @@
 #include <linux/ioport.h>
 
 #include "et1310_phy.h"
-#include "et1310_pm.h"
-#include "et1310_jagcore.h"
-#include "et1310_mac.h"
-
 #include "et131x_adapter.h"
+#include "et131x.h"
+
+/*
+ * For interrupts, normal running is:
+ *       rxdma_xfr_done, phy_interrupt, mac_stat_interrupt,
+ *       watchdog_interrupt & txdma_xfer_done
+ *
+ * In both cases, when flow control is enabled for either Tx or bi-direction,
+ * we additional enable rx_fbr0_low and rx_fbr1_low, so we know when the
+ * buffer rings are running low.
+ */
+#define INT_MASK_DISABLE            0xffffffff
+
+/* NOTE: Masking out MAC_STAT Interrupt for now...
+ * #define INT_MASK_ENABLE             0xfff6bf17
+ * #define INT_MASK_ENABLE_NO_FLOW     0xfff6bfd7
+ */
+#define INT_MASK_ENABLE             0xfffebf17
+#define INT_MASK_ENABLE_NO_FLOW     0xfffebfd7
+
 
 /**
  *	et131x_enable_interrupts	-	enable interrupt
@@ -104,7 +119,7 @@ void et131x_enable_interrupts(struct et131x_adapter *adapter)
 	u32 mask;
 
 	/* Enable all global interrupts */
-	if (adapter->FlowControl == TxOnly || adapter->FlowControl == Both)
+	if (adapter->flowcontrol == FLOW_TXONLY || adapter->flowcontrol == FLOW_BOTH)
 		mask = INT_MASK_ENABLE;
 	else
 		mask = INT_MASK_ENABLE_NO_FLOW;
@@ -162,8 +177,8 @@ irqreturn_t et131x_isr(int irq, void *dev_id)
 	 */
 	status = readl(&adapter->regs->global.int_status);
 
-	if (adapter->FlowControl == TxOnly ||
-	    adapter->FlowControl == Both) {
+	if (adapter->flowcontrol == FLOW_TXONLY ||
+	    adapter->flowcontrol == FLOW_BOTH) {
 		status &= ~INT_MASK_ENABLE;
 	} else {
 		status &= ~INT_MASK_ENABLE_NO_FLOW;
@@ -185,7 +200,7 @@ irqreturn_t et131x_isr(int irq, void *dev_id)
 			if (++tcb->stale > 1)
 				status |= ET_INTR_TXDMA_ISR;
 
-		if (adapter->RxRing.UnfinishedReceives)
+		if (adapter->rx_ring.UnfinishedReceives)
 			status |= ET_INTR_RXDMA_XFR_DONE;
 		else if (tcb == NULL)
 			writel(0, &adapter->regs->global.watchdog_timer);
@@ -207,7 +222,7 @@ irqreturn_t et131x_isr(int irq, void *dev_id)
 	 * DPC. We will clear the software copy of that in that
 	 * routine.
 	 */
-	adapter->Stats.InterruptStatus = status;
+	adapter->stats.InterruptStatus = status;
 
 	/* Schedule the ISR handler as a bottom-half task in the
 	 * kernel's tq_immediate queue, and mark the queue for
@@ -229,8 +244,8 @@ void et131x_isr_handler(struct work_struct *work)
 {
 	struct et131x_adapter *etdev =
 		container_of(work, struct et131x_adapter, task);
-	u32 status = etdev->Stats.InterruptStatus;
-	ADDRESS_MAP_t __iomem *iomem = etdev->regs;
+	u32 status = etdev->stats.InterruptStatus;
+	struct address_map __iomem *iomem = etdev->regs;
 
 	/*
 	 * These first two are by far the most common.  Once handled, we clear
@@ -238,14 +253,12 @@ void et131x_isr_handler(struct work_struct *work)
 	 * exit.
 	 */
 	/* Handle all the completed Transmit interrupts */
-	if (status & ET_INTR_TXDMA_ISR) {
+	if (status & ET_INTR_TXDMA_ISR)
 		et131x_handle_send_interrupt(etdev);
-	}
 
 	/* Handle all the completed Receives interrupts */
-	if (status & ET_INTR_RXDMA_XFR_DONE) {
+	if (status & ET_INTR_RXDMA_XFR_DONE)
 		et131x_handle_recv_interrupt(etdev);
-	}
 
 	status &= 0xffffffd7;
 
@@ -255,7 +268,7 @@ void et131x_isr_handler(struct work_struct *work)
 			u32 txdma_err;
 
 			/* Following read also clears the register (COR) */
-			txdma_err = readl(&iomem->txdma.TxDmaError);
+			txdma_err = readl(&iomem->txdma.tx_dma_error);
 
 			dev_warn(&etdev->pdev->dev,
 				    "TXDMA_ERR interrupt, error = %d\n",
@@ -282,8 +295,8 @@ void et131x_isr_handler(struct work_struct *work)
 			/* If the user has flow control on, then we will
 			 * send a pause packet, otherwise just exit
 			 */
-			if (etdev->FlowControl == TxOnly ||
-			    etdev->FlowControl == Both) {
+			if (etdev->flowcontrol == FLOW_TXONLY ||
+			    etdev->flowcontrol == FLOW_BOTH) {
 				u32 pm_csr;
 
 				/* Tell the device to send a pause packet via
@@ -352,8 +365,9 @@ void et131x_isr_handler(struct work_struct *work)
 		/* Handle the PHY interrupt */
 		if (status & ET_INTR_PHY) {
 			u32 pm_csr;
-			MI_BMSR_t BmsrInts, BmsrData;
-			MI_ISR_t myIsr;
+			u16 bmsr_ints;
+			u16 bmsr_data;
+			u16 myisr;
 
 			/* If we are in coma mode when we get this interrupt,
 			 * we need to disable it.
@@ -371,26 +385,25 @@ void et131x_isr_handler(struct work_struct *work)
 			/* Read the PHY ISR to clear the reason for the
 			 * interrupt.
 			 */
-			MiRead(etdev, (uint8_t) offsetof(MI_REGS_t, isr),
-			       &myIsr.value);
+			MiRead(etdev, (uint8_t) offsetof(struct mi_regs, isr),
+			       &myisr);
 
 			if (!etdev->ReplicaPhyLoopbk) {
 				MiRead(etdev,
-				       (uint8_t) offsetof(MI_REGS_t, bmsr),
-				       &BmsrData.value);
+				       (uint8_t) offsetof(struct mi_regs, bmsr),
+				       &bmsr_data);
 
-				BmsrInts.value =
-				    etdev->Bmsr.value ^ BmsrData.value;
-				etdev->Bmsr.value = BmsrData.value;
+				bmsr_ints = etdev->bmsr ^ bmsr_data;
+				etdev->bmsr = bmsr_data;
 
 				/* Do all the cable in / cable out stuff */
-				et131x_Mii_check(etdev, BmsrData, BmsrInts);
+				et131x_Mii_check(etdev, bmsr_data, bmsr_ints);
 			}
 		}
 
 		/* Let's move on to the TxMac */
 		if (status & ET_INTR_TXMAC) {
-			u32 err = readl(&iomem->txmac.err.value);
+			u32 err = readl(&iomem->txmac.err);
 
 			/*
 			 * When any of the errors occur and TXMAC generates
@@ -425,12 +438,12 @@ void et131x_isr_handler(struct work_struct *work)
 
 			dev_warn(&etdev->pdev->dev,
 			  "RXMAC interrupt, error 0x%08x.  Requesting reset\n",
-				    readl(&iomem->rxmac.err_reg.value));
+				    readl(&iomem->rxmac.err_reg));
 
 			dev_warn(&etdev->pdev->dev,
 				    "Enable 0x%08x, Diag 0x%08x\n",
-				    readl(&iomem->rxmac.ctrl.value),
-				    readl(&iomem->rxmac.rxq_diag.value));
+				    readl(&iomem->rxmac.ctrl),
+				    readl(&iomem->rxmac.rxq_diag));
 
 			/*
 			 * If we are debugging, we want to see this error,
@@ -453,7 +466,7 @@ void et131x_isr_handler(struct work_struct *work)
 		/* Handle SLV Timeout Interrupt */
 		if (status & ET_INTR_SLV_TIMEOUT) {
 			/*
-			 * This means a timeout has occured on a read or
+			 * This means a timeout has occurred on a read or
 			 * write request to one of the JAGCore registers. The
 			 * Global Resources block has terminated the request
 			 * and on a read request, returned a "fake" value.

@@ -1,6 +1,4 @@
 /*
- * linux/fs/nfsd/nfscache.c
- *
  * Request reply cache. This is currently a global cache, but this may
  * change in the future and be a per-client cache.
  *
@@ -10,16 +8,10 @@
  * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
  */
 
-#include <linux/kernel.h>
-#include <linux/time.h>
 #include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/spinlock.h>
-#include <linux/list.h>
 
-#include <linux/sunrpc/svc.h>
-#include <linux/nfsd/nfsd.h>
-#include <linux/nfsd/cache.h>
+#include "nfsd.h"
+#include "cache.h"
 
 /* Size of reply cache. Common values are:
  * 4.3BSD:	128
@@ -126,7 +118,7 @@ hash_refile(struct svc_cacherep *rp)
  * Note that no operation within the loop may sleep.
  */
 int
-nfsd_cache_lookup(struct svc_rqst *rqstp, int type)
+nfsd_cache_lookup(struct svc_rqst *rqstp)
 {
 	struct hlist_node	*hn;
 	struct hlist_head 	*rh;
@@ -136,6 +128,7 @@ nfsd_cache_lookup(struct svc_rqst *rqstp, int type)
 				vers = rqstp->rq_vers,
 				proc = rqstp->rq_proc;
 	unsigned long		age;
+	int type = rqstp->rq_cachetype;
 	int rtn;
 
 	rqstp->rq_cacherep = NULL;

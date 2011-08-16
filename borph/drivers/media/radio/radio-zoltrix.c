@@ -35,7 +35,6 @@
 #include <linux/delay.h>	/* udelay, msleep                 */
 #include <linux/videodev2.h>	/* kernel radio structs           */
 #include <linux/mutex.h>
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/io.h>		/* outb, outb_p                   */
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -43,6 +42,7 @@
 MODULE_AUTHOR("C.van Schaik");
 MODULE_DESCRIPTION("A driver for the Zoltrix Radio Plus.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 #ifndef CONFIG_RADIO_ZOLTRIX_PORT
 #define CONFIG_RADIO_ZOLTRIX_PORT -1
@@ -54,8 +54,6 @@ static int radio_nr = -1;
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the Zoltrix Radio Plus (0x20c or 0x30c)");
 module_param(radio_nr, int, 0);
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 struct zoltrix {
 	struct v4l2_device v4l2_dev;
@@ -228,7 +226,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->driver, "radio-zoltrix", sizeof(v->driver));
 	strlcpy(v->card, "Zoltrix Radio", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -266,6 +263,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct zoltrix *zol = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	if (zol_setfreq(zol, f->frequency) != 0)
 		return -EINVAL;
 	return 0;
@@ -276,6 +275,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct zoltrix *zol = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = zol->curfreq;
 	return 0;
@@ -373,7 +374,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 static const struct v4l2_file_operations zoltrix_fops =
 {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops zoltrix_ioctl_ops = {
@@ -420,20 +421,6 @@ static int __init zoltrix_init(void)
 		return res;
 	}
 
-	strlcpy(zol->vdev.name, v4l2_dev->name, sizeof(zol->vdev.name));
-	zol->vdev.v4l2_dev = v4l2_dev;
-	zol->vdev.fops = &zoltrix_fops;
-	zol->vdev.ioctl_ops = &zoltrix_ioctl_ops;
-	zol->vdev.release = video_device_release_empty;
-	video_set_drvdata(&zol->vdev, zol);
-
-	if (video_register_device(&zol->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
-		v4l2_device_unregister(v4l2_dev);
-		release_region(zol->io, 2);
-		return -EINVAL;
-	}
-	v4l2_info(v4l2_dev, "Zoltrix Radio Plus card driver.\n");
-
 	mutex_init(&zol->lock);
 
 	/* mute card - prevents noisy bootups */
@@ -447,6 +434,20 @@ static int __init zoltrix_init(void)
 
 	zol->curvol = 0;
 	zol->stereo = 1;
+
+	strlcpy(zol->vdev.name, v4l2_dev->name, sizeof(zol->vdev.name));
+	zol->vdev.v4l2_dev = v4l2_dev;
+	zol->vdev.fops = &zoltrix_fops;
+	zol->vdev.ioctl_ops = &zoltrix_ioctl_ops;
+	zol->vdev.release = video_device_release_empty;
+	video_set_drvdata(&zol->vdev, zol);
+
+	if (video_register_device(&zol->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
+		v4l2_device_unregister(v4l2_dev);
+		release_region(zol->io, 2);
+		return -EINVAL;
+	}
+	v4l2_info(v4l2_dev, "Zoltrix Radio Plus card driver.\n");
 
 	return 0;
 }

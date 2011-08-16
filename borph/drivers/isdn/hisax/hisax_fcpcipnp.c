@@ -25,6 +25,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/isapnp.h>
 #include <linux/kmod.h>
@@ -74,9 +75,10 @@ static struct pnp_device_id fcpnp_ids[] __devinitdata = {
 		.id		= "AVM0900",
 		.driver_data	= (unsigned long) "Fritz!Card PnP",
 	},
+	{ .id = "" }
 };
 
-MODULE_DEVICE_TABLE(isapnp, fcpnp_ids);
+MODULE_DEVICE_TABLE(pnp, fcpnp_ids);
 #endif
 
 static int protocol = 2;       /* EURO-ISDN Default */

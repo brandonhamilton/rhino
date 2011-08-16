@@ -74,12 +74,6 @@ struct musb_hw_ep;
 #define	is_cppi_enabled()	0
 #endif
 
-#ifdef CONFIG_USB_TI_CPPI41_DMA
-#define is_cppi41_enabled()     1
-#else
-#define is_cppi41_enabled()     0
-#endif
-
 #ifdef CONFIG_USB_TUSB_OMAP_DMA
 #define tusb_dma_omap()			1
 #else
@@ -175,6 +169,9 @@ struct dma_controller {
 							dma_addr_t dma_addr,
 							u32 length);
 	int			(*channel_abort)(struct dma_channel *);
+	int			(*is_compatible)(struct dma_channel *channel,
+							u16 maxpacket,
+							void *buf, u32 length);
 };
 
 /* called after channel_program(), may indicate a fault */

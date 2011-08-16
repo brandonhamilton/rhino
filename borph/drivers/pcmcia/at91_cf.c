@@ -15,6 +15,7 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 
 #include <pcmcia/ss.h>
 
@@ -51,8 +52,6 @@ struct at91_cf_socket {
 
 	unsigned long		phys_baseaddr;
 };
-
-#define	SZ_2K			(2 * SZ_1K)
 
 static inline int at91_cf_present(struct at91_cf_socket *cf)
 {
@@ -284,8 +283,7 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	}
 
 	/* reserve chip-select regions */
-	if (!request_mem_region(io->start, io->end + 1 - io->start,
-				driver_name)) {
+	if (!request_mem_region(io->start, resource_size(io), driver_name)) {
 		status = -ENXIO;
 		goto fail1;
 	}
@@ -309,7 +307,7 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	return 0;
 
 fail2:
-	release_mem_region(io->start, io->end + 1 - io->start);
+	release_mem_region(io->start, resource_size(io));
 fail1:
 	if (cf->socket.io_offset)
 		iounmap((void __iomem *) cf->socket.io_offset);
@@ -340,7 +338,7 @@ static int __exit at91_cf_remove(struct platform_device *pdev)
 	struct resource		*io = cf->socket.io[0].res;
 
 	pcmcia_unregister_socket(&cf->socket);
-	release_mem_region(io->start, io->end + 1 - io->start);
+	release_mem_region(io->start, resource_size(io));
 	iounmap((void __iomem *) cf->socket.io_offset);
 	if (board->irq_pin) {
 		free_irq(board->irq_pin, cf);
@@ -363,7 +361,6 @@ static int at91_cf_suspend(struct platform_device *pdev, pm_message_t mesg)
 	struct at91_cf_socket	*cf = platform_get_drvdata(pdev);
 	struct at91_cf_data	*board = cf->board;
 
-	pcmcia_socket_dev_suspend(&pdev->dev);
 	if (device_may_wakeup(&pdev->dev)) {
 		enable_irq_wake(board->det_pin);
 		if (board->irq_pin)
@@ -383,7 +380,6 @@ static int at91_cf_resume(struct platform_device *pdev)
 			disable_irq_wake(board->irq_pin);
 	}
 
-	pcmcia_socket_dev_resume(&pdev->dev);
 	return 0;
 }
 

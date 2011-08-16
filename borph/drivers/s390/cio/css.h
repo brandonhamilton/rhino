@@ -63,7 +63,6 @@ struct subchannel;
 struct chp_link;
 /**
  * struct css_driver - device driver for subchannels
- * @owner: owning module
  * @subchannel_type: subchannel type supported by this driver
  * @drv: embedded device driver structure
  * @irq: called on interrupts
@@ -78,10 +77,8 @@ struct chp_link;
  * @thaw: undo work done in @freeze
  * @restore: callback for restoring after hibernation
  * @settle: wait for asynchronous work to finish
- * @name: name of the device driver
  */
 struct css_driver {
-	struct module *owner;
 	struct css_device_id *subchannel_type;
 	struct device_driver drv;
 	void (*irq)(struct subchannel *);
@@ -95,16 +92,10 @@ struct css_driver {
 	int (*freeze)(struct subchannel *);
 	int (*thaw) (struct subchannel *);
 	int (*restore)(struct subchannel *);
-	void (*settle)(void);
-	const char *name;
+	int (*settle)(void);
 };
 
 #define to_cssdriver(n) container_of(n, struct css_driver, drv)
-
-/*
- * all css_drivers have the css_bus_type
- */
-extern struct bus_type css_bus_type;
 
 extern int css_driver_register(struct css_driver *);
 extern void css_driver_unregister(struct css_driver *);
@@ -140,18 +131,18 @@ struct channel_subsystem {
 };
 #define to_css(dev) container_of(dev, struct channel_subsystem, device)
 
-extern struct bus_type css_bus_type;
 extern struct channel_subsystem *channel_subsystems[];
 
 /* Helper functions to build lists for the slow path. */
 void css_schedule_eval(struct subchannel_id schid);
 void css_schedule_eval_all(void);
+int css_complete_work(void);
 
 int sch_is_pseudo_sch(struct subchannel *);
 struct schib;
 int css_sch_is_valid(struct schib *);
 
-extern struct workqueue_struct *slow_path_wq;
+extern struct workqueue_struct *cio_work_q;
 void css_wait_for_slow_path(void);
 void css_sched_sch_todo(struct subchannel *sch, enum sch_todo todo);
 #endif

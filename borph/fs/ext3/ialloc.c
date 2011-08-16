@@ -23,6 +23,7 @@
 #include <linux/buffer_head.h>
 #include <linux/random.h>
 #include <linux/bitops.h>
+#include <trace/events/ext3.h>
 
 #include <asm/byteorder.h>
 
@@ -118,20 +119,9 @@ void ext3_free_inode (handle_t *handle, struct inode * inode)
 
 	ino = inode->i_ino;
 	ext3_debug ("freeing inode %lu\n", ino);
-
-	/*
-	 * Note: we must free any quota before locking the superblock,
-	 * as writing the quota to disk may need the lock as well.
-	 */
-	vfs_dq_init(inode);
-	ext3_xattr_delete_inode(handle, inode);
-	vfs_dq_free_inode(inode);
-	vfs_dq_drop(inode);
+	trace_ext3_free_inode(inode);
 
 	is_directory = S_ISDIR(inode->i_mode);
-
-	/* Do this BEFORE marking the inode not in use or returning an error */
-	clear_inode (inode);
 
 	es = EXT3_SB(sb)->s_es;
 	if (ino < EXT3_FIRST_INO(sb) || ino > le32_to_cpu(es->s_inodes_count)) {
@@ -416,7 +406,8 @@ static int find_group_other(struct super_block *sb, struct inode *parent)
  * For other inodes, search forward from the parent directory's block
  * group to find a free inode.
  */
-struct inode *ext3_new_inode(handle_t *handle, struct inode * dir, int mode)
+struct inode *ext3_new_inode(handle_t *handle, struct inode * dir,
+			     const struct qstr *qstr, int mode)
 {
 	struct super_block *sb;
 	struct buffer_head *bitmap_bh = NULL;
@@ -437,6 +428,7 @@ struct inode *ext3_new_inode(handle_t *handle, struct inode * dir, int mode)
 		return ERR_PTR(-EPERM);
 
 	sb = dir->i_sb;
+	trace_ext3_request_inode(dir, mode);
 	inode = new_inode(sb);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
@@ -538,16 +530,13 @@ got:
 	if (S_ISDIR(mode))
 		percpu_counter_inc(&sbi->s_dirs_counter);
 
-	inode->i_uid = current_fsuid();
-	if (test_opt (sb, GRPID))
+
+	if (test_opt(sb, GRPID)) {
+		inode->i_mode = mode;
+		inode->i_uid = current_fsuid();
 		inode->i_gid = dir->i_gid;
-	else if (dir->i_mode & S_ISGID) {
-		inode->i_gid = dir->i_gid;
-		if (S_ISDIR(mode))
-			mode |= S_ISGID;
 	} else
-		inode->i_gid = current_fsgid();
-	inode->i_mode = mode;
+		inode_init_owner(inode, dir, mode);
 
 	inode->i_ino = ino;
 	/* This is the optimal IO size (for stat), not the fs block size */
@@ -582,22 +571,29 @@ got:
 	inode->i_generation = sbi->s_next_generation++;
 	spin_unlock(&sbi->s_next_gen_lock);
 
-	ei->i_state = EXT3_STATE_NEW;
-	ei->i_extra_isize =
-		(EXT3_INODE_SIZE(inode->i_sb) > EXT3_GOOD_OLD_INODE_SIZE) ?
-		sizeof(struct ext3_inode) - EXT3_GOOD_OLD_INODE_SIZE : 0;
+	ei->i_state_flags = 0;
+	ext3_set_inode_state(inode, EXT3_STATE_NEW);
+
+	/* See comment in ext3_iget for explanation */
+	if (ino >= EXT3_FIRST_INO(sb) + 1 &&
+	    EXT3_INODE_SIZE(sb) > EXT3_GOOD_OLD_INODE_SIZE) {
+		ei->i_extra_isize =
+			sizeof(struct ext3_inode) - EXT3_GOOD_OLD_INODE_SIZE;
+	} else {
+		ei->i_extra_isize = 0;
+	}
 
 	ret = inode;
-	if (vfs_dq_alloc_inode(inode)) {
-		err = -EDQUOT;
+	dquot_initialize(inode);
+	err = dquot_alloc_inode(inode);
+	if (err)
 		goto fail_drop;
-	}
 
 	err = ext3_init_acl(handle, inode, dir);
 	if (err)
 		goto fail_free_drop;
 
-	err = ext3_init_security(handle,inode, dir);
+	err = ext3_init_security(handle, inode, dir, qstr);
 	if (err)
 		goto fail_free_drop;
 
@@ -608,6 +604,7 @@ got:
 	}
 
 	ext3_debug("allocating inode %lu\n", inode->i_ino);
+	trace_ext3_allocate_inode(inode, dir, mode);
 	goto really_out;
 fail:
 	ext3_std_error(sb, err);
@@ -619,10 +616,10 @@ really_out:
 	return ret;
 
 fail_free_drop:
-	vfs_dq_free_inode(inode);
+	dquot_free_inode(inode);
 
 fail_drop:
-	vfs_dq_drop(inode);
+	dquot_drop(inode);
 	inode->i_flags |= S_NOQUOTA;
 	inode->i_nlink = 0;
 	unlock_new_inode(inode);

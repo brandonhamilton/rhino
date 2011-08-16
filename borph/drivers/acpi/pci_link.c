@@ -29,16 +29,16 @@
  *	   for IRQ management (e.g. start()->_SRS).
  */
 
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
-#include <linux/proc_fs.h>
 #include <linux/spinlock.h>
 #include <linux/pm.h>
 #include <linux/pci.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
@@ -56,7 +56,7 @@ ACPI_MODULE_NAME("pci_link");
 static int acpi_pci_link_add(struct acpi_device *device);
 static int acpi_pci_link_remove(struct acpi_device *device, int type);
 
-static struct acpi_device_id link_device_ids[] = {
+static const struct acpi_device_id link_device_ids[] = {
 	{"PNP0C0F", 0},
 	{"", 0},
 };
@@ -757,14 +757,13 @@ static int acpi_pci_link_resume(struct acpi_pci_link *link)
 	return 0;
 }
 
-static int irqrouter_resume(struct sys_device *dev)
+static void irqrouter_resume(void)
 {
 	struct acpi_pci_link *link;
 
 	list_for_each_entry(link, &acpi_link_list, list) {
 		acpi_pci_link_resume(link);
 	}
-	return 0;
 }
 
 static int acpi_pci_link_remove(struct acpi_device *device, int type)
@@ -871,32 +870,19 @@ static int __init acpi_irq_balance_set(char *str)
 
 __setup("acpi_irq_balance", acpi_irq_balance_set);
 
-/* FIXME: we will remove this interface after all drivers call pci_disable_device */
-static struct sysdev_class irqrouter_sysdev_class = {
-	.name = "irqrouter",
+static struct syscore_ops irqrouter_syscore_ops = {
 	.resume = irqrouter_resume,
 };
 
-static struct sys_device device_irqrouter = {
-	.id = 0,
-	.cls = &irqrouter_sysdev_class,
-};
-
-static int __init irqrouter_init_sysfs(void)
+static int __init irqrouter_init_ops(void)
 {
-	int error;
+	if (!acpi_disabled && !acpi_noirq)
+		register_syscore_ops(&irqrouter_syscore_ops);
 
-	if (acpi_disabled || acpi_noirq)
-		return 0;
-
-	error = sysdev_class_register(&irqrouter_sysdev_class);
-	if (!error)
-		error = sysdev_register(&device_irqrouter);
-
-	return error;
+	return 0;
 }
 
-device_initcall(irqrouter_init_sysfs);
+device_initcall(irqrouter_init_ops);
 
 static int __init acpi_pci_link_init(void)
 {

@@ -5,6 +5,7 @@
  *	Copyright (C) IBM Corporation, 2004. All rights reserved
  */
 
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/highmem.h>
 #include <linux/crash_dump.h>
@@ -12,9 +13,6 @@
 #include <asm/uaccess.h>
 
 static void *kdump_buf_page;
-
-/* Stores the physical address of elf header of crash image. */
-unsigned long long elfcorehdr_addr = ELFCORE_ADDR_MAX;
 
 static inline bool is_crashed_pfn_valid(unsigned long pfn)
 {
@@ -60,7 +58,7 @@ ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
 	if (!is_crashed_pfn_valid(pfn))
 		return -EFAULT;
 
-	vaddr = kmap_atomic_pfn(pfn, KM_PTE0);
+	vaddr = kmap_atomic_pfn(pfn);
 
 	if (!userbuf) {
 		memcpy(buf, (vaddr + offset), csize);

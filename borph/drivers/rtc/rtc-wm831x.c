@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/time.h>
 #include <linux/rtc.h>
+#include <linux/slab.h>
 #include <linux/bcd.h>
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
@@ -314,21 +315,6 @@ static int wm831x_rtc_alarm_irq_enable(struct device *dev,
 		return wm831x_rtc_stop_alarm(wm831x_rtc);
 }
 
-static int wm831x_rtc_update_irq_enable(struct device *dev,
-					unsigned int enabled)
-{
-	struct wm831x_rtc *wm831x_rtc = dev_get_drvdata(dev);
-	int val;
-
-	if (enabled)
-		val = 1 << WM831X_RTC_PINT_FREQ_SHIFT;
-	else
-		val = 0;
-
-	return wm831x_set_bits(wm831x_rtc->wm831x, WM831X_RTC_CONTROL,
-			       WM831X_RTC_PINT_FREQ_MASK, val);
-}
-
 static irqreturn_t wm831x_alm_irq(int irq, void *data)
 {
 	struct wm831x_rtc *wm831x_rtc = data;
@@ -353,7 +339,6 @@ static const struct rtc_class_ops wm831x_rtc_ops = {
 	.read_alarm = wm831x_rtc_readalarm,
 	.set_alarm = wm831x_rtc_setalarm,
 	.alarm_irq_enable = wm831x_rtc_alarm_irq_enable,
-	.update_irq_enable = wm831x_rtc_update_irq_enable,
 };
 
 #ifdef CONFIG_PM
@@ -448,17 +433,17 @@ static int wm831x_rtc_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ret = wm831x_request_irq(wm831x, per_irq, wm831x_per_irq,
-				 IRQF_TRIGGER_RISING, "wm831x_rtc_per",
-				 wm831x_rtc);
+	ret = request_threaded_irq(per_irq, NULL, wm831x_per_irq,
+				   IRQF_TRIGGER_RISING, "RTC period",
+				   wm831x_rtc);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to request periodic IRQ %d: %d\n",
 			per_irq, ret);
 	}
 
-	ret = wm831x_request_irq(wm831x, alm_irq, wm831x_alm_irq,
-				 IRQF_TRIGGER_RISING, "wm831x_rtc_alm",
-				 wm831x_rtc);
+	ret = request_threaded_irq(alm_irq, NULL, wm831x_alm_irq,
+				   IRQF_TRIGGER_RISING, "RTC alarm",
+				   wm831x_rtc);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to request alarm IRQ %d: %d\n",
 			alm_irq, ret);
@@ -477,8 +462,8 @@ static int __devexit wm831x_rtc_remove(struct platform_device *pdev)
 	int per_irq = platform_get_irq_byname(pdev, "PER");
 	int alm_irq = platform_get_irq_byname(pdev, "ALM");
 
-	wm831x_free_irq(wm831x_rtc->wm831x, alm_irq, wm831x_rtc);
-	wm831x_free_irq(wm831x_rtc->wm831x, per_irq, wm831x_rtc);
+	free_irq(alm_irq, wm831x_rtc);
+	free_irq(per_irq, wm831x_rtc);
 	rtc_device_unregister(wm831x_rtc->rtc);
 	kfree(wm831x_rtc);
 

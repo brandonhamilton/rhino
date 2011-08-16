@@ -9,11 +9,13 @@
  * your option) any later version.
  */
 
-#ifndef MMC_SDIO_FUNC_H
-#define MMC_SDIO_FUNC_H
+#ifndef LINUX_MMC_SDIO_FUNC_H
+#define LINUX_MMC_SDIO_FUNC_H
 
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
+
+#include <linux/mmc/pm.h>
 
 struct mmc_card;
 struct sdio_func;
@@ -143,6 +145,9 @@ extern void sdio_writew(struct sdio_func *func, u16 b,
 extern void sdio_writel(struct sdio_func *func, u32 b,
 	unsigned int addr, int *err_ret);
 
+extern u8 sdio_writeb_readb(struct sdio_func *func, u8 write_byte,
+	unsigned int addr, int *err_ret);
+
 extern int sdio_memcpy_toio(struct sdio_func *func, unsigned int addr,
 	void *src, int count);
 extern int sdio_writesb(struct sdio_func *func, unsigned int addr,
@@ -153,5 +158,7 @@ extern unsigned char sdio_f0_readb(struct sdio_func *func,
 extern void sdio_f0_writeb(struct sdio_func *func, unsigned char b,
 	unsigned int addr, int *err_ret);
 
-#endif
+extern mmc_pm_flag_t sdio_get_host_pm_caps(struct sdio_func *func);
+extern int sdio_set_host_pm_flags(struct sdio_func *func, mmc_pm_flag_t flags);
 
+#endif /* LINUX_MMC_SDIO_FUNC_H */

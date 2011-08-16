@@ -39,6 +39,7 @@
 #include <linux/delay.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/sb.h>
 #include <sound/initval.h>
@@ -58,7 +59,7 @@ struct snd_cs5530 {
 	unsigned long pci_base;
 };
 
-static struct pci_device_id snd_cs5530_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_cs5530_ids) = {
 	{PCI_VENDOR_ID_CYRIX, PCI_DEVICE_ID_CYRIX_5530_AUDIO, PCI_ANY_ID,
 							PCI_ANY_ID, 0, 0},
 	{0,}
@@ -284,7 +285,7 @@ static int __devinit snd_cs5530_probe(struct pci_dev *pci,
 }
 
 static struct pci_driver driver = {
-	.name = "CS5530_Audio",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_cs5530_ids,
 	.probe = snd_cs5530_probe,
 	.remove = __devexit_p(snd_cs5530_remove),

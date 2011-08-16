@@ -10,6 +10,7 @@
 
 #include <linux/kernel.h>
 #include <linux/kmemcheck.h>
+#include <linux/slab.h>
 #include <net/inet_hashtables.h>
 #include <net/inet_timewait_sock.h>
 #include <net/ip.h>
@@ -504,7 +505,9 @@ restart:
 			}
 
 			rcu_read_unlock();
+			local_bh_disable();
 			inet_twsk_deschedule(tw, twdr);
+			local_bh_enable();
 			inet_twsk_put(tw);
 			goto restart_rcu;
 		}

@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
@@ -20,14 +21,23 @@
 
 #include <asm/io.h>
 #include <mach/hardware.h>
-#include <asm/cacheflush.h>
 
 #include <asm/mach/flash.h>
+
+#define CACHELINESIZE	32
 
 static void pxa2xx_map_inval_cache(struct map_info *map, unsigned long from,
 				      ssize_t len)
 {
-	flush_ioremap_region(map->phys, map->cached, from, len);
+	unsigned long start = (unsigned long)map->cached + from;
+	unsigned long end = start + len;
+
+	start &= ~(CACHELINESIZE - 1);
+	while (start < end) {
+		/* invalidate D cache line */
+		asm volatile ("mcr p15, 0, %0, c7, c6, 1" : : "r" (start));
+		start += CACHELINESIZE;
+	}
 }
 
 struct pxa2xx_flash_info {
@@ -41,7 +51,7 @@ struct pxa2xx_flash_info {
 static const char *probes[] = { "RedBoot", "cmdlinepart", NULL };
 
 
-static int __init pxa2xx_flash_probe(struct platform_device *pdev)
+static int __devinit pxa2xx_flash_probe(struct platform_device *pdev)
 {
 	struct flash_platform_data *flash = pdev->dev.platform_data;
 	struct pxa2xx_flash_info *info;
@@ -53,15 +63,14 @@ static int __init pxa2xx_flash_probe(struct platform_device *pdev)
 	if (!res)
 		return -ENODEV;
 
-	info = kmalloc(sizeof(struct pxa2xx_flash_info), GFP_KERNEL);
+	info = kzalloc(sizeof(struct pxa2xx_flash_info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
-	memset(info, 0, sizeof(struct pxa2xx_flash_info));
 	info->map.name = (char *) flash->name;
 	info->map.bankwidth = flash->width;
 	info->map.phys = res->start;
-	info->map.size = res->end - res->start + 1;
+	info->map.size = resource_size(res);
 	info->parts = flash->parts;
 	info->nr_parts = flash->nr_parts;
 
@@ -95,23 +104,18 @@ static int __init pxa2xx_flash_probe(struct platform_device *pdev)
 	}
 	info->mtd->owner = THIS_MODULE;
 
-#ifdef CONFIG_MTD_PARTITIONS
 	ret = parse_mtd_partitions(info->mtd, probes, &parts, 0);
 
 	if (ret > 0) {
 		info->nr_parts = ret;
 		info->parts = parts;
 	}
-#endif
 
-	if (info->nr_parts) {
-		add_mtd_partitions(info->mtd, info->parts,
-				   info->nr_parts);
-	} else {
+	if (!info->nr_parts)
 		printk("Registering %s as whole device\n",
 		       info->map.name);
-		add_mtd_device(info->mtd);
-	}
+
+	mtd_device_register(info->mtd, info->parts, info->nr_parts);
 
 	platform_set_drvdata(pdev, info);
 	return 0;
@@ -123,12 +127,7 @@ static int __devexit pxa2xx_flash_remove(struct platform_device *dev)
 
 	platform_set_drvdata(dev, NULL);
 
-#ifdef CONFIG_MTD_PARTITIONS
-	if (info->nr_parts)
-		del_mtd_partitions(info->mtd);
-	else
-#endif
-		del_mtd_device(info->mtd);
+	mtd_device_unregister(info->mtd);
 
 	map_destroy(info->mtd);
 	iounmap(info->map.virt);

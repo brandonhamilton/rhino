@@ -210,9 +210,9 @@ void free_irqs(void)
 	list_for_each(ele, &list) {
 		chan = list_entry(ele, struct chan, free_list);
 
-		if (chan->input)
+		if (chan->input && chan->enabled)
 			free_irq(chan->line->driver->read_irq, chan);
-		if (chan->output)
+		if (chan->output && chan->enabled)
 			free_irq(chan->line->driver->write_irq, chan);
 		chan->enabled = 0;
 	}
@@ -231,9 +231,9 @@ static void close_one_chan(struct chan *chan, int delay_free_irq)
 		spin_unlock_irqrestore(&irqs_to_free_lock, flags);
 	}
 	else {
-		if (chan->input)
+		if (chan->input && chan->enabled)
 			free_irq(chan->line->driver->read_irq, chan);
-		if (chan->output)
+		if (chan->output && chan->enabled)
 			free_irq(chan->line->driver->write_irq, chan);
 		chan->enabled = 0;
 	}
@@ -543,11 +543,10 @@ int parse_chan_pair(char *str, struct line *line, int device,
 		    const struct chan_opts *opts, char **error_out)
 {
 	struct list_head *chans = &line->chan_list;
-	struct chan *new, *chan;
+	struct chan *new;
 	char *in, *out;
 
 	if (!list_empty(chans)) {
-		chan = list_entry(chans->next, struct chan, list);
 		free_chan(chans, 0);
 		INIT_LIST_HEAD(chans);
 	}

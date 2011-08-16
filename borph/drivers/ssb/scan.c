@@ -2,7 +2,7 @@
  * Sonics Silicon Backplane
  * Bus scanning
  *
- * Copyright (C) 2005-2007 Michael Buesch <mb@bu3sch.de>
+ * Copyright (C) 2005-2007 Michael Buesch <m@bues.ch>
  * Copyright (C) 2005 Martin Langer <martin-langer@gmx.de>
  * Copyright (C) 2005 Stefano Brivio <st3@riseup.net>
  * Copyright (C) 2005 Danny van Dyk <kugelfang@gentoo.org>
@@ -17,8 +17,6 @@
 #include <linux/pci.h>
 #include <linux/io.h>
 
-#include <pcmcia/cs_types.h>
-#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
 
@@ -260,7 +258,10 @@ static int we_support_multiple_80211_cores(struct ssb_bus *bus)
 #ifdef CONFIG_SSB_PCIHOST
 	if (bus->bustype == SSB_BUSTYPE_PCI) {
 		if (bus->host_pci->vendor == PCI_VENDOR_ID_BROADCOM &&
-		    bus->host_pci->device == 0x4324)
+		    ((bus->host_pci->device == 0x4313) ||
+		     (bus->host_pci->device == 0x431A) ||
+		     (bus->host_pci->device == 0x4321) ||
+		     (bus->host_pci->device == 0x4324)))
 			return 1;
 	}
 #endif /* CONFIG_SSB_PCIHOST */
@@ -309,8 +310,7 @@ int ssb_bus_scan(struct ssb_bus *bus,
 	} else {
 		if (bus->bustype == SSB_BUSTYPE_PCI) {
 			bus->chip_id = pcidev_to_chipid(bus->host_pci);
-			pci_read_config_word(bus->host_pci, PCI_REVISION_ID,
-					     &bus->chip_rev);
+			bus->chip_rev = bus->host_pci->revision;
 			bus->chip_package = 0;
 		} else {
 			bus->chip_id = 0x4710;
@@ -407,10 +407,10 @@ int ssb_bus_scan(struct ssb_bus *bus,
 				/* Ignore PCI cores on PCI-E cards.
 				 * Ignore PCI-E cores on PCI cards. */
 				if (dev->id.coreid == SSB_DEV_PCI) {
-					if (bus->host_pci->is_pcie)
+					if (pci_is_pcie(bus->host_pci))
 						continue;
 				} else {
-					if (!bus->host_pci->is_pcie)
+					if (!pci_is_pcie(bus->host_pci))
 						continue;
 				}
 			}
@@ -421,6 +421,16 @@ int ssb_bus_scan(struct ssb_bus *bus,
 			}
 			bus->pcicore.dev = dev;
 #endif /* CONFIG_SSB_DRIVER_PCICORE */
+			break;
+		case SSB_DEV_ETHERNET:
+			if (bus->bustype == SSB_BUSTYPE_PCI) {
+				if (bus->host_pci->vendor == PCI_VENDOR_ID_BROADCOM &&
+				    (bus->host_pci->device & 0xFF00) == 0x4300) {
+					/* This is a dangling ethernet core on a
+					 * wireless device. Ignore it. */
+					continue;
+				}
+			}
 			break;
 		default:
 			break;

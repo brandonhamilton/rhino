@@ -32,16 +32,15 @@
  *  add RDS support
  */
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>			/* Initdata			*/
 #include <linux/videodev2.h>		/* kernel radio structs		*/
 #include <linux/i2c.h>			/* I2C				*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
-#include <linux/version.h>      	/* for KERNEL_VERSION MACRO     */
 
-#define DRIVER_VERSION	"v0.01"
-#define RADIO_VERSION	KERNEL_VERSION(0, 0, 1)
+#define DRIVER_VERSION	"0.0.2"
 
 #define DRIVER_AUTHOR	"Fabio Belavenuto <belavenuto@gmail.com>"
 #define DRIVER_DESC	"A driver for the TEA5764 radio chip for EZX Phones."
@@ -141,7 +140,6 @@ struct tea5764_device {
 	struct video_device		*videodev;
 	struct tea5764_regs		regs;
 	struct mutex			mutex;
-	int				users;
 };
 
 /* I2C code related */
@@ -300,7 +298,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->card, dev->name, sizeof(v->card));
 	snprintf(v->bus_info, sizeof(v->bus_info),
 		 "I2C:%s", dev_name(&dev->dev));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -314,7 +311,7 @@ static int vidioc_g_tuner(struct file *file, void *priv,
 	if (v->index > 0)
 		return -EINVAL;
 
-	memset(v, 0, sizeof(v));
+	memset(v, 0, sizeof(*v));
 	strcpy(v->name, "FM");
 	v->type = V4L2_TUNER_RADIO;
 	tea5764_i2c_read(radio);
@@ -349,7 +346,7 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct tea5764_device *radio = video_drvdata(file);
 
-	if (f->tuner != 0)
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
 		return -EINVAL;
 	if (f->frequency == 0) {
 		/* We special case this as a power down control. */
@@ -370,8 +367,10 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 	struct tea5764_device *radio = video_drvdata(file);
 	struct tea5764_regs *r = &radio->regs;
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	tea5764_i2c_read(radio);
-	memset(f, 0, sizeof(f));
+	memset(f, 0, sizeof(*f));
 	f->type = V4L2_TUNER_RADIO;
 	if (r->tnctrl & TEA5764_TNCTRL_PUPD0)
 		f->frequency = (tea5764_get_freq(radio) * 2) / 125;
@@ -455,45 +454,10 @@ static int vidioc_s_audio(struct file *file, void *priv,
 	return 0;
 }
 
-static int tea5764_open(struct file *file)
-{
-	/* Currently we support only one device */
-	int minor = video_devdata(file)->minor;
-	struct tea5764_device *radio = video_drvdata(file);
-
-	if (radio->videodev->minor != minor)
-		return -ENODEV;
-
-	mutex_lock(&radio->mutex);
-	/* Only exclusive access */
-	if (radio->users) {
-		mutex_unlock(&radio->mutex);
-		return -EBUSY;
-	}
-	radio->users++;
-	mutex_unlock(&radio->mutex);
-	file->private_data = radio;
-	return 0;
-}
-
-static int tea5764_close(struct file *file)
-{
-	struct tea5764_device *radio = video_drvdata(file);
-
-	if (!radio)
-		return -ENODEV;
-	mutex_lock(&radio->mutex);
-	radio->users--;
-	mutex_unlock(&radio->mutex);
-	return 0;
-}
-
 /* File system interface */
 static const struct v4l2_file_operations tea5764_fops = {
 	.owner		= THIS_MODULE,
-	.open           = tea5764_open,
-	.release        = tea5764_close,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops tea5764_ioctl_ops = {
@@ -528,7 +492,7 @@ static int __devinit tea5764_i2c_probe(struct i2c_client *client,
 	int ret;
 
 	PDEBUG("probe");
-	radio = kmalloc(sizeof(struct tea5764_device), GFP_KERNEL);
+	radio = kzalloc(sizeof(struct tea5764_device), GFP_KERNEL);
 	if (!radio)
 		return -ENOMEM;
 
@@ -556,18 +520,19 @@ static int __devinit tea5764_i2c_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, radio);
 	video_set_drvdata(radio->videodev, radio);
-
-	ret = video_register_device(radio->videodev, VFL_TYPE_RADIO, radio_nr);
-	if (ret < 0) {
-		PWARN("Could not register video device!");
-		goto errrel;
-	}
+	radio->videodev->lock = &radio->mutex;
 
 	/* initialize and power off the chip */
 	tea5764_i2c_read(radio);
 	tea5764_set_audout_mode(radio, V4L2_TUNER_MODE_STEREO);
 	tea5764_mute(radio, 1);
 	tea5764_power_down(radio);
+
+	ret = video_register_device(radio->videodev, VFL_TYPE_RADIO, radio_nr);
+	if (ret < 0) {
+		PWARN("Could not register video device!");
+		goto errrel;
+	}
 
 	PINFO("registered.");
 	return 0;
@@ -627,8 +592,9 @@ static void __exit tea5764_exit(void)
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
+MODULE_VERSION(DRIVER_VERSION);
 
-module_param(use_xtal, int, 1);
+module_param(use_xtal, int, 0);
 MODULE_PARM_DESC(use_xtal, "Chip have a xtal connected in board");
 module_param(radio_nr, int, 0);
 MODULE_PARM_DESC(radio_nr, "video4linux device number to use");

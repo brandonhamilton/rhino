@@ -1,10 +1,10 @@
 #ifndef __PERF_RECORD_H
 #define __PERF_RECORD_H
 
+#include <limits.h>
+
 #include "../perf.h"
-#include "util.h"
-#include <linux/list.h>
-#include <linux/rbtree.h>
+#include "map.h"
 
 /*
  * PERF_SAMPLE_IP | PERF_SAMPLE_TID | *
@@ -56,34 +56,75 @@ struct read_event {
 	u64 id;
 };
 
+
+#define PERF_SAMPLE_MASK				\
+	(PERF_SAMPLE_IP | PERF_SAMPLE_TID |		\
+	 PERF_SAMPLE_TIME | PERF_SAMPLE_ADDR |		\
+	PERF_SAMPLE_ID | PERF_SAMPLE_STREAM_ID |	\
+	 PERF_SAMPLE_CPU | PERF_SAMPLE_PERIOD)
+
 struct sample_event {
 	struct perf_event_header        header;
 	u64 array[];
 };
 
-struct sample_data {
+struct perf_sample {
 	u64 ip;
 	u32 pid, tid;
 	u64 time;
 	u64 addr;
 	u64 id;
 	u64 stream_id;
-	u32 cpu;
 	u64 period;
-	struct ip_callchain *callchain;
+	u32 cpu;
 	u32 raw_size;
 	void *raw_data;
+	struct ip_callchain *callchain;
 };
 
 #define BUILD_ID_SIZE 20
 
 struct build_id_event {
 	struct perf_event_header header;
+	pid_t			 pid;
 	u8			 build_id[ALIGN(BUILD_ID_SIZE, sizeof(u64))];
 	char			 filename[];
 };
 
-typedef union event_union {
+enum perf_user_event_type { /* above any possible kernel type */
+	PERF_RECORD_USER_TYPE_START		= 64,
+	PERF_RECORD_HEADER_ATTR			= 64,
+	PERF_RECORD_HEADER_EVENT_TYPE		= 65,
+	PERF_RECORD_HEADER_TRACING_DATA		= 66,
+	PERF_RECORD_HEADER_BUILD_ID		= 67,
+	PERF_RECORD_FINISHED_ROUND		= 68,
+	PERF_RECORD_HEADER_MAX
+};
+
+struct attr_event {
+	struct perf_event_header header;
+	struct perf_event_attr attr;
+	u64 id[];
+};
+
+#define MAX_EVENT_NAME 64
+
+struct perf_trace_event_type {
+	u64	event_id;
+	char	name[MAX_EVENT_NAME];
+};
+
+struct event_type_event {
+	struct perf_event_header header;
+	struct perf_trace_event_type event_type;
+};
+
+struct tracing_data_event {
+	struct perf_event_header header;
+	u32 size;
+};
+
+union perf_event {
 	struct perf_event_header	header;
 	struct ip_event			ip;
 	struct mmap_event		mmap;
@@ -92,86 +133,59 @@ typedef union event_union {
 	struct lost_event		lost;
 	struct read_event		read;
 	struct sample_event		sample;
-} event_t;
-
-struct events_stats {
-	unsigned long total;
-	unsigned long lost;
+	struct attr_event		attr;
+	struct event_type_event		event_type;
+	struct tracing_data_event	tracing_data;
+	struct build_id_event		build_id;
 };
 
-void event__print_totals(void);
+void perf_event__print_totals(void);
 
-enum map_type {
-	MAP__FUNCTION = 0,
-	MAP__VARIABLE,
-};
+struct perf_session;
+struct thread_map;
 
-#define MAP__NR_TYPES (MAP__VARIABLE + 1)
+typedef int (*perf_event__handler_synth_t)(union perf_event *event, 
+					   struct perf_session *session);
+typedef int (*perf_event__handler_t)(union perf_event *event,
+				     struct perf_sample *sample,
+				      struct perf_session *session);
 
-struct map {
-	union {
-		struct rb_node	rb_node;
-		struct list_head node;
-	};
-	u64			start;
-	u64			end;
-	enum map_type		type;
-	u64			pgoff;
-	u64			(*map_ip)(struct map *, u64);
-	u64			(*unmap_ip)(struct map *, u64);
-	struct dso		*dso;
-};
+int perf_event__synthesize_thread_map(struct thread_map *threads,
+				      perf_event__handler_t process,
+				      struct perf_session *session);
+int perf_event__synthesize_threads(perf_event__handler_t process,
+				   struct perf_session *session);
+int perf_event__synthesize_kernel_mmap(perf_event__handler_t process,
+				       struct perf_session *session,
+				       struct machine *machine,
+				       const char *symbol_name);
 
-static inline u64 map__map_ip(struct map *map, u64 ip)
-{
-	return ip - map->start + map->pgoff;
-}
+int perf_event__synthesize_modules(perf_event__handler_t process,
+				   struct perf_session *session,
+				   struct machine *machine);
 
-static inline u64 map__unmap_ip(struct map *map, u64 ip)
-{
-	return ip + map->start - map->pgoff;
-}
-
-static inline u64 identity__map_ip(struct map *map __used, u64 ip)
-{
-	return ip;
-}
-
-struct symbol;
-
-typedef int (*symbol_filter_t)(struct map *map, struct symbol *sym);
-
-void map__init(struct map *self, enum map_type type,
-	       u64 start, u64 end, u64 pgoff, struct dso *dso);
-struct map *map__new(struct mmap_event *event, enum map_type,
-		     char *cwd, int cwdlen);
-void map__delete(struct map *self);
-struct map *map__clone(struct map *self);
-int map__overlap(struct map *l, struct map *r);
-size_t map__fprintf(struct map *self, FILE *fp);
-struct symbol *map__find_symbol(struct map *self, u64 addr,
-				symbol_filter_t filter);
-struct symbol *map__find_symbol_by_name(struct map *self, const char *name,
-					symbol_filter_t filter);
-void map__fixup_start(struct map *self);
-void map__fixup_end(struct map *self);
-
-int event__synthesize_thread(pid_t pid, int (*process)(event_t *event));
-void event__synthesize_threads(int (*process)(event_t *event));
-
-extern char *event__cwd;
-extern int  event__cwdlen;
-extern struct events_stats event__stats;
-extern unsigned long event__total[PERF_RECORD_MAX];
-
-int event__process_comm(event_t *self);
-int event__process_lost(event_t *self);
-int event__process_mmap(event_t *self);
-int event__process_task(event_t *self);
+int perf_event__process_comm(union perf_event *event, struct perf_sample *sample,
+			     struct perf_session *session);
+int perf_event__process_lost(union perf_event *event, struct perf_sample *sample,
+			     struct perf_session *session);
+int perf_event__process_mmap(union perf_event *event, struct perf_sample *sample,
+			     struct perf_session *session);
+int perf_event__process_task(union perf_event *event, struct perf_sample *sample,
+			     struct perf_session *session);
+int perf_event__process(union perf_event *event, struct perf_sample *sample,
+			struct perf_session *session);
 
 struct addr_location;
-int event__preprocess_sample(const event_t *self, struct addr_location *al,
-			     symbol_filter_t filter);
-int event__parse_sample(event_t *event, u64 type, struct sample_data *data);
+int perf_event__preprocess_sample(const union perf_event *self,
+				  struct perf_session *session,
+				  struct addr_location *al,
+				  struct perf_sample *sample,
+				  symbol_filter_t filter);
+
+const char *perf_event__name(unsigned int id);
+
+int perf_event__parse_sample(const union perf_event *event, u64 type,
+			     int sample_size, bool sample_id_all,
+			     struct perf_sample *sample);
 
 #endif /* __PERF_RECORD_H */

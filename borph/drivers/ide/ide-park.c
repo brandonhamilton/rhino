@@ -1,4 +1,5 @@
 #include <linux/kernel.h>
+#include <linux/gfp.h>
 #include <linux/ide.h>
 #include <linux/jiffies.h>
 #include <linux/blkdev.h>
@@ -51,7 +52,7 @@ static void issue_park_cmd(ide_drive_t *drive, unsigned long timeout)
 	rq->cmd[0] = REQ_UNPARK_HEADS;
 	rq->cmd_len = 1;
 	rq->cmd_type = REQ_TYPE_SPECIAL;
-	elv_add_request(q, rq, ELEVATOR_INSERT_FRONT, 1);
+	elv_add_request(q, rq, ELEVATOR_INSERT_FRONT);
 
 out:
 	return;

@@ -4,7 +4,7 @@
  *  Derived from ivtv-driver.h
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
- *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
+ *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
 #ifndef CX18_DRIVER_H
 #define CX18_DRIVER_H
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -42,6 +41,7 @@
 #include <linux/pagemap.h>
 #include <linux/workqueue.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 #include <asm/byteorder.h>
 
 #include <linux/dvb/video.h>
@@ -49,6 +49,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-fh.h>
 #include <media/tuner.h>
 #include <media/ir-kbd-i2c.h>
 #include "cx18-mailbox.h"
@@ -62,6 +63,10 @@
 #include "dvb_frontend.h"
 #include "dvb_net.h"
 #include "dvbdev.h"
+
+/* Videobuf / YUV support */
+#include <media/videobuf-core.h>
+#include <media/videobuf-vmalloc.h>
 
 #ifndef CONFIG_PCI
 #  error "This driver requires kernel PCI support."
@@ -83,7 +88,9 @@
 #define CX18_CARD_TOSHIBA_QOSMIO_DVBT 5 /* Toshiba Qosmio Interal DVB-T/Analog*/
 #define CX18_CARD_LEADTEK_PVR2100     6 /* Leadtek WinFast PVR2100 */
 #define CX18_CARD_LEADTEK_DVR3100H    7 /* Leadtek WinFast DVR3100 H */
-#define CX18_CARD_LAST 		      7
+#define CX18_CARD_GOTVIEW_PCI_DVD3    8 /* GoTView PCI DVD3 Hybrid */
+#define CX18_CARD_HVR_1600_S5H1411    9 /* Hauppauge HVR 1600 s5h1411/tda18271*/
+#define CX18_CARD_LAST		      9
 
 #define CX18_ENC_STREAM_TYPE_MPG  0
 #define CX18_ENC_STREAM_TYPE_TS   1
@@ -105,6 +112,7 @@
 #define CX18_PCI_ID_CONEXANT		0x14f1
 #define CX18_PCI_ID_TOSHIBA		0x1179
 #define CX18_PCI_ID_LEADTEK		0x107D
+#define CX18_PCI_ID_GOTVIEW		0x5854
 
 /* ======================================================================== */
 /* ========================== START USER SETTABLE DMA VARIABLES =========== */
@@ -126,10 +134,22 @@
 #define CX18_625_LINE_ENC_YUV_BUFSIZE	(CX18_UNIT_ENC_YUV_BUFSIZE * 576/32)
 #define CX18_525_LINE_ENC_YUV_BUFSIZE	(CX18_UNIT_ENC_YUV_BUFSIZE * 480/32)
 
+/* IDX buffer size should be a multiple of the index entry size from the chip */
+struct cx18_enc_idx_entry {
+	__le32 length;
+	__le32 offset_low;
+	__le32 offset_high;
+	__le32 flags;
+	__le32 pts_low;
+	__le32 pts_high;
+} __attribute__ ((packed));
+#define CX18_UNIT_ENC_IDX_BUFSIZE \
+	(sizeof(struct cx18_enc_idx_entry) * V4L2_ENC_IDX_ENTRIES)
+
 /* DMA buffer, default size in kB allocated */
 #define CX18_DEFAULT_ENC_TS_BUFSIZE   32
 #define CX18_DEFAULT_ENC_MPG_BUFSIZE  32
-#define CX18_DEFAULT_ENC_IDX_BUFSIZE  32
+#define CX18_DEFAULT_ENC_IDX_BUFSIZE  (CX18_UNIT_ENC_IDX_BUFSIZE * 1 / 1024 + 1)
 #define CX18_DEFAULT_ENC_YUV_BUFSIZE  (CX18_UNIT_ENC_YUV_BUFSIZE * 3 / 1024 + 1)
 #define CX18_DEFAULT_ENC_PCM_BUFSIZE   4
 
@@ -234,15 +254,7 @@
 #define CX18_WARN_DEV(dev, fmt, args...)     v4l2_warn(dev, fmt , ## args)
 #define CX18_INFO_DEV(dev, fmt, args...)     v4l2_info(dev, fmt , ## args)
 
-/* Values for CX18_API_DEC_PLAYBACK_SPEED mpeg_frame_type_mask parameter: */
-#define MPEG_FRAME_TYPE_IFRAME 1
-#define MPEG_FRAME_TYPE_IFRAME_PFRAME 3
-#define MPEG_FRAME_TYPE_ALL 7
-
-#define CX18_MAX_PGM_INDEX (400)
-
 extern int cx18_debug;
-
 
 struct cx18_options {
 	int megabytes[CX18_MAX_STREAMS]; /* Size in megabytes of each stream */
@@ -276,6 +288,18 @@ struct cx18_options {
 #define CX18_SLICED_TYPE_WSS_625        (5)
 #define CX18_SLICED_TYPE_VPS            (7)
 
+/**
+ * list_entry_is_past_end - check if a previous loop cursor is off list end
+ * @pos:	the type * previously used as a loop cursor.
+ * @head:	the head for your list.
+ * @member:	the name of the list_struct within the struct.
+ *
+ * Check if the entry's list_head is the head of the list, thus it's not a
+ * real entry but was the loop cursor that walked past the end
+ */
+#define list_entry_is_past_end(pos, head, member) \
+	(&pos->member == (head))
+
 struct cx18_buffer {
 	struct list_head list;
 	dma_addr_t dma_handle;
@@ -306,7 +330,10 @@ struct cx18_queue {
 	spinlock_t lock;
 };
 
+struct cx18_stream; /* forward reference */
+
 struct cx18_dvb {
+	struct cx18_stream *stream;
 	struct dmx_frontend hw_frontend;
 	struct dmx_frontend mem_frontend;
 	struct dmxdev dmxdev;
@@ -346,9 +373,10 @@ struct cx18_in_work_order {
 #define CX18_INVALID_TASK_HANDLE 0xffffffff
 
 struct cx18_stream {
-	/* These first four fields are always set, even if the stream
+	/* These first five fields are always set, even if the stream
 	   is not actually created. */
 	struct video_device *video_dev;	/* NULL when stream not created */
+	struct cx18_dvb *dvb;		/* DVB / Digital Transport */
 	struct cx18 *cx; 		/* for ease of use */
 	const char *name;		/* name of the stream */
 	int type;			/* stream type */
@@ -379,16 +407,44 @@ struct cx18_stream {
 
 	struct work_struct out_work_order;
 
-	/* DVB / Digital Transport */
-	struct cx18_dvb dvb;
+	/* Videobuf for YUV video */
+	u32 pixelformat;
+	struct list_head vb_capture;    /* video capture queue */
+	spinlock_t vb_lock;
+	struct timer_list vb_timeout;
+
+	struct videobuf_queue vbuf_q;
+	spinlock_t vbuf_q_lock; /* Protect vbuf_q */
+	enum v4l2_buf_type vb_type;
+};
+
+struct cx18_videobuf_buffer {
+	/* Common video buffer sub-system struct */
+	struct videobuf_buffer vb;
+	v4l2_std_id tvnorm; /* selected tv norm */
+	u32 bytes_used;
 };
 
 struct cx18_open_id {
+	struct v4l2_fh fh;
 	u32 open_id;
 	int type;
-	enum v4l2_priority prio;
 	struct cx18 *cx;
+
+	struct videobuf_queue vbuf_q;
+	spinlock_t s_lock; /* Protect vbuf_q */
+	enum v4l2_buf_type vb_type;
 };
+
+static inline struct cx18_open_id *fh2id(struct v4l2_fh *fh)
+{
+	return container_of(fh, struct cx18_open_id, fh);
+}
+
+static inline struct cx18_open_id *file2id(struct file *file)
+{
+	return fh2id(file->private_data);
+}
 
 /* forward declaration of struct defined in cx18-cards.h */
 struct cx18_card;
@@ -544,7 +600,7 @@ struct cx18 {
 	struct cx18_av_state av_state;
 
 	/* codec settings */
-	struct cx2341x_mpeg_params params;
+	struct cx2341x_handler cxhdl;
 	u32 filter_mode;
 	u32 temporal_strength;
 	u32 spatial_strength;
@@ -558,6 +614,10 @@ struct cx18 {
 	int stream_buffers[CX18_MAX_STREAMS]; /* # of buffers for each stream */
 	int stream_buf_size[CX18_MAX_STREAMS]; /* Stream buffer size */
 	struct cx18_stream streams[CX18_MAX_STREAMS]; 	/* Stream data */
+	struct snd_cx18_card *alsa; /* ALSA interface for PCM capture stream */
+	void (*pcm_announce_callback)(struct snd_cx18_card *card, u8 *pcm_data,
+				      size_t num_bytes);
+
 	unsigned long i_flags;  /* global cx18 flags */
 	atomic_t ana_capturing;	/* count number of active analog capture streams */
 	atomic_t tot_capturing;	/* total count number of active capture streams */
@@ -568,18 +628,11 @@ struct cx18 {
 				   uninitialized value in the stream->id. */
 
 	u32 base_addr;
-	struct v4l2_prio_state prio;
 
 	u8 card_rev;
 	void __iomem *enc_mem, *reg_mem;
 
 	struct vbi_info vbi;
-
-	u32 pgm_info_offset;
-	u32 pgm_info_num;
-	u32 pgm_info_write_idx;
-	u32 pgm_info_read_idx;
-	struct v4l2_enc_idx_entry pgm_info[CX18_MAX_PGM_INDEX];
 
 	u64 mpg_data_received;
 	u64 vbi_data_inserted;
@@ -598,9 +651,6 @@ struct cx18 {
 	char in_workq_name[11]; /* "cx18-NN-in" */
 	struct cx18_in_work_order in_work_order[CX18_MAX_IN_WORK_ORDERS];
 	char epu_debug_str[256]; /* CX18_EPU_DEBUG is rare: use shared space */
-
-	struct workqueue_struct *out_work_queue;
-	char out_workq_name[12]; /* "cx18-NN-out" */
 
 	/* i2c */
 	struct i2c_adapter i2c_adap[2];
@@ -623,12 +673,18 @@ struct cx18 {
 	u32 active_input;
 	v4l2_std_id std;
 	v4l2_std_id tuner_std;	/* The norm of the tuner (fixed) */
+
+	/* Used for cx18-alsa module loading */
+	struct work_struct request_module_wk;
 };
 
 static inline struct cx18 *to_cx18(struct v4l2_device *v4l2_dev)
 {
 	return container_of(v4l2_dev, struct cx18, v4l2_dev);
 }
+
+/* cx18 extensions to be loaded */
+extern int (*cx18_ext_init)(struct cx18 *);
 
 /* Globals */
 extern int cx18_first_minor;
@@ -653,18 +709,25 @@ static inline int cx18_raw_vbi(const struct cx18 *cx)
 
 /* Call the specified callback for all subdevs with a grp_id bit matching the
  * mask in hw (if 0, then match them all). Ignore any errors. */
-#define cx18_call_hw(cx, hw, o, f, args...) \
-	__v4l2_device_call_subdevs(&(cx)->v4l2_dev, \
-				   !(hw) || (sd->grp_id & (hw)), o, f , ##args)
+#define cx18_call_hw(cx, hw, o, f, args...)				\
+	do {								\
+		struct v4l2_subdev *__sd;				\
+		__v4l2_device_call_subdevs_p(&(cx)->v4l2_dev, __sd,	\
+			!(hw) || (__sd->grp_id & (hw)), o, f , ##args);	\
+	} while (0)
 
 #define cx18_call_all(cx, o, f, args...) cx18_call_hw(cx, 0, o, f , ##args)
 
 /* Call the specified callback for all subdevs with a grp_id bit matching the
  * mask in hw (if 0, then match them all). If the callback returns an error
  * other than 0 or -ENOIOCTLCMD, then return with that error code. */
-#define cx18_call_hw_err(cx, hw, o, f, args...) \
-	__v4l2_device_call_subdevs_until_err( \
-		   &(cx)->v4l2_dev, !(hw) || (sd->grp_id & (hw)), o, f , ##args)
+#define cx18_call_hw_err(cx, hw, o, f, args...)				\
+({									\
+	struct v4l2_subdev *__sd;					\
+	__v4l2_device_call_subdevs_until_err_p(&(cx)->v4l2_dev,		\
+			__sd, !(hw) || (__sd->grp_id & (hw)), o, f,	\
+			##args);					\
+})
 
 #define cx18_call_all_err(cx, o, f, args...) \
 	cx18_call_hw_err(cx, 0, o, f , ##args)

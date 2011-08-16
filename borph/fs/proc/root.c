@@ -28,31 +28,21 @@ static int proc_test_super(struct super_block *sb, void *data)
 
 static int proc_set_super(struct super_block *sb, void *data)
 {
-	struct pid_namespace *ns;
-
-	ns = (struct pid_namespace *)data;
-	sb->s_fs_info = get_pid_ns(ns);
-	return set_anon_super(sb, NULL);
+	int err = set_anon_super(sb, NULL);
+	if (!err) {
+		struct pid_namespace *ns = (struct pid_namespace *)data;
+		sb->s_fs_info = get_pid_ns(ns);
+	}
+	return err;
 }
 
-static int proc_get_sb(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+static struct dentry *proc_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
 	int err;
 	struct super_block *sb;
 	struct pid_namespace *ns;
 	struct proc_inode *ei;
-
-	if (proc_mnt) {
-		/* Seed the root directory with a pid so it doesn't need
-		 * to be special in base.c.  I would do this earlier but
-		 * the only task alive when /proc is mounted the first time
-		 * is the init_task and it doesn't have any pids.
-		 */
-		ei = PROC_I(proc_mnt->mnt_sb->s_root->d_inode);
-		if (!ei->pid)
-			ei->pid = find_get_pid(1);
-	}
 
 	if (flags & MS_KERNMOUNT)
 		ns = (struct pid_namespace *)data;
@@ -61,29 +51,27 @@ static int proc_get_sb(struct file_system_type *fs_type,
 
 	sb = sget(fs_type, proc_test_super, proc_set_super, ns);
 	if (IS_ERR(sb))
-		return PTR_ERR(sb);
+		return ERR_CAST(sb);
 
 	if (!sb->s_root) {
 		sb->s_flags = flags;
 		err = proc_fill_super(sb);
 		if (err) {
 			deactivate_locked_super(sb);
-			return err;
-		}
-
-		ei = PROC_I(sb->s_root->d_inode);
-		if (!ei->pid) {
-			rcu_read_lock();
-			ei->pid = get_pid(find_pid_ns(1, ns));
-			rcu_read_unlock();
+			return ERR_PTR(err);
 		}
 
 		sb->s_flags |= MS_ACTIVE;
-		ns->proc_mnt = mnt;
 	}
 
-	simple_set_mnt(mnt, sb);
-	return 0;
+	ei = PROC_I(sb->s_root->d_inode);
+	if (!ei->pid) {
+		rcu_read_lock();
+		ei->pid = get_pid(find_pid_ns(1, ns));
+		rcu_read_unlock();
+	}
+
+	return dget(sb->s_root);
 }
 
 static void proc_kill_sb(struct super_block *sb)
@@ -97,25 +85,26 @@ static void proc_kill_sb(struct super_block *sb)
 
 static struct file_system_type proc_fs_type = {
 	.name		= "proc",
-	.get_sb		= proc_get_sb,
+	.mount		= proc_mount,
 	.kill_sb	= proc_kill_sb,
 };
 
 void __init proc_root_init(void)
 {
+	struct vfsmount *mnt;
 	int err;
 
 	proc_init_inodecache();
 	err = register_filesystem(&proc_fs_type);
 	if (err)
 		return;
-	proc_mnt = kern_mount_data(&proc_fs_type, &init_pid_ns);
-	err = PTR_ERR(proc_mnt);
-	if (IS_ERR(proc_mnt)) {
+	mnt = kern_mount_data(&proc_fs_type, &init_pid_ns);
+	if (IS_ERR(mnt)) {
 		unregister_filesystem(&proc_fs_type);
 		return;
 	}
 
+	init_pid_ns.proc_mnt = mnt;
 	proc_symlink("mounts", NULL, "self/mounts");
 
 	proc_net_init();
@@ -180,6 +169,7 @@ static int proc_root_readdir(struct file * filp,
 static const struct file_operations proc_root_operations = {
 	.read		 = generic_read_dir,
 	.readdir	 = proc_root_readdir,
+	.llseek		= default_llseek,
 };
 
 /*
@@ -196,13 +186,13 @@ static const struct inode_operations proc_root_inode_operations = {
 struct proc_dir_entry proc_root = {
 	.low_ino	= PROC_ROOT_INO, 
 	.namelen	= 5, 
-	.name		= "/proc",
 	.mode		= S_IFDIR | S_IRUGO | S_IXUGO, 
 	.nlink		= 2, 
 	.count		= ATOMIC_INIT(1),
 	.proc_iops	= &proc_root_inode_operations, 
 	.proc_fops	= &proc_root_operations,
 	.parent		= &proc_root,
+	.name		= "/proc",
 };
 
 int pid_ns_prepare_proc(struct pid_namespace *ns)
@@ -213,6 +203,7 @@ int pid_ns_prepare_proc(struct pid_namespace *ns)
 	if (IS_ERR(mnt))
 		return PTR_ERR(mnt);
 
+	ns->proc_mnt = mnt;
 	return 0;
 }
 
@@ -220,9 +211,3 @@ void pid_ns_release_proc(struct pid_namespace *ns)
 {
 	mntput(ns->proc_mnt);
 }
-
-EXPORT_SYMBOL(proc_symlink);
-EXPORT_SYMBOL(proc_mkdir);
-EXPORT_SYMBOL(create_proc_entry);
-EXPORT_SYMBOL(proc_create_data);
-EXPORT_SYMBOL(remove_proc_entry);

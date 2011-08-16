@@ -14,13 +14,13 @@
 #ifndef __ASM_GENERIC_SYSTEM_H
 #define __ASM_GENERIC_SYSTEM_H
 
-#ifdef __KERNEL__
 #ifndef __ASSEMBLY__
 
 #include <linux/types.h>
 #include <linux/irqflags.h>
 
 #include <asm/cmpxchg-local.h>
+#include <asm/cmpxchg.h>
 
 struct task_struct;
 
@@ -136,26 +136,6 @@ unsigned long __xchg(unsigned long x, volatile void *ptr, int size)
 #define xchg(ptr, x) \
 	((__typeof__(*(ptr))) __xchg((unsigned long)(x), (ptr), sizeof(*(ptr))))
 
-static inline unsigned long __cmpxchg(volatile unsigned long *m,
-				      unsigned long old, unsigned long new)
-{
-	unsigned long retval;
-	unsigned long flags;
-
-	local_irq_save(flags);
-	retval = *m;
-	if (retval == old)
-		*m = new;
-	local_irq_restore(flags);
-	return retval;
-}
-
-#define cmpxchg(ptr, o, n)					\
-	((__typeof__(*(ptr))) __cmpxchg((unsigned long *)(ptr), \
-					(unsigned long)(o),	\
-					(unsigned long)(n)))
-
 #endif /* !__ASSEMBLY__ */
 
-#endif /* __KERNEL__ */
 #endif /* __ASM_GENERIC_SYSTEM_H */

@@ -75,7 +75,7 @@ enum pvr2_v4l_type {
  *  (but it might still on the bus).  In this state there's nothing we can
  *  do; it must be replugged in order to recover.
  *
- *  COLD - Device is in an unusuable state, needs microcontroller firmware.
+ *  COLD - Device is in an unusable state, needs microcontroller firmware.
  *
  *  WARM - We can communicate with the device and the proper
  *  microcontroller firmware is running, but other device initialization is
@@ -306,6 +306,7 @@ struct pvr2_hdw_debug_info {
 	int state_encoder_ok;
 	int state_encoder_run;
 	int state_decoder_run;
+	int state_decoder_ready;
 	int state_usbstream_run;
 	int state_decoder_quiescent;
 	int state_pipeline_config;

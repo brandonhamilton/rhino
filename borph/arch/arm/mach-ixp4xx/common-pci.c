@@ -316,6 +316,11 @@ static int abort_handler(unsigned long addr, unsigned int fsr, struct pt_regs *r
 }
 
 
+static int ixp4xx_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
+{
+	return (dma_addr + size) >= SZ_64M;
+}
+
 /*
  * Setup DMA mask to 64MB on PCI devices. Ignore all other devices.
  */
@@ -324,7 +329,7 @@ static int ixp4xx_pci_platform_notify(struct device *dev)
 	if(dev->bus == &pci_bus_type) {
 		*dev->dma_mask =  SZ_64M - 1;
 		dev->coherent_dma_mask = SZ_64M - 1;
-		dmabounce_register_dev(dev, 2048, 4096);
+		dmabounce_register_dev(dev, 2048, 4096, ixp4xx_needs_bounce);
 	}
 	return 0;
 }
@@ -337,38 +342,15 @@ static int ixp4xx_pci_platform_notify_remove(struct device *dev)
 	return 0;
 }
 
-int dma_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
-{
-	return (dev->bus == &pci_bus_type ) && ((dma_addr + size) >= SZ_64M);
-}
-
-/*
- * Only first 64MB of memory can be accessed via PCI.
- * We use GFP_DMA to allocate safe buffers to do map/unmap.
- * This is really ugly and we need a better way of specifying
- * DMA-capable regions of memory.
- */
-void __init ixp4xx_adjust_zones(int node, unsigned long *zone_size,
-	unsigned long *zhole_size)
-{
-	unsigned int sz = SZ_64M >> PAGE_SHIFT;
-
-	/*
-	 * Only adjust if > 64M on current system
-	 */
-	if (node || (zone_size[0] <= sz))
-		return;
-
-	zone_size[1] = zone_size[0] - sz;
-	zone_size[0] = sz;
-	zhole_size[1] = zhole_size[0];
-	zhole_size[0] = 0;
-}
-
 void __init ixp4xx_pci_preinit(void)
 {
 	unsigned long cpuid = read_cpuid_id();
 
+#ifdef CONFIG_IXP4XX_INDIRECT_PCI
+	pcibios_min_mem = 0x10000000; /* 1 GB of indirect PCI MMIO space */
+#else
+	pcibios_min_mem = 0x48000000; /* 64 MB of PCI MMIO space */
+#endif
 	/*
 	 * Determine which PCI read method to use.
 	 * Rev 0 IXP425 requires workaround.
@@ -382,7 +364,8 @@ void __init ixp4xx_pci_preinit(void)
 
 
 	/* hook in our fault handler for PCI errors */
-	hook_fault_code(16+6, abort_handler, SIGBUS, "imprecise external abort");
+	hook_fault_code(16+6, abort_handler, SIGBUS, 0,
+			"imprecise external abort");
 
 	pr_debug("setup PCI-AHB(inbound) and AHB-PCI(outbound) address mappings\n");
 
@@ -502,27 +485,9 @@ struct pci_bus * __devinit ixp4xx_scan_bus(int nr, struct pci_sys_data *sys)
 	return pci_scan_bus(sys->busnr, &ixp4xx_ops, sys);
 }
 
-/*
- * We override these so we properly do dmabounce otherwise drivers
- * are able to set the dma_mask to 0xffffffff and we can no longer
- * trap bounces. :(
- *
- * We just return true on everyhing except for < 64MB in which case 
- * we will fail miseralby and die since we can't handle that case.
- */
-int
-pci_set_dma_mask(struct pci_dev *dev, u64 mask)
+int dma_set_coherent_mask(struct device *dev, u64 mask)
 {
-	if (mask >= SZ_64M - 1 )
-		return 0;
-
-	return -EIO;
-}
-    
-int
-pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask)
-{
-	if (mask >= SZ_64M - 1 )
+	if (mask >= SZ_64M - 1)
 		return 0;
 
 	return -EIO;
@@ -530,4 +495,4 @@ pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask)
 
 EXPORT_SYMBOL(ixp4xx_pci_read);
 EXPORT_SYMBOL(ixp4xx_pci_write);
-
+EXPORT_SYMBOL(dma_set_coherent_mask);

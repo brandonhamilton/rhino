@@ -32,7 +32,7 @@
  * not change cp0_epc due to the instruction
  *
  * According to the spec:
- * 1) it shouldnt be a branch :-)
+ * 1) it shouldn't be a branch :-)
  * 2) it can be a COP instruction :-(
  * 3) if we are tring to run a protected memory space we must take
  *    special care on memory access instructions :-(
@@ -98,7 +98,7 @@ int mips_dsemul(struct pt_regs *regs, mips_instruction ir, unsigned long cpc)
 	err |= __put_user(cpc, &fr->epc);
 
 	if (unlikely(err)) {
-		fpuemustats.errors++;
+		MIPS_FPU_EMU_INC_STATS(errors);
 		return SIGBUS;
 	}
 
@@ -136,7 +136,7 @@ int do_dsemulret(struct pt_regs *xcp)
 	err |= __get_user(cookie, &fr->cookie);
 
 	if (unlikely(err || (insn != BREAK_MATH) || (cookie != BD_COOKIE))) {
-		fpuemustats.errors++;
+		MIPS_FPU_EMU_INC_STATS(errors);
 		return 0;
 	}
 

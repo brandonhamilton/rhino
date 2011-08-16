@@ -5,7 +5,7 @@
  * NetLabel system.  The NetLabel system manages static and dynamic label
  * mappings for network protocols such as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul.moore@hp.com>
+ * Author: Paul Moore <paul@paul-moore.com>
  *
  */
 
@@ -43,6 +43,7 @@
 #include <linux/notifier.h>
 #include <linux/netdevice.h>
 #include <linux/security.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>
@@ -51,7 +52,7 @@
 #include <net/net_namespace.h>
 #include <net/netlabel.h>
 #include <asm/bug.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 
 #include "netlabel_user.h"
 #include "netlabel_addrlist.h"
@@ -114,6 +115,8 @@ struct netlbl_unlhsh_walk_arg {
 /* updates should be so rare that having one spinlock for the entire
  * hash table should be okay */
 static DEFINE_SPINLOCK(netlbl_unlhsh_lock);
+#define netlbl_unlhsh_rcu_deref(p) \
+	rcu_dereference_check(p, lockdep_is_held(&netlbl_unlhsh_lock))
 static struct netlbl_unlhsh_tbl *netlbl_unlhsh = NULL;
 static struct netlbl_unlhsh_iface *netlbl_unlhsh_def = NULL;
 
@@ -148,44 +151,6 @@ static const struct nla_policy netlbl_unlabel_genl_policy[NLBL_UNLABEL_A_MAX + 1
 /*
  * Unlabeled Connection Hash Table Functions
  */
-
-/**
- * netlbl_unlhsh_free_addr4 - Frees an IPv4 address entry from the hash table
- * @entry: the entry's RCU field
- *
- * Description:
- * This function is designed to be used as a callback to the call_rcu()
- * function so that memory allocated to a hash table address entry can be
- * released safely.
- *
- */
-static void netlbl_unlhsh_free_addr4(struct rcu_head *entry)
-{
-	struct netlbl_unlhsh_addr4 *ptr;
-
-	ptr = container_of(entry, struct netlbl_unlhsh_addr4, rcu);
-	kfree(ptr);
-}
-
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-/**
- * netlbl_unlhsh_free_addr6 - Frees an IPv6 address entry from the hash table
- * @entry: the entry's RCU field
- *
- * Description:
- * This function is designed to be used as a callback to the call_rcu()
- * function so that memory allocated to a hash table address entry can be
- * released safely.
- *
- */
-static void netlbl_unlhsh_free_addr6(struct rcu_head *entry)
-{
-	struct netlbl_unlhsh_addr6 *ptr;
-
-	ptr = container_of(entry, struct netlbl_unlhsh_addr6, rcu);
-	kfree(ptr);
-}
-#endif /* IPv6 */
 
 /**
  * netlbl_unlhsh_free_iface - Frees an interface entry from the hash table
@@ -235,15 +200,13 @@ static void netlbl_unlhsh_free_iface(struct rcu_head *entry)
  * Description:
  * This is the hashing function for the unlabeled hash table, it returns the
  * bucket number for the given device/interface.  The caller is responsible for
- * calling the rcu_read_[un]lock() functions.
+ * ensuring that the hash table is protected with either a RCU read lock or
+ * the hash table lock.
  *
  */
 static u32 netlbl_unlhsh_hash(int ifindex)
 {
-	/* this is taken _almost_ directly from
-	 * security/selinux/netif.c:sel_netif_hasfn() as they do pretty much
-	 * the same thing */
-	return ifindex & (rcu_dereference(netlbl_unlhsh)->size - 1);
+	return ifindex & (netlbl_unlhsh_rcu_deref(netlbl_unlhsh)->size - 1);
 }
 
 /**
@@ -253,7 +216,8 @@ static u32 netlbl_unlhsh_hash(int ifindex)
  * Description:
  * Searches the unlabeled connection hash table and returns a pointer to the
  * interface entry which matches @ifindex, otherwise NULL is returned.  The
- * caller is responsible for calling the rcu_read_[un]lock() functions.
+ * caller is responsible for ensuring that the hash table is protected with
+ * either a RCU read lock or the hash table lock.
  *
  */
 static struct netlbl_unlhsh_iface *netlbl_unlhsh_search_iface(int ifindex)
@@ -263,37 +227,10 @@ static struct netlbl_unlhsh_iface *netlbl_unlhsh_search_iface(int ifindex)
 	struct netlbl_unlhsh_iface *iter;
 
 	bkt = netlbl_unlhsh_hash(ifindex);
-	bkt_list = &rcu_dereference(netlbl_unlhsh)->tbl[bkt];
+	bkt_list = &netlbl_unlhsh_rcu_deref(netlbl_unlhsh)->tbl[bkt];
 	list_for_each_entry_rcu(iter, bkt_list, list)
 		if (iter->valid && iter->ifindex == ifindex)
 			return iter;
-
-	return NULL;
-}
-
-/**
- * netlbl_unlhsh_search_iface_def - Search for a matching interface entry
- * @ifindex: the network interface
- *
- * Description:
- * Searches the unlabeled connection hash table and returns a pointer to the
- * interface entry which matches @ifindex.  If an exact match can not be found
- * and there is a valid default entry, the default entry is returned, otherwise
- * NULL is returned.  The caller is responsible for calling the
- * rcu_read_[un]lock() functions.
- *
- */
-static struct netlbl_unlhsh_iface *netlbl_unlhsh_search_iface_def(int ifindex)
-{
-	struct netlbl_unlhsh_iface *entry;
-
-	entry = netlbl_unlhsh_search_iface(ifindex);
-	if (entry != NULL)
-		return entry;
-
-	entry = rcu_dereference(netlbl_unlhsh_def);
-	if (entry != NULL && entry->valid)
-		return entry;
 
 	return NULL;
 }
@@ -308,8 +245,7 @@ static struct netlbl_unlhsh_iface *netlbl_unlhsh_search_iface_def(int ifindex)
  * Description:
  * Add a new address entry into the unlabeled connection hash table using the
  * interface entry specified by @iface.  On success zero is returned, otherwise
- * a negative value is returned.  The caller is responsible for calling the
- * rcu_read_[un]lock() functions.
+ * a negative value is returned.
  *
  */
 static int netlbl_unlhsh_add_addr4(struct netlbl_unlhsh_iface *iface,
@@ -327,7 +263,6 @@ static int netlbl_unlhsh_add_addr4(struct netlbl_unlhsh_iface *iface,
 	entry->list.addr = addr->s_addr & mask->s_addr;
 	entry->list.mask = mask->s_addr;
 	entry->list.valid = 1;
-	INIT_RCU_HEAD(&entry->rcu);
 	entry->secid = secid;
 
 	spin_lock(&netlbl_unlhsh_lock);
@@ -350,8 +285,7 @@ static int netlbl_unlhsh_add_addr4(struct netlbl_unlhsh_iface *iface,
  * Description:
  * Add a new address entry into the unlabeled connection hash table using the
  * interface entry specified by @iface.  On success zero is returned, otherwise
- * a negative value is returned.  The caller is responsible for calling the
- * rcu_read_[un]lock() functions.
+ * a negative value is returned.
  *
  */
 static int netlbl_unlhsh_add_addr6(struct netlbl_unlhsh_iface *iface,
@@ -373,7 +307,6 @@ static int netlbl_unlhsh_add_addr6(struct netlbl_unlhsh_iface *iface,
 	entry->list.addr.s6_addr32[3] &= mask->s6_addr32[3];
 	ipv6_addr_copy(&entry->list.mask, mask);
 	entry->list.valid = 1;
-	INIT_RCU_HEAD(&entry->rcu);
 	entry->secid = secid;
 
 	spin_lock(&netlbl_unlhsh_lock);
@@ -393,8 +326,7 @@ static int netlbl_unlhsh_add_addr6(struct netlbl_unlhsh_iface *iface,
  * Description:
  * Add a new, empty, interface entry into the unlabeled connection hash table.
  * On success a pointer to the new interface entry is returned, on failure NULL
- * is returned.  The caller is responsible for calling the rcu_read_[un]lock()
- * functions.
+ * is returned.
  *
  */
 static struct netlbl_unlhsh_iface *netlbl_unlhsh_add_iface(int ifindex)
@@ -410,7 +342,6 @@ static struct netlbl_unlhsh_iface *netlbl_unlhsh_add_iface(int ifindex)
 	INIT_LIST_HEAD(&iface->addr4_list);
 	INIT_LIST_HEAD(&iface->addr6_list);
 	iface->valid = 1;
-	INIT_RCU_HEAD(&iface->rcu);
 
 	spin_lock(&netlbl_unlhsh_lock);
 	if (ifindex > 0) {
@@ -418,10 +349,10 @@ static struct netlbl_unlhsh_iface *netlbl_unlhsh_add_iface(int ifindex)
 		if (netlbl_unlhsh_search_iface(ifindex) != NULL)
 			goto add_iface_failure;
 		list_add_tail_rcu(&iface->list,
-				  &rcu_dereference(netlbl_unlhsh)->tbl[bkt]);
+			     &netlbl_unlhsh_rcu_deref(netlbl_unlhsh)->tbl[bkt]);
 	} else {
 		INIT_LIST_HEAD(&iface->list);
-		if (rcu_dereference(netlbl_unlhsh_def) != NULL)
+		if (netlbl_unlhsh_rcu_deref(netlbl_unlhsh_def) != NULL)
 			goto add_iface_failure;
 		rcu_assign_pointer(netlbl_unlhsh_def, iface);
 	}
@@ -494,10 +425,9 @@ int netlbl_unlhsh_add(struct net *net,
 					      audit_info);
 	switch (addr_len) {
 	case sizeof(struct in_addr): {
-		struct in_addr *addr4, *mask4;
+		const struct in_addr *addr4 = addr;
+		const struct in_addr *mask4 = mask;
 
-		addr4 = (struct in_addr *)addr;
-		mask4 = (struct in_addr *)mask;
 		ret_val = netlbl_unlhsh_add_addr4(iface, addr4, mask4, secid);
 		if (audit_buf != NULL)
 			netlbl_af4list_audit_addr(audit_buf, 1,
@@ -508,10 +438,9 @@ int netlbl_unlhsh_add(struct net *net,
 	}
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	case sizeof(struct in6_addr): {
-		struct in6_addr *addr6, *mask6;
+		const struct in6_addr *addr6 = addr;
+		const struct in6_addr *mask6 = mask;
 
-		addr6 = (struct in6_addr *)addr;
-		mask6 = (struct in6_addr *)mask;
 		ret_val = netlbl_unlhsh_add_addr6(iface, addr6, mask6, secid);
 		if (audit_buf != NULL)
 			netlbl_af6list_audit_addr(audit_buf, 1,
@@ -551,8 +480,7 @@ unlhsh_add_return:
  *
  * Description:
  * Remove an IP address entry from the unlabeled connection hash table.
- * Returns zero on success, negative values on failure.  The caller is
- * responsible for calling the rcu_read_[un]lock() functions.
+ * Returns zero on success, negative values on failure.
  *
  */
 static int netlbl_unlhsh_remove_addr4(struct net *net,
@@ -599,7 +527,7 @@ static int netlbl_unlhsh_remove_addr4(struct net *net,
 	if (entry == NULL)
 		return -ENOENT;
 
-	call_rcu(&entry->rcu, netlbl_unlhsh_free_addr4);
+	kfree_rcu(entry, rcu);
 	return 0;
 }
 
@@ -614,8 +542,7 @@ static int netlbl_unlhsh_remove_addr4(struct net *net,
  *
  * Description:
  * Remove an IP address entry from the unlabeled connection hash table.
- * Returns zero on success, negative values on failure.  The caller is
- * responsible for calling the rcu_read_[un]lock() functions.
+ * Returns zero on success, negative values on failure.
  *
  */
 static int netlbl_unlhsh_remove_addr6(struct net *net,
@@ -661,7 +588,7 @@ static int netlbl_unlhsh_remove_addr6(struct net *net,
 	if (entry == NULL)
 		return -ENOENT;
 
-	call_rcu(&entry->rcu, netlbl_unlhsh_free_addr6);
+	kfree_rcu(entry, rcu);
 	return 0;
 }
 #endif /* IPv6 */
@@ -702,7 +629,6 @@ static void netlbl_unlhsh_condremove_iface(struct netlbl_unlhsh_iface *iface)
 
 unlhsh_condremove_failure:
 	spin_unlock(&netlbl_unlhsh_lock);
-	return;
 }
 
 /**
@@ -1550,8 +1476,10 @@ int netlbl_unlabel_getattr(const struct sk_buff *skb,
 	struct netlbl_unlhsh_iface *iface;
 
 	rcu_read_lock();
-	iface = netlbl_unlhsh_search_iface_def(skb->skb_iif);
+	iface = netlbl_unlhsh_search_iface(skb->skb_iif);
 	if (iface == NULL)
+		iface = rcu_dereference(netlbl_unlhsh_def);
+	if (iface == NULL || !iface->valid)
 		goto unlabel_getattr_nolabel;
 	switch (family) {
 	case PF_INET: {

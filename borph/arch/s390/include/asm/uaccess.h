@@ -49,12 +49,13 @@
 
 #define segment_eq(a,b) ((a).ar4 == (b).ar4)
 
+#define __access_ok(addr, size)	\
+({				\
+	__chk_user_ptr(addr);	\
+	1;			\
+})
 
-static inline int __access_ok(const void __user *addr, unsigned long size)
-{
-	return 1;
-}
-#define access_ok(type,addr,size) __access_ok(addr,size)
+#define access_ok(type, addr, size) __access_ok(addr, size)
 
 /*
  * The exception table consists of pairs of addresses: the first is the
@@ -83,8 +84,8 @@ struct uaccess_ops {
 	size_t (*clear_user)(size_t, void __user *);
 	size_t (*strnlen_user)(size_t, const char __user *);
 	size_t (*strncpy_from_user)(size_t, const char __user *, char *);
-	int (*futex_atomic_op)(int op, int __user *, int oparg, int *old);
-	int (*futex_atomic_cmpxchg)(int __user *, int old, int new);
+	int (*futex_atomic_op)(int op, u32 __user *, int oparg, int *old);
+	int (*futex_atomic_cmpxchg)(u32 *, u32 __user *, u32 old, u32 new);
 };
 
 extern struct uaccess_ops uaccess;
@@ -265,6 +266,12 @@ __copy_from_user(void *to, const void __user *from, unsigned long n)
 		return uaccess.copy_from_user(n, from, to);
 }
 
+extern void copy_from_user_overflow(void)
+#ifdef CONFIG_DEBUG_STRICT_USER_COPY_CHECKS
+__compiletime_warning("copy_from_user() buffer size is not provably correct")
+#endif
+;
+
 /**
  * copy_from_user: - Copy a block of data from user space.
  * @to:   Destination address, in kernel space.
@@ -284,7 +291,13 @@ __copy_from_user(void *to, const void __user *from, unsigned long n)
 static inline unsigned long __must_check
 copy_from_user(void *to, const void __user *from, unsigned long n)
 {
+	unsigned int sz = __compiletime_object_size(to);
+
 	might_fault();
+	if (unlikely(sz != -1 && sz < n)) {
+		copy_from_user_overflow();
+		return n;
+	}
 	if (access_ok(VERIFY_READ, from, n))
 		n = __copy_from_user(to, from, n);
 	else

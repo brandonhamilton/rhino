@@ -29,10 +29,6 @@ enum sparc_cpu {
 /* This cannot ever be a sun4c :) That's just history. */
 #define ARCH_SUN4C 0
 
-extern const char *sparc_cpu_type;
-extern const char *sparc_fpu_type;
-extern const char *sparc_pmu_type;
-
 extern char reboot_command[];
 
 /* These are here in an effort to more fully work around Spitfire Errata
@@ -106,6 +102,7 @@ do {	__asm__ __volatile__("ba,pt	%%xcc, 1f\n\t" \
  */
 #define write_pic(__p)  					\
 	__asm__ __volatile__("ba,pt	%%xcc, 99f\n\t"		\
+			     " nop\n\t"				\
 			     ".align	64\n"			\
 			  "99:wr	%0, 0x0, %%pic\n\t"	\
 			     "rd	%%pic, %%g0" : : "r" (__p))
@@ -143,15 +140,7 @@ do {						\
 	 * and 2 stores in this critical code path.  -DaveM
 	 */
 #define switch_to(prev, next, last)					\
-do {	if (test_thread_flag(TIF_PERFCTR)) {				\
-		unsigned long __tmp;					\
-		read_pcr(__tmp);					\
-		current_thread_info()->pcr_reg = __tmp;			\
-		read_pic(__tmp);					\
-		current_thread_info()->kernel_cntd0 += (unsigned int)(__tmp);\
-		current_thread_info()->kernel_cntd1 += ((__tmp) >> 32);	\
-	}								\
-	flush_tlb_pending();						\
+do {	flush_tlb_pending();						\
 	save_and_clear_fpu();						\
 	/* If you are tempted to conditionalize the following */	\
 	/* so that ASI is only written if it changes, think again. */	\
@@ -197,11 +186,6 @@ do {	if (test_thread_flag(TIF_PERFCTR)) {				\
 	        "l1", "l2", "l3", "l4", "l5", "l6", "l7",		\
 	  "i0", "i1", "i2", "i3", "i4", "i5",				\
 	  "o0", "o1", "o2", "o3", "o4", "o5",       "o7");		\
-	/* If you fuck with this, update ret_from_syscall code too. */	\
-	if (test_thread_flag(TIF_PERFCTR)) {				\
-		write_pcr(current_thread_info()->pcr_reg);		\
-		reset_pic();						\
-	}								\
 } while(0)
 
 static inline unsigned long xchg32(__volatile__ unsigned int *m, unsigned int val)
@@ -250,7 +234,7 @@ static inline unsigned long __xchg(unsigned long x, __volatile__ void * ptr,
 		return xchg32(ptr, x);
 	case 8:
 		return xchg64(ptr, x);
-	};
+	}
 	__xchg_called_with_bad_pointer();
 	return x;
 }

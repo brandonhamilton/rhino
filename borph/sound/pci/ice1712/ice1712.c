@@ -87,7 +87,7 @@ static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
 static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;/* Enable this card */
 static char *model[SNDRV_CARDS];
 static int omni[SNDRV_CARDS];				/* Delta44 & 66 Omni I/O support */
-static int cs8427_timeout[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS-1)] = 500}; /* CS8427 S/PDIF transciever reset timeout value in msec */
+static int cs8427_timeout[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS-1)] = 500}; /* CS8427 S/PDIF transceiver reset timeout value in msec */
 static int dxr_enable[SNDRV_CARDS];			/* DXR enable for DMX6FIRE */
 
 module_param_array(index, int, NULL, 0444);
@@ -106,7 +106,7 @@ module_param_array(dxr_enable, int, NULL, 0444);
 MODULE_PARM_DESC(dxr_enable, "Enable DXR support for Terratec DMX6FIRE.");
 
 
-static const struct pci_device_id snd_ice1712_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_ice1712_ids) = {
 	{ PCI_VDEVICE(ICE, PCI_DEVICE_ID_ICE_1712), 0 },   /* ICE1712 */
 	{ 0, }
 };
@@ -1180,6 +1180,10 @@ static int snd_ice1712_playback_pro_open(struct snd_pcm_substream *substream)
 	snd_pcm_set_sync(substream);
 	snd_pcm_hw_constraint_msbits(runtime, 0, 32, 24);
 	snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE, &hw_constraints_rates);
+	if (is_pro_rate_locked(ice)) {
+		runtime->hw.rate_min = PRO_RATE_DEFAULT;
+		runtime->hw.rate_max = PRO_RATE_DEFAULT;
+	}
 
 	if (ice->spdif.ops.open)
 		ice->spdif.ops.open(ice, substream);
@@ -1197,6 +1201,11 @@ static int snd_ice1712_capture_pro_open(struct snd_pcm_substream *substream)
 	snd_pcm_set_sync(substream);
 	snd_pcm_hw_constraint_msbits(runtime, 0, 32, 24);
 	snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE, &hw_constraints_rates);
+	if (is_pro_rate_locked(ice)) {
+		runtime->hw.rate_min = PRO_RATE_DEFAULT;
+		runtime->hw.rate_max = PRO_RATE_DEFAULT;
+	}
+
 	return 0;
 }
 
@@ -2598,7 +2607,7 @@ static int __devinit snd_ice1712_create(struct snd_card *card,
 	ice->profi_port = pci_resource_start(pci, 3);
 
 	if (request_irq(pci->irq, snd_ice1712_interrupt, IRQF_SHARED,
-			"ICE1712", ice)) {
+			KBUILD_MODNAME, ice)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_ice1712_free(ice);
 		return -EIO;
@@ -2746,7 +2755,7 @@ static int __devinit snd_ice1712_probe(struct pci_dev *pci,
 			return err;
 		}
 		if (c->mpu401_1_name)
-			/*  Prefered name available in card_info */
+			/*  Preferred name available in card_info */
 			snprintf(ice->rmidi[0]->name,
 				 sizeof(ice->rmidi[0]->name),
 				 "%s %d", c->mpu401_1_name, card->number);
@@ -2763,7 +2772,7 @@ static int __devinit snd_ice1712_probe(struct pci_dev *pci,
 				return err;
 			}
 			if (c->mpu401_2_name)
-				/*  Prefered name available in card_info */
+				/*  Preferred name available in card_info */
 				snprintf(ice->rmidi[1]->name,
 					 sizeof(ice->rmidi[1]->name),
 					 "%s %d", c->mpu401_2_name,
@@ -2793,7 +2802,7 @@ static void __devexit snd_ice1712_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = "ICE1712",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_ice1712_ids,
 	.probe = snd_ice1712_probe,
 	.remove = __devexit_p(snd_ice1712_remove),

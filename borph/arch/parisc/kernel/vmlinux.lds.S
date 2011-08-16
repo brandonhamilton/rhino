@@ -69,6 +69,9 @@ SECTIONS
 	/* End of text section */
 	_etext = .;
 
+	/* Start of data section */
+	_sdata = .;
+
 	RODATA
 
 	/* writeable */
@@ -94,8 +97,8 @@ SECTIONS
 
 	/* PA-RISC locks requires 16-byte alignment */
 	. = ALIGN(16);
-	.data.lock_aligned : {
-		*(.data.lock_aligned)
+	.data..lock_aligned : {
+		*(.data..lock_aligned)
 	}
 
 	/* End of data section */
@@ -105,10 +108,10 @@ SECTIONS
 	__bss_start = .;
 	/* page table entries need to be PAGE_SIZE aligned */
 	. = ALIGN(PAGE_SIZE);
-	.data.vmpages : {
-		*(.data.vm0.pmd)
-		*(.data.vm0.pgd)
-		*(.data.vm0.pte)
+	.data..vmpages : {
+		*(.data..vm0.pmd)
+		*(.data..vm0.pgd)
+		*(.data..vm0.pte)
 	}
 	.bss : {
 		*(.bss)
@@ -134,6 +137,7 @@ SECTIONS
 	. = ALIGN(16384);
 	__init_begin = .;
 	INIT_TEXT_SECTION(16384)
+	. = ALIGN(PAGE_SIZE);
 	INIT_DATA_SECTION(16)
 	/* we have to discard exit text and such at runtime, not link time */
 	.exit.text :
@@ -145,7 +149,7 @@ SECTIONS
 		EXIT_DATA
 	}
 
-	PERCPU(PAGE_SIZE)
+	PERCPU_SECTION(L1_CACHE_BYTES)
 	. = ALIGN(PAGE_SIZE);
 	__init_end = .;
 	/* freed after init ends here */

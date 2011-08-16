@@ -167,7 +167,7 @@ static int __devinit njs_pci_probe(struct pci_dev *dev_netjet,
 		return(0);
 	}
 	/* the TJ300 and TJ320 must be detected, the IRQ handling is different
-	 * unfortunatly the chips use the same device ID, but the TJ320 has
+	 * unfortunately the chips use the same device ID, but the TJ320 has
 	 * the bit20 in status PCI cfg register set
 	 */
 	pci_read_config_dword(dev_netjet, 0x04, &cfg);
@@ -276,7 +276,7 @@ setup_netjet_s(struct IsdnCard *card)
 
 	for ( ;; )
 	{
-		if ((dev_netjet = pci_find_device(PCI_VENDOR_ID_TIGERJET,
+		if ((dev_netjet = hisax_find_pci_device(PCI_VENDOR_ID_TIGERJET,
 			PCI_DEVICE_ID_TIGERJET_300,  dev_netjet))) {
 			ret = njs_pci_probe(dev_netjet, cs);
 			if (!ret)

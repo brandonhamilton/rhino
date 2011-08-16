@@ -33,14 +33,11 @@
 #endif
 
 #include <xfs_types.h>
-#include <xfs_arch.h>
 
 #include <kmem.h>
 #include <mrlock.h>
-#include <sv.h>
 #include <time.h>
 
-#include <support/debug.h>
 #include <support/uuid.h>
 
 #include <linux/semaphore.h>
@@ -71,6 +68,8 @@
 #include <linux/random.h>
 #include <linux/ctype.h>
 #include <linux/writeback.h>
+#include <linux/capability.h>
+#include <linux/list_sort.h>
 
 #include <asm/page.h>
 #include <asm/div64.h>
@@ -79,17 +78,20 @@
 #include <asm/byteorder.h>
 #include <asm/unaligned.h>
 
-#include <xfs_cred.h>
 #include <xfs_vnode.h>
 #include <xfs_stats.h>
 #include <xfs_sysctl.h>
 #include <xfs_iops.h>
 #include <xfs_aops.h>
 #include <xfs_super.h>
-#include <xfs_globals.h>
-#include <xfs_fs_subr.h>
-#include <xfs_lrw.h>
 #include <xfs_buf.h>
+#include <xfs_message.h>
+
+#ifdef __BIG_ENDIAN
+#define XFS_NATIVE_HOST 1
+#else
+#undef XFS_NATIVE_HOST
+#endif
 
 /*
  * Feature macros (disable/enable)
@@ -146,7 +148,7 @@
 #define SYNCHRONIZE()	barrier()
 #define __return_address __builtin_return_address(0)
 
-#define dfltprid	0
+#define XFS_PROJID_DEFAULT	0
 #define MAXPATHLEN	1024
 
 #define MIN(a,b)	(min(a,b))
@@ -158,8 +160,6 @@
  */
 #define xfs_sort(a,n,s,fn)	sort(a,n,s,fn,NULL)
 #define xfs_stack_trace()	dump_stack()
-#define xfs_itruncate_data(ip, off)	\
-	(-vmtruncate(VFS_I(ip), (off)))
 
 
 /* Move the kernel do_div definition off to one side */
@@ -285,5 +285,26 @@ static inline __uint64_t howmany_64(__uint64_t x, __uint32_t y)
 #else
 #define __arch_pack
 #endif
+
+#define ASSERT_ALWAYS(expr)	\
+	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
+
+#ifndef DEBUG
+#define ASSERT(expr)	((void)0)
+
+#ifndef STATIC
+# define STATIC static noinline
+#endif
+
+#else /* DEBUG */
+
+#define ASSERT(expr)	\
+	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
+
+#ifndef STATIC
+# define STATIC noinline
+#endif
+
+#endif /* DEBUG */
 
 #endif /* __XFS_LINUX__ */

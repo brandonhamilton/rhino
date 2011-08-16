@@ -20,10 +20,12 @@
  *
  */
 
+#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/mISDNhw.h>
+#include <linux/slab.h>
 #include "ipac.h"
 #include "iohelper.h"
 #include "netjet.h"
@@ -319,12 +321,12 @@ inittiger(struct tiger_hw *card)
 		return -ENOMEM;
 	}
 	for (i = 0; i < 2; i++) {
-		card->bc[i].hsbuf = kmalloc(NJ_DMA_TXSIZE, GFP_KERNEL);
+		card->bc[i].hsbuf = kmalloc(NJ_DMA_TXSIZE, GFP_ATOMIC);
 		if (!card->bc[i].hsbuf) {
 			pr_info("%s: no B%d send buffer\n", card->name, i + 1);
 			return -ENOMEM;
 		}
-		card->bc[i].hrbuf = kmalloc(NJ_DMA_RXSIZE, GFP_KERNEL);
+		card->bc[i].hrbuf = kmalloc(NJ_DMA_RXSIZE, GFP_ATOMIC);
 		if (!card->bc[i].hrbuf) {
 			pr_info("%s: no B%d recv buffer\n", card->name, i + 1);
 			return -ENOMEM;
@@ -1068,6 +1070,12 @@ nj_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (pdev->subsystem_vendor == 0x55 &&
 	    pdev->subsystem_device == 0x02) {
 		pr_notice("Netjet: Enter!Now not handled yet\n");
+		return -ENODEV;
+	}
+
+	if (pdev->subsystem_vendor == 0xb100 &&
+	    pdev->subsystem_device == 0x0003 ) {
+		pr_notice("Netjet: Digium TDM400P not handled yet\n");
 		return -ENODEV;
 	}
 

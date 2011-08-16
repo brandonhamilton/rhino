@@ -6,6 +6,7 @@
 #include <linux/ioport.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 
 /* Number of bytes to reserve for the iomem resource */
 #define ATMEL_TC_IOMEM_SIZE	256
@@ -74,7 +75,7 @@ out:
 	return tc;
 
 fail_ioremap:
-	release_resource(r);
+	release_mem_region(r->start, ATMEL_TC_IOMEM_SIZE);
 fail:
 	tc = NULL;
 	goto out;
@@ -94,7 +95,7 @@ void atmel_tc_free(struct atmel_tc *tc)
 	spin_lock(&tc_list_lock);
 	if (tc->regs) {
 		iounmap(tc->regs);
-		release_resource(tc->iomem);
+		release_mem_region(tc->iomem->start, ATMEL_TC_IOMEM_SIZE);
 		tc->regs = NULL;
 		tc->iomem = NULL;
 	}

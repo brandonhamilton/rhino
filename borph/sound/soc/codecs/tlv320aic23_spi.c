@@ -84,14 +84,7 @@ static inline void tlv320aic23_spi_write_reg_cache(struct snd_soc_codec *codec,
 static int tlv320aic23_spi_write(struct snd_soc_codec *codec, unsigned int reg,
 			     unsigned int value)
 {
-	int rc;
-	struct aic23 *aic23 = codec->private_data;
 	u8 data[2];
-
-	if (!aic23) {
-		printk(KERN_WARNING "%s Invalid device 0x%x\n", __func__, (int) aic23);
-		return -1;
-	}
 	/* TLV320AIC23 has 7 bit address and 9 bits of data
 	 * so we need to switch one data bit into reg and rest
 	 * of data into val
@@ -104,15 +97,16 @@ static int tlv320aic23_spi_write(struct snd_soc_codec *codec, unsigned int reg,
 
 	data[0] = (reg << 1) | (value >> 8 & 0x01);
 	data[1] = value & 0xff;
-	rc = spi_write(aic23->spi, data, 2);
-	if (rc) {
-		dev_err(&aic23->spi->dev, "AIC23 reg read error\n");
-		return -EIO;
-	}
 
 	tlv320aic23_spi_write_reg_cache(codec, reg, value);
 
-	return 0;
+	if (codec->hw_write(codec->control_data, data, 2) == 2)
+		return 0;
+
+	printk(KERN_ERR "%s cannot write %03x to register R%u\n", __func__,
+	       value, reg);
+
+	return -EIO;;
 }
 
 static const char *rec_src_text[] = { "Line", "Mic" };
@@ -390,26 +384,15 @@ static int set_sample_rate_control(struct snd_soc_codec *codec, int mclk,
 	return 0;
 }
 
-static int tlv320aic23_spi_add_widgets(struct snd_soc_codec *codec)
-{
-	snd_soc_dapm_new_controls(codec, tlv320aic23_spi_dapm_widgets, ARRAY_SIZE(tlv320aic23_spi_dapm_widgets));
-
-	/* set up audio path interconnects */
-	snd_soc_dapm_add_routes(codec, intercon, ARRAY_SIZE(intercon));
-
-	return 0;
-}
-
 static int tlv320aic23_spi_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params,
 				 struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_device *socdev = rtd->socdev;
-	struct snd_soc_codec *codec = socdev->card->codec;
+	struct snd_soc_codec *codec = rtd->codec;
 	u16 iface_reg;
 	int ret;
-	struct aic23 *aic23 = container_of(codec, struct aic23, codec);
+	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
 	u32 sample_rate_adc = aic23->requested_adc;
 	u32 sample_rate_dac = aic23->requested_dac;
 	u32 sample_rate = params_rate(params);
@@ -451,8 +434,7 @@ static int tlv320aic23_spi_pcm_prepare(struct snd_pcm_substream *substream,
 				   struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_device *socdev = rtd->socdev;
-	struct snd_soc_codec *codec = socdev->card->codec;
+	struct snd_soc_codec *codec = rtd->codec;
 
 	/* set active */
 	tlv320aic23_spi_write(codec, TLV320AIC23_ACTIVE, 0x0001);
@@ -464,9 +446,8 @@ static void tlv320aic23_spi_shutdown(struct snd_pcm_substream *substream,
 				 struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_device *socdev = rtd->socdev;
-	struct snd_soc_codec *codec = socdev->card->codec;
-	struct aic23 *aic23 = container_of(codec, struct aic23, codec);
+	struct snd_soc_codec *codec = rtd->codec;
+	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
 
 	/* deactivate */
 	if (!codec->active) {
@@ -545,7 +526,7 @@ static int tlv320aic23_spi_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 				      int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct aic23 *aic23 = container_of(codec, struct aic23, codec);
+	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
 	aic23->mclk = freq;
 	return 0;
 }
@@ -571,7 +552,7 @@ static int tlv320aic23_spi_set_bias_level(struct snd_soc_codec *codec,
 		tlv320aic23_spi_write(codec, TLV320AIC23_ACTIVE, 0x0);
 		break;
 	}
-	codec->bias_level = level;
+	codec->dapm.bias_level = level;
 	return 0;
 }
 
@@ -588,7 +569,7 @@ static struct snd_soc_dai_ops tlv320aic23_spi_dai_ops = {
 	.set_sysclk	= tlv320aic23_spi_set_dai_sysclk,
 };
 
-struct snd_soc_dai tlv320aic23_spi_dai = {
+struct snd_soc_dai_driver tlv320aic23_spi_dai = {
 	.name = "tlv320aic23_spi",
 	.playback = {
 		     .stream_name = "Playback",
@@ -606,20 +587,15 @@ struct snd_soc_dai tlv320aic23_spi_dai = {
 };
 EXPORT_SYMBOL_GPL(tlv320aic23_spi_dai);
 
-static int tlv320aic23_spi_suspend(struct platform_device *pdev, pm_message_t state)
+static int tlv320aic23_spi_suspend(struct snd_soc_codec *codec, pm_message_t state)
 {
-	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
-	struct snd_soc_codec *codec = socdev->card->codec;
-
 	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_OFF);
 
 	return 0;
 }
 
-static int tlv320aic23_spi_resume(struct platform_device *pdev)
+static int tlv320aic23_spi_resume(struct snd_soc_codec *codec)
 {
-	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
-	struct snd_soc_codec *codec = socdev->card->codec;
 	u16 reg;
 
 	/* Sync reg_cache with the hardware */
@@ -629,7 +605,6 @@ static int tlv320aic23_spi_resume(struct platform_device *pdev)
 	}
 
 	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
-	tlv320aic23_spi_set_bias_level(codec, codec->suspend_bias_level);
 
 	return 0;
 }
@@ -637,110 +612,12 @@ static int tlv320aic23_spi_resume(struct platform_device *pdev)
 /* ---------------------------------------------------------------------
  * SoC CODEC portion of driver: probe and release routines
  */
-static int tlv320aic23_spi_codec_probe(struct platform_device *pdev)
+static int tlv320aic23_spi_codec_probe(struct snd_soc_codec *codec)
 {
-	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
-	struct snd_soc_codec *codec;
-	struct aic23 *aic23;
-	int ret = 0, err;
+	int ret = 0, reg;
+	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
 
 	printk(KERN_INFO "AIC23 Audio Codec %s\n", AIC23_VERSION);
-
-	aic23 = socdev->codec_data;
-	if (aic23 == NULL) {
-		dev_err(&pdev->dev, "aic23: missing codec pointer\n");
-		return -ENODEV;
-	}
-	codec = &aic23->codec;
-	socdev->card->codec = codec;
-
-	/* register pcms */
-	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
-	if (ret < 0) {
-		printk(KERN_ERR "tlv320aic23: failed to create pcms\n");
-		return -ENODEV;
-	}
-
-	err = snd_soc_add_controls(codec, tlv320aic23_spi_snd_controls, ARRAY_SIZE(tlv320aic23_spi_snd_controls));
-	WARN_ON(err < 0);
-
-	return ret;
-}
-
-static int tlv320aic23_spi_codec_remove(struct platform_device *pdev)
-{
-	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
-	struct snd_soc_codec *codec = socdev->card->codec;
-	struct aic23 *aic23 = container_of(codec, struct aic23, codec);
-
-	if (codec->control_data)
-		tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_OFF);
-
-	snd_soc_free_pcms(socdev);
-	snd_soc_dapm_free(socdev);
-	kfree(codec->reg_cache);
-	kfree(aic23);
-
-	return 0;
-}
-
-struct snd_soc_codec_device soc_codec_dev_tlv320aic23_spi = {
-	.probe = tlv320aic23_spi_codec_probe,
-	.remove = tlv320aic23_spi_codec_remove,
-	.suspend = tlv320aic23_spi_suspend,
-	.resume = tlv320aic23_spi_resume,
-};
-EXPORT_SYMBOL_GPL(soc_codec_dev_tlv320aic23_spi);
-
-struct aic23* tlv320aic23_spi_aic23 = 0;
-
-/* ---------------------------------------------------------------------
- * SPI portion of driver: probe and release routines
- */
-static int tlv320aic23_spi_device_probe(struct spi_device *spi)
-{
-	struct aic23 *aic23;
-	int ret, reg;
-
-	dev_dbg(&spi->dev, "probing tlv320aic23 spi device\n");
-
-	/* Allocate driver data */
-	aic23 = kzalloc(sizeof *aic23, GFP_KERNEL);
-	if (!aic23)
-		return -ENOMEM;
-
-	/* Initialize the driver data */
-	aic23->spi = spi;
-	dev_set_drvdata(&spi->dev, aic23);
-
-	/* Setup what we can in the codec structure so that the register
-	 * access functions will work as expected.  More will be filled
-	 * out when it is probed by the SoC CODEC part of this driver */
-	aic23->codec.private_data = aic23;
-	aic23->codec.name = "tlv320aic23_spi";
-	aic23->codec.owner = THIS_MODULE;
-	aic23->codec.read = tlv320aic23_spi_read_reg_cache;
-	aic23->codec.write = tlv320aic23_spi_write;
-	aic23->codec.set_bias_level = tlv320aic23_spi_set_bias_level;
-	aic23->codec.dai = &tlv320aic23_spi_dai;
-	aic23->codec.num_dai = 1;
-	mutex_init(&aic23->codec.mutex);
-	INIT_LIST_HEAD(&aic23->codec.dapm_widgets);
-	INIT_LIST_HEAD(&aic23->codec.dapm_paths);
-	aic23->codec.reg_cache_size = ARRAY_SIZE(tlv320aic23_spi_reg);
-	aic23->codec.reg_cache = kmemdup(tlv320aic23_spi_reg, sizeof(tlv320aic23_spi_reg), GFP_KERNEL);
-	if (aic23->codec.reg_cache == NULL)
-		return -ENOMEM;
-
-	tlv320aic23_spi_dai.dev = &spi->dev;
-	ret = snd_soc_register_dai(&tlv320aic23_spi_dai);
-	if (ret != 0) {
-		dev_err(&spi->dev, "Failed to register DAI: %d\n", ret);
-		kfree(aic23);
-		return ret;
-	}
-
-	tlv320aic23_spi_aic23 = aic23;
 
 	/* Reset codec */
 	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_RESET, 0);
@@ -776,18 +653,74 @@ static int tlv320aic23_spi_device_probe(struct spi_device *spi)
 
 	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_ACTIVE, 0x1);
 
-	tlv320aic23_spi_add_widgets(&aic23->codec);
+	snd_soc_add_controls(codec, tlv320aic23_spi_snd_controls, ARRAY_SIZE(tlv320aic23_spi_snd_controls));
+
+	return ret;
+}
+
+static int tlv320aic23_spi_codec_remove(struct snd_soc_codec *codec)
+{
+	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_OFF);
+
+	return 0;
+}
+
+struct snd_soc_codec_driver soc_codec_dev_tlv320aic23_spi = {
+	.reg_cache_size = ARRAY_SIZE(tlv320aic23_spi_reg),
+	.reg_word_size = sizeof(u16),
+	.reg_cache_default = tlv320aic23_spi_reg,
+	.probe = tlv320aic23_spi_codec_probe,
+	.remove = tlv320aic23_spi_codec_remove,
+	.suspend = tlv320aic23_spi_suspend,
+	.resume = tlv320aic23_spi_resume,
+	.read = tlv320aic23_spi_read_reg_cache,
+	.write = tlv320aic23_spi_write,
+	.set_bias_level = tlv320aic23_spi_set_bias_level,
+	.dapm_widgets = tlv320aic23_spi_dapm_widgets,
+	.num_dapm_widgets = ARRAY_SIZE(tlv320aic23_spi_dapm_widgets),
+	.dapm_routes = intercon,
+	.num_dapm_routes = ARRAY_SIZE(intercon),
+};
+EXPORT_SYMBOL_GPL(soc_codec_dev_tlv320aic23_spi);
+
+struct aic23* tlv320aic23_spi_aic23 = 0;
+
+/* ---------------------------------------------------------------------
+ * SPI portion of driver: probe and release routines
+ */
+static int tlv320aic23_spi_device_probe(struct spi_device *spi)
+{
+	struct aic23 *aic23;
+	int ret;
+
+	dev_dbg(&spi->dev, "Probing tlv320aic23 spi device\n");
+
+	/* Allocate driver data */
+	aic23 = kzalloc(sizeof *aic23, GFP_KERNEL);
+	if (!aic23)
+		return -ENOMEM;
+	
+	/* Initialize the driver data */
+	aic23->spi = spi;
+	dev_set_drvdata(&spi->dev, aic23);
+
+	ret = snd_soc_register_codec(&spi->dev, &soc_codec_dev_tlv320aic23_spi, &tlv320aic23_spi_dai, 1);
+	if (ret < 0)
+		kfree(aic23);
+		return ret;
+
+	printk(KERN_WARNING " ----------------------------------> SOC 5");
+	tlv320aic23_spi_aic23 = aic23;
 
 	dev_dbg(&spi->dev, "SPI device initialized\n");
-	return ret;
+	return 0;
 
 }
 
 static int tlv320aic23_spi_device_remove(struct spi_device *spi)
 {
-	struct aic23 *aic23 = dev_get_drvdata(&spi->dev);
-	snd_soc_unregister_dai(&tlv320aic23_spi_dai);
-	kfree(aic23);
+	snd_soc_unregister_codec(&spi->dev);
+	kfree(tlv320aic23_spi_aic23);
 	return 0;
 }
 

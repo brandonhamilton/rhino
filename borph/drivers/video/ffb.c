@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/fb.h>
@@ -894,10 +893,9 @@ static void ffb_init_fix(struct fb_info *info)
 	info->fix.accel = FB_ACCEL_SUN_CREATOR;
 }
 
-static int __devinit ffb_probe(struct of_device *op,
-			       const struct of_device_id *match)
+static int __devinit ffb_probe(struct platform_device *op)
 {
-	struct device_node *dp = op->node;
+	struct device_node *dp = op->dev.of_node;
 	struct ffb_fbc __iomem *fbc;
 	struct ffb_dac __iomem *dac;
 	struct fb_info *info;
@@ -1012,7 +1010,7 @@ out_dealloc_cmap:
 	fb_dealloc_cmap(&info->cmap);
 
 out_unmap_dac:
-	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
+	of_iounmap(&op->resource[1], par->dac, sizeof(struct ffb_dac));
 
 out_unmap_fbc:
 	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
@@ -1024,7 +1022,7 @@ out_err:
 	return err;
 }
 
-static int __devexit ffb_remove(struct of_device *op)
+static int __devexit ffb_remove(struct platform_device *op)
 {
 	struct fb_info *info = dev_get_drvdata(&op->dev);
 	struct ffb_par *par = info->par;
@@ -1053,9 +1051,12 @@ static const struct of_device_id ffb_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ffb_match);
 
-static struct of_platform_driver ffb_driver = {
-	.name		= "ffb",
-	.match_table	= ffb_match,
+static struct platform_driver ffb_driver = {
+	.driver = {
+		.name = "ffb",
+		.owner = THIS_MODULE,
+		.of_match_table = ffb_match,
+	},
 	.probe		= ffb_probe,
 	.remove		= __devexit_p(ffb_remove),
 };
@@ -1065,12 +1066,12 @@ static int __init ffb_init(void)
 	if (fb_get_options("ffb", NULL))
 		return -ENODEV;
 
-	return of_register_driver(&ffb_driver, &of_bus_type);
+	return platform_driver_register(&ffb_driver);
 }
 
 static void __exit ffb_exit(void)
 {
-	of_unregister_driver(&ffb_driver);
+	platform_driver_unregister(&ffb_driver);
 }
 
 module_init(ffb_init);

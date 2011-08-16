@@ -73,7 +73,7 @@ struct rhino_fpga_device *rhino_fpga;
 DECLARE_COMPLETION(configuration_data_sent);
 
 /* Mutex Semaphore to ensure proper access to page buffer */
-static DECLARE_MUTEX(rhino_mutex);
+static DEFINE_SEMAPHORE(rhino_mutex);
 
 /* FPGA configuration pins definitions */
 #define PROG_B     126

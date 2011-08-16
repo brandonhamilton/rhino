@@ -10,16 +10,20 @@
 #include <linux/seq_file.h>
 #include <linux/stat.h>
 #include <linux/string.h>
+#include <linux/of.h>
+#include <linux/module.h>
+#include <linux/slab.h>
 #include <asm/prom.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
-#ifndef HAVE_ARCH_DEVTREE_FIXUPS
 static inline void set_node_proc_entry(struct device_node *np,
 				       struct proc_dir_entry *de)
 {
-}
+#ifdef HAVE_ARCH_DEVTREE_FIXUPS
+	np->pde = de;
 #endif
+}
 
 static struct proc_dir_entry *proc_device_tree;
 
@@ -205,6 +209,9 @@ void proc_device_tree_add_node(struct device_node *np,
 	for (pp = np->properties; pp != NULL; pp = pp->next) {
 		p = pp->name;
 
+		if (strchr(p, '/'))
+			continue;
+
 		if (duplicate_name(de, p))
 			p = fixup_name(np, de, p);
 
@@ -226,7 +233,7 @@ void __init proc_device_tree_init(void)
 		return;
 	root = of_find_node_by_path("/");
 	if (root == NULL) {
-		printk(KERN_ERR "/proc/device-tree: can't find root\n");
+		pr_debug("/proc/device-tree: can't find root\n");
 		return;
 	}
 	proc_device_tree_add_node(root, proc_device_tree);

@@ -26,7 +26,7 @@
 
 struct sca_entry {
 	atomic_t scn;
-	__u64	reserved;
+	__u32	reserved;
 	__u64	sda;
 	__u64	reserved2[2];
 } __attribute__((packed));
@@ -41,7 +41,8 @@ struct sca_block {
 } __attribute__((packed));
 
 #define KVM_NR_PAGE_SIZES 2
-#define KVM_HPAGE_SHIFT(x) (PAGE_SHIFT + ((x) - 1) * 8)
+#define KVM_HPAGE_GFN_SHIFT(x) (((x) - 1) * 8)
+#define KVM_HPAGE_SHIFT(x) (PAGE_SHIFT + KVM_HPAGE_GFN_SHIFT(x))
 #define KVM_HPAGE_SIZE(x) (1UL << KVM_HPAGE_SHIFT(x))
 #define KVM_HPAGE_MASK(x)	(~(KVM_HPAGE_SIZE(x) - 1))
 #define KVM_PAGES_PER_HPAGE(x)	(KVM_HPAGE_SIZE(x) / PAGE_SIZE)
@@ -92,9 +93,7 @@ struct kvm_s390_sie_block {
 	__u32	scaol;			/* 0x0064 */
 	__u8	reserved68[4];		/* 0x0068 */
 	__u32	todpr;			/* 0x006c */
-	__u8	reserved70[16];		/* 0x0070 */
-	__u64	gmsor;			/* 0x0080 */
-	__u64	gmslm;			/* 0x0088 */
+	__u8	reserved70[32];		/* 0x0070 */
 	psw_t	gpsw;			/* 0x0090 */
 	__u64	gg14;			/* 0x00a0 */
 	__u64	gg15;			/* 0x00a8 */
@@ -137,6 +136,7 @@ struct kvm_vcpu_stat {
 	u32 instruction_chsc;
 	u32 instruction_stsi;
 	u32 instruction_stfl;
+	u32 instruction_tprot;
 	u32 instruction_sigp_sense;
 	u32 instruction_sigp_emergency;
 	u32 instruction_sigp_stop;
@@ -174,6 +174,10 @@ struct kvm_s390_prefix_info {
 	__u32 address;
 };
 
+struct kvm_s390_emerg_info {
+	__u16 code;
+};
+
 struct kvm_s390_interrupt_info {
 	struct list_head list;
 	u64	type;
@@ -181,6 +185,7 @@ struct kvm_s390_interrupt_info {
 		struct kvm_s390_io_info io;
 		struct kvm_s390_ext_info ext;
 		struct kvm_s390_pgm_info pgm;
+		struct kvm_s390_emerg_info emerg;
 		struct kvm_s390_prefix_info prefix;
 	};
 };
@@ -225,6 +230,7 @@ struct kvm_vcpu_arch {
 		struct cpuid	cpu_id;
 		u64		stidp_data;
 	};
+	struct gmap *gmap;
 };
 
 struct kvm_vm_stat {
@@ -235,6 +241,7 @@ struct kvm_arch{
 	struct sca_block *sca;
 	debug_info_t *dbf;
 	struct kvm_s390_float_interrupt float_int;
+	struct gmap *gmap;
 };
 
 extern int sie64a(struct kvm_s390_sie_block *, unsigned long *);

@@ -11,7 +11,6 @@
  * for more details.
  */
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/gfp.h>
@@ -95,17 +94,17 @@ const char *arch_vma_name(struct vm_area_struct *vma)
 	return NULL;
 }
 
-struct vm_area_struct *get_gate_vma(struct task_struct *task)
+struct vm_area_struct *get_gate_vma(struct mm_struct *mm)
 {
 	return NULL;
 }
 
-int in_gate_area(struct task_struct *task, unsigned long address)
+int in_gate_area(struct mm_struct *mm, unsigned long address)
 {
 	return 0;
 }
 
-int in_gate_area_no_task(unsigned long address)
+int in_gate_area_no_mm(unsigned long address)
 {
 	return 0;
 }

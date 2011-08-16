@@ -8,13 +8,15 @@
 
 DOCBOOKS := z8530book.xml mcabook.xml device-drivers.xml \
 	    kernel-hacking.xml kernel-locking.xml deviceiobook.xml \
-	    procfs-guide.xml writing_usb_driver.xml networking.xml \
+	    writing_usb_driver.xml networking.xml \
 	    kernel-api.xml filesystems.xml lsm.xml usb.xml kgdb.xml \
 	    gadget.xml libata.xml mtdnand.xml librs.xml rapidio.xml \
 	    genericirq.xml s390-drivers.xml uio-howto.xml scsi.xml \
-	    mac80211.xml debugobjects.xml sh.xml regulator.xml \
+	    80211.xml debugobjects.xml sh.xml regulator.xml \
 	    alsa-driver-api.xml writing-an-alsa-driver.xml \
-	    tracepoint.xml media.xml
+	    tracepoint.xml drm.xml media_api.xml
+
+include $(srctree)/Documentation/DocBook/media/Makefile
 
 ###
 # The build process is as follows (targets):
@@ -32,7 +34,7 @@ PS_METHOD	= $(prefer-db2x)
 
 ###
 # The targets that may be used.
-PHONY += xmldocs sgmldocs psdocs pdfdocs htmldocs mandocs installmandocs cleandocs media
+PHONY += xmldocs sgmldocs psdocs pdfdocs htmldocs mandocs installmandocs cleandocs
 
 BOOKS := $(addprefix $(obj)/,$(DOCBOOKS))
 xmldocs: $(BOOKS)
@@ -45,15 +47,13 @@ PDF := $(patsubst %.xml, %.pdf, $(BOOKS))
 pdfdocs: $(PDF)
 
 HTML := $(sort $(patsubst %.xml, %.html, $(BOOKS)))
-htmldocs: media $(HTML)
+htmldocs: $(HTML)
 	$(call build_main_index)
+	$(call build_images)
+	$(call install_media_images)
 
 MAN := $(patsubst %.xml, %.9, $(BOOKS))
 mandocs: $(MAN)
-
-media:
-	mkdir -p $(srctree)/Documentation/DocBook/media/
-	cp $(srctree)/Documentation/DocBook/dvb/*.png $(srctree)/Documentation/DocBook/v4l/*.gif $(srctree)/Documentation/DocBook/media/
 
 installmandocs: mandocs
 	mkdir -p /usr/local/man/man9/
@@ -62,10 +62,10 @@ installmandocs: mandocs
 ###
 #External programs used
 KERNELDOC = $(srctree)/scripts/kernel-doc
-DOCPROC   = $(objtree)/scripts/basic/docproc
+DOCPROC   = $(objtree)/scripts/docproc
 
 XMLTOFLAGS = -m $(srctree)/Documentation/DocBook/stylesheet.xsl
-#XMLTOFLAGS += --skip-validation
+XMLTOFLAGS += --skip-validation
 
 ###
 # DOCPROC is used for two purposes:
@@ -90,7 +90,7 @@ endef
 	$(call if_changed_rule,docproc)
 
 ###
-#Read in all saved dependency files 
+#Read in all saved dependency files
 cmd_files := $(wildcard $(foreach f,$(BOOKS),$(dir $(f)).$(notdir $(f)).cmd))
 
 ifneq ($(cmd_files),)
@@ -100,17 +100,6 @@ endif
 ###
 # Changes in kernel-doc force a rebuild of all documentation
 $(BOOKS): $(KERNELDOC)
-
-###
-# procfs guide uses a .c file as example code.
-# This requires an explicit dependency
-C-procfs-example = procfs_example.xml
-C-procfs-example2 = $(addprefix $(obj)/,$(C-procfs-example))
-$(obj)/procfs-guide.xml: $(C-procfs-example2)
-
-# List of programs to build
-##oops, this is a kernel module::hostprogs-y := procfs_example
-obj-m += procfs_example.o
 
 # Tell kbuild to always build the programs
 always := $(hostprogs-y)
@@ -150,7 +139,7 @@ quiet_cmd_db2pdf = PDF     $@
 
 index = index.html
 main_idx = Documentation/DocBook/$(index)
-build_main_index = rm -rf $(main_idx) && \
+build_main_index = rm -rf $(main_idx); \
 		   echo '<h1>Linux Kernel HTML Documentation</h1>' >> $(main_idx) && \
 		   echo '<h2>Kernel Version: $(KERNELVERSION)</h2>' >> $(main_idx) && \
 		   cat $(HTML) >> $(main_idx)
@@ -238,11 +227,11 @@ clean-files := $(DOCBOOKS) \
 	$(patsubst %.xml, %.pdf,  $(DOCBOOKS)) \
 	$(patsubst %.xml, %.html, $(DOCBOOKS)) \
 	$(patsubst %.xml, %.9,    $(DOCBOOKS)) \
-	$(C-procfs-example) $(index)
+	$(index)
 
 clean-dirs := $(patsubst %.xml,%,$(DOCBOOKS)) man
 
-cleandocs:
+cleandocs: cleanmediadocs
 	$(Q)rm -f $(call objectify, $(clean-files))
 	$(Q)rm -rf $(call objectify, $(clean-dirs))
 

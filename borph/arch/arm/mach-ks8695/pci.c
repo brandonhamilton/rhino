@@ -268,8 +268,8 @@ static void __init ks8695_pci_preinit(void)
 	__raw_writel(0, KS8695_PCI_VA + KS8695_PIOBAC);
 
 	/* hook in fault handlers */
-	hook_fault_code(8, ks8695_pci_fault, SIGBUS, "external abort on non-linefetch");
-	hook_fault_code(10, ks8695_pci_fault, SIGBUS, "external abort on non-linefetch");
+	hook_fault_code(8, ks8695_pci_fault, SIGBUS, 0, "external abort on non-linefetch");
+	hook_fault_code(10, ks8695_pci_fault, SIGBUS, 0, "external abort on non-linefetch");
 }
 
 static void ks8695_show_pciregs(void)
@@ -316,6 +316,9 @@ void __init ks8695_init_pci(struct ks8695_pci_cfg *cfg)
 		printk("PCI: KS8695 in guest mode, not initialising\n");
 		return;
 	}
+
+	pcibios_min_io = 0;
+	pcibios_min_mem = 0;
 
 	printk(KERN_INFO "PCI: Initialising\n");
 	ks8695_show_pciregs();

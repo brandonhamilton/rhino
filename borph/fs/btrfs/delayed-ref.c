@@ -17,6 +17,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/sort.h>
 #include "ctree.h"
 #include "delayed-ref.h"
@@ -280,145 +281,6 @@ again:
 }
 
 /*
- * This checks to see if there are any delayed refs in the
- * btree for a given bytenr.  It returns one if it finds any
- * and zero otherwise.
- *
- * If it only finds a head node, it returns 0.
- *
- * The idea is to use this when deciding if you can safely delete an
- * extent from the extent allocation tree.  There may be a pending
- * ref in the rbtree that adds or removes references, so as long as this
- * returns one you need to leave the BTRFS_EXTENT_ITEM in the extent
- * allocation tree.
- */
-int btrfs_delayed_ref_pending(struct btrfs_trans_handle *trans, u64 bytenr)
-{
-	struct btrfs_delayed_ref_node *ref;
-	struct btrfs_delayed_ref_root *delayed_refs;
-	struct rb_node *prev_node;
-	int ret = 0;
-
-	delayed_refs = &trans->transaction->delayed_refs;
-	spin_lock(&delayed_refs->lock);
-
-	ref = find_ref_head(&delayed_refs->root, bytenr, NULL);
-	if (ref) {
-		prev_node = rb_prev(&ref->rb_node);
-		if (!prev_node)
-			goto out;
-		ref = rb_entry(prev_node, struct btrfs_delayed_ref_node,
-			       rb_node);
-		if (ref->bytenr == bytenr)
-			ret = 1;
-	}
-out:
-	spin_unlock(&delayed_refs->lock);
-	return ret;
-}
-
-/*
- * helper function to lookup reference count and flags of extent.
- *
- * the head node for delayed ref is used to store the sum of all the
- * reference count modifications queued up in the rbtree. the head
- * node may also store the extent flags to set. This way you can check
- * to see what the reference count and extent flags would be if all of
- * the delayed refs are not processed.
- */
-int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
-			     struct btrfs_root *root, u64 bytenr,
-			     u64 num_bytes, u64 *refs, u64 *flags)
-{
-	struct btrfs_delayed_ref_node *ref;
-	struct btrfs_delayed_ref_head *head;
-	struct btrfs_delayed_ref_root *delayed_refs;
-	struct btrfs_path *path;
-	struct btrfs_extent_item *ei;
-	struct extent_buffer *leaf;
-	struct btrfs_key key;
-	u32 item_size;
-	u64 num_refs;
-	u64 extent_flags;
-	int ret;
-
-	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
-
-	key.objectid = bytenr;
-	key.type = BTRFS_EXTENT_ITEM_KEY;
-	key.offset = num_bytes;
-	delayed_refs = &trans->transaction->delayed_refs;
-again:
-	ret = btrfs_search_slot(trans, root->fs_info->extent_root,
-				&key, path, 0, 0);
-	if (ret < 0)
-		goto out;
-
-	if (ret == 0) {
-		leaf = path->nodes[0];
-		item_size = btrfs_item_size_nr(leaf, path->slots[0]);
-		if (item_size >= sizeof(*ei)) {
-			ei = btrfs_item_ptr(leaf, path->slots[0],
-					    struct btrfs_extent_item);
-			num_refs = btrfs_extent_refs(leaf, ei);
-			extent_flags = btrfs_extent_flags(leaf, ei);
-		} else {
-#ifdef BTRFS_COMPAT_EXTENT_TREE_V0
-			struct btrfs_extent_item_v0 *ei0;
-			BUG_ON(item_size != sizeof(*ei0));
-			ei0 = btrfs_item_ptr(leaf, path->slots[0],
-					     struct btrfs_extent_item_v0);
-			num_refs = btrfs_extent_refs_v0(leaf, ei0);
-			/* FIXME: this isn't correct for data */
-			extent_flags = BTRFS_BLOCK_FLAG_FULL_BACKREF;
-#else
-			BUG();
-#endif
-		}
-		BUG_ON(num_refs == 0);
-	} else {
-		num_refs = 0;
-		extent_flags = 0;
-		ret = 0;
-	}
-
-	spin_lock(&delayed_refs->lock);
-	ref = find_ref_head(&delayed_refs->root, bytenr, NULL);
-	if (ref) {
-		head = btrfs_delayed_node_to_head(ref);
-		if (!mutex_trylock(&head->mutex)) {
-			atomic_inc(&ref->refs);
-			spin_unlock(&delayed_refs->lock);
-
-			btrfs_release_path(root->fs_info->extent_root, path);
-
-			mutex_lock(&head->mutex);
-			mutex_unlock(&head->mutex);
-			btrfs_put_delayed_ref(ref);
-			goto again;
-		}
-		if (head->extent_op && head->extent_op->update_flags)
-			extent_flags |= head->extent_op->flags_to_set;
-		else
-			BUG_ON(num_refs == 0);
-
-		num_refs += ref->ref_mod;
-		mutex_unlock(&head->mutex);
-	}
-	WARN_ON(num_refs == 0);
-	if (refs)
-		*refs = num_refs;
-	if (flags)
-		*flags = extent_flags;
-out:
-	spin_unlock(&delayed_refs->lock);
-	btrfs_free_path(path);
-	return ret;
-}
-
-/*
  * helper function to update an extent delayed ref in the
  * rbtree.  existing and update must both have the same
  * bytenr and parent
@@ -583,6 +445,8 @@ static noinline int add_delayed_ref_head(struct btrfs_trans_handle *trans,
 	INIT_LIST_HEAD(&head_ref->cluster);
 	mutex_init(&head_ref->mutex);
 
+	trace_btrfs_delayed_ref_head(ref, head_ref, action);
+
 	existing = tree_insert(&delayed_refs->root, &ref->rb_node);
 
 	if (existing) {
@@ -637,6 +501,8 @@ static noinline int add_delayed_tree_ref(struct btrfs_trans_handle *trans,
 	}
 	full_ref->level = level;
 
+	trace_btrfs_delayed_tree_ref(ref, full_ref, action);
+
 	existing = tree_insert(&delayed_refs->root, &ref->rb_node);
 
 	if (existing) {
@@ -690,6 +556,8 @@ static noinline int add_delayed_data_ref(struct btrfs_trans_handle *trans,
 	}
 	full_ref->objectid = owner;
 	full_ref->offset = offset;
+
+	trace_btrfs_delayed_data_ref(ref, full_ref, action);
 
 	existing = tree_insert(&delayed_refs->root, &ref->rb_node);
 
@@ -841,79 +709,3 @@ btrfs_find_delayed_ref_head(struct btrfs_trans_handle *trans, u64 bytenr)
 		return btrfs_delayed_node_to_head(ref);
 	return NULL;
 }
-
-/*
- * add a delayed ref to the tree.  This does all of the accounting required
- * to make sure the delayed ref is eventually processed before this
- * transaction commits.
- *
- * The main point of this call is to add and remove a backreference in a single
- * shot, taking the lock only once, and only searching for the head node once.
- *
- * It is the same as doing a ref add and delete in two separate calls.
- */
-#if 0
-int btrfs_update_delayed_ref(struct btrfs_trans_handle *trans,
-			  u64 bytenr, u64 num_bytes, u64 orig_parent,
-			  u64 parent, u64 orig_ref_root, u64 ref_root,
-			  u64 orig_ref_generation, u64 ref_generation,
-			  u64 owner_objectid, int pin)
-{
-	struct btrfs_delayed_ref *ref;
-	struct btrfs_delayed_ref *old_ref;
-	struct btrfs_delayed_ref_head *head_ref;
-	struct btrfs_delayed_ref_root *delayed_refs;
-	int ret;
-
-	ref = kmalloc(sizeof(*ref), GFP_NOFS);
-	if (!ref)
-		return -ENOMEM;
-
-	old_ref = kmalloc(sizeof(*old_ref), GFP_NOFS);
-	if (!old_ref) {
-		kfree(ref);
-		return -ENOMEM;
-	}
-
-	/*
-	 * the parent = 0 case comes from cases where we don't actually
-	 * know the parent yet.  It will get updated later via a add/drop
-	 * pair.
-	 */
-	if (parent == 0)
-		parent = bytenr;
-	if (orig_parent == 0)
-		orig_parent = bytenr;
-
-	head_ref = kmalloc(sizeof(*head_ref), GFP_NOFS);
-	if (!head_ref) {
-		kfree(ref);
-		kfree(old_ref);
-		return -ENOMEM;
-	}
-	delayed_refs = &trans->transaction->delayed_refs;
-	spin_lock(&delayed_refs->lock);
-
-	/*
-	 * insert both the head node and the new ref without dropping
-	 * the spin lock
-	 */
-	ret = __btrfs_add_delayed_ref(trans, &head_ref->node, bytenr, num_bytes,
-				      (u64)-1, 0, 0, 0,
-				      BTRFS_UPDATE_DELAYED_HEAD, 0);
-	BUG_ON(ret);
-
-	ret = __btrfs_add_delayed_ref(trans, &ref->node, bytenr, num_bytes,
-				      parent, ref_root, ref_generation,
-				      owner_objectid, BTRFS_ADD_DELAYED_REF, 0);
-	BUG_ON(ret);
-
-	ret = __btrfs_add_delayed_ref(trans, &old_ref->node, bytenr, num_bytes,
-				      orig_parent, orig_ref_root,
-				      orig_ref_generation, owner_objectid,
-				      BTRFS_DROP_DELAYED_REF, pin);
-	BUG_ON(ret);
-	spin_unlock(&delayed_refs->lock);
-	return 0;
-}
-#endif

@@ -47,6 +47,7 @@
 #include <linux/pci_hotplug.h>
 #include <linux/pci-acpi.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 
 #include "../pci.h"
 #include "acpiphp.h"
@@ -109,7 +110,7 @@ static int post_dock_fixups(struct notifier_block *nb, unsigned long val,
 }
 
 
-static struct acpi_dock_ops acpiphp_dock_ops = {
+static const struct acpi_dock_ops acpiphp_dock_ops = {
 	.handler = handle_hotplug_event_func,
 };
 
@@ -211,6 +212,7 @@ register_slot(acpi_handle handle, u32 lvl, void *context, void **rv)
 
 	pdev = pci_get_slot(pbus, PCI_DEVFN(device, function));
 	if (pdev) {
+		pdev->current_state = PCI_D0;
 		slot->flags |= (SLOT_ENABLED | SLOT_POWEREDON);
 		pci_dev_put(pdev);
 	}
@@ -583,7 +585,7 @@ static void remove_bridge(acpi_handle handle)
 
 	/*
 	 * On root bridges with hotplug slots directly underneath (ie,
-	 * no p2p bridge inbetween), we call cleanup_bridge(). 
+	 * no p2p bridge between), we call cleanup_bridge(). 
 	 *
 	 * The else clause cleans up root bridges that either had no
 	 * hotplug slots at all, or had a p2p bridge underneath.
@@ -720,12 +722,6 @@ static int acpiphp_bus_add(struct acpiphp_func *func)
 			-ret_val);
 		goto acpiphp_bus_add_out;
 	}
-	/*
-	 * try to start anyway.  We could have failed to add
-	 * simply because this bus had previously been added
-	 * on another add.  Don't bother with the return value
-	 * we just keep going.
-	 */
 	ret_val = acpi_bus_start(device);
 
 acpiphp_bus_add_out:
@@ -753,6 +749,24 @@ static int acpiphp_bus_trim(acpi_handle handle)
 		err("cannot remove from acpi list\n");
 
 	return retval;
+}
+
+static void acpiphp_set_acpi_region(struct acpiphp_slot *slot)
+{
+	struct acpiphp_func *func;
+	union acpi_object params[2];
+	struct acpi_object_list arg_list;
+
+	list_for_each_entry(func, &slot->funcs, sibling) {
+		arg_list.count = 2;
+		arg_list.pointer = params;
+		params[0].type = ACPI_TYPE_INTEGER;
+		params[0].integer.value = ACPI_ADR_SPACE_PCI_CONFIG;
+		params[1].type = ACPI_TYPE_INTEGER;
+		params[1].integer.value = 1;
+		/* _REG is optional, we don't care about if there is failure */
+		acpi_evaluate_object(func->handle, "_REG", &arg_list, NULL);
+	}
 }
 
 /**
@@ -811,7 +825,15 @@ static int __ref enable_device(struct acpiphp_slot *slot)
 	pci_bus_assign_resources(bus);
 	acpiphp_sanitize_bus(bus);
 	acpiphp_set_hpp_values(bus);
+	acpiphp_set_acpi_region(slot);
 	pci_enable_bridges(bus);
+
+	list_for_each_entry(dev, &bus->devices, bus_list) {
+		/* Assume that newly added devices are powered on already. */
+		if (!dev->is_added)
+			dev->current_state = PCI_D0;
+	}
+
 	pci_bus_add_devices(bus);
 
 	list_for_each_entry(func, &slot->funcs, sibling) {

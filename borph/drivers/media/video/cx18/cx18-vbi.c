@@ -29,7 +29,7 @@
 /*
  * Raster Reference/Protection (RP) bytes, used in Start/End Active
  * Video codes emitted from the digitzer in VIP 1.x mode, that flag the start
- * of VBI sample or VBI ancilliary data regions in the digitial ratser line.
+ * of VBI sample or VBI ancillary data regions in the digitial ratser line.
  *
  * Task FieldEven VerticalBlank HorizontalBlank 0 0 0 0
  */
@@ -174,7 +174,7 @@ static u32 compress_sliced_buf(struct cx18 *cx, u8 *buf, u32 size,
 		     p[3] != sliced_vbi_eav_rp[1]))
 			continue;
 		vbi.p = p + 4;
-		v4l2_subdev_call(cx->sd_av, video, decode_vbi_line, &vbi);
+		v4l2_subdev_call(cx->sd_av, vbi, decode_vbi_line, &vbi);
 		if (vbi.type) {
 			cx->vbi.sliced_data[line].id = vbi.type;
 			cx->vbi.sliced_data[line].field = vbi.is_second_field;

@@ -40,6 +40,8 @@
 #define RETU_REG_CTRL_CLR	0x0f	/* Regulator clear register */
 #define RETU_REG_CTRL_SET	0x10	/* Regulator set register */
 #define RETU_REG_STATUS		0x16	/* Status register */
+#define  RETU_REG_STATUS_BATAVAIL	0x0100 /* Battery available */
+#define  RETU_REG_STATUS_CHGPLUG	0x1000 /* Charger is plugged in */
 #define RETU_REG_WATCHDOG	0x17	/* Watchdog register */
 #define RETU_REG_AUDTXR		0x18	/* Audio Codec Tx register */
 #define RETU_REG_MAX		0x1f
@@ -57,21 +59,27 @@
 
 #define	MAX_RETU_IRQ_HANDLERS	16
 
-int retu_read_reg(int reg);
-void retu_write_reg(int reg, u16 val);
-void retu_set_clear_reg_bits(int reg, u16 set, u16 clear);
-int retu_read_adc(int channel);
-int retu_request_irq(int id, void *irq_handler, unsigned long arg, char *name);
-void retu_free_irq(int id);
-void retu_enable_irq(int id);
-void retu_disable_irq(int id);
-void retu_ack_irq(int id);
+/* ADC channels */
+#define RETU_ADC_GND		0x00 /* Ground */
+#define RETU_ADC_BSI		0x01 /* Battery Size Indicator */
+#define RETU_ADC_BATTEMP	0x02 /* Battery temperature */
+#define RETU_ADC_CHGVOLT	0x03 /* Charger voltage */
+#define RETU_ADC_HEADSET	0x04 /* Headset detection */
+#define RETU_ADC_HOOKDET	0x05 /* Hook detection */
+#define RETU_ADC_RFGP		0x06 /* RF GP */
+#define RETU_ADC_WBTX		0x07 /* Wideband Tx detection */
+#define RETU_ADC_BATTVOLT	0x08 /* Battery voltage measurement */
+#define RETU_ADC_GND2		0x09 /* Ground */
+#define RETU_ADC_LIGHTSENS	0x0A /* Light sensor */
+#define RETU_ADC_LIGHTTEMP	0x0B /* Light sensor temperature */
+#define RETU_ADC_BKUPVOLT	0x0C /* Backup battery voltage */
+#define RETU_ADC_TEMP		0x0D /* RETU temperature */
 
-#ifdef CONFIG_CBUS_RETU_USER
-int retu_user_init(void);
-void retu_user_cleanup(void);
-#endif
 
-extern spinlock_t retu_lock;
+int retu_read_reg(struct device *child, unsigned reg);
+void retu_write_reg(struct device *child, unsigned reg, u16 val);
+void retu_set_clear_reg_bits(struct device *child, unsigned reg, u16 set,
+		u16 clear);
+int retu_read_adc(struct device *child, int channel);
 
 #endif /* __DRIVERS_CBUS_RETU_H */

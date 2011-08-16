@@ -309,7 +309,7 @@ static inline int test_and_change_bit(int nr, volatile unsigned long *addr)
 static __always_inline int constant_test_bit(unsigned int nr, const volatile unsigned long *addr)
 {
 	return ((1UL << (nr % BITS_PER_LONG)) &
-		(((unsigned long *)addr)[nr / BITS_PER_LONG])) != 0;
+		(addr[nr / BITS_PER_LONG])) != 0;
 }
 
 static inline int variable_test_bit(int nr, volatile const unsigned long *addr)
@@ -440,11 +440,15 @@ static inline int fls(int x)
 
 #ifdef __KERNEL__
 
+#include <asm-generic/bitops/find.h>
+
 #include <asm-generic/bitops/sched.h>
 
 #define ARCH_HAS_FAST_MULTIPLIER 1
 
-#include <asm-generic/bitops/hweight.h>
+#include <asm/arch_hweight.h>
+
+#include <asm-generic/bitops/const_hweight.h>
 
 #endif /* __KERNEL__ */
 
@@ -452,14 +456,9 @@ static inline int fls(int x)
 
 #ifdef __KERNEL__
 
-#include <asm-generic/bitops/ext2-non-atomic.h>
+#include <asm-generic/bitops/le.h>
 
-#define ext2_set_bit_atomic(lock, nr, addr)			\
-	test_and_set_bit((nr), (unsigned long *)(addr))
-#define ext2_clear_bit_atomic(lock, nr, addr)			\
-	test_and_clear_bit((nr), (unsigned long *)(addr))
-
-#include <asm-generic/bitops/minix.h>
+#include <asm-generic/bitops/ext2-atomic-setbit.h>
 
 #endif /* __KERNEL__ */
 #endif /* _ASM_X86_BITOPS_H */

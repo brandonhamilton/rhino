@@ -394,7 +394,7 @@ static struct go7007_usb_board board_adlink_mpg24 = {
 		.num_i2c_devs	 = 1,
 		.i2c_devs	 = {
 			{
-				.type	= "wis_twTW2804",
+				.type	= "wis_tw2804",
 				.id	= I2C_DRIVERID_WIS_TW2804,
 				.addr	= 0x00, /* yes, really */
 			},
@@ -444,7 +444,9 @@ static struct go7007_usb_board board_sensoray_2250 = {
 	},
 };
 
-static struct usb_device_id go7007_usb_id_table[] = {
+MODULE_FIRMWARE("go7007tv.bin");
+
+static const struct usb_device_id go7007_usb_id_table[] = {
 	{
 		.match_flags	= USB_DEVICE_ID_MATCH_DEVICE_AND_VERSION |
 					USB_DEVICE_ID_MATCH_INT_INFO,
@@ -668,10 +670,9 @@ static int go7007_usb_onboard_write_interrupt(struct go7007 *go,
 		"go7007-usb: WriteInterrupt: %04x %04x\n", addr, data);
 #endif
 
-	tbuf = kmalloc(8, GFP_KERNEL);
+	tbuf = kzalloc(8, GFP_KERNEL);
 	if (tbuf == NULL)
 		return -ENOMEM;
-	memset(tbuf, 0, 8);
 	tbuf[0] = data & 0xff;
 	tbuf[1] = data >> 8;
 	tbuf[2] = addr & 0xff;
@@ -1246,15 +1247,13 @@ static void go7007_usb_disconnect(struct usb_interface *intf)
 		vurb = usb->video_urbs[i];
 		if (vurb) {
 			usb_kill_urb(vurb);
-			if (vurb->transfer_buffer)
-				kfree(vurb->transfer_buffer);
+			kfree(vurb->transfer_buffer);
 			usb_free_urb(vurb);
 		}
 		aurb = usb->audio_urbs[i];
 		if (aurb) {
 			usb_kill_urb(aurb);
-			if (aurb->transfer_buffer)
-				kfree(aurb->transfer_buffer);
+			kfree(aurb->transfer_buffer);
 			usb_free_urb(aurb);
 		}
 	}

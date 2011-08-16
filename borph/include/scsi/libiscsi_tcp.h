@@ -47,11 +47,12 @@ struct iscsi_segment {
 	struct scatterlist	*sg;
 	void			*sg_mapped;
 	unsigned int		sg_offset;
+	bool			atomic_mapped;
 
 	iscsi_segment_done_fn_t	*done;
 };
 
-/* Socket connection recieve helper */
+/* Socket connection receive helper */
 struct iscsi_tcp_recv {
 	struct iscsi_hdr	*hdr;
 	struct iscsi_segment	segment;
@@ -80,7 +81,7 @@ struct iscsi_tcp_task {
 	int			data_offset;
 	struct iscsi_r2t_info	*r2t;		/* in progress solict R2T */
 	struct iscsi_pool	r2tpool;
-	struct kfifo		*r2tqueue;
+	struct kfifo		r2tqueue;
 	void			*dd_data;
 };
 

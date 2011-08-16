@@ -15,6 +15,7 @@
 #include <linux/interrupt.h>
 #include <linux/errno.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -292,7 +293,7 @@ static int parport_ax88796_probe(struct platform_device *pdev)
 		goto exit_mem;
 	}
 
-	size = (res->end - res->start) + 1;
+	size = resource_size(res);
 	spacing = size / 3;
 
 	dd->io = request_mem_region(res->start, size, pdev->name);

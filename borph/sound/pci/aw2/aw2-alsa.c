@@ -26,7 +26,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
@@ -44,9 +44,6 @@ MODULE_LICENSE("GPL");
 /*********************************
  * DEFINES
  ********************************/
-#define PCI_VENDOR_ID_SAA7146		  0x1131
-#define PCI_DEVICE_ID_SAA7146		  0x7146
-
 #define CTL_ROUTE_ANALOG 0
 #define CTL_ROUTE_DIGITAL 1
 
@@ -164,8 +161,8 @@ MODULE_PARM_DESC(id, "ID string for the Audiowerk2 soundcard.");
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable Audiowerk2 soundcard.");
 
-static struct pci_device_id snd_aw2_ids[] = {
-	{PCI_VENDOR_ID_SAA7146, PCI_DEVICE_ID_SAA7146, 0, 0,
+static DEFINE_PCI_DEVICE_TABLE(snd_aw2_ids) = {
+	{PCI_VENDOR_ID_PHILIPS, PCI_DEVICE_ID_PHILIPS_SAA7146, 0, 0,
 	 0, 0, 0},
 	{0}
 };
@@ -174,7 +171,7 @@ MODULE_DEVICE_TABLE(pci, snd_aw2_ids);
 
 /* pci_driver definition */
 static struct pci_driver driver = {
-	.name = "Emagic Audiowerk 2",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_aw2_ids,
 	.probe = snd_aw2_probe,
 	.remove = __devexit_p(snd_aw2_remove),
@@ -320,7 +317,7 @@ static int __devinit snd_aw2_create(struct snd_card *card,
 	snd_aw2_saa7146_setup(&chip->saa7146, chip->iobase_virt);
 
 	if (request_irq(pci->irq, snd_aw2_saa7146_interrupt,
-			IRQF_SHARED, "Audiowerk2", chip)) {
+			IRQF_SHARED, KBUILD_MODNAME, chip)) {
 		printk(KERN_ERR "aw2: Cannot grab irq %d\n", pci->irq);
 
 		iounmap(chip->iobase_virt);
@@ -419,7 +416,7 @@ static int snd_aw2_pcm_playback_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	snd_printdd(KERN_DEBUG "aw2: Playback_open \n");
+	snd_printdd(KERN_DEBUG "aw2: Playback_open\n");
 	runtime->hw = snd_aw2_playback_hw;
 	return 0;
 }
@@ -435,7 +432,7 @@ static int snd_aw2_pcm_capture_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	snd_printdd(KERN_DEBUG "aw2: Capture_open \n");
+	snd_printdd(KERN_DEBUG "aw2: Capture_open\n");
 	runtime->hw = snd_aw2_capture_hw;
 	return 0;
 }

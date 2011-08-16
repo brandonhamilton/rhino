@@ -23,7 +23,6 @@
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 
@@ -228,9 +227,14 @@ static void __init ixp23xx_pci_common_init(void)
 
 void __init ixp23xx_pci_preinit(void)
 {
+	pcibios_min_io = 0;
+	pcibios_min_mem = 0xe0000000;
+
+	pci_set_flags(0);
+
 	ixp23xx_pci_common_init();
 
-	hook_fault_code(16+6, ixp23xx_pci_abort_handler, SIGBUS,
+	hook_fault_code(16+6, ixp23xx_pci_abort_handler, SIGBUS, 0,
 			"PCI config cycle to non-existent device");
 
 	*IXP23XX_PCI_ADDR_EXT = 0x0000e000;

@@ -105,7 +105,7 @@ struct i2c_reg {
 
 struct cpm_i2c {
 	char *base;
-	struct of_device *ofdev;
+	struct platform_device *ofdev;
 	struct i2c_adapter adap;
 	uint dp_addr;
 	int version; /* CPM1=1, CPM2=2 */
@@ -428,7 +428,7 @@ static const struct i2c_adapter cpm_ops = {
 
 static int __devinit cpm_i2c_setup(struct cpm_i2c *cpm)
 {
-	struct of_device *ofdev = cpm->ofdev;
+	struct platform_device *ofdev = cpm->ofdev;
 	const u32 *data;
 	int len, ret, i;
 	void __iomem *i2c_base;
@@ -440,8 +440,8 @@ static int __devinit cpm_i2c_setup(struct cpm_i2c *cpm)
 
 	init_waitqueue_head(&cpm->i2c_wait);
 
-	cpm->irq = of_irq_to_resource(ofdev->node, 0, NULL);
-	if (cpm->irq == NO_IRQ)
+	cpm->irq = of_irq_to_resource(ofdev->dev.of_node, 0, NULL);
+	if (!cpm->irq)
 		return -EINVAL;
 
 	/* Install interrupt handler. */
@@ -451,13 +451,13 @@ static int __devinit cpm_i2c_setup(struct cpm_i2c *cpm)
 		return ret;
 
 	/* I2C parameter RAM */
-	i2c_base = of_iomap(ofdev->node, 1);
+	i2c_base = of_iomap(ofdev->dev.of_node, 1);
 	if (i2c_base == NULL) {
 		ret = -EINVAL;
 		goto out_irq;
 	}
 
-	if (of_device_is_compatible(ofdev->node, "fsl,cpm1-i2c")) {
+	if (of_device_is_compatible(ofdev->dev.of_node, "fsl,cpm1-i2c")) {
 
 		/* Check for and use a microcode relocation patch. */
 		cpm->i2c_ram = i2c_base;
@@ -474,7 +474,7 @@ static int __devinit cpm_i2c_setup(struct cpm_i2c *cpm)
 
 		cpm->version = 1;
 
-	} else if (of_device_is_compatible(ofdev->node, "fsl,cpm2-i2c")) {
+	} else if (of_device_is_compatible(ofdev->dev.of_node, "fsl,cpm2-i2c")) {
 		cpm->i2c_addr = cpm_muram_alloc(sizeof(struct i2c_ram), 64);
 		cpm->i2c_ram = cpm_muram_addr(cpm->i2c_addr);
 		out_be16(i2c_base, cpm->i2c_addr);
@@ -489,24 +489,24 @@ static int __devinit cpm_i2c_setup(struct cpm_i2c *cpm)
 	}
 
 	/* I2C control/status registers */
-	cpm->i2c_reg = of_iomap(ofdev->node, 0);
+	cpm->i2c_reg = of_iomap(ofdev->dev.of_node, 0);
 	if (cpm->i2c_reg == NULL) {
 		ret = -EINVAL;
 		goto out_ram;
 	}
 
-	data = of_get_property(ofdev->node, "fsl,cpm-command", &len);
+	data = of_get_property(ofdev->dev.of_node, "fsl,cpm-command", &len);
 	if (!data || len != 4) {
 		ret = -EINVAL;
 		goto out_reg;
 	}
 	cpm->cp_command = *data;
 
-	data = of_get_property(ofdev->node, "linux,i2c-class", &len);
+	data = of_get_property(ofdev->dev.of_node, "linux,i2c-class", &len);
 	if (data && len == 4)
 		cpm->adap.class = *data;
 
-	data = of_get_property(ofdev->node, "clock-frequency", &len);
+	data = of_get_property(ofdev->dev.of_node, "clock-frequency", &len);
 	if (data && len == 4)
 		cpm->freq = *data;
 	else
@@ -634,8 +634,7 @@ static void cpm_i2c_shutdown(struct cpm_i2c *cpm)
 		cpm_muram_free(cpm->i2c_addr);
 }
 
-static int __devinit cpm_i2c_probe(struct of_device *ofdev,
-			 const struct of_device_id *match)
+static int __devinit cpm_i2c_probe(struct platform_device *ofdev)
 {
 	int result, len;
 	struct cpm_i2c *cpm;
@@ -652,6 +651,7 @@ static int __devinit cpm_i2c_probe(struct of_device *ofdev,
 	cpm->adap = cpm_ops;
 	i2c_set_adapdata(&cpm->adap, cpm);
 	cpm->adap.dev.parent = &ofdev->dev;
+	cpm->adap.dev.of_node = of_node_get(ofdev->dev.of_node);
 
 	result = cpm_i2c_setup(cpm);
 	if (result) {
@@ -661,12 +661,9 @@ static int __devinit cpm_i2c_probe(struct of_device *ofdev,
 
 	/* register new adapter to i2c module... */
 
-	data = of_get_property(ofdev->node, "linux,i2c-index", &len);
-	if (data && len == 4) {
-		cpm->adap.nr = *data;
-		result = i2c_add_numbered_adapter(&cpm->adap);
-	} else
-		result = i2c_add_adapter(&cpm->adap);
+	data = of_get_property(ofdev->dev.of_node, "linux,i2c-index", &len);
+	cpm->adap.nr = (data && len == 4) ? be32_to_cpup(data) : -1;
+	result = i2c_add_numbered_adapter(&cpm->adap);
 
 	if (result < 0) {
 		dev_err(&ofdev->dev, "Unable to register with I2C\n");
@@ -679,7 +676,7 @@ static int __devinit cpm_i2c_probe(struct of_device *ofdev,
 	/*
 	 * register OF I2C devices
 	 */
-	of_register_i2c_devices(&cpm->adap, ofdev->node);
+	of_i2c_register_devices(&cpm->adap);
 
 	return 0;
 out_shut:
@@ -691,7 +688,7 @@ out_free:
 	return result;
 }
 
-static int __devexit cpm_i2c_remove(struct of_device *ofdev)
+static int __devexit cpm_i2c_remove(struct platform_device *ofdev)
 {
 	struct cpm_i2c *cpm = dev_get_drvdata(&ofdev->dev);
 
@@ -717,24 +714,24 @@ static const struct of_device_id cpm_i2c_match[] = {
 
 MODULE_DEVICE_TABLE(of, cpm_i2c_match);
 
-static struct of_platform_driver cpm_i2c_driver = {
-	.match_table	= cpm_i2c_match,
+static struct platform_driver cpm_i2c_driver = {
 	.probe		= cpm_i2c_probe,
 	.remove		= __devexit_p(cpm_i2c_remove),
-	.driver		= {
-		.name	= "fsl-i2c-cpm",
-		.owner	= THIS_MODULE,
-	}
+	.driver = {
+		.name = "fsl-i2c-cpm",
+		.owner = THIS_MODULE,
+		.of_match_table = cpm_i2c_match,
+	},
 };
 
 static int __init cpm_i2c_init(void)
 {
-	return of_register_platform_driver(&cpm_i2c_driver);
+	return platform_driver_register(&cpm_i2c_driver);
 }
 
 static void __exit cpm_i2c_exit(void)
 {
-	of_unregister_platform_driver(&cpm_i2c_driver);
+	platform_driver_unregister(&cpm_i2c_driver);
 }
 
 module_init(cpm_i2c_init);

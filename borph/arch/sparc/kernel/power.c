@@ -33,17 +33,17 @@ static int __devinit has_button_interrupt(unsigned int irq, struct device_node *
 	return 1;
 }
 
-static int __devinit power_probe(struct of_device *op, const struct of_device_id *match)
+static int __devinit power_probe(struct platform_device *op)
 {
 	struct resource *res = &op->resource[0];
-	unsigned int irq= op->irqs[0];
+	unsigned int irq = op->archdata.irqs[0];
 
 	power_reg = of_ioremap(res, 0, 0x4, "power");
 
 	printk(KERN_INFO "%s: Control reg at %llx\n",
-	       op->node->name, res->start);
+	       op->dev.of_node->name, res->start);
 
-	if (has_button_interrupt(irq, op->node)) {
+	if (has_button_interrupt(irq, op->dev.of_node)) {
 		if (request_irq(irq,
 				power_handler, 0, "power", NULL) < 0)
 			printk(KERN_ERR "power: Cannot setup IRQ handler.\n");
@@ -52,24 +52,25 @@ static int __devinit power_probe(struct of_device *op, const struct of_device_id
 	return 0;
 }
 
-static struct of_device_id __initdata power_match[] = {
+static const struct of_device_id power_match[] = {
 	{
 		.name = "power",
 	},
 	{},
 };
 
-static struct of_platform_driver power_driver = {
-	.match_table	= power_match,
+static struct platform_driver power_driver = {
 	.probe		= power_probe,
-	.driver		= {
-		.name	= "power",
+	.driver = {
+		.name = "power",
+		.owner = THIS_MODULE,
+		.of_match_table = power_match,
 	},
 };
 
 static int __init power_init(void)
 {
-	return of_register_driver(&power_driver, &of_platform_bus_type);
+	return platform_driver_register(&power_driver);
 }
 
 device_initcall(power_init);

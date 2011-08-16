@@ -23,6 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
 #include <linux/delay.h>
@@ -493,7 +494,7 @@ static __init int celleb_setup_pciex(struct device_node *node,
 		pr_err("PCIEXC:Failed to get config resource.\n");
 		return 1;
 	}
-	phb->cfg_addr = ioremap(r.start, r.end - r.start + 1);
+	phb->cfg_addr = ioremap(r.start, resource_size(&r));
 	if (!phb->cfg_addr) {
 		pr_err("PCIEXC:Failed to remap SMMIO region.\n");
 		return 1;

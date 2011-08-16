@@ -2,6 +2,7 @@
 #include <linux/dma-debug.h>
 #include <linux/dmar.h>
 #include <linux/bootmem.h>
+#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/kmemleak.h>
 
@@ -10,8 +11,8 @@
 #include <asm/iommu.h>
 #include <asm/gart.h>
 #include <asm/calgary.h>
-#include <asm/amd_iommu.h>
 #include <asm/x86_init.h>
+#include <asm/iommu_table.h>
 
 static int forbid_dac __read_mostly;
 
@@ -38,10 +39,12 @@ int iommu_detected __read_mostly = 0;
  * This variable becomes 1 if iommu=pt is passed on the kernel command line.
  * If this variable is 1, IOMMU implementations do no DMA translation for
  * devices and allow every device to access to whole physical memory. This is
- * useful if a user want to use an IOMMU only for KVM device assignment to
+ * useful if a user wants to use an IOMMU only for KVM device assignment to
  * guests and not for driver dma translation.
  */
 int iommu_pass_through __read_mostly;
+
+extern struct iommu_table_entry __iommu_table[], __iommu_table_end[];
 
 /* Dummy device used for NULL arguments (normally ISA). */
 struct device x86_dma_fallback_dev = {
@@ -65,81 +68,23 @@ int dma_set_mask(struct device *dev, u64 mask)
 }
 EXPORT_SYMBOL(dma_set_mask);
 
-#ifdef CONFIG_X86_64
-static __initdata void *dma32_bootmem_ptr;
-static unsigned long dma32_bootmem_size __initdata = (128ULL<<20);
-
-static int __init parse_dma32_size_opt(char *p)
-{
-	if (!p)
-		return -EINVAL;
-	dma32_bootmem_size = memparse(p, &p);
-	return 0;
-}
-early_param("dma32_size", parse_dma32_size_opt);
-
-void __init dma32_reserve_bootmem(void)
-{
-	unsigned long size, align;
-	if (max_pfn <= MAX_DMA32_PFN)
-		return;
-
-	/*
-	 * check aperture_64.c allocate_aperture() for reason about
-	 * using 512M as goal
-	 */
-	align = 64ULL<<20;
-	size = roundup(dma32_bootmem_size, align);
-	dma32_bootmem_ptr = __alloc_bootmem_nopanic(size, align,
-				 512ULL<<20);
-	/*
-	 * Kmemleak should not scan this block as it may not be mapped via the
-	 * kernel direct mapping.
-	 */
-	kmemleak_ignore(dma32_bootmem_ptr);
-	if (dma32_bootmem_ptr)
-		dma32_bootmem_size = size;
-	else
-		dma32_bootmem_size = 0;
-}
-static void __init dma32_free_bootmem(void)
-{
-
-	if (max_pfn <= MAX_DMA32_PFN)
-		return;
-
-	if (!dma32_bootmem_ptr)
-		return;
-
-	free_bootmem(__pa(dma32_bootmem_ptr), dma32_bootmem_size);
-
-	dma32_bootmem_ptr = NULL;
-	dma32_bootmem_size = 0;
-}
-#endif
-
 void __init pci_iommu_alloc(void)
 {
-	int use_swiotlb;
+	struct iommu_table_entry *p;
 
-	use_swiotlb = pci_swiotlb_init();
-#ifdef CONFIG_X86_64
-	/* free the range so iommu could get some range less than 4G */
-	dma32_free_bootmem();
-#endif
-	if (use_swiotlb)
-		return;
+	sort_iommu_table(__iommu_table, __iommu_table_end);
+	check_iommu_entries(__iommu_table, __iommu_table_end);
 
-	gart_iommu_hole_init();
-
-	detect_calgary();
-
-	detect_intel_iommu();
-
-	/* needs to be called after gart_iommu_hole_init */
-	amd_iommu_detect();
+	for (p = __iommu_table; p < __iommu_table_end; p++) {
+		if (p && p->detect && p->detect() > 0) {
+			p->flags |= IOMMU_DETECTED;
+			if (p->early_init)
+				p->early_init();
+			if (p->flags & IOMMU_FINISH_IF_DETECTED)
+				break;
+		}
+	}
 }
-
 void *dma_generic_alloc_coherent(struct device *dev, size_t size,
 				 dma_addr_t *dma_addr, gfp_t flag)
 {
@@ -282,6 +227,7 @@ EXPORT_SYMBOL(dma_supported);
 
 static int __init pci_iommu_init(void)
 {
+	struct iommu_table_entry *p;
 	dma_debug_init(PREALLOC_DMA_DEBUG_ENTRIES);
 
 #ifdef CONFIG_PCI
@@ -289,12 +235,10 @@ static int __init pci_iommu_init(void)
 #endif
 	x86_init.iommu.iommu_init();
 
-	if (swiotlb) {
-		printk(KERN_INFO "PCI-DMA: "
-		       "Using software bounce buffering for IO (SWIOTLB)\n");
-		swiotlb_print_info();
-	} else
-		swiotlb_free();
+	for (p = __iommu_table; p < __iommu_table_end; p++) {
+		if (p && (p->flags & IOMMU_DETECTED) && p->late_init)
+			p->late_init();
+	}
 
 	return 0;
 }

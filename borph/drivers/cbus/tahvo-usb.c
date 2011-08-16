@@ -98,8 +98,9 @@ struct tahvo_usb {
 #ifdef CONFIG_USB_OTG
 	int tahvo_mode;
 #endif
+	struct clk *ick;
 };
-static struct platform_device tahvo_usb_device;
+static struct tahvo_usb *tahvo_usb_device;
 
 /*
  * ---------------------------------------------------------------------------
@@ -114,8 +115,7 @@ static struct platform_device *tahvo_otg_dev;
 
 static irqreturn_t omap_otg_irq(int irq, void *arg)
 {
-	struct platform_device *otg_dev = arg;
-	struct tahvo_usb *tu = platform_get_drvdata(otg_dev);
+	struct tahvo_usb *tu = arg;
 	u16 otg_irq;
 
 	otg_irq = omap_readw(OTG_IRQ_SRC);
@@ -132,12 +132,14 @@ static irqreturn_t omap_otg_irq(int irq, void *arg)
 	} else if (otg_irq & A_VBUS_ERR) {
 		omap_writew(A_VBUS_ERR, OTG_IRQ_SRC);
 	} else if (otg_irq & DRIVER_SWITCH) {
+#ifdef CONFIG_USB_OTG
 		if ((!(omap_readl(OTG_CTRL) & OTG_DRIVER_SEL)) &&
 		   tu->otg.host && tu->otg.state == OTG_STATE_A_HOST) {
 			/* role is host */
 			usb_bus_start_enum(tu->otg.host,
 					   tu->otg.host->otg_port);
 		}
+#endif
 		omap_writew(DRIVER_SWITCH, OTG_IRQ_SRC);
 	} else
 		return IRQ_NONE;
@@ -146,7 +148,7 @@ static irqreturn_t omap_otg_irq(int irq, void *arg)
 
 }
 
-static int omap_otg_init(void)
+static int tahvo_otg_init(void)
 {
 	u32 l;
 
@@ -186,35 +188,35 @@ static int omap_otg_init(void)
 	return 0;
 }
 
-static int omap_otg_probe(struct device *dev)
+static int __init omap_otg_probe(struct platform_device *pdev)
 {
 	int ret;
 
-	tahvo_otg_dev = to_platform_device(dev);
-	ret = omap_otg_init();
+	tahvo_otg_dev = pdev;
+	ret = tahvo_otg_init();
 	if (ret != 0) {
-		printk(KERN_ERR "tahvo-usb: omap_otg_init failed\n");
+		printk(KERN_ERR "tahvo-usb: tahvo_otg_init failed\n");
 		return ret;
 	}
 
 	return request_irq(tahvo_otg_dev->resource[1].start,
 			   omap_otg_irq, IRQF_DISABLED, DRIVER_NAME,
-			   &tahvo_usb_device);
+			   tahvo_usb_device);
 }
 
-static int omap_otg_remove(struct device *dev)
+static int __exit omap_otg_remove(struct platform_device *pdev)
 {
-	free_irq(tahvo_otg_dev->resource[1].start, &tahvo_usb_device);
+	free_irq(tahvo_otg_dev->resource[1].start, tahvo_usb_device);
 	tahvo_otg_dev = NULL;
 
 	return 0;
 }
 
-struct device_driver omap_otg_driver = {
-	.name		= "omap_otg",
-	.bus		= &platform_bus_type,
-	.probe		= omap_otg_probe,
-	.remove		= omap_otg_remove,
+struct platform_driver omap_otg_driver = {
+	.driver		= {
+		.name	= "omap_otg",
+	},
+	.remove		= __exit_p(omap_otg_remove),
 };
 
 /*
@@ -233,47 +235,6 @@ static ssize_t vbus_state_show(struct device *device,
 static DEVICE_ATTR(vbus_state, 0444, vbus_state_show, NULL);
 
 int vbus_active = 0;
-
-#if 0
-
-static int host_suspend(struct tahvo_usb *tu)
-{
-	struct device	*dev;
-
-	if (!tu->otg.host)
-		return -ENODEV;
-
-	/* Currently ASSUMES only the OTG port matters;
-	 * other ports could be active...
-	 */
-	dev = tu->otg.host->controller;
-	return dev->driver->suspend(dev, PMSG_SUSPEND);
-}
-
-static int host_resume(struct tahvo_usb *tu)
-{
-	struct device	*dev;
-
-	if (!tu->otg.host)
-		return -ENODEV;
-
-	dev = tu->otg.host->controller;
-	return dev->driver->resume(dev);
-}
-
-#else
-
-static int host_suspend(struct tahvo_usb *tu)
-{
-	return 0;
-}
-
-static int host_resume(struct tahvo_usb *tu)
-{
-	return 0;
-}
-
-#endif
 
 static void check_vbus_state(struct tahvo_usb *tu)
 {
@@ -301,7 +262,6 @@ static void check_vbus_state(struct tahvo_usb *tu)
 		case OTG_STATE_A_IDLE:
 			/* Session is now valid assuming the USB hub is driving Vbus */
 			tu->otg.state = OTG_STATE_A_HOST;
-			host_resume(tu);
 			break;
 		default:
 			break;
@@ -336,7 +296,7 @@ static void tahvo_usb_become_host(struct tahvo_usb *tu)
 
 	/* Clear system and transceiver controlled bits
 	 * also mark the A-session is always valid */
-	omap_otg_init();
+	tahvo_otg_init();
 
 	l = omap_readl(OTG_CTRL);
 	l &= ~(OTG_CTRL_XCVR_MASK | OTG_CTRL_SYS_MASK);
@@ -353,7 +313,6 @@ static void tahvo_usb_become_host(struct tahvo_usb *tu)
 
 static void tahvo_usb_stop_host(struct tahvo_usb *tu)
 {
-	host_suspend(tu);
 	tu->otg.state = OTG_STATE_A_IDLE;
 }
 
@@ -364,7 +323,7 @@ static void tahvo_usb_become_peripheral(struct tahvo_usb *tu)
 	/* Clear system and transceiver controlled bits
 	 * and enable ID to mark peripheral mode and
 	 * BSESSEND to mark no Vbus */
-	omap_otg_init();
+	tahvo_otg_init();
 	l = omap_readl(OTG_CTRL);
 	l &= ~(OTG_CTRL_XCVR_MASK | OTG_CTRL_SYS_MASK | OTG_BSESSVLD);
 	l |= OTG_ID | OTG_BSESSEND;
@@ -400,8 +359,6 @@ static void tahvo_usb_power_off(struct tahvo_usb *tu)
 	/* Disable gadget controller if any */
 	if (tu->otg.gadget)
 		usb_gadget_vbus_disconnect(tu->otg.gadget);
-
-	host_suspend(tu);
 
 	/* Disable OTG and interrupts */
 	if (TAHVO_MODE(tu) == TAHVO_MODE_PERIPHERAL)
@@ -519,8 +476,7 @@ static int tahvo_usb_set_host(struct otg_transceiver *otg, struct usb_bus *host)
 	if (TAHVO_MODE(tu) == TAHVO_MODE_HOST) {
 		tu->otg.host = NULL;
 		tahvo_usb_become_host(tu);
-	} else
-		host_suspend(tu);
+	}
 
 	tu->otg.host = host;
 
@@ -641,18 +597,24 @@ static ssize_t otg_mode_store(struct device *device,
 static DEVICE_ATTR(otg_mode, 0644, otg_mode_show, otg_mode_store);
 #endif
 
-static int tahvo_usb_probe(struct device *dev)
+static int __init tahvo_usb_probe(struct platform_device *pdev)
 {
 	struct tahvo_usb *tu;
+	struct device *dev = &pdev->dev;
 	int ret;
+
+	ret = tahvo_get_status();
+	if (!ret)
+		return -ENODEV;
 
 	dev_dbg(dev, "probe\n");
 
 	/* Create driver data */
-	tu = kmalloc(sizeof(*tu), GFP_KERNEL);
+	tu = kzalloc(sizeof(*tu), GFP_KERNEL);
 	if (!tu)
 		return -ENOMEM;
-	memset(tu, 0, sizeof(*tu));
+	tahvo_usb_device = tu;
+
 	tu->pt_dev = container_of(dev, struct platform_device, dev);
 #ifdef CONFIG_USB_OTG
 	/* Default mode */
@@ -666,6 +628,14 @@ static int tahvo_usb_probe(struct device *dev)
 	INIT_WORK(&tu->irq_work, tahvo_usb_irq_work);
 	mutex_init(&tu->serialize);
 
+	tu->ick = clk_get(NULL, "usb_l4_ick");
+	if (IS_ERR(tu->ick)) {
+		dev_err(dev, "Failed to get usb_l4_ick\n");
+		ret = PTR_ERR(tu->ick);
+		goto err_free_tu;
+	}
+	clk_enable(tu->ick);
+
 	/* Set initial state, so that we generate kevents only on
 	 * state changes */
 	tu->vbus_state = tahvo_read_reg(TAHVO_REG_IDSR) & 0x01;
@@ -674,9 +644,8 @@ static int tahvo_usb_probe(struct device *dev)
 	ret = tahvo_request_irq(TAHVO_INT_VBUSON, tahvo_usb_vbus_interrupt,
 				(unsigned long) tu, "vbus_interrupt");
 	if (ret != 0) {
-		kfree(tu);
 		printk(KERN_ERR "Could not register Tahvo interrupt for VBUS\n");
-		return ret;
+		goto err_release_clk;
 	}
 
 	/* Attributes */
@@ -701,9 +670,7 @@ static int tahvo_usb_probe(struct device *dev)
 	ret = otg_set_transceiver(&tu->otg);
 	if (ret < 0) {
 		printk(KERN_ERR "Cannot register USB transceiver\n");
-		kfree(tu);
-		tahvo_free_irq(TAHVO_INT_VBUSON);
-		return ret;
+		goto err_free_irq;
 	}
 
 	dev_set_drvdata(dev, tu);
@@ -712,53 +679,62 @@ static int tahvo_usb_probe(struct device *dev)
 	 * may not be generated in addition to this. */
 	schedule_work(&tu->irq_work);
 	return 0;
+
+err_free_irq:
+	tahvo_free_irq(TAHVO_INT_VBUSON);
+err_release_clk:
+	clk_disable(tu->ick);
+	clk_put(tu->ick);
+err_free_tu:
+	kfree(tu);
+	tahvo_usb_device = NULL;
+
+	return ret;
 }
 
-static int tahvo_usb_remove(struct device *dev)
+static int __exit tahvo_usb_remove(struct platform_device *pdev)
 {
-	dev_dbg(dev, "remove\n");
+	struct tahvo_usb *tu = platform_get_drvdata(pdev);
+
+	dev_dbg(&pdev->dev, "remove\n");
 
 	tahvo_free_irq(TAHVO_INT_VBUSON);
 	flush_scheduled_work();
 	otg_set_transceiver(0);
-	device_remove_file(dev, &dev_attr_vbus_state);
+	device_remove_file(&pdev->dev, &dev_attr_vbus_state);
 #ifdef CONFIG_USB_OTG
-	device_remove_file(dev, &dev_attr_otg_mode);
+	device_remove_file(&pdev->dev, &dev_attr_otg_mode);
 #endif
+	clk_disable(tu->ick);
+	clk_put(tu->ick);
+
+	kfree(tu);
+	tahvo_usb_device = NULL;
+
 	return 0;
 }
 
-static struct device_driver tahvo_usb_driver = {
-	.name		= "tahvo-usb",
-	.bus		= &platform_bus_type,
-	.probe		= tahvo_usb_probe,
-	.remove		= tahvo_usb_remove,
-};
-
-static struct platform_device tahvo_usb_device = {
-	.name		= "tahvo-usb",
-	.id		= -1,
+static struct platform_driver tahvo_usb_driver = {
+	.driver		= {
+		.name	= "tahvo-usb",
+	},
+	.remove		= __exit_p(tahvo_usb_remove),
 };
 
 static int __init tahvo_usb_init(void)
 {
 	int ret = 0;
 
-	printk(KERN_INFO "Tahvo USB transceiver driver initializing\n");
-	ret = driver_register(&tahvo_usb_driver);
+	ret = platform_driver_probe(&tahvo_usb_driver, tahvo_usb_probe);
 	if (ret)
 		return ret;
-	ret = platform_device_register(&tahvo_usb_device);
-	if (ret < 0) {
-		driver_unregister(&tahvo_usb_driver);
-		return ret;
-	}
-	ret = driver_register(&omap_otg_driver);
+
+	ret = platform_driver_probe(&omap_otg_driver, omap_otg_probe);
 	if (ret) {
-		platform_device_unregister(&tahvo_usb_device);
-		driver_unregister(&tahvo_usb_driver);
+		platform_driver_unregister(&tahvo_usb_driver);
 		return ret;
 	}
+
 	return 0;
 }
 
@@ -766,9 +742,8 @@ subsys_initcall(tahvo_usb_init);
 
 static void __exit tahvo_usb_exit(void)
 {
-	driver_unregister(&omap_otg_driver);
-	platform_device_unregister(&tahvo_usb_device);
-	driver_unregister(&tahvo_usb_driver);
+	platform_driver_unregister(&omap_otg_driver);
+	platform_driver_unregister(&tahvo_usb_driver);
 }
 module_exit(tahvo_usb_exit);
 

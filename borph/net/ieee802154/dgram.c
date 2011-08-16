@@ -1,5 +1,5 @@
 /*
- * ZigBee socket interface
+ * IEEE 802.15.4 dgram socket interface
  *
  * Copyright 2007, 2008 Siemens AG
  *
@@ -25,6 +25,7 @@
 #include <linux/module.h>
 #include <linux/if_arp.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_ieee802154.h>
 #include <net/ieee802154.h>

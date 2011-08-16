@@ -43,16 +43,20 @@ struct regulator;
 /**
  * struct regulator_state - regulator state during low power system states
  *
- * This describes a regulators state during a system wide low power state.
+ * This describes a regulators state during a system wide low power
+ * state.  One of enabled or disabled must be set for the
+ * configuration to be applied.
  *
  * @uV: Operating voltage during suspend.
  * @mode: Operating mode during suspend.
  * @enabled: Enabled during suspend.
+ * @disabled: Disabled during suspend.
  */
 struct regulator_state {
 	int uV;	/* suspend voltage */
 	unsigned int mode; /* suspend regulator operating mode */
 	int enabled; /* is regulator enabled in this suspend state */
+	int disabled; /* is the regulator disbled in this suspend state */
 };
 
 /**
@@ -64,6 +68,8 @@ struct regulator_state {
  *
  * @min_uV: Smallest voltage consumers may set.
  * @max_uV: Largest voltage consumers may set.
+ * @uV_offset: Offset applied to voltages from consumer to compensate for
+ *             voltage drops.
  *
  * @min_uA: Smallest consumers consumers may set.
  * @max_uA: Largest current consumers may set.
@@ -94,6 +100,8 @@ struct regulation_constraints {
 	/* voltage output range (inclusive) - for voltage control */
 	int min_uV;
 	int max_uV;
+
+	int uV_offset;
 
 	/* current output range (inclusive) - for current control */
 	int min_uA;
@@ -153,7 +161,9 @@ struct regulator_consumer_supply {
  *
  * Initialisation constraints, our supply and consumers supplies.
  *
- * @supply_regulator_dev: Parent regulator (if any).
+ * @supply_regulator: Parent regulator.  Specified using the regulator name
+ *                    as it appears in the name field in sysfs, which can
+ *                    be explicitly set using the constraints field 'name'.
  *
  * @constraints: Constraints.  These must be specified for the regulator to
  *               be usable.
@@ -164,7 +174,7 @@ struct regulator_consumer_supply {
  * @driver_data: Data passed to regulator_init.
  */
 struct regulator_init_data {
-	struct device *supply_regulator_dev; /* or NULL for LINE */
+	const char *supply_regulator;        /* or NULL for system supply */
 
 	struct regulation_constraints constraints;
 
@@ -177,11 +187,17 @@ struct regulator_init_data {
 };
 
 int regulator_suspend_prepare(suspend_state_t state);
+int regulator_suspend_finish(void);
 
 #ifdef CONFIG_REGULATOR
 void regulator_has_full_constraints(void);
+void regulator_use_dummy_regulator(void);
 #else
 static inline void regulator_has_full_constraints(void)
+{
+}
+
+static inline void regulator_use_dummy_regulator(void)
 {
 }
 #endif

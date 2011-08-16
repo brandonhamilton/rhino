@@ -345,8 +345,38 @@
 #define __NR_pwritev		334
 #define __NR_rt_tgsigqueueinfo	335
 #define __NR_perf_event_open	336
+#define __NR_fanotify_init	337
+#define __NR_fanotify_mark	338
+#define __NR_prlimit64		339
 
-#define NR_syscalls 337
+/* Non-multiplexed socket family */
+#define __NR_socket		340
+#define __NR_bind		341
+#define __NR_connect		342
+#define __NR_listen		343
+#define __NR_accept		344
+#define __NR_getsockname	345
+#define __NR_getpeername	346
+#define __NR_socketpair		347
+#define __NR_send		348
+#define __NR_sendto		349
+#define __NR_recv		350
+#define __NR_recvfrom		351
+#define __NR_shutdown		352
+#define __NR_setsockopt		353
+#define __NR_getsockopt		354
+#define __NR_sendmsg		355
+#define __NR_recvmsg		356
+#define __NR_recvmmsg		357
+#define __NR_accept4		358
+#define __NR_name_to_handle_at	359
+#define __NR_open_by_handle_at	360
+#define __NR_clock_adjtime	361
+#define __NR_syncfs		362
+#define __NR_sendmmsg		363
+#define __NR_setns		364
+
+#define NR_syscalls 365
 
 #ifdef __KERNEL__
 
@@ -356,6 +386,7 @@
 #define __ARCH_WANT_STAT64
 #define __ARCH_WANT_SYS_ALARM
 #define __ARCH_WANT_SYS_GETHOSTNAME
+#define __ARCH_WANT_SYS_IPC
 #define __ARCH_WANT_SYS_PAUSE
 #define __ARCH_WANT_SYS_SGETMASK
 #define __ARCH_WANT_SYS_SIGNAL
@@ -368,6 +399,7 @@
 #define __ARCH_WANT_SYS_LLSEEK
 #define __ARCH_WANT_SYS_NICE
 #define __ARCH_WANT_SYS_OLD_GETRLIMIT
+#define __ARCH_WANT_SYS_OLD_UNAME
 #define __ARCH_WANT_SYS_OLDUMOUNT
 #define __ARCH_WANT_SYS_SIGPENDING
 #define __ARCH_WANT_SYS_SIGPROCMASK

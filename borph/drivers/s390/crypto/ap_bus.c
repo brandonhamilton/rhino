@@ -6,6 +6,7 @@
  *	      Martin Schwidefsky <schwidefsky@de.ibm.com>
  *	      Ralph Wuerthner <rwuerthn@de.ibm.com>
  *	      Felix Beck <felix.beck@de.ibm.com>
+ *	      Holger Dengler <hd@linux.vnet.ibm.com>
  *
  * Adjunct processor bus.
  *
@@ -27,18 +28,20 @@
 #define KMSG_COMPONENT "ap"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
+#include <linux/kernel_stat.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 #include <linux/notifier.h>
 #include <linux/kthread.h>
 #include <linux/mutex.h>
 #include <asm/reset.h>
 #include <asm/airq.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <asm/system.h>
 #include <asm/isc.h>
 #include <linux/hrtimer.h>
@@ -153,14 +156,7 @@ static inline int ap_instructions_available(void)
  */
 static int ap_interrupts_available(void)
 {
-	unsigned long long facility_bits[2];
-
-	if (stfle(facility_bits, 2) <= 1)
-		return 0;
-	if (!(facility_bits[0] & (1ULL << 61)) ||
-	    !(facility_bits[1] & (1ULL << 62)))
-		return 0;
-	return 1;
+	return test_facility(2) && test_facility(65);
 }
 
 /**
@@ -226,6 +222,95 @@ ap_queue_interruption_control(ap_qid_t qid, void *ind)
 	return reg1_out;
 }
 #endif
+
+#ifdef CONFIG_64BIT
+static inline struct ap_queue_status
+__ap_query_functions(ap_qid_t qid, unsigned int *functions)
+{
+	register unsigned long reg0 asm ("0") = 0UL | qid | (1UL << 23);
+	register struct ap_queue_status reg1 asm ("1") = AP_QUEUE_STATUS_INVALID;
+	register unsigned long reg2 asm ("2");
+
+	asm volatile(
+		".long 0xb2af0000\n"
+		"0:\n"
+		EX_TABLE(0b, 0b)
+		: "+d" (reg0), "+d" (reg1), "=d" (reg2)
+		:
+		: "cc");
+
+	*functions = (unsigned int)(reg2 >> 32);
+	return reg1;
+}
+#endif
+
+/**
+ * ap_query_functions(): Query supported functions.
+ * @qid: The AP queue number
+ * @functions: Pointer to functions field.
+ *
+ * Returns
+ *   0	     on success.
+ *   -ENODEV  if queue not valid.
+ *   -EBUSY   if device busy.
+ *   -EINVAL  if query function is not supported
+ */
+static int ap_query_functions(ap_qid_t qid, unsigned int *functions)
+{
+#ifdef CONFIG_64BIT
+	struct ap_queue_status status;
+	int i;
+	status = __ap_query_functions(qid, functions);
+
+	for (i = 0; i < AP_MAX_RESET; i++) {
+		if (ap_queue_status_invalid_test(&status))
+			return -ENODEV;
+
+		switch (status.response_code) {
+		case AP_RESPONSE_NORMAL:
+			return 0;
+		case AP_RESPONSE_RESET_IN_PROGRESS:
+		case AP_RESPONSE_BUSY:
+			break;
+		case AP_RESPONSE_Q_NOT_AVAIL:
+		case AP_RESPONSE_DECONFIGURED:
+		case AP_RESPONSE_CHECKSTOPPED:
+		case AP_RESPONSE_INVALID_ADDRESS:
+			return -ENODEV;
+		case AP_RESPONSE_OTHERWISE_CHANGED:
+			break;
+		default:
+			break;
+		}
+		if (i < AP_MAX_RESET - 1) {
+			udelay(5);
+			status = __ap_query_functions(qid, functions);
+		}
+	}
+	return -EBUSY;
+#else
+	return -EINVAL;
+#endif
+}
+
+/**
+ * ap_4096_commands_availablen(): Check for availability of 4096 bit RSA
+ * support.
+ * @qid: The AP queue number
+ *
+ * Returns 1 if 4096 bit RSA keys are support fo the AP, returns 0 if not.
+ */
+int ap_4096_commands_available(ap_qid_t qid)
+{
+	unsigned int functions;
+
+	if (ap_query_functions(qid, &functions))
+		return 0;
+
+	return test_ap_facility(functions, 1) &&
+	       test_ap_facility(functions, 2);
+}
+EXPORT_SYMBOL(ap_4096_commands_available);
 
 /**
  * ap_queue_enable_interruption(): Enable interruption on an AP.
@@ -1048,6 +1133,7 @@ out:
 
 static void ap_interrupt_handler(void *unused1, void *unused2)
 {
+	kstat_cpu(smp_processor_id()).irqs[IOINT_APB]++;
 	tasklet_schedule(&ap_tasklet);
 }
 
@@ -1076,6 +1162,7 @@ static void ap_scan_bus(struct work_struct *unused)
 	struct device *dev;
 	ap_qid_t qid;
 	int queue_depth, device_type;
+	unsigned int device_functions;
 	int rc, i;
 
 	if (ap_select_domain() != 0)
@@ -1124,10 +1211,30 @@ static void ap_scan_bus(struct work_struct *unused)
 		INIT_LIST_HEAD(&ap_dev->list);
 		setup_timer(&ap_dev->timeout, ap_request_timeout,
 			    (unsigned long) ap_dev);
-		if (device_type == 0)
-			ap_probe_device_type(ap_dev);
-		else
+		switch (device_type) {
+		case 0:
+			if (ap_probe_device_type(ap_dev)) {
+				kfree(ap_dev);
+				continue;
+			}
+			break;
+		case 10:
+			if (ap_query_functions(qid, &device_functions)) {
+				kfree(ap_dev);
+				continue;
+			}
+			if (test_ap_facility(device_functions, 3))
+				ap_dev->device_type = AP_DEVICE_TYPE_CEX3C;
+			else if (test_ap_facility(device_functions, 4))
+				ap_dev->device_type = AP_DEVICE_TYPE_CEX3A;
+			else {
+				kfree(ap_dev);
+				continue;
+			}
+			break;
+		default:
 			ap_dev->device_type = device_type;
+		}
 
 		ap_dev->device.bus = &ap_bus_type;
 		ap_dev->device.parent = ap_root_device;

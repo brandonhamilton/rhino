@@ -67,13 +67,7 @@
 /*******************************************************************************
  *  include files
  ******************************************************************************/
-#include <linux/version.h>
 #ifdef BUS_PCMCIA
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-#include <pcmcia/version.h>
-#endif
-#include <pcmcia/cs_types.h>
-#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ciscode.h>
@@ -866,7 +860,6 @@ struct wl_private
 {
 
 #ifdef BUS_PCMCIA
-	dev_node_t                  node;
 	struct pcmcia_device	    *link;
 #endif // BUS_PCMCIA
 
@@ -996,14 +989,7 @@ struct wl_private
 #endif // USE_WDS
 }; // wl_private
 
-#ifdef HAVE_NETDEV_PRIV
 #define wl_priv(dev) ((struct wl_private *) netdev_priv(dev))
-#else
-extern inline struct wl_private *wl_priv(struct net_device *dev)
-{
-    return dev->priv;
-}
-#endif
 
 /********************************************************************/
 /* Locking and synchronization functions                            */
@@ -1013,13 +999,13 @@ extern inline struct wl_private *wl_priv(struct net_device *dev)
  * SPARC, due to its weird semantics for save/restore flags. extern
  * inline should prevent the kernel from linking or module from
  * loading if they are not inlined. */
-extern inline void wl_lock(struct wl_private *lp,
+static inline void wl_lock(struct wl_private *lp,
 	                       unsigned long *flags)
 {
 	spin_lock_irqsave(&lp->slock, *flags);
 }
 
-extern inline void wl_unlock(struct wl_private *lp,
+static inline void wl_unlock(struct wl_private *lp,
 	                          unsigned long *flags)
 {
 	spin_unlock_irqrestore(&lp->slock, *flags);

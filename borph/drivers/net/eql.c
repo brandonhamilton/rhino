@@ -111,10 +111,13 @@
  * Sorry, I had to rewrite most of this for 2.5.x -DaveM
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/capability.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/netdevice.h>
 #include <net/net_namespace.h>
@@ -161,7 +164,7 @@ static void eql_timer(unsigned long param)
 }
 
 static const char version[] __initconst =
-	"Equalizer2002: Simon Janes (simon@ncm.com) and David S. Miller (davem@redhat.com)\n";
+	"Equalizer2002: Simon Janes (simon@ncm.com) and David S. Miller (davem@redhat.com)";
 
 static const struct net_device_ops eql_netdev_ops = {
 	.ndo_open	= eql_open,
@@ -203,8 +206,8 @@ static int eql_open(struct net_device *dev)
 	equalizer_t *eql = netdev_priv(dev);
 
 	/* XXX We should force this off automatically for the user. */
-	printk(KERN_INFO "%s: remember to turn off Van-Jacobson compression on "
-	       "your slave devices.\n", dev->name);
+	netdev_info(dev,
+		    "remember to turn off Van-Jacobson compression on your slave devices\n");
 
 	BUG_ON(!list_empty(&eql->queue.all_slaves));
 
@@ -287,7 +290,7 @@ static int eql_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			return eql_s_master_cfg(dev, ifr->ifr_data);
 		default:
 			return -EOPNOTSUPP;
-	};
+	}
 }
 
 /* queue->lock must be held */
@@ -554,6 +557,8 @@ static int eql_g_master_cfg(struct net_device *dev, master_config_t __user *mcp)
 	equalizer_t *eql;
 	master_config_t mc;
 
+	memset(&mc, 0, sizeof(master_config_t));
+
 	if (eql_is_master(dev)) {
 		eql = netdev_priv(dev);
 		mc.max_slaves = eql->max_slaves;
@@ -588,7 +593,7 @@ static int __init eql_init_module(void)
 {
 	int err;
 
-	printk(version);
+	pr_info("%s\n", version);
 
 	dev_eql = alloc_netdev(sizeof(equalizer_t), "eql", eql_setup);
 	if (!dev_eql)

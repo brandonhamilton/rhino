@@ -40,6 +40,8 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/pci.h>
@@ -707,11 +709,11 @@ static int __init control_of_init(struct device_node *dp)
 
 	/* Map in frame buffer and registers */
 	p->fb_orig_base = fb_res.start;
-	p->fb_orig_size = fb_res.end - fb_res.start + 1;
+	p->fb_orig_size = resource_size(&fb_res);
 	/* use the big-endian aperture (??) */
 	p->frame_buffer_phys = fb_res.start + 0x800000;
 	p->control_regs_phys = reg_res.start;
-	p->control_regs_size = reg_res.end - reg_res.start + 1;
+	p->control_regs_size = resource_size(&reg_res);
 
 	if (!p->fb_orig_base ||
 	    !request_mem_region(p->fb_orig_base,p->fb_orig_size,"controlfb")) {

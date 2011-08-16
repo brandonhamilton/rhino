@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2008-2009 Solarflare Communications Inc.
+ * Copyright 2008-2010 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -93,7 +93,7 @@ extern void efx_mcdi_process_event(struct efx_channel *channel,
 #define MCDI_EVENT_FIELD(_ev, _field)			\
 	EFX_QWORD_FIELD(_ev, MCDI_EVENT_ ## _field)
 
-extern int efx_mcdi_fwver(struct efx_nic *efx, u64 *version, u32 *build);
+extern void efx_mcdi_print_fwver(struct efx_nic *efx, char *buf, size_t len);
 extern int efx_mcdi_drv_attach(struct efx_nic *efx, bool driver_operating,
 			       bool *was_attached_out);
 extern int efx_mcdi_get_board_cfg(struct efx_nic *efx, u8 *mac_address,
@@ -111,16 +111,16 @@ extern int efx_mcdi_nvram_read(struct efx_nic *efx, unsigned int type,
 extern int efx_mcdi_nvram_write(struct efx_nic *efx, unsigned int type,
 				loff_t offset, const u8 *buffer,
 				size_t length);
+#define EFX_MCDI_NVRAM_LEN_MAX 128
 extern int efx_mcdi_nvram_erase(struct efx_nic *efx, unsigned int type,
 				loff_t offset, size_t length);
 extern int efx_mcdi_nvram_update_finish(struct efx_nic *efx,
 					unsigned int type);
+extern int efx_mcdi_nvram_test_all(struct efx_nic *efx);
 extern int efx_mcdi_handle_assertion(struct efx_nic *efx);
 extern void efx_mcdi_set_id_led(struct efx_nic *efx, enum efx_led_mode mode);
 extern int efx_mcdi_reset_port(struct efx_nic *efx);
 extern int efx_mcdi_reset_mc(struct efx_nic *efx);
-extern int efx_mcdi_wol_filter_set(struct efx_nic *efx, u32 type,
-				   const u8 *mac, int *id_out);
 extern int efx_mcdi_wol_filter_set_magic(struct efx_nic *efx,
 					 const u8 *mac, int *id_out);
 extern int efx_mcdi_wol_filter_get_magic(struct efx_nic *efx, int *id_out);

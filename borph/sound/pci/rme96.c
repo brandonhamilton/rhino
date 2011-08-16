@@ -27,7 +27,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/moduleparam.h>
 
 #include <sound/core.h>
@@ -151,7 +150,7 @@ MODULE_PARM_DESC(enable, "Enable RME Digi96 soundcard.");
 #define RME96_RCR_BITPOS_F1 28
 #define RME96_RCR_BITPOS_F2 29
 
-/* Additonal register bits */
+/* Additional register bits */
 #define RME96_AR_WSEL       (1 << 0)
 #define RME96_AR_ANALOG     (1 << 1)
 #define RME96_AR_FREQPAD_0  (1 << 2)
@@ -231,7 +230,7 @@ struct rme96 {
 	struct snd_kcontrol   *spdif_ctl;
 };
 
-static struct pci_device_id snd_rme96_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_rme96_ids) = {
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96), 0, },
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96_8), 0, },
 	{ PCI_VDEVICE(XILINX, PCI_DEVICE_ID_RME_DIGI96_8_PRO), 0, },
@@ -1528,14 +1527,14 @@ snd_rme96_free(void *private_data)
 static void
 snd_rme96_free_spdif_pcm(struct snd_pcm *pcm)
 {
-	struct rme96 *rme96 = (struct rme96 *) pcm->private_data;
+	struct rme96 *rme96 = pcm->private_data;
 	rme96->spdif_pcm = NULL;
 }
 
 static void
 snd_rme96_free_adat_pcm(struct snd_pcm *pcm)
 {
-	struct rme96 *rme96 = (struct rme96 *) pcm->private_data;
+	struct rme96 *rme96 = pcm->private_data;
 	rme96->adat_pcm = NULL;
 }
 
@@ -1562,7 +1561,7 @@ snd_rme96_create(struct rme96 *rme96)
 	}
 
 	if (request_irq(pci->irq, snd_rme96_interrupt, IRQF_SHARED,
-			"RME96", rme96)) {
+			KBUILD_MODNAME, rme96)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		return -EBUSY;
 	}
@@ -1662,7 +1661,7 @@ static void
 snd_rme96_proc_read(struct snd_info_entry *entry, struct snd_info_buffer *buffer)
 {
 	int n;
-	struct rme96 *rme96 = (struct rme96 *)entry->private_data;
+	struct rme96 *rme96 = entry->private_data;
 	
 	rme96->rcreg = readl(rme96->iobase + RME96_IO_CONTROL_REGISTER);
 
@@ -2349,7 +2348,7 @@ snd_rme96_probe(struct pci_dev *pci,
 	if (err < 0)
 		return err;
 	card->private_free = snd_rme96_card_free;
-	rme96 = (struct rme96 *)card->private_data;	
+	rme96 = card->private_data;
 	rme96->card = card;
 	rme96->pci = pci;
 	snd_card_set_dev(card, &pci->dev);
@@ -2397,7 +2396,7 @@ static void __devexit snd_rme96_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = "RME Digi96",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_rme96_ids,
 	.probe = snd_rme96_probe,
 	.remove = __devexit_p(snd_rme96_remove),

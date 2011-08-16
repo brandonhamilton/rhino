@@ -34,7 +34,7 @@
 /* Use ENTRY_SAME for 32-bit syscalls which are the same on wide and
  * narrow palinux.  Use ENTRY_DIFF for those where a 32-bit specific
  * implementation is required on wide palinux.  Use ENTRY_COMP where
- * the compatability layer has a useful 32-bit implementation.
+ * the compatibility layer has a useful 32-bit implementation.
  */
 #define ENTRY_SAME(_name_) .dword sys_##_name_
 #define ENTRY_DIFF(_name_) .dword sys32_##_name_
@@ -127,7 +127,7 @@
 	ENTRY_SAME(socketpair)
 	ENTRY_SAME(setpgid)
 	ENTRY_SAME(send)
-	ENTRY_OURS(newuname)
+	ENTRY_SAME(newuname)
 	ENTRY_SAME(umask)		/* 60 */
 	ENTRY_SAME(chroot)
 	ENTRY_COMP(ustat)
@@ -417,6 +417,17 @@
 	ENTRY_COMP(pwritev)
 	ENTRY_COMP(rt_tgsigqueueinfo)
 	ENTRY_SAME(perf_event_open)
+	ENTRY_COMP(recvmmsg)
+	ENTRY_SAME(accept4)		/* 320 */
+	ENTRY_SAME(prlimit64)
+	ENTRY_SAME(fanotify_init)
+	ENTRY_COMP(fanotify_mark)
+	ENTRY_COMP(clock_adjtime)
+	ENTRY_SAME(name_to_handle_at)	/* 325 */
+	ENTRY_COMP(open_by_handle_at)
+	ENTRY_SAME(syncfs)
+	ENTRY_SAME(setns)
+	ENTRY_COMP(sendmmsg)
 
 	/* Nothing yet */
 

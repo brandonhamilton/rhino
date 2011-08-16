@@ -59,19 +59,17 @@ static inline unsigned radeon_mem_type_to_domain(u32 mem_type)
  *
  * Returns:
  * -EBUSY: buffer is busy and @no_wait is true
- * -ERESTART: A wait for the buffer to become unreserved was interrupted by
+ * -ERESTARTSYS: A wait for the buffer to become unreserved was interrupted by
  * a signal. Release all buffer reservations and return to user-space.
  */
 static inline int radeon_bo_reserve(struct radeon_bo *bo, bool no_wait)
 {
 	int r;
 
-retry:
 	r = ttm_bo_reserve(&bo->tbo, true, no_wait, false, 0);
 	if (unlikely(r != 0)) {
-		if (r == -ERESTART)
-			goto retry;
-		dev_err(bo->rdev->dev, "%p reserve failed\n", bo);
+		if (r != -ERESTARTSYS)
+			dev_err(bo->rdev->dev, "%p reserve failed\n", bo);
 		return r;
 	}
 	return 0;
@@ -89,7 +87,7 @@ static inline void radeon_bo_unreserve(struct radeon_bo *bo)
  * Returns current GPU offset of the object.
  *
  * Note: object should either be pinned or reserved when calling this
- * function, it might be usefull to add check for this for debugging.
+ * function, it might be useful to add check for this for debugging.
  */
 static inline u64 radeon_bo_gpu_offset(struct radeon_bo *bo)
 {
@@ -125,28 +123,21 @@ static inline int radeon_bo_wait(struct radeon_bo *bo, u32 *mem_type,
 {
 	int r;
 
-retry:
 	r = ttm_bo_reserve(&bo->tbo, true, no_wait, false, 0);
-	if (unlikely(r != 0)) {
-		if (r == -ERESTART)
-			goto retry;
-		dev_err(bo->rdev->dev, "%p reserve failed for wait\n", bo);
+	if (unlikely(r != 0))
 		return r;
-	}
-	spin_lock(&bo->tbo.lock);
+	spin_lock(&bo->tbo.bdev->fence_lock);
 	if (mem_type)
 		*mem_type = bo->tbo.mem.mem_type;
 	if (bo->tbo.sync_obj)
 		r = ttm_bo_wait(&bo->tbo, true, true, no_wait);
-	spin_unlock(&bo->tbo.lock);
+	spin_unlock(&bo->tbo.bdev->fence_lock);
 	ttm_bo_unreserve(&bo->tbo);
-	if (unlikely(r == -ERESTART))
-		goto retry;
 	return r;
 }
 
 extern int radeon_bo_create(struct radeon_device *rdev,
-				struct drm_gem_object *gobj, unsigned long size,
+				unsigned long size, int byte_align,
 				bool kernel, u32 domain,
 				struct radeon_bo **bo_ptr);
 extern int radeon_bo_kmap(struct radeon_bo *bo, void **ptr);
@@ -160,10 +151,7 @@ extern int radeon_bo_init(struct radeon_device *rdev);
 extern void radeon_bo_fini(struct radeon_device *rdev);
 extern void radeon_bo_list_add_object(struct radeon_bo_list *lobj,
 				struct list_head *head);
-extern int radeon_bo_list_reserve(struct list_head *head);
-extern void radeon_bo_list_unreserve(struct list_head *head);
-extern int radeon_bo_list_validate(struct list_head *head, void *fence);
-extern void radeon_bo_list_unvalidate(struct list_head *head, void *fence);
+extern int radeon_bo_list_validate(struct list_head *head);
 extern int radeon_bo_fbdev_mmap(struct radeon_bo *bo,
 				struct vm_area_struct *vma);
 extern int radeon_bo_set_tiling_flags(struct radeon_bo *bo,
@@ -174,6 +162,6 @@ extern int radeon_bo_check_tiling(struct radeon_bo *bo, bool has_moved,
 				bool force_drop);
 extern void radeon_bo_move_notify(struct ttm_buffer_object *bo,
 					struct ttm_mem_reg *mem);
-extern void radeon_bo_fault_reserve_notify(struct ttm_buffer_object *bo);
+extern int radeon_bo_fault_reserve_notify(struct ttm_buffer_object *bo);
 extern int radeon_bo_get_surface_reg(struct radeon_bo *bo);
 #endif

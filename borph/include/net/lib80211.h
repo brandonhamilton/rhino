@@ -26,7 +26,7 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/if.h>
 #include <linux/skbuff.h>
 #include <linux/ieee80211.h>
@@ -53,9 +53,6 @@ struct lib80211_crypto_ops {
 
 	/* deinitialize crypto context and free allocated private data */
 	void (*deinit) (void *priv);
-
-	int (*build_iv) (struct sk_buff * skb, int hdr_len,
-			 u8 *key, int keylen, void *priv);
 
 	/* encrypt/decrypt return < 0 on error or >= 0 on success. The return
 	 * value from decrypt_mpdu is passed as the keyidx value for

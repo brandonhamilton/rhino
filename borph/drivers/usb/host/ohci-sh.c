@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2008 Renesas Solutions Corp.
  *
- * Author : Yoshihiro Shimoda <shimoda.yoshihiro@renesas.com>
+ * Author : Yoshihiro Shimoda <yoshihiro.shimoda.uh@renesas.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -77,7 +77,6 @@ static const struct hc_driver ohci_sh_hc_driver = {
 
 /*-------------------------------------------------------------------------*/
 
-#define resource_len(r) (((r)->end - (r)->start) + 1)
 static int ohci_hcd_sh_probe(struct platform_device *pdev)
 {
 	struct resource *res = NULL;
@@ -109,8 +108,8 @@ static int ohci_hcd_sh_probe(struct platform_device *pdev)
 
 	hcd->regs = (void __iomem *)res->start;
 	hcd->rsrc_start = res->start;
-	hcd->rsrc_len = resource_len(res);
-	ret = usb_add_hcd(hcd, irq, IRQF_DISABLED);
+	hcd->rsrc_len = resource_size(res);
+	ret = usb_add_hcd(hcd, irq, IRQF_DISABLED | IRQF_SHARED);
 	if (ret != 0) {
 		err("Failed to add hcd");
 		usb_put_hcd(hcd);

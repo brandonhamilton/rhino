@@ -8,6 +8,7 @@
  */
 
 #include <linux/irq.h>
+#include <linux/slab.h>
 
 static void urb_free_priv (struct ohci_hcd *hc, urb_priv_t *urb_priv)
 {
@@ -51,7 +52,7 @@ __acquires(ohci->lock)
 		ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs--;
 		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
 			if (quirk_amdiso(ohci))
-				quirk_amd_pll(1);
+				usb_amd_quirk_pll_enable();
 			if (quirk_amdprefetch(ohci))
 				sb800_prefetch(ohci, 0);
 		}
@@ -685,7 +686,7 @@ static void td_submit_urb (
 		}
 		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
 			if (quirk_amdiso(ohci))
-				quirk_amd_pll(0);
+				usb_amd_quirk_pll_disable();
 			if (quirk_amdprefetch(ohci))
 				sb800_prefetch(ohci, 1);
 		}

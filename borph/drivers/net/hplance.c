@@ -10,7 +10,6 @@
 #include <linux/types.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -136,7 +135,7 @@ static void __devexit hplance_remove_one(struct dio_dev *d)
 }
 
 /* Initialise a single lance board at the given DIO device */
-static void __init hplance_init(struct net_device *dev, struct dio_dev *d)
+static void __devinit hplance_init(struct net_device *dev, struct dio_dev *d)
 {
         unsigned long va = (d->resource.start + DIO_VIRADDRBASE);
         struct hplance_private *lp;

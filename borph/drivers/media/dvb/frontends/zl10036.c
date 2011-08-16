@@ -29,6 +29,7 @@
 
 #include <linux/module.h>
 #include <linux/dvb/frontend.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 
 #include "zl10036.h"
@@ -411,7 +412,7 @@ static int zl10036_init_regs(struct zl10036_state *state)
 	state->bf = 0xff;
 
 	if (!state->config->rf_loop_enable)
-		zl10036_init_tab[1][2] |= 0x01;
+		zl10036_init_tab[1][0] |= 0x01;
 
 	deb_info("%s\n", __func__);
 
@@ -462,16 +463,16 @@ struct dvb_frontend *zl10036_attach(struct dvb_frontend *fe,
 				    const struct zl10036_config *config,
 				    struct i2c_adapter *i2c)
 {
-	struct zl10036_state *state = NULL;
+	struct zl10036_state *state;
 	int ret;
 
-	if (NULL == config) {
+	if (!config) {
 		printk(KERN_ERR "%s: no config specified", __func__);
-		goto error;
+		return NULL;
 	}
 
 	state = kzalloc(sizeof(struct zl10036_state), GFP_KERNEL);
-	if (NULL == state)
+	if (!state)
 		return NULL;
 
 	state->config = config;
@@ -506,7 +507,7 @@ struct dvb_frontend *zl10036_attach(struct dvb_frontend *fe,
 	return fe;
 
 error:
-	zl10036_release(fe);
+	kfree(state);
 	return NULL;
 }
 EXPORT_SYMBOL(zl10036_attach);

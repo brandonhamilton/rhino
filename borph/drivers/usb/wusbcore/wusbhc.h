@@ -58,9 +58,7 @@
 #include <linux/mutex.h>
 #include <linux/kref.h>
 #include <linux/workqueue.h>
-/* FIXME: Yes, I know: BAD--it's not my fault the USB HC iface is not
- *        public */
-#include <linux/../../drivers/usb/core/hcd.h>
+#include <linux/usb/hcd.h>
 #include <linux/uwb.h>
 #include <linux/usb/wusb.h>
 
@@ -134,7 +132,7 @@ static inline void wusb_dev_put(struct wusb_dev *wusb_dev)
 }
 
 /**
- * Wireless USB Host Controlller root hub "fake" ports
+ * Wireless USB Host Controller root hub "fake" ports
  * (state and device information)
  *
  * Wireless USB is wireless, so there are no ports; but we
@@ -198,7 +196,7 @@ struct wusb_port {
  *                 ports) this HC will take. Read-only.
  *
  * @port      	   Array of port status for each fake root port. Guaranteed to
- *                 always be the same lenght during device existence
+ *                 always be the same length during device existence
  *                 [this allows for some unlocked but referenced reading].
  *
  * @mmcies_max	   Max number of Information Elements this HC can send
@@ -233,7 +231,7 @@ struct wusb_port {
  *
  *    Most of the times when you need to use it, it will be non-NULL,
  *    so there is no real need to check for it (wusb_dev will
- *    dissapear before usb_dev).
+ *    disappear before usb_dev).
  *
  *  - The following fields need to be filled out before calling
  *    wusbhc_create(): ports_max, mmcies_max, mmcie_{add,rm}.

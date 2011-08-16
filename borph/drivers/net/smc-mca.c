@@ -42,6 +42,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 
@@ -460,7 +461,6 @@ static void ultramca_reset_8390(struct net_device *dev)
 
 	if (ei_debug > 1)
 		printk("reset done\n");
-	return;
 }
 
 /* Grab the 8390 specific header. Similar to the block_input routine, but

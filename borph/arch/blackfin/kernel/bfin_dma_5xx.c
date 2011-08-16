@@ -36,10 +36,14 @@ static int __init blackfin_dma_init(void)
 
 	printk(KERN_INFO "Blackfin DMA Controller\n");
 
+
+#if ANOMALY_05000480
+	bfin_write_DMAC_TC_PER(0x0111);
+#endif
+
 	for (i = 0; i < MAX_DMA_CHANNELS; i++) {
-		dma_ch[i].chan_status = DMA_CHANNEL_FREE;
+		atomic_set(&dma_ch[i].chan_status, 0);
 		dma_ch[i].regs = dma_io_base_addr[i];
-		mutex_init(&(dma_ch[i].dmalock));
 	}
 	/* Mark MEMDMA Channel 0 as requested since we're using it internally */
 	request_dma(CH_MEM_STREAM0_DEST, "Blackfin dma_memcpy");
@@ -60,7 +64,7 @@ static int proc_dma_show(struct seq_file *m, void *v)
 	int i;
 
 	for (i = 0; i < MAX_DMA_CHANNELS; ++i)
-		if (dma_ch[i].chan_status != DMA_CHANNEL_FREE)
+		if (dma_channel_active(i))
 			seq_printf(m, "%2d: %s\n", i, dma_ch[i].device_id);
 
 	return 0;
@@ -85,6 +89,24 @@ static int __init proc_dma_init(void)
 late_initcall(proc_dma_init);
 #endif
 
+static void set_dma_peripheral_map(unsigned int channel, const char *device_id)
+{
+#ifdef CONFIG_BF54x
+	unsigned int per_map;
+
+	switch (channel) {
+		case CH_UART2_RX: per_map = 0xC << 12; break;
+		case CH_UART2_TX: per_map = 0xD << 12; break;
+		case CH_UART3_RX: per_map = 0xE << 12; break;
+		case CH_UART3_TX: per_map = 0xF << 12; break;
+		default:          return;
+	}
+
+	if (strncmp(device_id, "BFIN_UART", 9) == 0)
+		dma_ch[channel].regs->peripheral_map = per_map;
+#endif
+}
+
 /**
  *	request_dma - request a DMA channel
  *
@@ -92,7 +114,7 @@ late_initcall(proc_dma_init);
  */
 int request_dma(unsigned int channel, const char *device_id)
 {
-	pr_debug("request_dma() : BEGIN \n");
+	pr_debug("request_dma() : BEGIN\n");
 
 	if (device_id == NULL)
 		printk(KERN_WARNING "request_dma(%u): no device_id given\n", channel);
@@ -107,33 +129,12 @@ int request_dma(unsigned int channel, const char *device_id)
 	}
 #endif
 
-	mutex_lock(&(dma_ch[channel].dmalock));
-
-	if ((dma_ch[channel].chan_status == DMA_CHANNEL_REQUESTED)
-	    || (dma_ch[channel].chan_status == DMA_CHANNEL_ENABLED)) {
-		mutex_unlock(&(dma_ch[channel].dmalock));
-		pr_debug("DMA CHANNEL IN USE  \n");
+	if (atomic_cmpxchg(&dma_ch[channel].chan_status, 0, 1)) {
+		pr_debug("DMA CHANNEL IN USE\n");
 		return -EBUSY;
-	} else {
-		dma_ch[channel].chan_status = DMA_CHANNEL_REQUESTED;
-		pr_debug("DMA CHANNEL IS ALLOCATED  \n");
 	}
 
-	mutex_unlock(&(dma_ch[channel].dmalock));
-
-#ifdef CONFIG_BF54x
-	if (channel >= CH_UART2_RX && channel <= CH_UART3_TX) {
-		unsigned int per_map;
-		per_map = dma_ch[channel].regs->peripheral_map & 0xFFF;
-		if (strncmp(device_id, "BFIN_UART", 9) == 0)
-			dma_ch[channel].regs->peripheral_map = per_map |
-				((channel - CH_UART2_RX + 0xC)<<12);
-		else
-			dma_ch[channel].regs->peripheral_map = per_map |
-				((channel - CH_UART2_RX + 0x6)<<12);
-	}
-#endif
-
+	set_dma_peripheral_map(channel, device_id);
 	dma_ch[channel].device_id = device_id;
 	dma_ch[channel].irq = 0;
 
@@ -141,28 +142,27 @@ int request_dma(unsigned int channel, const char *device_id)
 	 * you have to request DMA, before doing any operations on
 	 * descriptor/channel
 	 */
-	pr_debug("request_dma() : END  \n");
+	pr_debug("request_dma() : END\n");
 	return 0;
 }
 EXPORT_SYMBOL(request_dma);
 
 int set_dma_callback(unsigned int channel, irq_handler_t callback, void *data)
 {
-	BUG_ON(channel >= MAX_DMA_CHANNELS ||
-			dma_ch[channel].chan_status == DMA_CHANNEL_FREE);
+	int ret;
+	unsigned int irq;
 
-	if (callback != NULL) {
-		int ret;
-		unsigned int irq = channel2irq(channel);
+	BUG_ON(channel >= MAX_DMA_CHANNELS || !callback ||
+			!atomic_read(&dma_ch[channel].chan_status));
 
-		ret = request_irq(irq, callback, IRQF_DISABLED,
-			dma_ch[channel].device_id, data);
-		if (ret)
-			return ret;
+	irq = channel2irq(channel);
+	ret = request_irq(irq, callback, 0, dma_ch[channel].device_id, data);
+	if (ret)
+		return ret;
 
-		dma_ch[channel].irq = irq;
-		dma_ch[channel].data = data;
-	}
+	dma_ch[channel].irq = irq;
+	dma_ch[channel].data = data;
+
 	return 0;
 }
 EXPORT_SYMBOL(set_dma_callback);
@@ -182,9 +182,9 @@ static void clear_dma_buffer(unsigned int channel)
 
 void free_dma(unsigned int channel)
 {
-	pr_debug("freedma() : BEGIN \n");
+	pr_debug("freedma() : BEGIN\n");
 	BUG_ON(channel >= MAX_DMA_CHANNELS ||
-			dma_ch[channel].chan_status == DMA_CHANNEL_FREE);
+			!atomic_read(&dma_ch[channel].chan_status));
 
 	/* Halt the DMA */
 	disable_dma(channel);
@@ -194,11 +194,9 @@ void free_dma(unsigned int channel)
 		free_irq(dma_ch[channel].irq, dma_ch[channel].data);
 
 	/* Clear the DMA Variable in the Channel */
-	mutex_lock(&(dma_ch[channel].dmalock));
-	dma_ch[channel].chan_status = DMA_CHANNEL_FREE;
-	mutex_unlock(&(dma_ch[channel].dmalock));
+	atomic_set(&dma_ch[channel].chan_status, 0);
 
-	pr_debug("freedma() : END \n");
+	pr_debug("freedma() : END\n");
 }
 EXPORT_SYMBOL(free_dma);
 
@@ -210,13 +208,14 @@ int blackfin_dma_suspend(void)
 {
 	int i;
 
-	for (i = 0; i < MAX_DMA_SUSPEND_CHANNELS; ++i) {
-		if (dma_ch[i].chan_status == DMA_CHANNEL_ENABLED) {
+	for (i = 0; i < MAX_DMA_CHANNELS; ++i) {
+		if (dma_ch[i].regs->cfg & DMAEN) {
 			printk(KERN_ERR "DMA Channel %d failed to suspend\n", i);
 			return -EBUSY;
 		}
 
-		dma_ch[i].saved_peripheral_map = dma_ch[i].regs->peripheral_map;
+		if (i < MAX_DMA_SUSPEND_CHANNELS)
+			dma_ch[i].saved_peripheral_map = dma_ch[i].regs->peripheral_map;
 	}
 
 	return 0;
@@ -462,13 +461,28 @@ void *dma_memcpy(void *pdst, const void *psrc, size_t size)
 {
 	unsigned long dst = (unsigned long)pdst;
 	unsigned long src = (unsigned long)psrc;
-	size_t bulk, rest;
 
 	if (bfin_addr_dcacheable(src))
 		blackfin_dcache_flush_range(src, src + size);
 
 	if (bfin_addr_dcacheable(dst))
 		blackfin_dcache_invalidate_range(dst, dst + size);
+
+	return dma_memcpy_nocache(pdst, psrc, size);
+}
+EXPORT_SYMBOL(dma_memcpy);
+
+/**
+ *	dma_memcpy_nocache - DMA memcpy under mutex lock
+ *	- No cache flush/invalidate
+ *
+ * Do not check arguments before starting the DMA memcpy.  Break the transfer
+ * up into two pieces.  The first transfer is in multiples of 64k and the
+ * second transfer is the piece smaller than 64k.
+ */
+void *dma_memcpy_nocache(void *pdst, const void *psrc, size_t size)
+{
+	size_t bulk, rest;
 
 	bulk = size & ~0xffff;
 	rest = size - bulk;
@@ -477,7 +491,7 @@ void *dma_memcpy(void *pdst, const void *psrc, size_t size)
 	_dma_memcpy(pdst + bulk, psrc + bulk, rest);
 	return pdst;
 }
-EXPORT_SYMBOL(dma_memcpy);
+EXPORT_SYMBOL(dma_memcpy_nocache);
 
 /**
  *	safe_dma_memcpy - DMA memcpy w/argument checking

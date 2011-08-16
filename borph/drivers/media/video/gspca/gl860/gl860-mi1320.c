@@ -201,7 +201,7 @@ void mi1320_init_settings(struct gspca_dev *gspca_dev)
 	sd->vmax.backlight  =  2;
 	sd->vmax.brightness =  8;
 	sd->vmax.sharpness  =  7;
-	sd->vmax.contrast   =  0; /* 10 but not working with tihs driver */
+	sd->vmax.contrast   =  0; /* 10 but not working with this driver */
 	sd->vmax.gamma      = 40;
 	sd->vmax.hue        =  5 + 1;
 	sd->vmax.saturation =  8;
@@ -345,7 +345,7 @@ static int mi1320_configure_alt(struct gspca_dev *gspca_dev)
 	return 0;
 }
 
-int mi1320_camera_settings(struct gspca_dev *gspca_dev)
+static int mi1320_camera_settings(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 

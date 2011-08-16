@@ -22,6 +22,7 @@
 #include "extent_map.h"
 #include "extent_io.h"
 #include "ordered-data.h"
+#include "delayed-inode.h"
 
 /* in memory btrfs inode */
 struct btrfs_inode {
@@ -33,6 +34,9 @@ struct btrfs_inode {
 	 */
 	struct btrfs_key location;
 
+	/* Lock for counters */
+	spinlock_t lock;
+
 	/* the extent_tree has caches of all the extent mappings to disk */
 	struct extent_map_tree extent_tree;
 
@@ -43,9 +47,6 @@ struct btrfs_inode {
 	 * tried when checksums fail for a given block
 	 */
 	struct extent_io_tree io_failure_tree;
-
-	/* held while inesrting or deleting extents from files */
-	struct mutex extent_mutex;
 
 	/* held while logging the inode in tree-log.c */
 	struct mutex log_mutex;
@@ -123,9 +124,6 @@ struct btrfs_inode {
 	 */
 	u64 index_cnt;
 
-	/* the start of block group preferred for allocations. */
-	u64 block_group;
-
 	/* the fsync log has some corner cases that mean we have to check
 	 * directories to see if any unlinks have been done before
 	 * the directory was logged.  See tree-log.c for all the
@@ -139,9 +137,8 @@ struct btrfs_inode {
 	 * items we think we'll end up using, and reserved_extents is the number
 	 * of extent items we've reserved metadata for.
 	 */
-	spinlock_t accounting_lock;
-	int reserved_extents;
-	int outstanding_extents;
+	unsigned outstanding_extents;
+	unsigned reserved_extents;
 
 	/*
 	 * ordered_data_close is set by truncate when a file that used
@@ -154,20 +151,49 @@ struct btrfs_inode {
 	 * of these.
 	 */
 	unsigned ordered_data_close:1;
+	unsigned orphan_meta_reserved:1;
 	unsigned dummy_inode:1;
+	unsigned in_defrag:1;
+
+	/*
+	 * always compress this one file
+	 */
+	unsigned force_compress:4;
+
+	struct btrfs_delayed_node *delayed_node;
 
 	struct inode vfs_inode;
 };
+
+extern unsigned char btrfs_filetype_table[];
 
 static inline struct btrfs_inode *BTRFS_I(struct inode *inode)
 {
 	return container_of(inode, struct btrfs_inode, vfs_inode);
 }
 
+static inline u64 btrfs_ino(struct inode *inode)
+{
+	u64 ino = BTRFS_I(inode)->location.objectid;
+
+	if (ino <= BTRFS_FIRST_FREE_OBJECTID)
+		ino = inode->i_ino;
+	return ino;
+}
+
 static inline void btrfs_i_size_write(struct inode *inode, u64 size)
 {
-	inode->i_size = size;
+	i_size_write(inode, size);
 	BTRFS_I(inode)->disk_i_size = size;
+}
+
+static inline bool btrfs_is_free_space_inode(struct btrfs_root *root,
+				       struct inode *inode)
+{
+	if (root == root->fs_info->tree_root ||
+	    BTRFS_I(inode)->location.objectid == BTRFS_FREE_INO_OBJECTID)
+		return true;
+	return false;
 }
 
 #endif

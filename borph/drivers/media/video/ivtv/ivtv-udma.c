@@ -132,7 +132,12 @@ int ivtv_udma_setup(struct ivtv *itv, unsigned long ivtv_dest_addr,
 	if (user_dma.page_count != err) {
 		IVTV_DEBUG_WARN("failed to map user pages, returned %d instead of %d\n",
 			   err, user_dma.page_count);
-		return -EINVAL;
+		if (err >= 0) {
+			for (i = 0; i < err; i++)
+				put_page(dma->map[i]);
+			return -EINVAL;
+		}
+		return err;
 	}
 
 	dma->page_count = user_dma.page_count;
@@ -213,6 +218,7 @@ void ivtv_udma_start(struct ivtv *itv)
 	write_reg_sync(read_reg(IVTV_REG_DMAXFER) | 0x01, IVTV_REG_DMAXFER);
 	set_bit(IVTV_F_I_DMA, &itv->i_flags);
 	set_bit(IVTV_F_I_UDMA, &itv->i_flags);
+	clear_bit(IVTV_F_I_UDMA_PENDING, &itv->i_flags);
 }
 
 void ivtv_udma_prepare(struct ivtv *itv)

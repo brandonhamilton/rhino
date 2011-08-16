@@ -27,7 +27,7 @@
 #define STE_VSID_SHIFT	12
 
 /* Location of cpu0's segment table */
-#define STAB0_PAGE	0x6
+#define STAB0_PAGE	0x8
 #define STAB0_OFFSET	(STAB0_PAGE << 12)
 #define STAB0_PHYS_ADDR	(STAB0_OFFSET + PHYSICAL_START)
 
@@ -90,13 +90,19 @@ extern char initial_stab[];
 
 #define HPTE_R_PP0		ASM_CONST(0x8000000000000000)
 #define HPTE_R_TS		ASM_CONST(0x4000000000000000)
+#define HPTE_R_KEY_HI		ASM_CONST(0x3000000000000000)
 #define HPTE_R_RPN_SHIFT	12
-#define HPTE_R_RPN		ASM_CONST(0x3ffffffffffff000)
-#define HPTE_R_FLAGS		ASM_CONST(0x00000000000003ff)
+#define HPTE_R_RPN		ASM_CONST(0x0ffffffffffff000)
 #define HPTE_R_PP		ASM_CONST(0x0000000000000003)
 #define HPTE_R_N		ASM_CONST(0x0000000000000004)
+#define HPTE_R_G		ASM_CONST(0x0000000000000008)
+#define HPTE_R_M		ASM_CONST(0x0000000000000010)
+#define HPTE_R_I		ASM_CONST(0x0000000000000020)
+#define HPTE_R_W		ASM_CONST(0x0000000000000040)
+#define HPTE_R_WIMG		ASM_CONST(0x0000000000000078)
 #define HPTE_R_C		ASM_CONST(0x0000000000000080)
 #define HPTE_R_R		ASM_CONST(0x0000000000000100)
+#define HPTE_R_KEY_LO		ASM_CONST(0x0000000000000e00)
 
 #define HPTE_V_1TB_SEG		ASM_CONST(0x4000000000000000)
 #define HPTE_V_VRMA_MASK	ASM_CONST(0x4001ffffff000000)
@@ -250,7 +256,9 @@ extern int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
 int __hash_page_huge(unsigned long ea, unsigned long access, unsigned long vsid,
 		     pte_t *ptep, unsigned long trap, int local, int ssize,
 		     unsigned int shift, unsigned int mmu_psize);
-
+extern void hash_failure_debug(unsigned long ea, unsigned long access,
+			       unsigned long vsid, unsigned long trap,
+			       int ssize, int psize, unsigned long pte);
 extern int htab_bolt_mapping(unsigned long vstart, unsigned long vend,
 			     unsigned long pstart, unsigned long prot,
 			     int psize, int ssize);
@@ -406,6 +414,7 @@ static inline void subpage_prot_init_new_context(struct mm_struct *mm) { }
 #endif /* CONFIG_PPC_SUBPAGE_PROT */
 
 typedef unsigned long mm_context_id_t;
+struct spinlock;
 
 typedef struct {
 	mm_context_id_t id;
@@ -421,6 +430,11 @@ typedef struct {
 #ifdef CONFIG_PPC_SUBPAGE_PROT
 	struct subpage_prot_table spt;
 #endif /* CONFIG_PPC_SUBPAGE_PROT */
+#ifdef CONFIG_PPC_ICSWX
+	struct spinlock *cop_lockp; /* guard acop and cop_pid */
+	unsigned long acop;	/* mask of enabled coprocessor types */
+	unsigned int cop_pid;	/* pid value used with coprocessors */
+#endif /* CONFIG_PPC_ICSWX */
 } mm_context_t;
 
 
@@ -431,7 +445,7 @@ typedef struct {
  * with.  However gcc is not clever enough to compute the
  * modulus (2^n-1) without a second multiply.
  */
-#define vsid_scrample(protovsid, size) \
+#define vsid_scramble(protovsid, size) \
 	((((protovsid) * VSID_MULTIPLIER_##size) % VSID_MODULUS_##size))
 
 #else /* 1 */

@@ -5,6 +5,7 @@
 
 #include <linux/kernel.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/of_device.h>
@@ -58,8 +59,7 @@ static int __devinit clock_board_calc_nslots(struct clock_board *p)
 	}
 }
 
-static int __devinit clock_board_probe(struct of_device *op,
-				       const struct of_device_id *match)
+static int __devinit clock_board_probe(struct platform_device *op)
 {
 	struct clock_board *p = kzalloc(sizeof(*p), GFP_KERNEL);
 	int err = -ENOMEM;
@@ -99,7 +99,7 @@ static int __devinit clock_board_probe(struct of_device *op,
 
 	p->leds_resource.start = (unsigned long)
 		(p->clock_regs + CLOCK_CTRL);
-	p->leds_resource.end = p->leds_resource.end;
+	p->leds_resource.end = p->leds_resource.start;
 	p->leds_resource.name = "leds";
 
 	p->leds_pdev.name = "sunfire-clockboard-leds";
@@ -140,23 +140,23 @@ out_free:
 	goto out;
 }
 
-static struct of_device_id __initdata clock_board_match[] = {
+static const struct of_device_id clock_board_match[] = {
 	{
 		.name = "clock-board",
 	},
 	{},
 };
 
-static struct of_platform_driver clock_board_driver = {
-	.match_table	= clock_board_match,
+static struct platform_driver clock_board_driver = {
 	.probe		= clock_board_probe,
-	.driver		= {
-		.name	= "clock_board",
+	.driver = {
+		.name = "clock_board",
+		.owner = THIS_MODULE,
+		.of_match_table = clock_board_match,
 	},
 };
 
-static int __devinit fhc_probe(struct of_device *op,
-			       const struct of_device_id *match)
+static int __devinit fhc_probe(struct platform_device *op)
 {
 	struct fhc *p = kzalloc(sizeof(*p), GFP_KERNEL);
 	int err = -ENOMEM;
@@ -167,7 +167,7 @@ static int __devinit fhc_probe(struct of_device *op,
 		goto out;
 	}
 
-	if (!strcmp(op->node->parent->name, "central"))
+	if (!strcmp(op->dev.of_node->parent->name, "central"))
 		p->central = true;
 
 	p->pregs = of_ioremap(&op->resource[0], 0,
@@ -182,7 +182,7 @@ static int __devinit fhc_probe(struct of_device *op,
 		reg = upa_readl(p->pregs + FHC_PREGS_BSR);
 		p->board_num = ((reg >> 16) & 1) | ((reg >> 12) & 0x0e);
 	} else {
-		p->board_num = of_getintprop_default(op->node, "board#", -1);
+		p->board_num = of_getintprop_default(op->dev.of_node, "board#", -1);
 		if (p->board_num == -1) {
 			printk(KERN_ERR "fhc: No board# property\n");
 			goto out_unmap_pregs;
@@ -194,7 +194,7 @@ static int __devinit fhc_probe(struct of_device *op,
 	if (!p->central) {
 		p->leds_resource.start = (unsigned long)
 			(p->pregs + FHC_PREGS_CTRL);
-		p->leds_resource.end = p->leds_resource.end;
+		p->leds_resource.end = p->leds_resource.start;
 		p->leds_resource.name = "leds";
 
 		p->leds_pdev.name = "sunfire-fhc-leds";
@@ -245,25 +245,26 @@ out_free:
 	goto out;
 }
 
-static struct of_device_id __initdata fhc_match[] = {
+static const struct of_device_id fhc_match[] = {
 	{
 		.name = "fhc",
 	},
 	{},
 };
 
-static struct of_platform_driver fhc_driver = {
-	.match_table	= fhc_match,
+static struct platform_driver fhc_driver = {
 	.probe		= fhc_probe,
-	.driver		= {
-		.name	= "fhc",
+	.driver = {
+		.name = "fhc",
+		.owner = THIS_MODULE,
+		.of_match_table = fhc_match,
 	},
 };
 
 static int __init sunfire_init(void)
 {
-	(void) of_register_driver(&fhc_driver, &of_platform_bus_type);
-	(void) of_register_driver(&clock_board_driver, &of_platform_bus_type);
+	(void) platform_driver_register(&fhc_driver);
+	(void) platform_driver_register(&clock_board_driver);
 	return 0;
 }
 

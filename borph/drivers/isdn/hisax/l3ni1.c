@@ -22,6 +22,7 @@
 #include "isdnl3.h"
 #include "l3ni1.h"
 #include <linux/ctype.h>
+#include <linux/slab.h>
 
 extern char *HiSax_getrev(const char *revision);
 static const char *ni1_revision = "$Revision: 2.8.2.3 $";
@@ -1448,7 +1449,7 @@ l3ni1_setup(struct l3_process *pc, u_char pr, void *arg)
 	 * Bearer Capabilities
 	 */
 	p = skb->data;
-	/* only the first occurence 'll be detected ! */
+	/* only the first occurrence 'll be detected ! */
 	if ((p = findie(p, skb->len, 0x04, 0))) {
 		if ((p[1] < 2) || (p[1] > 11))
 			err = 1;
@@ -2016,7 +2017,7 @@ static void l3ni1_redir_req_early(struct l3_process *pc, u_char pr, void *arg)
 
 /***********************************************/
 /* handle special commands for this protocol.  */
-/* Examples are call independant services like */
+/* Examples are call independent services like */
 /* remote operations with dummy  callref.      */
 /***********************************************/
 static int l3ni1_cmd_global(struct PStack *st, isdn_ctrl *ic)
@@ -2882,7 +2883,7 @@ global_handler(struct PStack *st, int mt, struct sk_buff *skb)
 static void
 ni1up(struct PStack *st, int pr, void *arg)
 {
-	int i, mt, cr, cause, callState;
+	int i, mt, cr, callState;
 	char *ptr;
 	u_char *p;
 	struct sk_buff *skb = arg;
@@ -2985,12 +2986,10 @@ ni1up(struct PStack *st, int pr, void *arg)
 				return;
 			}
 		} else if (mt == MT_STATUS) {
-			cause = 0;
 			if ((ptr = findie(skb->data, skb->len, IE_CAUSE, 0)) != NULL) {
 				ptr++;
 				if (*ptr++ == 2)
 					ptr++;
-				cause = *ptr & 0x7f;
 			}
 			callState = 0;
 			if ((ptr = findie(skb->data, skb->len, IE_CALL_STATE, 0)) != NULL) {

@@ -10,9 +10,6 @@
 
 #include <linux/ptrace.h>
 
-/* gdb locks */
-#define KGDB_MAX_NO_CPUS 8
-
 /*
  * BUFMAX defines the maximum number of characters in inbound/outbound buffers.
  * At least NUMREGBYTES*2 are needed for register packets.
@@ -106,7 +103,12 @@ static inline void arch_kgdb_breakpoint(void)
 	asm("EXCPT 2;");
 }
 #define BREAK_INSTR_SIZE	2
-#define CACHE_FLUSH_IS_SAFE	1
+#ifdef CONFIG_SMP
+# define CACHE_FLUSH_IS_SAFE	0
+#else
+# define CACHE_FLUSH_IS_SAFE	1
+#endif
+#define GDB_ADJUSTS_BREAK_OFFSET
 #define HW_INST_WATCHPOINT_NUM	6
 #define HW_WATCHPOINT_NUM	8
 #define TYPE_INST_WATCHPOINT	0

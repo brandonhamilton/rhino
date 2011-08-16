@@ -58,7 +58,7 @@
  *    a zillion reads; by serializing, we are throttling.
  *
  *  - RX data processing can get heavy enough so that it is not
- *    appropiate for doing it in the USB callback; thus we run it in a
+ *    appropriate for doing it in the USB callback; thus we run it in a
  *    process context.
  *
  * We provide a read buffer of an arbitrary size (short of a page); if
@@ -83,6 +83,7 @@
  * i2400mu_rx_release()            called from i2400mu_bus_dev_stop()
  */
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 #include <linux/usb.h>
 #include "i2400m-usb.h"
 

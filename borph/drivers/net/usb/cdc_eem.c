@@ -30,6 +30,7 @@
 #include <linux/crc32.h>
 #include <linux/usb/cdc.h>
 #include <linux/usb/usbnet.h>
+#include <linux/gfp.h>
 
 
 /*
@@ -73,7 +74,7 @@ static void eem_linkcmd(struct usbnet *dev, struct sk_buff *skb)
 		usb_free_urb(urb);
 fail:
 		dev_kfree_skb(skb);
-		devwarn(dev, "link cmd failure\n");
+		netdev_warn(dev->net, "link cmd failure\n");
 		return;
 	}
 }
@@ -189,7 +190,7 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 
 		/*
 		 * EEM packet header format:
-		 * b0..14:	EEM type dependant (Data or Command)
+		 * b0..14:	EEM type dependent (Data or Command)
 		 * b15:		bmType
 		 */
 		header = get_unaligned_le16(skb->data);
@@ -212,7 +213,8 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			 * b15:		1 (EEM command)
 			 */
 			if (header & BIT(14)) {
-				devdbg(dev, "reserved command %04x\n", header);
+				netdev_dbg(dev->net, "reserved command %04x\n",
+					   header);
 				continue;
 			}
 
@@ -255,8 +257,9 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			case 1:		/* Echo response */
 			case 5:		/* Tickle */
 			default:	/* reserved */
-				devwarn(dev, "unexpected link command %d\n",
-						bmEEMCmd);
+				netdev_warn(dev->net,
+					    "unexpected link command %d\n",
+					    bmEEMCmd);
 				continue;
 			}
 
@@ -337,7 +340,7 @@ next:
 
 static const struct driver_info eem_info = {
 	.description =	"CDC EEM Device",
-	.flags =	FLAG_ETHER,
+	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT,
 	.bind =		eem_bind,
 	.rx_fixup =	eem_rx_fixup,
 	.tx_fixup =	eem_tx_fixup,

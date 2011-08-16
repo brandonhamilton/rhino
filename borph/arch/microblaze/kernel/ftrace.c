@@ -51,6 +51,9 @@ void prepare_ftrace_return(unsigned long *parent, unsigned long self_addr)
 			: "r" (parent), "r" (return_hooker)
 	);
 
+	flush_dcache_range((u32)parent, (u32)parent + 4);
+	flush_icache_range((u32)parent, (u32)parent + 4);
+
 	if (unlikely(faulted)) {
 		ftrace_graph_stop();
 		WARN_ON(1);
@@ -94,6 +97,9 @@ static int ftrace_modify_code(unsigned long addr, unsigned int value)
 
 	if (unlikely(faulted))
 		return -EFAULT;
+
+	flush_dcache_range(addr, addr + 4);
+	flush_icache_range(addr, addr + 4);
 
 	return 0;
 }
@@ -151,13 +157,10 @@ int ftrace_make_nop(struct module *mod,
 	return ret;
 }
 
-static int ret_addr; /* initialized as 0 by default */
-
 /* I believe that first is called ftrace_make_nop before this function */
 int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 {
 	int ret;
-	ret_addr = addr; /* saving where the barrier jump is */
 	pr_debug("%s: addr:0x%x, rec->ip: 0x%x, imm:0x%x\n",
 		__func__, (unsigned int)addr, (unsigned int)rec->ip, imm);
 	ret = ftrace_modify_code(rec->ip, imm);
@@ -194,15 +197,10 @@ int ftrace_update_ftrace_func(ftrace_func_t func)
 	ret = ftrace_modify_code(ip, upper);
 	ret += ftrace_modify_code(ip + 4, lower);
 
-	/* We just need to remove the rtsd r15, 8 by NOP */
-	BUG_ON(!ret_addr);
-	if (ret_addr)
-		ret += ftrace_modify_code(ret_addr, MICROBLAZE_NOP);
-	else
-		ret = 1; /* fault */
+	/* We just need to replace the rtsd r15, 8 with NOP */
+	ret += ftrace_modify_code((unsigned long)&ftrace_caller,
+				  MICROBLAZE_NOP);
 
-	/* All changes are done - lets do caches consistent */
-	flush_icache();
 	return ret;
 }
 
@@ -216,7 +214,6 @@ int ftrace_enable_ftrace_graph_caller(void)
 
 	old_jump = *(unsigned int *)ip; /* save jump over instruction */
 	ret = ftrace_modify_code(ip, MICROBLAZE_NOP);
-	flush_icache();
 
 	pr_debug("%s: Replace instruction: 0x%x\n", __func__, old_jump);
 	return ret;
@@ -228,7 +225,6 @@ int ftrace_disable_ftrace_graph_caller(void)
 	unsigned long ip = (unsigned long)(&ftrace_call_graph);
 
 	ret = ftrace_modify_code(ip, old_jump);
-	flush_icache();
 
 	pr_debug("%s\n", __func__);
 	return ret;

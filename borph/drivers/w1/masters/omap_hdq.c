@@ -12,9 +12,11 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/io.h>
+#include <linux/sched.h>
 
 #include <asm/irq.h>
 #include <mach/hardware.h>
@@ -72,7 +74,7 @@ struct hdq_data {
 	int			init_trans;
 };
 
-static int __init omap_hdq_probe(struct platform_device *pdev);
+static int __devinit omap_hdq_probe(struct platform_device *pdev);
 static int omap_hdq_remove(struct platform_device *pdev);
 
 static struct platform_driver omap_hdq_driver = {
@@ -543,7 +545,7 @@ static void omap_w1_write_byte(void *_hdq, u8 byte)
 		return;
 	}
 
-	/* Second write, data transfered. Release the module */
+	/* Second write, data transferred. Release the module */
 	if (hdq_data->init_trans > 1) {
 		omap_hdq_put(hdq_data);
 		ret = mutex_lock_interruptible(&hdq_data->hdq_mutex);
@@ -558,7 +560,7 @@ static void omap_w1_write_byte(void *_hdq, u8 byte)
 	return;
 }
 
-static int __init omap_hdq_probe(struct platform_device *pdev)
+static int __devinit omap_hdq_probe(struct platform_device *pdev)
 {
 	struct hdq_data *hdq_data;
 	struct resource *res;
@@ -591,19 +593,17 @@ static int __init omap_hdq_probe(struct platform_device *pdev)
 
 	/* get interface & functional clock objects */
 	hdq_data->hdq_ick = clk_get(&pdev->dev, "ick");
-	hdq_data->hdq_fck = clk_get(&pdev->dev, "fck");
+	if (IS_ERR(hdq_data->hdq_ick)) {
+		dev_dbg(&pdev->dev, "Can't get HDQ ick clock object\n");
+		ret = PTR_ERR(hdq_data->hdq_ick);
+		goto err_ick;
+	}
 
-	if (IS_ERR(hdq_data->hdq_ick) || IS_ERR(hdq_data->hdq_fck)) {
-		dev_dbg(&pdev->dev, "Can't get HDQ clock objects\n");
-		if (IS_ERR(hdq_data->hdq_ick)) {
-			ret = PTR_ERR(hdq_data->hdq_ick);
-			goto err_clk;
-		}
-		if (IS_ERR(hdq_data->hdq_fck)) {
-			ret = PTR_ERR(hdq_data->hdq_fck);
-			clk_put(hdq_data->hdq_ick);
-			goto err_clk;
-		}
+	hdq_data->hdq_fck = clk_get(&pdev->dev, "fck");
+	if (IS_ERR(hdq_data->hdq_fck)) {
+		dev_dbg(&pdev->dev, "Can't get HDQ fck clock object\n");
+		ret = PTR_ERR(hdq_data->hdq_fck);
+		goto err_fck;
 	}
 
 	hdq_data->hdq_usecount = 0;
@@ -663,10 +663,12 @@ err_fnclk:
 	clk_disable(hdq_data->hdq_ick);
 
 err_intfclk:
-	clk_put(hdq_data->hdq_ick);
 	clk_put(hdq_data->hdq_fck);
 
-err_clk:
+err_fck:
+	clk_put(hdq_data->hdq_ick);
+
+err_ick:
 	iounmap(hdq_data->hdq_base);
 
 err_ioremap:

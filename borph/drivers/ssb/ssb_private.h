@@ -171,7 +171,8 @@ ssize_t ssb_attr_sprom_store(struct ssb_bus *bus,
 			     const char *buf, size_t count,
 			     int (*sprom_check_crc)(const u16 *sprom, size_t size),
 			     int (*sprom_write)(struct ssb_bus *bus, const u16 *sprom));
-extern const struct ssb_sprom *ssb_get_fallback_sprom(void);
+extern int ssb_fill_sprom_with_fallback(struct ssb_bus *bus,
+					struct ssb_sprom *out);
 
 
 /* core.c */
@@ -196,7 +197,7 @@ extern int ssb_devices_thaw(struct ssb_freeze_context *ctx);
 #ifdef CONFIG_SSB_B43_PCI_BRIDGE
 extern int __init b43_pci_ssb_bridge_init(void);
 extern void __exit b43_pci_ssb_bridge_exit(void);
-#else /* CONFIG_SSB_B43_PCI_BRIDGR */
+#else /* CONFIG_SSB_B43_PCI_BRIDGE */
 static inline int b43_pci_ssb_bridge_init(void)
 {
 	return 0;
@@ -204,6 +205,6 @@ static inline int b43_pci_ssb_bridge_init(void)
 static inline void b43_pci_ssb_bridge_exit(void)
 {
 }
-#endif /* CONFIG_SSB_PCIHOST */
+#endif /* CONFIG_SSB_B43_PCI_BRIDGE */
 
 #endif /* LINUX_SSB_PRIVATE_H_ */

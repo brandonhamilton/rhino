@@ -33,7 +33,6 @@
 #include <linux/ctype.h>  /* isdigit, isxdigit */
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/blkpg.h>
 #include <linux/hdreg.h>  /* HDIO_GETGEO */
@@ -41,6 +40,7 @@
 #include <linux/bio.h>
 #include <linux/suspend.h>
 #include <linux/platform_device.h>
+#include <linux/gfp.h>
 #include <asm/uaccess.h>
 
 #define XPRAM_NAME	"xpram"
@@ -62,8 +62,8 @@ static int xpram_devs;
 /*
  * Parameter parsing functions.
  */
-static int __initdata devs = XPRAM_DEVS;
-static char __initdata *sizes[XPRAM_MAX_DEVS];
+static int devs = XPRAM_DEVS;
+static char *sizes[XPRAM_MAX_DEVS];
 
 module_param(devs, int, 0);
 module_param_array(sizes, charp, NULL, 0);

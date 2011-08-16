@@ -6,7 +6,6 @@
  */
 #include <linux/errno.h>
 #include <linux/thread_info.h>
-#include <linux/prefetch.h>
 #include <linux/string.h>
 #include <asm/asm.h>
 #include <asm/page.h>
@@ -205,14 +204,13 @@ static inline unsigned long __must_check copy_from_user(void *to,
 					  unsigned long n)
 {
 	int sz = __compiletime_object_size(to);
-	int ret = -EFAULT;
 
 	if (likely(sz == -1 || sz >= n))
-		ret = _copy_from_user(to, from, n);
+		n = _copy_from_user(to, from, n);
 	else
 		copy_from_user_overflow();
 
-	return ret;
+	return n;
 }
 
 long __must_check strncpy_from_user(char *dst, const char __user *src,

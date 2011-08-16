@@ -7,7 +7,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/pagemap.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/dmapool.h>
 #include <linux/mempool.h>
 #include <linux/spinlock.h>
@@ -67,8 +66,8 @@ static int ql_update_ring_coalescing(struct ql_adapter *qdev)
 			status = ql_write_cfg(qdev, cqicb, sizeof(*cqicb),
 						CFG_LCQ, rx_ring->cq_id);
 			if (status) {
-				QPRINTK(qdev, IFUP, ERR,
-					"Failed to load CQICB.\n");
+				netif_err(qdev, ifup, qdev->ndev,
+					  "Failed to load CQICB.\n");
 				goto exit;
 			}
 		}
@@ -89,8 +88,8 @@ static int ql_update_ring_coalescing(struct ql_adapter *qdev)
 			status = ql_write_cfg(qdev, cqicb, sizeof(*cqicb),
 						CFG_LCQ, rx_ring->cq_id);
 			if (status) {
-				QPRINTK(qdev, IFUP, ERR,
-					"Failed to load CQICB.\n");
+				netif_err(qdev, ifup, qdev->ndev,
+					  "Failed to load CQICB.\n");
 				goto exit;
 			}
 		}
@@ -107,8 +106,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 
 	spin_lock(&qdev->stats_lock);
 	if (ql_sem_spinlock(qdev, qdev->xg_sem_mask)) {
-			QPRINTK(qdev, DRV, ERR,
-				"Couldn't get xgmac sem.\n");
+			netif_err(qdev, drv, qdev->ndev,
+				  "Couldn't get xgmac sem.\n");
 		goto quit;
 	}
 	/*
@@ -116,8 +115,9 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x200; i < 0x280; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			QPRINTK(qdev, DRV, ERR,
-				"Error reading status register 0x%.04x.\n", i);
+			netif_err(qdev, drv, qdev->ndev,
+				  "Error reading status register 0x%.04x.\n",
+				  i);
 			goto end;
 		} else
 			*iter = data;
@@ -129,8 +129,9 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x300; i < 0x3d0; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			QPRINTK(qdev, DRV, ERR,
-				"Error reading status register 0x%.04x.\n", i);
+			netif_err(qdev, drv, qdev->ndev,
+				  "Error reading status register 0x%.04x.\n",
+				  i);
 			goto end;
 		} else
 			*iter = data;
@@ -142,8 +143,9 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x500; i < 0x540; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			QPRINTK(qdev, DRV, ERR,
-				"Error reading status register 0x%.04x.\n", i);
+			netif_err(qdev, drv, qdev->ndev,
+				  "Error reading status register 0x%.04x.\n",
+				  i);
 			goto end;
 		} else
 			*iter = data;
@@ -155,8 +157,9 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 */
 	for (i = 0x568; i < 0x5a8; i += 8) {
 		if (ql_read_xgmac_reg64(qdev, i, &data)) {
-			QPRINTK(qdev, DRV, ERR,
-				"Error reading status register 0x%.04x.\n", i);
+			netif_err(qdev, drv, qdev->ndev,
+				  "Error reading status register 0x%.04x.\n",
+				  i);
 			goto end;
 		} else
 			*iter = data;
@@ -167,8 +170,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 	 * Get RX NIC FIFO DROP statistics.
 	 */
 	if (ql_read_xgmac_reg64(qdev, 0x5b8, &data)) {
-		QPRINTK(qdev, DRV, ERR,
-			"Error reading status register 0x%.04x.\n", i);
+		netif_err(qdev, drv, qdev->ndev,
+			  "Error reading status register 0x%.04x.\n", i);
 		goto end;
 	} else
 		*iter = data;
@@ -178,8 +181,6 @@ quit:
 	spin_unlock(&qdev->stats_lock);
 
 	QL_DUMP_STAT(qdev);
-
-	return;
 }
 
 static char ql_stats_str_arr[][ETH_GSTRING_LEN] = {
@@ -355,7 +356,7 @@ static int ql_get_settings(struct net_device *ndev,
 		ecmd->port = PORT_FIBRE;
 	}
 
-	ecmd->speed = SPEED_10000;
+	ethtool_cmd_speed_set(ecmd, SPEED_10000);
 	ecmd->duplex = DUPLEX_FULL;
 
 	return 0;
@@ -374,7 +375,10 @@ static void ql_get_drvinfo(struct net_device *ndev,
 	strncpy(drvinfo->bus_info, pci_name(qdev->pdev), 32);
 	drvinfo->n_stats = 0;
 	drvinfo->testinfo_len = 0;
-	drvinfo->regdump_len = 0;
+	if (!test_bit(QL_FRC_COREDUMP, &qdev->flags))
+		drvinfo->regdump_len = sizeof(struct ql_mpi_coredump);
+	else
+		drvinfo->regdump_len = sizeof(struct ql_reg_dump);
 	drvinfo->eedump_len = 0;
 }
 
@@ -396,44 +400,43 @@ static int ql_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
 		return -EINVAL;
 	qdev->wol = wol->wolopts;
 
-	QPRINTK(qdev, DRV, INFO, "Set wol option 0x%x on %s\n",
-			 qdev->wol, ndev->name);
+	netif_info(qdev, drv, qdev->ndev, "Set wol option 0x%x\n", qdev->wol);
 	if (!qdev->wol) {
 		u32 wol = 0;
 		status = ql_mb_wol_mode(qdev, wol);
-		QPRINTK(qdev, DRV, ERR, "WOL %s (wol code 0x%x) on %s\n",
-			(status == 0) ? "cleared sucessfully" : "clear failed",
-			wol, qdev->ndev->name);
+		netif_err(qdev, drv, qdev->ndev, "WOL %s (wol code 0x%x)\n",
+			  status == 0 ? "cleared successfully" : "clear failed",
+			  wol);
 	}
 
 	return 0;
 }
 
-static int ql_phys_id(struct net_device *ndev, u32 data)
+static int ql_set_phys_id(struct net_device *ndev,
+			  enum ethtool_phys_id_state state)
+
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
-	u32 led_reg, i;
-	int status;
 
-	/* Save the current LED settings */
-	status = ql_mb_get_led_cfg(qdev);
-	if (status)
-		return status;
-	led_reg = qdev->led_config;
+	switch (state) {
+	case ETHTOOL_ID_ACTIVE:
+		/* Save the current LED settings */
+		if (ql_mb_get_led_cfg(qdev))
+			return -EIO;
 
-	/* Start blinking the led */
-	if (!data || data > 300)
-		data = 300;
-
-	for (i = 0; i < (data * 10); i++)
+		/* Start blinking */
 		ql_mb_set_led_cfg(qdev, QL_LED_BLINK);
+		return 0;
 
-	/* Restore LED settings */
-	status = ql_mb_set_led_cfg(qdev, led_reg);
-	if (status)
-		return status;
+	case ETHTOOL_ID_INACTIVE:
+		/* Restore LED settings */
+		if (ql_mb_set_led_cfg(qdev, qdev->led_config))
+			return -EIO;
+		return 0;
 
-	return 0;
+	default:
+		return -EINVAL;
+	}
 }
 
 static int ql_start_loopback(struct ql_adapter *qdev)
@@ -500,7 +503,8 @@ static int ql_run_loopback_test(struct ql_adapter *qdev)
 			return -EPIPE;
 		atomic_inc(&qdev->lb_count);
 	}
-
+	/* Give queue time to settle before testing results. */
+	msleep(2);
 	ql_clean_lb_rx_ring(&qdev->rx_ring[0], 128);
 	return atomic_read(&qdev->lb_count) ? -EIO : 0;
 }
@@ -533,16 +537,25 @@ static void ql_self_test(struct net_device *ndev,
 			data[0] = 0;
 		}
 		clear_bit(QL_SELFTEST, &qdev->flags);
+		/* Give link time to come up after
+		 * port configuration changes.
+		 */
+		msleep_interruptible(4 * 1000);
 	} else {
-		QPRINTK(qdev, DRV, ERR,
-			"%s: is down, Loopback test will fail.\n", ndev->name);
+		netif_err(qdev, drv, qdev->ndev,
+			  "is down, Loopback test will fail.\n");
 		eth_test->flags |= ETH_TEST_FL_FAILED;
 	}
 }
 
 static int ql_get_regs_len(struct net_device *ndev)
 {
-	return sizeof(struct ql_reg_dump);
+	struct ql_adapter *qdev = netdev_priv(ndev);
+
+	if (!test_bit(QL_FRC_COREDUMP, &qdev->flags))
+		return sizeof(struct ql_mpi_coredump);
+	else
+		return sizeof(struct ql_reg_dump);
 }
 
 static void ql_get_regs(struct net_device *ndev,
@@ -550,7 +563,12 @@ static void ql_get_regs(struct net_device *ndev,
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
 
-	ql_gen_reg_dump(qdev, p);
+	ql_get_dump(qdev, p);
+	qdev->core_is_dumped = 0;
+	if (!test_bit(QL_FRC_COREDUMP, &qdev->flags))
+		regs->len = sizeof(struct ql_mpi_coredump);
+	else
+		regs->len = sizeof(struct ql_reg_dump);
 }
 
 static int ql_get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
@@ -632,35 +650,7 @@ static int ql_set_pauseparam(struct net_device *netdev,
 		return -EINVAL;
 
 	status = ql_mb_set_port_cfg(qdev);
-	if (status)
-		return status;
 	return status;
-}
-
-static u32 ql_get_rx_csum(struct net_device *netdev)
-{
-	struct ql_adapter *qdev = netdev_priv(netdev);
-	return qdev->rx_csum;
-}
-
-static int ql_set_rx_csum(struct net_device *netdev, uint32_t data)
-{
-	struct ql_adapter *qdev = netdev_priv(netdev);
-	qdev->rx_csum = data;
-	return 0;
-}
-
-static int ql_set_tso(struct net_device *ndev, uint32_t data)
-{
-
-	if (data) {
-		ndev->features |= NETIF_F_TSO;
-		ndev->features |= NETIF_F_TSO6;
-	} else {
-		ndev->features &= ~NETIF_F_TSO;
-		ndev->features &= ~NETIF_F_TSO6;
-	}
-	return 0;
 }
 
 static u32 ql_get_msglevel(struct net_device *ndev)
@@ -685,18 +675,10 @@ const struct ethtool_ops qlge_ethtool_ops = {
 	.get_msglevel = ql_get_msglevel,
 	.set_msglevel = ql_set_msglevel,
 	.get_link = ethtool_op_get_link,
-	.phys_id		 = ql_phys_id,
+	.set_phys_id		 = ql_set_phys_id,
 	.self_test		 = ql_self_test,
 	.get_pauseparam		 = ql_get_pauseparam,
 	.set_pauseparam		 = ql_set_pauseparam,
-	.get_rx_csum = ql_get_rx_csum,
-	.set_rx_csum = ql_set_rx_csum,
-	.get_tx_csum = ethtool_op_get_tx_csum,
-	.set_tx_csum = ethtool_op_set_tx_csum,
-	.get_sg = ethtool_op_get_sg,
-	.set_sg = ethtool_op_set_sg,
-	.get_tso = ethtool_op_get_tso,
-	.set_tso = ql_set_tso,
 	.get_coalesce = ql_get_coalesce,
 	.set_coalesce = ql_set_coalesce,
 	.get_sset_count = ql_get_sset_count,

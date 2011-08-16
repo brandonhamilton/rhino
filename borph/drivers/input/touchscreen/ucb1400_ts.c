@@ -6,7 +6,7 @@
  *  Copyright:	MontaVista Software, Inc.
  *
  * Spliting done by: Marek Vasut <marek.vasut@gmail.com>
- * If something doesnt work and it worked before spliting, e-mail me,
+ * If something doesn't work and it worked before spliting, e-mail me,
  * dont bother Nicolas please ;-)
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,6 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/suspend.h>
-#include <linux/slab.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/ucb1400.h>

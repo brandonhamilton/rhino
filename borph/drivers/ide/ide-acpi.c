@@ -12,6 +12,7 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <acpi/acpi.h>
 #include <linux/ide.h>
 #include <linux/pci.h>
@@ -108,11 +109,11 @@ bool ide_port_acpi(ide_hwif_t *hwif)
  * Returns 0 on success, <0 on error.
  */
 static int ide_get_dev_handle(struct device *dev, acpi_handle *handle,
-			       acpi_integer *pcidevfn)
+			       u64 *pcidevfn)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	unsigned int bus, devnum, func;
-	acpi_integer addr;
+	u64 addr;
 	acpi_handle dev_handle;
 	acpi_status status;
 	struct acpi_device_info	*dinfo = NULL;
@@ -122,7 +123,7 @@ static int ide_get_dev_handle(struct device *dev, acpi_handle *handle,
 	devnum = PCI_SLOT(pdev->devfn);
 	func = PCI_FUNC(pdev->devfn);
 	/* ACPI _ADR encoding for PCI bus: */
-	addr = (acpi_integer)(devnum << 16 | func);
+	addr = (u64)(devnum << 16 | func);
 
 	DEBPRINT("ENTER: pci %02x:%02x.%01x\n", bus, devnum, func);
 
@@ -169,7 +170,7 @@ static acpi_handle ide_acpi_hwif_get_handle(ide_hwif_t *hwif)
 {
 	struct device		*dev = hwif->gendev.parent;
 	acpi_handle		uninitialized_var(dev_handle);
-	acpi_integer		pcidevfn;
+	u64			pcidevfn;
 	acpi_handle		chan_handle;
 	int			err;
 
@@ -415,21 +416,21 @@ void ide_acpi_get_timing(ide_hwif_t *hwif)
 
 	out_obj = output.pointer;
 	if (out_obj->type != ACPI_TYPE_BUFFER) {
-		kfree(output.pointer);
 		DEBPRINT("Run _GTM: error: "
 		       "expected object type of ACPI_TYPE_BUFFER, "
 		       "got 0x%x\n", out_obj->type);
+		kfree(output.pointer);
 		return;
 	}
 
 	if (!out_obj->buffer.length || !out_obj->buffer.pointer ||
 	    out_obj->buffer.length != sizeof(struct GTM_buffer)) {
-		kfree(output.pointer);
 		printk(KERN_ERR
 			"%s: unexpected _GTM length (0x%x)[should be 0x%zx] or "
 			"addr (0x%p)\n",
 			__func__, out_obj->buffer.length,
 			sizeof(struct GTM_buffer), out_obj->buffer.pointer);
+		kfree(output.pointer);
 		return;
 	}
 

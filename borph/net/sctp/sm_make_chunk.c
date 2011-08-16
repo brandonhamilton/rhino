@@ -50,6 +50,8 @@
  * be incorporated into the next SCTP release.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/ip.h>
@@ -58,6 +60,7 @@
 #include <linux/inet.h>
 #include <linux/scatterlist.h>
 #include <linux/crypto.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 
 #include <linux/skbuff.h>
@@ -107,7 +110,7 @@ static const struct sctp_paramhdr prsctp_param = {
 	cpu_to_be16(sizeof(struct sctp_paramhdr)),
 };
 
-/* A helper to initialize to initialize an op error inside a
+/* A helper to initialize an op error inside a
  * provided chunk, as most cause codes will be embedded inside an
  * abort chunk.
  */
@@ -124,6 +127,29 @@ void  sctp_init_cause(struct sctp_chunk *chunk, __be16 cause_code,
 	chunk->subh.err_hdr = sctp_addto_chunk(chunk, sizeof(sctp_errhdr_t), &err);
 }
 
+/* A helper to initialize an op error inside a
+ * provided chunk, as most cause codes will be embedded inside an
+ * abort chunk.  Differs from sctp_init_cause in that it won't oops
+ * if there isn't enough space in the op error chunk
+ */
+int sctp_init_cause_fixed(struct sctp_chunk *chunk, __be16 cause_code,
+		      size_t paylen)
+{
+	sctp_errhdr_t err;
+	__u16 len;
+
+	/* Cause code constants are now defined in network order.  */
+	err.cause = cause_code;
+	len = sizeof(sctp_errhdr_t) + paylen;
+	err.length  = htons(len);
+
+	if (skb_tailroom(chunk->skb) < len)
+		return -ENOSPC;
+	chunk->subh.err_hdr = sctp_addto_chunk_fixed(chunk,
+						     sizeof(sctp_errhdr_t),
+						     &err);
+	return 0;
+}
 /* 3.3.2 Initiation (INIT) (1)
  *
  * This chunk is used to initiate a SCTP association between two
@@ -207,7 +233,8 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 	sp = sctp_sk(asoc->base.sk);
 	num_types = sp->pf->supported_addrs(sp, types);
 
-	chunksize = sizeof(init) + addrs_len + SCTP_SAT_LEN(num_types);
+	chunksize = sizeof(init) + addrs_len;
+	chunksize += WORD_ROUND(SCTP_SAT_LEN(num_types));
 	chunksize += sizeof(ecap_param);
 
 	if (sctp_prsctp_enable)
@@ -237,14 +264,14 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 		/* Add HMACS parameter length if any were defined */
 		auth_hmacs = (sctp_paramhdr_t *)asoc->c.auth_hmacs;
 		if (auth_hmacs->length)
-			chunksize += ntohs(auth_hmacs->length);
+			chunksize += WORD_ROUND(ntohs(auth_hmacs->length));
 		else
 			auth_hmacs = NULL;
 
 		/* Add CHUNKS parameter length */
 		auth_chunks = (sctp_paramhdr_t *)asoc->c.auth_chunks;
 		if (auth_chunks->length)
-			chunksize += ntohs(auth_chunks->length);
+			chunksize += WORD_ROUND(ntohs(auth_chunks->length));
 		else
 			auth_chunks = NULL;
 
@@ -254,7 +281,8 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 
 	/* If we have any extensions to report, account for that */
 	if (num_ext)
-		chunksize += sizeof(sctp_supported_ext_param_t) + num_ext;
+		chunksize += WORD_ROUND(sizeof(sctp_supported_ext_param_t) +
+					num_ext);
 
 	/* RFC 2960 3.3.2 Initiation (INIT) (1)
 	 *
@@ -396,13 +424,13 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 
 		auth_hmacs = (sctp_paramhdr_t *)asoc->c.auth_hmacs;
 		if (auth_hmacs->length)
-			chunksize += ntohs(auth_hmacs->length);
+			chunksize += WORD_ROUND(ntohs(auth_hmacs->length));
 		else
 			auth_hmacs = NULL;
 
 		auth_chunks = (sctp_paramhdr_t *)asoc->c.auth_chunks;
 		if (auth_chunks->length)
-			chunksize += ntohs(auth_chunks->length);
+			chunksize += WORD_ROUND(ntohs(auth_chunks->length));
 		else
 			auth_chunks = NULL;
 
@@ -411,17 +439,25 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 	}
 
 	if (num_ext)
-		chunksize += sizeof(sctp_supported_ext_param_t) + num_ext;
+		chunksize += WORD_ROUND(sizeof(sctp_supported_ext_param_t) +
+					num_ext);
 
 	/* Now allocate and fill out the chunk.  */
 	retval = sctp_make_chunk(asoc, SCTP_CID_INIT_ACK, 0, chunksize);
 	if (!retval)
 		goto nomem_chunk;
 
-	/* Per the advice in RFC 2960 6.4, send this reply to
-	 * the source of the INIT packet.
+	/* RFC 2960 6.4 Multi-homed SCTP Endpoints
+	 *
+	 * An endpoint SHOULD transmit reply chunks (e.g., SACK,
+	 * HEARTBEAT ACK, * etc.) to the same destination transport
+	 * address from which it received the DATA or control chunk
+	 * to which it is replying.
+	 *
+	 * [INIT ACK back to where the INIT came from.]
 	 */
 	retval->transport = chunk->transport;
+
 	retval->subh.init_hdr =
 		sctp_addto_chunk(retval, sizeof(initack), &initack);
 	retval->param_hdr.v = sctp_addto_chunk(retval, addrs_len, addrs.v);
@@ -459,18 +495,6 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 
 	/* We need to remove the const qualifier at this point.  */
 	retval->asoc = (struct sctp_association *) asoc;
-
-	/* RFC 2960 6.4 Multi-homed SCTP Endpoints
-	 *
-	 * An endpoint SHOULD transmit reply chunks (e.g., SACK,
-	 * HEARTBEAT ACK, * etc.) to the same destination transport
-	 * address from which it received the DATA or control chunk
-	 * to which it is replying.
-	 *
-	 * [INIT ACK back to where the INIT came from.]
-	 */
-	if (chunk)
-		retval->transport = chunk->transport;
 
 nomem_chunk:
 	kfree(cookie);
@@ -1051,20 +1075,28 @@ nodata:
 
 /* Make a HEARTBEAT chunk.  */
 struct sctp_chunk *sctp_make_heartbeat(const struct sctp_association *asoc,
-				  const struct sctp_transport *transport,
-				  const void *payload, const size_t paylen)
+				  const struct sctp_transport *transport)
 {
-	struct sctp_chunk *retval = sctp_make_chunk(asoc, SCTP_CID_HEARTBEAT,
-						    0, paylen);
+	struct sctp_chunk *retval;
+	sctp_sender_hb_info_t hbinfo;
+
+	retval = sctp_make_chunk(asoc, SCTP_CID_HEARTBEAT, 0, sizeof(hbinfo));
 
 	if (!retval)
 		goto nodata;
+
+	hbinfo.param_hdr.type = SCTP_PARAM_HEARTBEAT_INFO;
+	hbinfo.param_hdr.length = htons(sizeof(sctp_sender_hb_info_t));
+	hbinfo.daddr = transport->ipaddr;
+	hbinfo.sent_at = jiffies;
+	hbinfo.hb_nonce = transport->hb_nonce;
 
 	/* Cast away the 'const', as this is just telling the chunk
 	 * what transport it belongs to.
 	 */
 	retval->transport = (struct sctp_transport *) transport;
-	retval->subh.hbs_hdr = sctp_addto_chunk(retval, paylen, payload);
+	retval->subh.hbs_hdr = sctp_addto_chunk(retval, sizeof(hbinfo),
+						&hbinfo);
 
 nodata:
 	return retval;
@@ -1126,6 +1158,24 @@ static struct sctp_chunk *sctp_make_op_error_space(
 
 nodata:
 	return retval;
+}
+
+/* Create an Operation Error chunk of a fixed size,
+ * specifically, max(asoc->pathmtu, SCTP_DEFAULT_MAXSEGMENT)
+ * This is a helper function to allocate an error chunk for
+ * for those invalid parameter codes in which we may not want
+ * to report all the errors, if the incomming chunk is large
+ */
+static inline struct sctp_chunk *sctp_make_op_error_fixed(
+	const struct sctp_association *asoc,
+	const struct sctp_chunk *chunk)
+{
+	size_t size = asoc ? asoc->pathmtu : 0;
+
+	if (!size)
+		size = SCTP_DEFAULT_MAXSEGMENT;
+
+	return sctp_make_op_error_space(asoc, chunk, size);
 }
 
 /* Create an Operation Error chunk.  */
@@ -1209,7 +1259,6 @@ struct sctp_chunk *sctp_chunkify(struct sk_buff *skb,
 	INIT_LIST_HEAD(&retval->list);
 	retval->skb		= skb;
 	retval->asoc		= (struct sctp_association *)asoc;
-	retval->resent  	= 0;
 	retval->has_tsn		= 0;
 	retval->has_ssn         = 0;
 	retval->rtt_in_progress	= 0;
@@ -1368,6 +1417,18 @@ void *sctp_addto_chunk(struct sctp_chunk *chunk, int len, const void *data)
 	chunk->chunk_end = skb_tail_pointer(chunk->skb);
 
 	return target;
+}
+
+/* Append bytes to the end of a chunk. Returns NULL if there isn't sufficient
+ * space in the chunk
+ */
+void *sctp_addto_chunk_fixed(struct sctp_chunk *chunk,
+			     int len, const void *data)
+{
+	if (skb_tailroom(chunk->skb) >= len)
+		return sctp_addto_chunk(chunk, len, data);
+	else
+		return NULL;
 }
 
 /* Append bytes from user space to the end of a chunk.  Will panic if
@@ -1766,7 +1827,7 @@ malformed:
 struct __sctp_missing {
 	__be32 num_missing;
 	__be16 type;
-}  __attribute__((packed));
+}  __packed;
 
 /*
  * Report a missing mandatory parameter.
@@ -1973,15 +2034,14 @@ static sctp_ierror_t sctp_process_unk_param(const struct sctp_association *asoc,
 		 * returning multiple unknown parameters.
 		 */
 		if (NULL == *errp)
-			*errp = sctp_make_op_error_space(asoc, chunk,
-					ntohs(chunk->chunk_hdr->length));
+			*errp = sctp_make_op_error_fixed(asoc, chunk);
 
 		if (*errp) {
-			sctp_init_cause(*errp, SCTP_ERROR_UNKNOWN_PARAM,
-					WORD_ROUND(ntohs(param.p->length)));
-			sctp_addto_chunk(*errp,
-					WORD_ROUND(ntohs(param.p->length)),
-					param.v);
+			if (!sctp_init_cause_fixed(*errp, SCTP_ERROR_UNKNOWN_PARAM,
+					WORD_ROUND(ntohs(param.p->length))))
+				sctp_addto_chunk_fixed(*errp,
+						WORD_ROUND(ntohs(param.p->length)),
+						param.v);
 		} else {
 			/* If there is no memory for generating the ERROR
 			 * report as specified, an ABORT will be triggered
@@ -2190,14 +2250,17 @@ int sctp_verify_init(const struct sctp_association *asoc,
  * Returns 0 on failure, else success.
  * FIXME:  This is an association method.
  */
-int sctp_process_init(struct sctp_association *asoc, sctp_cid_t cid,
+int sctp_process_init(struct sctp_association *asoc, struct sctp_chunk *chunk,
 		      const union sctp_addr *peer_addr,
 		      sctp_init_chunk_t *peer_init, gfp_t gfp)
 {
 	union sctp_params param;
 	struct sctp_transport *transport;
 	struct list_head *pos, *temp;
+	struct sctp_af *af;
+	union sctp_addr addr;
 	char *cookie;
+	int src_match = 0;
 
 	/* We must include the address that the INIT packet came from.
 	 * This is the only address that matters for an INIT packet.
@@ -2209,17 +2272,30 @@ int sctp_process_init(struct sctp_association *asoc, sctp_cid_t cid,
 	 * added as the primary transport.  The source address seems to
 	 * be a a better choice than any of the embedded addresses.
 	 */
-	if (peer_addr) {
-		if(!sctp_assoc_add_peer(asoc, peer_addr, gfp, SCTP_ACTIVE))
-			goto nomem;
-	}
+	if(!sctp_assoc_add_peer(asoc, peer_addr, gfp, SCTP_ACTIVE))
+		goto nomem;
+
+	if (sctp_cmp_addr_exact(sctp_source(chunk), peer_addr))
+		src_match = 1;
 
 	/* Process the initialization parameters.  */
 	sctp_walk_params(param, peer_init, init_hdr.params) {
+		if (!src_match && (param.p->type == SCTP_PARAM_IPV4_ADDRESS ||
+		    param.p->type == SCTP_PARAM_IPV6_ADDRESS)) {
+			af = sctp_get_af_specific(param_type2af(param.p->type));
+			af->from_addr_param(&addr, param.addr,
+					    chunk->sctp_hdr->source, 0);
+			if (sctp_cmp_addr_exact(sctp_source(chunk), &addr))
+				src_match = 1;
+		}
 
 		if (!sctp_process_param(asoc, param, peer_addr, gfp))
 			goto clean_up;
 	}
+
+	/* source address of chunk may not match any valid address */
+	if (!src_match)
+		goto clean_up;
 
 	/* AUTH: After processing the parameters, make sure that we
 	 * have all the required info to potentially do authentications.
@@ -2692,11 +2768,12 @@ struct sctp_chunk *sctp_make_asconf_update_ip(struct sctp_association *asoc,
 	int			addr_param_len = 0;
 	int 			totallen = 0;
 	int 			i;
+	int			del_pickup = 0;
 
 	/* Get total length of all the address parameters. */
 	addr_buf = addrs;
 	for (i = 0; i < addrcnt; i++) {
-		addr = (union sctp_addr *)addr_buf;
+		addr = addr_buf;
 		af = sctp_get_af_specific(addr->v4.sin_family);
 		addr_param_len = af->to_addr_param(addr, &addr_param);
 
@@ -2704,6 +2781,13 @@ struct sctp_chunk *sctp_make_asconf_update_ip(struct sctp_association *asoc,
 		totallen += addr_param_len;
 
 		addr_buf += af->sockaddr_len;
+		if (asoc->asconf_addr_del_pending && !del_pickup) {
+			/* reuse the parameter length from the same scope one */
+			totallen += paramlen;
+			totallen += addr_param_len;
+			del_pickup = 1;
+			SCTP_DEBUG_PRINTK("mkasconf_update_ip: picked same-scope del_pending addr, totallen for all addresses is %d\n", totallen);
+		}
 	}
 
 	/* Create an asconf chunk with the required length. */
@@ -2714,7 +2798,7 @@ struct sctp_chunk *sctp_make_asconf_update_ip(struct sctp_association *asoc,
 	/* Add the address parameters to the asconf chunk. */
 	addr_buf = addrs;
 	for (i = 0; i < addrcnt; i++) {
-		addr = (union sctp_addr *)addr_buf;
+		addr = addr_buf;
 		af = sctp_get_af_specific(addr->v4.sin_family);
 		addr_param_len = af->to_addr_param(addr, &addr_param);
 		param.param_hdr.type = flags;
@@ -2725,6 +2809,17 @@ struct sctp_chunk *sctp_make_asconf_update_ip(struct sctp_association *asoc,
 		sctp_addto_chunk(retval, addr_param_len, &addr_param);
 
 		addr_buf += af->sockaddr_len;
+	}
+	if (flags == SCTP_PARAM_ADD_IP && del_pickup) {
+		addr = asoc->asconf_addr_del_pending;
+		af = sctp_get_af_specific(addr->v4.sin_family);
+		addr_param_len = af->to_addr_param(addr, &addr_param);
+		param.param_hdr.type = SCTP_PARAM_DEL_IP;
+		param.param_hdr.length = htons(paramlen + addr_param_len);
+		param.crr_id = i;
+
+		sctp_addto_chunk(retval, paramlen, &param);
+		sctp_addto_chunk(retval, addr_param_len, &addr_param);
 	}
 	return retval;
 }
@@ -2863,15 +2958,14 @@ static __be16 sctp_process_asconf_param(struct sctp_association *asoc,
 	union sctp_addr	addr;
 	union sctp_addr_param *addr_param;
 
-	addr_param = (union sctp_addr_param *)
-			((void *)asconf_param + sizeof(sctp_addip_param_t));
+	addr_param = (void *)asconf_param + sizeof(sctp_addip_param_t);
 
 	if (asconf_param->param_hdr.type != SCTP_PARAM_ADD_IP &&
 	    asconf_param->param_hdr.type != SCTP_PARAM_DEL_IP &&
 	    asconf_param->param_hdr.type != SCTP_PARAM_SET_PRIMARY)
 		return SCTP_ERROR_UNKNOWN_PARAM;
 
-	switch (addr_param->v4.param_hdr.type) {
+	switch (addr_param->p.type) {
 	case SCTP_PARAM_IPV6_ADDRESS:
 		if (!asoc->peer.ipv6_address)
 			return SCTP_ERROR_DNS_FAILED;
@@ -2884,7 +2978,7 @@ static __be16 sctp_process_asconf_param(struct sctp_association *asoc,
 		return SCTP_ERROR_DNS_FAILED;
 	}
 
-	af = sctp_get_af_specific(param_type2af(addr_param->v4.param_hdr.type));
+	af = sctp_get_af_specific(param_type2af(addr_param->p.type));
 	if (unlikely(!af))
 		return SCTP_ERROR_DNS_FAILED;
 
@@ -2938,7 +3032,7 @@ static __be16 sctp_process_asconf_param(struct sctp_association *asoc,
 		 * an Error Cause TLV set to the new error code 'Request to
 		 * Delete Source IP Address'
 		 */
-		if (sctp_cmp_addr_exact(sctp_source(asconf), &addr))
+		if (sctp_cmp_addr_exact(&asconf->source, &addr))
 			return SCTP_ERROR_DEL_SRC_IP;
 
 		/* Section 4.2.2
@@ -3048,16 +3142,16 @@ struct sctp_chunk *sctp_process_asconf(struct sctp_association *asoc,
 	/* Skip the address parameter and store a pointer to the first
 	 * asconf parameter.
 	 */
-	length = ntohs(addr_param->v4.param_hdr.length);
-	asconf_param = (sctp_addip_param_t *)((void *)addr_param + length);
+	length = ntohs(addr_param->p.length);
+	asconf_param = (void *)addr_param + length;
 	chunk_len -= length;
 
 	/* create an ASCONF_ACK chunk.
 	 * Based on the definitions of parameters, we know that the size of
-	 * ASCONF_ACK parameters are less than or equal to the twice of ASCONF
+	 * ASCONF_ACK parameters are less than or equal to the fourfold of ASCONF
 	 * parameters.
 	 */
-	asconf_ack = sctp_make_asconf_ack(asoc, serial, chunk_len * 2);
+	asconf_ack = sctp_make_asconf_ack(asoc, serial, chunk_len * 4);
 	if (!asconf_ack)
 		goto done;
 
@@ -3090,8 +3184,7 @@ struct sctp_chunk *sctp_process_asconf(struct sctp_association *asoc,
 
 		/* Move to the next ASCONF param. */
 		length = ntohs(asconf_param->param_hdr.length);
-		asconf_param = (sctp_addip_param_t *)((void *)asconf_param +
-						      length);
+		asconf_param = (void *)asconf_param + length;
 		chunk_len -= length;
 	}
 
@@ -3121,11 +3214,10 @@ static void sctp_asconf_param_success(struct sctp_association *asoc,
 	struct sctp_transport *transport;
 	struct sctp_sockaddr_entry *saddr;
 
-	addr_param = (union sctp_addr_param *)
-			((void *)asconf_param + sizeof(sctp_addip_param_t));
+	addr_param = (void *)asconf_param + sizeof(sctp_addip_param_t);
 
 	/* We have checked the packet before, so we do not check again.	*/
-	af = sctp_get_af_specific(param_type2af(addr_param->v4.param_hdr.type));
+	af = sctp_get_af_specific(param_type2af(addr_param->p.type));
 	af->from_addr_param(&addr, addr_param, htons(bp->port), 0);
 
 	switch (asconf_param->param_hdr.type) {
@@ -3141,22 +3233,23 @@ static void sctp_asconf_param_success(struct sctp_association *asoc,
 		local_bh_enable();
 		list_for_each_entry(transport, &asoc->peer.transport_addr_list,
 				transports) {
-			if (transport->state == SCTP_ACTIVE)
-				continue;
 			dst_release(transport->dst);
-			sctp_transport_route(transport, NULL,
-					     sctp_sk(asoc->base.sk));
+			transport->dst = NULL;
 		}
 		break;
 	case SCTP_PARAM_DEL_IP:
 		local_bh_disable();
 		sctp_del_bind_addr(bp, &addr);
+		if (asoc->asconf_addr_del_pending != NULL &&
+		    sctp_cmp_addr_exact(asoc->asconf_addr_del_pending, &addr)) {
+			kfree(asoc->asconf_addr_del_pending);
+			asoc->asconf_addr_del_pending = NULL;
+		}
 		local_bh_enable();
 		list_for_each_entry(transport, &asoc->peer.transport_addr_list,
 				transports) {
 			dst_release(transport->dst);
-			sctp_transport_route(transport, NULL,
-					     sctp_sk(asoc->base.sk));
+			transport->dst = NULL;
 		}
 		break;
 	default:
@@ -3206,8 +3299,7 @@ static __be16 sctp_get_asconf_response(struct sctp_chunk *asconf_ack,
 				return SCTP_ERROR_NO_ERROR;
 			case SCTP_PARAM_ERR_CAUSE:
 				length = sizeof(sctp_addip_param_t);
-				err_param = (sctp_errhdr_t *)
-					   ((void *)asconf_ack_param + length);
+				err_param = (void *)asconf_ack_param + length;
 				asconf_ack_len -= length;
 				if (asconf_ack_len > 0)
 					return err_param->cause;
@@ -3220,8 +3312,7 @@ static __be16 sctp_get_asconf_response(struct sctp_chunk *asconf_ack,
 		}
 
 		length = ntohs(asconf_ack_param->param_hdr.length);
-		asconf_ack_param = (sctp_addip_param_t *)
-					((void *)asconf_ack_param + length);
+		asconf_ack_param = (void *)asconf_ack_param + length;
 		asconf_ack_len -= length;
 	}
 
@@ -3252,8 +3343,8 @@ int sctp_process_asconf_ack(struct sctp_association *asoc,
 	/* Skip the address parameter in the last asconf sent and store a
 	 * pointer to the first asconf parameter.
 	 */
-	length = ntohs(addr_param->v4.param_hdr.length);
-	asconf_param = (sctp_addip_param_t *)((void *)addr_param + length);
+	length = ntohs(addr_param->p.length);
+	asconf_param = (void *)addr_param + length;
 	asconf_len -= length;
 
 	/* ADDIP 4.1
@@ -3304,30 +3395,17 @@ int sctp_process_asconf_ack(struct sctp_association *asoc,
 		 * one.
 		 */
 		length = ntohs(asconf_param->param_hdr.length);
-		asconf_param = (sctp_addip_param_t *)((void *)asconf_param +
-						      length);
+		asconf_param = (void *)asconf_param + length;
 		asconf_len -= length;
 	}
+
+	if (no_err && asoc->src_out_of_asoc_ok)
+		asoc->src_out_of_asoc_ok = 0;
 
 	/* Free the cached last sent asconf chunk. */
 	list_del_init(&asconf->transmitted_list);
 	sctp_chunk_free(asconf);
 	asoc->addip_last_asconf = NULL;
-
-	/* Send the next asconf chunk from the addip chunk queue. */
-	if (!list_empty(&asoc->addip_chunk_list)) {
-		struct list_head *entry = asoc->addip_chunk_list.next;
-		asconf = list_entry(entry, struct sctp_chunk, list);
-
-		list_del_init(entry);
-
-		/* Hold the chunk until an ASCONF_ACK is received. */
-		sctp_chunk_hold(asconf);
-		if (sctp_primitive_ASCONF(asoc, asconf))
-			sctp_chunk_free(asconf);
-		else
-			asoc->addip_last_asconf = asconf;
-	}
 
 	return retval;
 }
@@ -3338,7 +3416,6 @@ struct sctp_chunk *sctp_make_fwdtsn(const struct sctp_association *asoc,
 				    struct sctp_fwdtsn_skip *skiplist)
 {
 	struct sctp_chunk *retval = NULL;
-	struct sctp_fwdtsn_chunk *ftsn_chunk;
 	struct sctp_fwdtsn_hdr ftsn_hdr;
 	struct sctp_fwdtsn_skip skip;
 	size_t hint;
@@ -3350,8 +3427,6 @@ struct sctp_chunk *sctp_make_fwdtsn(const struct sctp_association *asoc,
 
 	if (!retval)
 		return NULL;
-
-	ftsn_chunk = (struct sctp_fwdtsn_chunk *)retval->subh.fwdtsn_hdr;
 
 	ftsn_hdr.new_cum_tsn = htonl(new_cum_tsn);
 	retval->subh.fwdtsn_hdr =

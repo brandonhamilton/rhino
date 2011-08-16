@@ -1,5 +1,5 @@
 /*
- * i2c-boardinfo.h - collect pre-declarations of I2C devices
+ * i2c-boardinfo.c - collect pre-declarations of I2C devices
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 
 #include <linux/kernel.h>
 #include <linux/i2c.h>
+#include <linux/slab.h>
 #include <linux/rwsem.h>
 
 #include "i2c-core.h"

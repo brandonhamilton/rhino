@@ -262,7 +262,7 @@ struct nm256 {
 /*
  * PCI ids
  */
-static struct pci_device_id snd_nm256_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_nm256_ids) = {
 	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256AV_AUDIO), 0},
 	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256ZX_AUDIO), 0},
 	{PCI_VDEVICE(NEOMAGIC, PCI_DEVICE_ID_NEOMAGIC_NM256XL_PLUS_AUDIO), 0},
@@ -465,7 +465,7 @@ static int snd_nm256_acquire_irq(struct nm256 *chip)
 	mutex_lock(&chip->irq_mutex);
 	if (chip->irq < 0) {
 		if (request_irq(chip->pci->irq, chip->interrupt, IRQF_SHARED,
-				chip->card->driver, chip)) {
+				KBUILD_MODNAME, chip)) {
 			snd_printk(KERN_ERR "unable to grab IRQ %d\n", chip->pci->irq);
 			mutex_unlock(&chip->irq_mutex);
 			return -EBUSY;
@@ -1743,7 +1743,7 @@ static void __devexit snd_nm256_remove(struct pci_dev *pci)
 
 
 static struct pci_driver driver = {
-	.name = "NeoMagic 256",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_nm256_ids,
 	.probe = snd_nm256_probe,
 	.remove = __devexit_p(snd_nm256_remove),

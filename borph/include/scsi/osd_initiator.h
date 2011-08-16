@@ -137,11 +137,12 @@ struct osd_request {
 		void *buff;
 		unsigned alloc_size; /* 0 here means: don't call kfree */
 		unsigned total_bytes;
-	} set_attr, enc_get_attr, get_attr;
+	} cdb_cont, set_attr, enc_get_attr, get_attr;
 
 	struct _osd_io_info {
 		struct bio *bio;
 		u64 total_bytes;
+		u64 residual;
 		struct request *req;
 		struct _osd_req_data_segment *last_seg;
 		u8 *pad_buff;
@@ -150,12 +151,14 @@ struct osd_request {
 	gfp_t alloc_flags;
 	unsigned timeout;
 	unsigned retries;
+	unsigned sense_len;
 	u8 sense[OSD_MAX_SENSE_LEN];
 	enum osd_attributes_mode attributes_mode;
 
 	osd_req_done_fn *async_done;
 	void *async_private;
 	int async_error;
+	int req_errors;
 };
 
 static inline bool osd_req_is_ver1(struct osd_request *or)
@@ -259,10 +262,10 @@ int osd_execute_request_async(struct osd_request *or,
  * osd_req_decode_sense_full - Decode sense information after execution.
  *
  * @or:           - osd_request to examine
- * @osi           - Recievs a more detailed error report information (optional).
+ * @osi           - Receives a more detailed error report information (optional).
  * @silent        - Do not print to dmsg (Even if enabled)
  * @bad_obj_list  - Some commands act on multiple objects. Failed objects will
- *                  be recieved here (optional)
+ *                  be received here (optional)
  * @max_obj       - Size of @bad_obj_list.
  * @bad_attr_list - List of failing attributes (optional)
  * @max_attr      - Size of @bad_attr_list.
@@ -297,8 +300,6 @@ enum osd_err_priority {
 };
 
 struct osd_sense_info {
-	u64 out_resid;		/* Zero on success otherwise out residual */
-	u64 in_resid;		/* Zero on success otherwise in residual */
 	enum osd_err_priority osd_err_pri;
 
 	int key;		/* one of enum scsi_sense_keys */
@@ -446,6 +447,20 @@ void osd_req_read(struct osd_request *or,
 	const struct osd_obj_id *obj, u64 offset, struct bio *bio, u64 len);
 int osd_req_read_kern(struct osd_request *or,
 	const struct osd_obj_id *obj, u64 offset, void *buff, u64 len);
+
+/* Scatter/Gather write/read commands */
+int osd_req_write_sg(struct osd_request *or,
+	const struct osd_obj_id *obj, struct bio *bio,
+	const struct osd_sg_entry *sglist, unsigned numentries);
+int osd_req_read_sg(struct osd_request *or,
+	const struct osd_obj_id *obj, struct bio *bio,
+	const struct osd_sg_entry *sglist, unsigned numentries);
+int osd_req_write_sg_kern(struct osd_request *or,
+	const struct osd_obj_id *obj, void **buff,
+	const struct osd_sg_entry *sglist, unsigned numentries);
+int osd_req_read_sg_kern(struct osd_request *or,
+	const struct osd_obj_id *obj, void **buff,
+	const struct osd_sg_entry *sglist, unsigned numentries);
 
 /*
  * Root/Partition/Collection/Object Attributes commands

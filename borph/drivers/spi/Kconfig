@@ -53,6 +53,20 @@ if SPI_MASTER
 
 comment "SPI Master Controller Drivers"
 
+config SPI_ALTERA
+	tristate "Altera SPI Controller"
+	select SPI_BITBANG
+	help
+	  This is the driver for the Altera SPI Controller.
+
+config SPI_ATH79
+	tristate "Atheros AR71XX/AR724X/AR913X SPI controller driver"
+	depends on ATH79 && GENERIC_GPIO
+	select SPI_BITBANG
+	help
+	  This enables support for the SPI controller present on the
+	  Atheros AR71XX/AR724X/AR913X SoCs.
+
 config SPI_ATMEL
 	tristate "Atmel SPI Controller"
 	depends on (ARCH_AT91 || AVR32)
@@ -66,6 +80,12 @@ config SPI_BFIN
 	help
 	  This is the SPI controller master driver for Blackfin 5xx processor.
 
+config SPI_BFIN_SPORT
+	tristate "SPI bus via Blackfin SPORT"
+	depends on BLACKFIN
+	help
+	  Enable support for a SPI bus via the Blackfin SPORT peripheral.
+
 config SPI_AU1550
 	tristate "Au1550/Au12x0 SPI Controller"
 	depends on (SOC_AU1550 || SOC_AU1200) && EXPERIMENTAL
@@ -73,9 +93,6 @@ config SPI_AU1550
 	help
 	  If you say yes to this option, support will be included for the
 	  Au1550 SPI controller (may also work with Au1200,Au1210,Au1250).
-
-	  This driver can also be built as a module.  If so, the module
-	  will be called au1550_spi.
 
 config SPI_BITBANG
 	tristate "Utilities for Bitbanging SPI masters"
@@ -100,6 +117,27 @@ config SPI_BUTTERFLY
 	  inexpensive battery powered microcontroller evaluation board.
 	  This same cable can be used to flash new firmware.
 
+config SPI_COLDFIRE_QSPI
+	tristate "Freescale Coldfire QSPI controller"
+	depends on (M520x || M523x || M5249 || M527x || M528x || M532x)
+	help
+	  This enables support for the Coldfire QSPI controller in master
+	  mode.
+
+config SPI_DAVINCI
+	tristate "Texas Instruments DaVinci/DA8x/OMAP-L/AM1x SoC SPI controller"
+	depends on SPI_MASTER && ARCH_DAVINCI
+	select SPI_BITBANG
+	help
+	  SPI master controller for DaVinci/DA8x/OMAP-L/AM1x SPI modules.
+
+config SPI_EP93XX
+	tristate "Cirrus Logic EP93xx SPI controller"
+	depends on ARCH_EP93XX
+	help
+	  This enables using the Cirrus EP93xx SPI controller in master
+	  mode.
+
 config SPI_GPIO
 	tristate "GPIO-based bitbanging SPI Master"
 	depends on GENERIC_GPIO
@@ -120,6 +158,7 @@ config SPI_IMX
 	tristate "Freescale i.MX SPI controllers"
 	depends on ARCH_MXC
 	select SPI_BITBANG
+	default m if IMX_HAVE_PLATFORM_SPI_IMX
 	help
 	  This enables using the Freescale i.MX SPI controllers in master
 	  mode.
@@ -148,12 +187,41 @@ config SPI_MPC52xx_PSC
 	  This enables using the Freescale MPC52xx Programmable Serial
 	  Controller in master SPI mode.
 
-config SPI_MPC8xxx
-	tristate "Freescale MPC8xxx SPI controller"
-	depends on FSL_SOC
+config SPI_MPC512x_PSC
+	tristate "Freescale MPC512x PSC SPI controller"
+	depends on SPI_MASTER && PPC_MPC512x
 	help
-	  This enables using the Freescale MPC8xxx SPI controllers in master
-	  mode.
+	  This enables using the Freescale MPC5121 Programmable Serial
+	  Controller in SPI master mode.
+
+config SPI_FSL_LIB
+	tristate
+	depends on FSL_SOC
+
+config SPI_FSL_SPI
+	tristate "Freescale SPI controller"
+	depends on FSL_SOC
+	select SPI_FSL_LIB
+	help
+	  This enables using the Freescale SPI controllers in master mode.
+	  MPC83xx platform uses the controller in cpu mode or CPM/QE mode.
+	  MPC8569 uses the controller in QE mode, MPC8610 in cpu mode.
+
+config SPI_FSL_ESPI
+	tristate "Freescale eSPI controller"
+	depends on FSL_SOC
+	select SPI_FSL_LIB
+	help
+	  This enables using the Freescale eSPI controllers in master mode.
+	  From MPC8536, 85xx platform uses the controller, and all P10xx,
+	  P20xx, P30xx,P40xx, P50xx uses this controller.
+
+config SPI_OC_TINY
+	tristate "OpenCores tiny SPI"
+	depends on GENERIC_GPIO
+	select SPI_BITBANG
+	help
+	  This is the driver for OpenCores tiny SPI master controller.
 
 config SPI_OMAP_UWIRE
 	tristate "OMAP1 MicroWire"
@@ -163,10 +231,10 @@ config SPI_OMAP_UWIRE
 	  This hooks up to the MicroWire controller on OMAP1 chips.
 
 config SPI_OMAP24XX
-	tristate "McSPI driver for OMAP24xx/OMAP34xx"
-	depends on ARCH_OMAP24XX || ARCH_OMAP34XX
+	tristate "McSPI driver for OMAP"
+	depends on ARCH_OMAP2PLUS
 	help
-	  SPI master controller for OMAP24xx/OMAP34xx Multichannel SPI
+	  SPI master controller for OMAP24XX and later Multichannel SPI
 	  (McSPI) modules.
 
 config SPI_OMAP_100K
@@ -182,8 +250,8 @@ config SPI_ORION
 	  This enables using the SPI master controller on the Orion chips.
 
 config SPI_PL022
-	tristate "ARM AMBA PL022 SSP controller (EXPERIMENTAL)"
-	depends on ARM_AMBA && EXPERIMENTAL
+	tristate "ARM AMBA PL022 SSP controller"
+	depends on ARM_AMBA
 	default y if MACH_U300
 	default y if ARCH_REALVIEW
 	default y if INTEGRATOR_IMPD1
@@ -202,12 +270,15 @@ config SPI_PPC4xx
 
 config SPI_PXA2XX
 	tristate "PXA2xx SSP SPI master"
-	depends on ARCH_PXA && EXPERIMENTAL
-	select PXA_SSP
+	depends on (ARCH_PXA || (X86_32 && PCI)) && EXPERIMENTAL
+	select PXA_SSP if ARCH_PXA
 	help
-	  This enables using a PXA2xx SSP port as a SPI master controller.
-	  The driver can be configured to use any SSP port and additional
-	  documentation can be found a Documentation/spi/pxa2xx.
+	  This enables using a PXA2xx or Sodaville SSP port as a SPI master
+	  controller. The driver can be configured to use any SSP port and
+	  additional documentation can be found a Documentation/spi/pxa2xx.
+
+config SPI_PXA2XX_PCI
+	def_bool SPI_PXA2XX && X86_32 && PCI
 
 config SPI_S3C24XX
 	tristate "Samsung S3C24XX series SPI"
@@ -216,15 +287,23 @@ config SPI_S3C24XX
 	help
 	  SPI driver for Samsung S3C24XX series ARM SoCs
 
-config SPI_S3C24XX_GPIO
-	tristate "Samsung S3C24XX series SPI by GPIO"
-	depends on ARCH_S3C2410 && EXPERIMENTAL
-	select SPI_BITBANG
+config SPI_S3C24XX_FIQ
+	bool "S3C24XX driver with FIQ pseudo-DMA"
+	depends on SPI_S3C24XX
+	select FIQ
 	help
-	  SPI driver for Samsung S3C24XX series ARM SoCs using
-	  GPIO lines to provide the SPI bus. This can be used where
-	  the inbuilt hardware cannot provide the transfer mode, or
-	  where the board is using non hardware connected pins.
+	  Enable FIQ support for the S3C24XX SPI driver to provide pseudo
+	  DMA by using the fast-interrupt request framework, This allows
+	  the driver to get DMA-like performance when there are either
+	  no free DMA channels, or when doing transfers that required both
+	  TX and RX data paths.
+
+config SPI_S3C64XX
+	tristate "Samsung S3C64XX series type SPI"
+	depends on (ARCH_S3C64XX || ARCH_S5P64X0)
+	select S3C64XX_DMA if ARCH_S3C64XX
+	help
+	  SPI driver for Samsung S3C64XX and newer SoCs.
 
 config SPI_SH_MSIOF
 	tristate "SuperH MSIOF SPI controller"
@@ -232,6 +311,12 @@ config SPI_SH_MSIOF
 	select SPI_BITBANG
 	help
 	  SPI driver for SuperH MSIOF blocks.
+
+config SPI_SH
+	tristate "SuperH SPI controller"
+	depends on SUPERH
+	help
+	  SPI driver for SuperH SPI blocks.
 
 config SPI_SH_SCI
 	tristate "SuperH SCI SPI controller"
@@ -246,6 +331,30 @@ config SPI_STMP3XXX
 	help
 	  SPI driver for Freescale STMP37xx/378x SoC SSP interface
 
+config SPI_TEGRA
+	tristate "Nvidia Tegra SPI controller"
+	depends on ARCH_TEGRA
+	select TEGRA_SYSTEM_DMA
+	help
+	  SPI driver for NVidia Tegra SoCs
+
+config SPI_TI_SSP
+	tristate "TI Sequencer Serial Port - SPI Support"
+	depends on MFD_TI_SSP
+	help
+	  This selects an SPI master implementation using a TI sequencer
+	  serial port.
+
+config SPI_TOPCLIFF_PCH
+	tristate "Intel EG20T PCH/OKI SEMICONDUCTOR ML7213 IOH SPI controller"
+	depends on PCI
+	help
+	  SPI driver for the Topcliff PCH (Platform Controller Hub) SPI bus
+	  used in some x86 embedded processors.
+
+	  This driver also supports the ML7213, a companion chip for the
+	  Atom E6xx series and compatible with the Intel EG20T PCH.
+
 config SPI_TXX9
 	tristate "Toshiba TXx9 SPI controller"
 	depends on GENERIC_GPIO && CPU_TX49XX
@@ -256,7 +365,6 @@ config SPI_XILINX
 	tristate "Xilinx SPI controller common module"
 	depends on HAS_IOMEM && EXPERIMENTAL
 	select SPI_BITBANG
-	select SPI_XILINX_OF if (XILINX_VIRTEX || MICROBLAZE)
 	help
 	  This exposes the SPI controller IP from the Xilinx EDK.
 
@@ -264,19 +372,6 @@ config SPI_XILINX
 	  Product Specification document (DS464) for hardware details.
 
 	  Or for the DS570, see "XPS Serial Peripheral Interface (SPI) (v2.00b)"
-
-config SPI_XILINX_OF
-	tristate "Xilinx SPI controller OF device"
-	depends on SPI_XILINX && (XILINX_VIRTEX || MICROBLAZE)
-	help
-	  This is the OF driver for the SPI controller IP from the Xilinx EDK.
-
-config SPI_XILINX_PLTFM
-	tristate "Xilinx SPI controller platform device"
-	depends on SPI_XILINX
-	help
-	  This is the platform driver for the SPI controller IP
-	  from the Xilinx EDK.
 
 config SPI_NUC900
 	tristate "Nuvoton NUC900 series SPI"
@@ -288,6 +383,24 @@ config SPI_NUC900
 #
 # Add new SPI master controllers in alphabetical order above this line
 #
+
+config SPI_DESIGNWARE
+	tristate "DesignWare SPI controller core support"
+	depends on SPI_MASTER
+	help
+	  general driver for SPI controller core from DesignWare
+
+config SPI_DW_PCI
+	tristate "PCI interface driver for DW SPI core"
+	depends on SPI_DESIGNWARE && PCI
+
+config SPI_DW_MID_DMA
+	bool "DMA support for DW SPI controller on Intel Moorestown platform"
+	depends on SPI_DW_PCI && INTEL_MID_DMAC
+
+config SPI_DW_MMIO
+	tristate "Memory-mapped io interface driver for DW SPI core"
+	depends on SPI_DESIGNWARE && HAVE_CLK
 
 #
 # There are lots of SPI device types, with sensors and memory

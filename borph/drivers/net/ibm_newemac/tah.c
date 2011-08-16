@@ -23,7 +23,7 @@
 #include "emac.h"
 #include "core.h"
 
-int __devinit tah_attach(struct of_device *ofdev, int channel)
+int __devinit tah_attach(struct platform_device *ofdev, int channel)
 {
 	struct tah_instance *dev = dev_get_drvdata(&ofdev->dev);
 
@@ -35,7 +35,7 @@ int __devinit tah_attach(struct of_device *ofdev, int channel)
 	return 0;
 }
 
-void tah_detach(struct of_device *ofdev, int channel)
+void tah_detach(struct platform_device *ofdev, int channel)
 {
 	struct tah_instance *dev = dev_get_drvdata(&ofdev->dev);
 
@@ -44,7 +44,7 @@ void tah_detach(struct of_device *ofdev, int channel)
 	mutex_unlock(&dev->lock);
 }
 
-void tah_reset(struct of_device *ofdev)
+void tah_reset(struct platform_device *ofdev)
 {
 	struct tah_instance *dev = dev_get_drvdata(&ofdev->dev);
 	struct tah_regs __iomem *p = dev->base;
@@ -57,21 +57,22 @@ void tah_reset(struct of_device *ofdev)
 		--n;
 
 	if (unlikely(!n))
-		printk(KERN_ERR "%s: reset timeout\n", ofdev->node->full_name);
+		printk(KERN_ERR "%s: reset timeout\n",
+			ofdev->dev.of_node->full_name);
 
-	/* 10KB TAH TX FIFO accomodates the max MTU of 9000 */
+	/* 10KB TAH TX FIFO accommodates the max MTU of 9000 */
 	out_be32(&p->mr,
 		 TAH_MR_CVR | TAH_MR_ST_768 | TAH_MR_TFS_10KB | TAH_MR_DTFP |
 		 TAH_MR_DIG);
 }
 
-int tah_get_regs_len(struct of_device *ofdev)
+int tah_get_regs_len(struct platform_device *ofdev)
 {
 	return sizeof(struct emac_ethtool_regs_subhdr) +
 		sizeof(struct tah_regs);
 }
 
-void *tah_dump_regs(struct of_device *ofdev, void *buf)
+void *tah_dump_regs(struct platform_device *ofdev, void *buf)
 {
 	struct tah_instance *dev = dev_get_drvdata(&ofdev->dev);
 	struct emac_ethtool_regs_subhdr *hdr = buf;
@@ -86,10 +87,9 @@ void *tah_dump_regs(struct of_device *ofdev, void *buf)
 	return regs + 1;
 }
 
-static int __devinit tah_probe(struct of_device *ofdev,
-			       const struct of_device_id *match)
+static int __devinit tah_probe(struct platform_device *ofdev)
 {
-	struct device_node *np = ofdev->node;
+	struct device_node *np = ofdev->dev.of_node;
 	struct tah_instance *dev;
 	struct resource regs;
 	int rc;
@@ -127,7 +127,7 @@ static int __devinit tah_probe(struct of_device *ofdev,
 	tah_reset(ofdev);
 
 	printk(KERN_INFO
-	       "TAH %s initialized\n", ofdev->node->full_name);
+	       "TAH %s initialized\n", ofdev->dev.of_node->full_name);
 	wmb();
 
 	return 0;
@@ -138,7 +138,7 @@ static int __devinit tah_probe(struct of_device *ofdev,
 	return rc;
 }
 
-static int __devexit tah_remove(struct of_device *ofdev)
+static int __devexit tah_remove(struct platform_device *ofdev)
 {
 	struct tah_instance *dev = dev_get_drvdata(&ofdev->dev);
 
@@ -164,20 +164,22 @@ static struct of_device_id tah_match[] =
 	{},
 };
 
-static struct of_platform_driver tah_driver = {
-	.name = "emac-tah",
-	.match_table = tah_match,
-
+static struct platform_driver tah_driver = {
+	.driver = {
+		.name = "emac-tah",
+		.owner = THIS_MODULE,
+		.of_match_table = tah_match,
+	},
 	.probe = tah_probe,
 	.remove = tah_remove,
 };
 
 int __init tah_init(void)
 {
-	return of_register_platform_driver(&tah_driver);
+	return platform_driver_register(&tah_driver);
 }
 
 void tah_exit(void)
 {
-	of_unregister_platform_driver(&tah_driver);
+	platform_driver_unregister(&tah_driver);
 }

@@ -30,7 +30,10 @@
 #include <linux/ppp_channel.h>
 #include <linux/spinlock.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/jiffies.h>
+#include <linux/slab.h>
+#include <asm/unaligned.h>
 #include <asm/uaccess.h>
 #include <asm/string.h>
 
@@ -107,9 +110,9 @@ static void ppp_async_process(unsigned long arg);
 static void async_lcp_peek(struct asyncppp *ap, unsigned char *data,
 			   int len, int inbound);
 
-static struct ppp_channel_ops async_ops = {
-	ppp_async_send,
-	ppp_async_ioctl
+static const struct ppp_channel_ops async_ops = {
+	.start_xmit = ppp_async_send,
+	.ioctl      = ppp_async_ioctl,
 };
 
 /*
@@ -183,7 +186,7 @@ ppp_asynctty_open(struct tty_struct *tty)
 	tasklet_init(&ap->tsk, ppp_async_process, (unsigned long) ap);
 
 	atomic_set(&ap->refcnt, 1);
-	init_MUTEX_LOCKED(&ap->dead_sem);
+	sema_init(&ap->dead_sem, 0);
 
 	ap->chan.private = ap;
 	ap->chan.ops = &async_ops;
@@ -521,7 +524,7 @@ static void ppp_async_process(unsigned long arg)
 #define PUT_BYTE(ap, buf, c, islcp)	do {		\
 	if ((islcp && c < 0x20) || (ap->xaccm[c >> 5] & (1 << (c & 0x1f)))) {\
 		*buf++ = PPP_ESCAPE;			\
-		*buf++ = c ^ 0x20;			\
+		*buf++ = c ^ PPP_TRANS;			\
 	} else						\
 		*buf++ = c;				\
 } while (0)
@@ -541,7 +544,7 @@ ppp_async_encode(struct asyncppp *ap)
 	data = ap->tpkt->data;
 	count = ap->tpkt->len;
 	fcs = ap->tfcs;
-	proto = (data[0] << 8) + data[1];
+	proto = get_unaligned_be16(data);
 
 	/*
 	 * LCP packets with code values between 1 (configure-reqest)
@@ -894,7 +897,7 @@ ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
 				sp = skb_put(skb, n);
 				memcpy(sp, buf, n);
 				if (ap->state & SC_ESCAPE) {
-					sp[0] ^= 0x20;
+					sp[0] ^= PPP_TRANS;
 					ap->state &= ~SC_ESCAPE;
 				}
 			}
@@ -962,7 +965,7 @@ static void async_lcp_peek(struct asyncppp *ap, unsigned char *data,
 	code = data[0];
 	if (code != CONFACK && code != CONFREQ)
 		return;
-	dlen = (data[2] << 8) + data[3];
+	dlen = get_unaligned_be16(data + 2);
 	if (len < dlen)
 		return;		/* packet got truncated or length is bogus */
 
@@ -996,15 +999,14 @@ static void async_lcp_peek(struct asyncppp *ap, unsigned char *data,
 	while (dlen >= 2 && dlen >= data[1] && data[1] >= 2) {
 		switch (data[0]) {
 		case LCP_MRU:
-			val = (data[2] << 8) + data[3];
+			val = get_unaligned_be16(data + 2);
 			if (inbound)
 				ap->mru = val;
 			else
 				ap->chan.mtu = val;
 			break;
 		case LCP_ASYNCMAP:
-			val = (data[2] << 24) + (data[3] << 16)
-				+ (data[4] << 8) + data[5];
+			val = get_unaligned_be32(data + 2);
 			if (inbound)
 				ap->raccm = val;
 			else

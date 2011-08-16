@@ -17,6 +17,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/kernel.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/interrupt.h>
@@ -28,8 +29,12 @@
 #include <linux/clk.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/core.h>
+#include <linux/mmc/mmc.h>
 #include <linux/io.h>
 #include <linux/semaphore.h>
+#include <linux/gpio.h>
+#include <linux/regulator/consumer.h>
+#include <linux/pm_runtime.h>
 #include <plat/dma.h>
 #include <mach/hardware.h>
 #include <plat/board.h>
@@ -76,6 +81,7 @@
 #define INT_EN_MASK		0x307F0033
 #define BWR_ENABLE		(1 << 4)
 #define BRR_ENABLE		(1 << 5)
+#define DTO_ENABLE		(1 << 20)
 #define INIT_STREAM		(1 << 1)
 #define DP_SELECT		(1 << 21)
 #define DDIR			(1 << 4)
@@ -100,10 +106,6 @@
 #define SRD			(1 << 26)
 #define SOFTRESET		(1 << 1)
 #define RESETDONE		(1 << 0)
-#define CIRQ		(1 << 8)
-#define CIRQ_ENABLE	(1 << 8)
-#define CTPL		(1 << 11)
-#define CLKEXTFREE	(1 << 16)
 
 /*
  * FIXME: Most likely all the data using these _DEVID defines should come
@@ -116,14 +118,12 @@
 #define OMAP_MMC4_DEVID		3
 #define OMAP_MMC5_DEVID		4
 
+#define MMC_AUTOSUSPEND_DELAY	100
 #define MMC_TIMEOUT_MS		20
 #define OMAP_MMC_MASTER_CLOCK	96000000
-#define DRIVER_NAME		"mmci-omap-hs"
-
-/* Timeouts for entering power saving states on inactivity, msec */
-#define OMAP_MMC_DISABLED_TIMEOUT	100
-#define OMAP_MMC_SLEEP_TIMEOUT		1000
-#define OMAP_MMC_OFF_TIMEOUT		8000
+#define OMAP_MMC_MIN_CLOCK	400000
+#define OMAP_MMC_MAX_CLOCK	52000000
+#define DRIVER_NAME		"omap_hsmmc"
 
 /*
  * One controller can have multiple slots, like on some omap boards using
@@ -141,6 +141,11 @@
 #define OMAP_HSMMC_WRITE(base, reg, val) \
 	__raw_writel((val), (base) + OMAP_HSMMC_##reg)
 
+struct omap_hsmmc_next {
+	unsigned int	dma_len;
+	s32		cookie;
+};
+
 struct omap_hsmmc_host {
 	struct	device		*dev;
 	struct	mmc_host	*mmc;
@@ -148,14 +153,20 @@ struct omap_hsmmc_host {
 	struct	mmc_command	*cmd;
 	struct	mmc_data	*data;
 	struct	clk		*fclk;
-	struct	clk		*iclk;
 	struct	clk		*dbclk;
-	struct	semaphore	sem;
+	/*
+	 * vcc == configured supply
+	 * vcc_aux == optional
+	 *   -	MMC1, supply for DAT4..DAT7
+	 *   -	MMC2/MMC2, external level shifter voltage supply, for
+	 *	chip (SDIO, eMMC, etc) or transceiver (MMC2 only)
+	 */
+	struct	regulator	*vcc;
+	struct	regulator	*vcc_aux;
 	struct	work_struct	mmc_carddetect_work;
 	void	__iomem		*base;
 	resource_size_t		mapbase;
 	spinlock_t		irq_lock; /* Prevent races with irq handler */
-	unsigned long		flags;
 	unsigned int		id;
 	unsigned int		dma_len;
 	unsigned int		dma_sg_idx;
@@ -175,10 +186,380 @@ struct omap_hsmmc_host {
 	int			vdd;
 	int			protect_card;
 	int			reqs_blocked;
-	int			sdio_int;
+	int			use_reg;
+	int			req_in_progress;
+	struct omap_hsmmc_next	next_data;
 
 	struct	omap_mmc_platform_data	*pdata;
 };
+
+static int omap_hsmmc_card_detect(struct device *dev, int slot)
+{
+	struct omap_mmc_platform_data *mmc = dev->platform_data;
+
+	/* NOTE: assumes card detect signal is active-low */
+	return !gpio_get_value_cansleep(mmc->slots[0].switch_pin);
+}
+
+static int omap_hsmmc_get_wp(struct device *dev, int slot)
+{
+	struct omap_mmc_platform_data *mmc = dev->platform_data;
+
+	/* NOTE: assumes write protect signal is active-high */
+	return gpio_get_value_cansleep(mmc->slots[0].gpio_wp);
+}
+
+static int omap_hsmmc_get_cover_state(struct device *dev, int slot)
+{
+	struct omap_mmc_platform_data *mmc = dev->platform_data;
+
+	/* NOTE: assumes card detect signal is active-low */
+	return !gpio_get_value_cansleep(mmc->slots[0].switch_pin);
+}
+
+#ifdef CONFIG_PM
+
+static int omap_hsmmc_suspend_cdirq(struct device *dev, int slot)
+{
+	struct omap_mmc_platform_data *mmc = dev->platform_data;
+
+	disable_irq(mmc->slots[0].card_detect_irq);
+	return 0;
+}
+
+static int omap_hsmmc_resume_cdirq(struct device *dev, int slot)
+{
+	struct omap_mmc_platform_data *mmc = dev->platform_data;
+
+	enable_irq(mmc->slots[0].card_detect_irq);
+	return 0;
+}
+
+#else
+
+#define omap_hsmmc_suspend_cdirq	NULL
+#define omap_hsmmc_resume_cdirq		NULL
+
+#endif
+
+#ifdef CONFIG_REGULATOR
+
+static int omap_hsmmc_1_set_power(struct device *dev, int slot, int power_on,
+				  int vdd)
+{
+	struct omap_hsmmc_host *host =
+		platform_get_drvdata(to_platform_device(dev));
+	int ret;
+
+	if (mmc_slot(host).before_set_reg)
+		mmc_slot(host).before_set_reg(dev, slot, power_on, vdd);
+
+	if (power_on)
+		ret = mmc_regulator_set_ocr(host->mmc, host->vcc, vdd);
+	else
+		ret = mmc_regulator_set_ocr(host->mmc, host->vcc, 0);
+
+	if (mmc_slot(host).after_set_reg)
+		mmc_slot(host).after_set_reg(dev, slot, power_on, vdd);
+
+	return ret;
+}
+
+static int omap_hsmmc_235_set_power(struct device *dev, int slot, int power_on,
+				   int vdd)
+{
+	struct omap_hsmmc_host *host =
+		platform_get_drvdata(to_platform_device(dev));
+	int ret = 0;
+
+	/*
+	 * If we don't see a Vcc regulator, assume it's a fixed
+	 * voltage always-on regulator.
+	 */
+	if (!host->vcc)
+		return 0;
+
+	if (mmc_slot(host).before_set_reg)
+		mmc_slot(host).before_set_reg(dev, slot, power_on, vdd);
+
+	/*
+	 * Assume Vcc regulator is used only to power the card ... OMAP
+	 * VDDS is used to power the pins, optionally with a transceiver to
+	 * support cards using voltages other than VDDS (1.8V nominal).  When a
+	 * transceiver is used, DAT3..7 are muxed as transceiver control pins.
+	 *
+	 * In some cases this regulator won't support enable/disable;
+	 * e.g. it's a fixed rail for a WLAN chip.
+	 *
+	 * In other cases vcc_aux switches interface power.  Example, for
+	 * eMMC cards it represents VccQ.  Sometimes transceivers or SDIO
+	 * chips/cards need an interface voltage rail too.
+	 */
+	if (power_on) {
+		ret = mmc_regulator_set_ocr(host->mmc, host->vcc, vdd);
+		/* Enable interface voltage rail, if needed */
+		if (ret == 0 && host->vcc_aux) {
+			ret = regulator_enable(host->vcc_aux);
+			if (ret < 0)
+				ret = mmc_regulator_set_ocr(host->mmc,
+							host->vcc, 0);
+		}
+	} else {
+		/* Shut down the rail */
+		if (host->vcc_aux)
+			ret = regulator_disable(host->vcc_aux);
+		if (!ret) {
+			/* Then proceed to shut down the local regulator */
+			ret = mmc_regulator_set_ocr(host->mmc,
+						host->vcc, 0);
+		}
+	}
+
+	if (mmc_slot(host).after_set_reg)
+		mmc_slot(host).after_set_reg(dev, slot, power_on, vdd);
+
+	return ret;
+}
+
+static int omap_hsmmc_4_set_power(struct device *dev, int slot, int power_on,
+					int vdd)
+{
+	return 0;
+}
+
+static int omap_hsmmc_1_set_sleep(struct device *dev, int slot, int sleep,
+				  int vdd, int cardsleep)
+{
+	struct omap_hsmmc_host *host =
+		platform_get_drvdata(to_platform_device(dev));
+	int mode = sleep ? REGULATOR_MODE_STANDBY : REGULATOR_MODE_NORMAL;
+
+	return regulator_set_mode(host->vcc, mode);
+}
+
+static int omap_hsmmc_235_set_sleep(struct device *dev, int slot, int sleep,
+				   int vdd, int cardsleep)
+{
+	struct omap_hsmmc_host *host =
+		platform_get_drvdata(to_platform_device(dev));
+	int err, mode;
+
+	/*
+	 * If we don't see a Vcc regulator, assume it's a fixed
+	 * voltage always-on regulator.
+	 */
+	if (!host->vcc)
+		return 0;
+
+	mode = sleep ? REGULATOR_MODE_STANDBY : REGULATOR_MODE_NORMAL;
+
+	if (!host->vcc_aux)
+		return regulator_set_mode(host->vcc, mode);
+
+	if (cardsleep) {
+		/* VCC can be turned off if card is asleep */
+		if (sleep)
+			err = mmc_regulator_set_ocr(host->mmc, host->vcc, 0);
+		else
+			err = mmc_regulator_set_ocr(host->mmc, host->vcc, vdd);
+	} else
+		err = regulator_set_mode(host->vcc, mode);
+	if (err)
+		return err;
+
+	if (!mmc_slot(host).vcc_aux_disable_is_sleep)
+		return regulator_set_mode(host->vcc_aux, mode);
+
+	if (sleep)
+		return regulator_disable(host->vcc_aux);
+	else
+		return regulator_enable(host->vcc_aux);
+}
+
+static int omap_hsmmc_4_set_sleep(struct device *dev, int slot, int sleep,
+					int vdd, int cardsleep)
+{
+	return 0;
+}
+
+static int omap_hsmmc_reg_get(struct omap_hsmmc_host *host)
+{
+	struct regulator *reg;
+	int ret = 0;
+	int ocr_value = 0;
+
+	switch (host->id) {
+	case OMAP_MMC1_DEVID:
+		/* On-chip level shifting via PBIAS0/PBIAS1 */
+		mmc_slot(host).set_power = omap_hsmmc_1_set_power;
+		mmc_slot(host).set_sleep = omap_hsmmc_1_set_sleep;
+		break;
+	case OMAP_MMC2_DEVID:
+	case OMAP_MMC3_DEVID:
+	case OMAP_MMC5_DEVID:
+		/* Off-chip level shifting, or none */
+		mmc_slot(host).set_power = omap_hsmmc_235_set_power;
+		mmc_slot(host).set_sleep = omap_hsmmc_235_set_sleep;
+		break;
+	case OMAP_MMC4_DEVID:
+		mmc_slot(host).set_power = omap_hsmmc_4_set_power;
+		mmc_slot(host).set_sleep = omap_hsmmc_4_set_sleep;
+	default:
+		pr_err("MMC%d configuration not supported!\n", host->id);
+		return -EINVAL;
+	}
+
+	reg = regulator_get(host->dev, "vmmc");
+	if (IS_ERR(reg)) {
+		dev_dbg(host->dev, "vmmc regulator missing\n");
+		/*
+		* HACK: until fixed.c regulator is usable,
+		* we don't require a main regulator
+		* for MMC2 or MMC3
+		*/
+		if (host->id == OMAP_MMC1_DEVID) {
+			ret = PTR_ERR(reg);
+			goto err;
+		}
+	} else {
+		host->vcc = reg;
+		ocr_value = mmc_regulator_get_ocrmask(reg);
+		if (!mmc_slot(host).ocr_mask) {
+			mmc_slot(host).ocr_mask = ocr_value;
+		} else {
+			if (!(mmc_slot(host).ocr_mask & ocr_value)) {
+				pr_err("MMC%d ocrmask %x is not supported\n",
+					host->id, mmc_slot(host).ocr_mask);
+				mmc_slot(host).ocr_mask = 0;
+				return -EINVAL;
+			}
+		}
+
+		/* Allow an aux regulator */
+		reg = regulator_get(host->dev, "vmmc_aux");
+		host->vcc_aux = IS_ERR(reg) ? NULL : reg;
+
+		/* For eMMC do not power off when not in sleep state */
+		if (mmc_slot(host).no_regulator_off_init)
+			return 0;
+		/*
+		* UGLY HACK:  workaround regulator framework bugs.
+		* When the bootloader leaves a supply active, it's
+		* initialized with zero usecount ... and we can't
+		* disable it without first enabling it.  Until the
+		* framework is fixed, we need a workaround like this
+		* (which is safe for MMC, but not in general).
+		*/
+		if (regulator_is_enabled(host->vcc) > 0) {
+			regulator_enable(host->vcc);
+			regulator_disable(host->vcc);
+		}
+		if (host->vcc_aux) {
+			if (regulator_is_enabled(reg) > 0) {
+				regulator_enable(reg);
+				regulator_disable(reg);
+			}
+		}
+	}
+
+	return 0;
+
+err:
+	mmc_slot(host).set_power = NULL;
+	mmc_slot(host).set_sleep = NULL;
+	return ret;
+}
+
+static void omap_hsmmc_reg_put(struct omap_hsmmc_host *host)
+{
+	regulator_put(host->vcc);
+	regulator_put(host->vcc_aux);
+	mmc_slot(host).set_power = NULL;
+	mmc_slot(host).set_sleep = NULL;
+}
+
+static inline int omap_hsmmc_have_reg(void)
+{
+	return 1;
+}
+
+#else
+
+static inline int omap_hsmmc_reg_get(struct omap_hsmmc_host *host)
+{
+	return -EINVAL;
+}
+
+static inline void omap_hsmmc_reg_put(struct omap_hsmmc_host *host)
+{
+}
+
+static inline int omap_hsmmc_have_reg(void)
+{
+	return 0;
+}
+
+#endif
+
+static int omap_hsmmc_gpio_init(struct omap_mmc_platform_data *pdata)
+{
+	int ret;
+
+	if (gpio_is_valid(pdata->slots[0].switch_pin)) {
+		if (pdata->slots[0].cover)
+			pdata->slots[0].get_cover_state =
+					omap_hsmmc_get_cover_state;
+		else
+			pdata->slots[0].card_detect = omap_hsmmc_card_detect;
+		pdata->slots[0].card_detect_irq =
+				gpio_to_irq(pdata->slots[0].switch_pin);
+		ret = gpio_request(pdata->slots[0].switch_pin, "mmc_cd");
+		if (ret)
+			return ret;
+		ret = gpio_direction_input(pdata->slots[0].switch_pin);
+		if (ret)
+			goto err_free_sp;
+	} else
+		pdata->slots[0].switch_pin = -EINVAL;
+
+	if (gpio_is_valid(pdata->slots[0].gpio_wp)) {
+		pdata->slots[0].get_ro = omap_hsmmc_get_wp;
+		ret = gpio_request(pdata->slots[0].gpio_wp, "mmc_wp");
+		if (ret)
+			goto err_free_cd;
+		ret = gpio_direction_input(pdata->slots[0].gpio_wp);
+		if (ret)
+			goto err_free_wp;
+	} else
+		pdata->slots[0].gpio_wp = -EINVAL;
+
+	return 0;
+
+err_free_wp:
+	gpio_free(pdata->slots[0].gpio_wp);
+err_free_cd:
+	if (gpio_is_valid(pdata->slots[0].switch_pin))
+err_free_sp:
+		gpio_free(pdata->slots[0].switch_pin);
+	return ret;
+}
+
+static void omap_hsmmc_gpio_free(struct omap_mmc_platform_data *pdata)
+{
+	if (gpio_is_valid(pdata->slots[0].gpio_wp))
+		gpio_free(pdata->slots[0].gpio_wp);
+	if (gpio_is_valid(pdata->slots[0].switch_pin))
+		gpio_free(pdata->slots[0].switch_pin);
+}
+
+/*
+ * Start clock to the card
+ */
+static void omap_hsmmc_start_clock(struct omap_hsmmc_host *host)
+{
+	OMAP_HSMMC_WRITE(host->base, SYSCTL,
+		OMAP_HSMMC_READ(host->base, SYSCTL) | CEN);
+}
 
 /*
  * Stop clock to the card
@@ -189,6 +570,107 @@ static void omap_hsmmc_stop_clock(struct omap_hsmmc_host *host)
 		OMAP_HSMMC_READ(host->base, SYSCTL) & ~CEN);
 	if ((OMAP_HSMMC_READ(host->base, SYSCTL) & CEN) != 0x0)
 		dev_dbg(mmc_dev(host->mmc), "MMC Clock is not stoped\n");
+}
+
+static void omap_hsmmc_enable_irq(struct omap_hsmmc_host *host,
+				  struct mmc_command *cmd)
+{
+	unsigned int irq_mask;
+
+	if (host->use_dma)
+		irq_mask = INT_EN_MASK & ~(BRR_ENABLE | BWR_ENABLE);
+	else
+		irq_mask = INT_EN_MASK;
+
+	/* Disable timeout for erases */
+	if (cmd->opcode == MMC_ERASE)
+		irq_mask &= ~DTO_ENABLE;
+
+	OMAP_HSMMC_WRITE(host->base, STAT, STAT_CLEAR);
+	OMAP_HSMMC_WRITE(host->base, ISE, irq_mask);
+	OMAP_HSMMC_WRITE(host->base, IE, irq_mask);
+}
+
+static void omap_hsmmc_disable_irq(struct omap_hsmmc_host *host)
+{
+	OMAP_HSMMC_WRITE(host->base, ISE, 0);
+	OMAP_HSMMC_WRITE(host->base, IE, 0);
+	OMAP_HSMMC_WRITE(host->base, STAT, STAT_CLEAR);
+}
+
+/* Calculate divisor for the given clock frequency */
+static u16 calc_divisor(struct mmc_ios *ios)
+{
+	u16 dsor = 0;
+
+	if (ios->clock) {
+		dsor = DIV_ROUND_UP(OMAP_MMC_MASTER_CLOCK, ios->clock);
+		if (dsor > 250)
+			dsor = 250;
+	}
+
+	return dsor;
+}
+
+static void omap_hsmmc_set_clock(struct omap_hsmmc_host *host)
+{
+	struct mmc_ios *ios = &host->mmc->ios;
+	unsigned long regval;
+	unsigned long timeout;
+
+	dev_dbg(mmc_dev(host->mmc), "Set clock to %uHz\n", ios->clock);
+
+	omap_hsmmc_stop_clock(host);
+
+	regval = OMAP_HSMMC_READ(host->base, SYSCTL);
+	regval = regval & ~(CLKD_MASK | DTO_MASK);
+	regval = regval | (calc_divisor(ios) << 6) | (DTO << 16);
+	OMAP_HSMMC_WRITE(host->base, SYSCTL, regval);
+	OMAP_HSMMC_WRITE(host->base, SYSCTL,
+		OMAP_HSMMC_READ(host->base, SYSCTL) | ICE);
+
+	/* Wait till the ICS bit is set */
+	timeout = jiffies + msecs_to_jiffies(MMC_TIMEOUT_MS);
+	while ((OMAP_HSMMC_READ(host->base, SYSCTL) & ICS) != ICS
+		&& time_before(jiffies, timeout))
+		cpu_relax();
+
+	omap_hsmmc_start_clock(host);
+}
+
+static void omap_hsmmc_set_bus_width(struct omap_hsmmc_host *host)
+{
+	struct mmc_ios *ios = &host->mmc->ios;
+	u32 con;
+
+	con = OMAP_HSMMC_READ(host->base, CON);
+	switch (ios->bus_width) {
+	case MMC_BUS_WIDTH_8:
+		OMAP_HSMMC_WRITE(host->base, CON, con | DW8);
+		break;
+	case MMC_BUS_WIDTH_4:
+		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
+		OMAP_HSMMC_WRITE(host->base, HCTL,
+			OMAP_HSMMC_READ(host->base, HCTL) | FOUR_BIT);
+		break;
+	case MMC_BUS_WIDTH_1:
+		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
+		OMAP_HSMMC_WRITE(host->base, HCTL,
+			OMAP_HSMMC_READ(host->base, HCTL) & ~FOUR_BIT);
+		break;
+	}
+}
+
+static void omap_hsmmc_set_bus_mode(struct omap_hsmmc_host *host)
+{
+	struct mmc_ios *ios = &host->mmc->ios;
+	u32 con;
+
+	con = OMAP_HSMMC_READ(host->base, CON);
+	if (ios->bus_mode == MMC_BUSMODE_OPENDRAIN)
+		OMAP_HSMMC_WRITE(host->base, CON, con | OD);
+	else
+		OMAP_HSMMC_WRITE(host->base, CON, con & ~OD);
 }
 
 #ifdef CONFIG_PM
@@ -202,8 +684,7 @@ static int omap_hsmmc_context_restore(struct omap_hsmmc_host *host)
 	struct mmc_ios *ios = &host->mmc->ios;
 	struct omap_mmc_platform_data *pdata = host->pdata;
 	int context_loss = 0;
-	u32 hctl, capa, con;
-	u16 dsor = 0;
+	u32 hctl, capa;
 	unsigned long timeout;
 
 	if (pdata->get_context_loss_count) {
@@ -259,62 +740,18 @@ static int omap_hsmmc_context_restore(struct omap_hsmmc_host *host)
 		&& time_before(jiffies, timeout))
 		;
 
-	OMAP_HSMMC_WRITE(host->base, STAT, STAT_CLEAR);
-	OMAP_HSMMC_WRITE(host->base, ISE, INT_EN_MASK);
-	OMAP_HSMMC_WRITE(host->base, IE, INT_EN_MASK);
+	omap_hsmmc_disable_irq(host);
 
 	/* Do not initialize card-specific things if the power is off */
 	if (host->power_mode == MMC_POWER_OFF)
 		goto out;
 
-	con = OMAP_HSMMC_READ(host->base, CON);
-	switch (ios->bus_width) {
-	case MMC_BUS_WIDTH_8:
-		OMAP_HSMMC_WRITE(host->base, CON, con | DW8);
-		break;
-	case MMC_BUS_WIDTH_4:
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
-		OMAP_HSMMC_WRITE(host->base, HCTL,
-			OMAP_HSMMC_READ(host->base, HCTL) | FOUR_BIT);
-		break;
-	case MMC_BUS_WIDTH_1:
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
-		OMAP_HSMMC_WRITE(host->base, HCTL,
-			OMAP_HSMMC_READ(host->base, HCTL) & ~FOUR_BIT);
-		break;
-	}
+	omap_hsmmc_set_bus_width(host);
 
-	if (ios->clock) {
-		dsor = OMAP_MMC_MASTER_CLOCK / ios->clock;
-		if (dsor < 1)
-			dsor = 1;
+	omap_hsmmc_set_clock(host);
 
-		if (OMAP_MMC_MASTER_CLOCK / dsor > ios->clock)
-			dsor++;
+	omap_hsmmc_set_bus_mode(host);
 
-		if (dsor > 250)
-			dsor = 250;
-	}
-
-	OMAP_HSMMC_WRITE(host->base, SYSCTL,
-		OMAP_HSMMC_READ(host->base, SYSCTL) & ~CEN);
-	OMAP_HSMMC_WRITE(host->base, SYSCTL, (dsor << 6) | (DTO << 16));
-	OMAP_HSMMC_WRITE(host->base, SYSCTL,
-		OMAP_HSMMC_READ(host->base, SYSCTL) | ICE);
-
-	timeout = jiffies + msecs_to_jiffies(MMC_TIMEOUT_MS);
-	while ((OMAP_HSMMC_READ(host->base, SYSCTL) & ICS) != ICS
-		&& time_before(jiffies, timeout))
-		;
-
-	OMAP_HSMMC_WRITE(host->base, SYSCTL,
-		OMAP_HSMMC_READ(host->base, SYSCTL) | CEN);
-
-	con = OMAP_HSMMC_READ(host->base, CON);
-	if (ios->bus_mode == MMC_BUSMODE_OPENDRAIN)
-		OMAP_HSMMC_WRITE(host->base, CON, con | OD);
-	else
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~OD);
 out:
 	host->context_loss = context_loss;
 
@@ -364,6 +801,8 @@ static void send_init_stream(struct omap_hsmmc_host *host)
 		return;
 
 	disable_irq(host->irq);
+
+	OMAP_HSMMC_WRITE(host->base, IE, INT_EN_MASK);
 	OMAP_HSMMC_WRITE(host->base, CON,
 		OMAP_HSMMC_READ(host->base, CON) | INIT_STREAM);
 	OMAP_HSMMC_WRITE(host->base, CMD, INIT_STREAM_CMD);
@@ -429,24 +868,7 @@ omap_hsmmc_start_command(struct omap_hsmmc_host *host, struct mmc_command *cmd,
 		mmc_hostname(host->mmc), cmd->opcode, cmd->arg);
 	host->cmd = cmd;
 
-	/*
-	 * Clear status bits and enable interrupts
-	 */
-	OMAP_HSMMC_WRITE(host->base, STAT, STAT_CLEAR);
-	OMAP_HSMMC_WRITE(host->base, ISE, INT_EN_MASK);
-
-	if (host->use_dma)
-		OMAP_HSMMC_WRITE(host->base, IE,
-				 INT_EN_MASK & ~(BRR_ENABLE | BWR_ENABLE));
-	else
-		OMAP_HSMMC_WRITE(host->base, IE, INT_EN_MASK);
-
-	if (host->sdio_int) {
-		OMAP_HSMMC_WRITE(host->base, ISE,
-			(OMAP_HSMMC_READ(host->base, ISE) | CIRQ_ENABLE));
-		OMAP_HSMMC_WRITE(host->base, IE,
-			(OMAP_HSMMC_READ(host->base, IE) | CIRQ_ENABLE));
-	}
+	omap_hsmmc_enable_irq(host, cmd);
 
 	host->response_busy = 0;
 	if (cmd->flags & MMC_RSP_PRESENT) {
@@ -480,13 +902,7 @@ omap_hsmmc_start_command(struct omap_hsmmc_host *host, struct mmc_command *cmd,
 	if (host->use_dma)
 		cmdreg |= DMA_EN;
 
-	/*
-	 * In an interrupt context (i.e. STOP command), the spinlock is unlocked
-	 * by the interrupt handler, otherwise (i.e. for a new request) it is
-	 * unlocked here.
-	 */
-	if (!in_interrupt())
-		spin_unlock_irqrestore(&host->irq_lock, host->flags);
+	host->req_in_progress = 1;
 
 	OMAP_HSMMC_WRITE(host->base, ARG, cmd->arg);
 	OMAP_HSMMC_WRITE(host->base, CMD, cmdreg);
@@ -499,6 +915,23 @@ omap_hsmmc_get_dma_dir(struct omap_hsmmc_host *host, struct mmc_data *data)
 		return DMA_TO_DEVICE;
 	else
 		return DMA_FROM_DEVICE;
+}
+
+static void omap_hsmmc_request_done(struct omap_hsmmc_host *host, struct mmc_request *mrq)
+{
+	int dma_ch;
+
+	spin_lock(&host->irq_lock);
+	host->req_in_progress = 0;
+	dma_ch = host->dma_ch;
+	spin_unlock(&host->irq_lock);
+
+	omap_hsmmc_disable_irq(host);
+	/* Do not complete the request if DMA is still in progress */
+	if (mrq->data && host->use_dma && dma_ch != -1)
+		return;
+	host->mrq = NULL;
+	mmc_request_done(host->mmc, mrq);
 }
 
 /*
@@ -517,16 +950,11 @@ omap_hsmmc_xfer_done(struct omap_hsmmc_host *host, struct mmc_data *data)
 			return;
 		}
 
-		host->mrq = NULL;
-		mmc_request_done(host->mmc, mrq);
+		omap_hsmmc_request_done(host, mrq);
 		return;
 	}
 
 	host->data = NULL;
-
-	if (host->use_dma && host->dma_ch != -1)
-		dma_unmap_sg(mmc_dev(host->mmc), data->sg, host->dma_len,
-			omap_hsmmc_get_dma_dir(host, data));
 
 	if (!data->error)
 		data->bytes_xfered += data->blocks * (data->blksz);
@@ -534,8 +962,7 @@ omap_hsmmc_xfer_done(struct omap_hsmmc_host *host, struct mmc_data *data)
 		data->bytes_xfered = 0;
 
 	if (!data->stop) {
-		host->mrq = NULL;
-		mmc_request_done(host->mmc, data->mrq);
+		omap_hsmmc_request_done(host, data->mrq);
 		return;
 	}
 	omap_hsmmc_start_command(host, data->stop, NULL);
@@ -561,10 +988,8 @@ omap_hsmmc_cmd_done(struct omap_hsmmc_host *host, struct mmc_command *cmd)
 			cmd->resp[0] = OMAP_HSMMC_READ(host->base, RSP10);
 		}
 	}
-	if ((host->data == NULL && !host->response_busy) || cmd->error) {
-		host->mrq = NULL;
-		mmc_request_done(host->mmc, cmd->mrq);
-	}
+	if ((host->data == NULL && !host->response_busy) || cmd->error)
+		omap_hsmmc_request_done(host, cmd->mrq);
 }
 
 /*
@@ -572,14 +997,20 @@ omap_hsmmc_cmd_done(struct omap_hsmmc_host *host, struct mmc_command *cmd)
  */
 static void omap_hsmmc_dma_cleanup(struct omap_hsmmc_host *host, int errno)
 {
+	int dma_ch;
+
 	host->data->error = errno;
 
-	if (host->use_dma && host->dma_ch != -1) {
-		dma_unmap_sg(mmc_dev(host->mmc), host->data->sg, host->dma_len,
+	spin_lock(&host->irq_lock);
+	dma_ch = host->dma_ch;
+	host->dma_ch = -1;
+	spin_unlock(&host->irq_lock);
+
+	if (host->use_dma && dma_ch != -1) {
+		dma_unmap_sg(mmc_dev(host->mmc), host->data->sg,
+			host->data->sg_len,
 			omap_hsmmc_get_dma_dir(host, host->data));
-		omap_free_dma(host->dma_ch);
-		host->dma_ch = -1;
-		up(&host->sem);
+		omap_free_dma(dma_ch);
 	}
 	host->data = NULL;
 }
@@ -588,14 +1019,14 @@ static void omap_hsmmc_dma_cleanup(struct omap_hsmmc_host *host, int errno)
  * Readable error output
  */
 #ifdef CONFIG_MMC_DEBUG
-static void omap_hsmmc_report_irq(struct omap_hsmmc_host *host, u32 status)
+static void omap_hsmmc_dbg_report_irq(struct omap_hsmmc_host *host, u32 status)
 {
 	/* --- means reserved bit without definition at documentation */
 	static const char *omap_hsmmc_status_bits[] = {
-		"CC", "TC", "BGE", "---", "BWR", "BRR", "---", "---", "CIRQ",
-		"OBI", "---", "---", "---", "---", "---", "ERRI", "CTO", "CCRC",
-		"CEB", "CIE", "DTO", "DCRC", "DEB", "---", "ACE", "---",
-		"---", "---", "---", "CERR", "CERR", "BADA", "---", "---", "---"
+		"CC"  , "TC"  , "BGE", "---", "BWR" , "BRR" , "---" , "---" ,
+		"CIRQ",	"OBI" , "---", "---", "---" , "---" , "---" , "ERRI",
+		"CTO" , "CCRC", "CEB", "CIE", "DTO" , "DCRC", "DEB" , "---" ,
+		"ACE" , "---" , "---", "---", "CERR", "BADA", "---" , "---"
 	};
 	char res[256];
 	char *buf = res;
@@ -611,6 +1042,11 @@ static void omap_hsmmc_report_irq(struct omap_hsmmc_host *host, u32 status)
 		}
 
 	dev_dbg(mmc_dev(host->mmc), "%s\n", res);
+}
+#else
+static inline void omap_hsmmc_dbg_report_irq(struct omap_hsmmc_host *host,
+					     u32 status)
+{
 }
 #endif  /* CONFIG_MMC_DEBUG */
 
@@ -631,6 +1067,17 @@ static inline void omap_hsmmc_reset_controller_fsm(struct omap_hsmmc_host *host,
 	OMAP_HSMMC_WRITE(host->base, SYSCTL,
 			 OMAP_HSMMC_READ(host->base, SYSCTL) | bit);
 
+	/*
+	 * OMAP4 ES2 and greater has an updated reset logic.
+	 * Monitor a 0->1 transition first
+	 */
+	if (mmc_slot(host).features & HSMMC_HAS_UPDATED_RESET) {
+		while ((!(OMAP_HSMMC_READ(host->base, SYSCTL) & bit))
+					&& (i++ < limit))
+			cpu_relax();
+	}
+	i = 0;
+
 	while ((OMAP_HSMMC_READ(host->base, SYSCTL) & bit) &&
 		(i++ < limit))
 		cpu_relax();
@@ -641,41 +1088,25 @@ static inline void omap_hsmmc_reset_controller_fsm(struct omap_hsmmc_host *host,
 			__func__);
 }
 
-/*
- * MMC controller IRQ handler
- */
-static irqreturn_t omap_hsmmc_irq(int irq, void *dev_id)
+static void omap_hsmmc_do_irq(struct omap_hsmmc_host *host, int status)
 {
-	struct omap_hsmmc_host *host = dev_id;
 	struct mmc_data *data;
-	int end_cmd = 0, end_trans = 0, status;
+	int end_cmd = 0, end_trans = 0;
 
-	spin_lock(&host->irq_lock);
+	if (!host->req_in_progress) {
+		do {
+			OMAP_HSMMC_WRITE(host->base, STAT, status);
+			/* Flush posted write */
+			status = OMAP_HSMMC_READ(host->base, STAT);
+		} while (status & INT_EN_MASK);
+		return;
+	}
 
 	data = host->data;
-	status = OMAP_HSMMC_READ(host->base, STAT);
 	dev_dbg(mmc_dev(host->mmc), "IRQ Status is %x\n", status);
 
-	if (host->mmc->caps & MMC_CAP_SDIO_IRQ) {
-		if (status & CIRQ) {
-			dev_dbg(mmc_dev(host->mmc), "SDIO Card Interrupt\n");
-			mmc_signal_sdio_irq(host->mmc);
-		}
-	}
-
-	if (host->mrq == NULL) {
-		OMAP_HSMMC_WRITE(host->base, STAT,
-			OMAP_HSMMC_READ(host->base, STAT));
-		/* Flush posted write */
-		OMAP_HSMMC_READ(host->base, STAT);
-		spin_unlock(&host->irq_lock);
-		return IRQ_HANDLED;
-	}
-
 	if (status & ERR) {
-#ifdef CONFIG_MMC_DEBUG
-		omap_hsmmc_report_irq(host, status);
-#endif
+		omap_hsmmc_dbg_report_irq(host, status);
 		if ((status & CMD_TIMEOUT) ||
 			(status & CMD_CRC)) {
 			if (host->cmd) {
@@ -722,15 +1153,27 @@ static irqreturn_t omap_hsmmc_irq(int irq, void *dev_id)
 	}
 
 	OMAP_HSMMC_WRITE(host->base, STAT, status);
-	/* Flush posted write */
-	OMAP_HSMMC_READ(host->base, STAT);
 
 	if (end_cmd || ((status & CC) && host->cmd))
 		omap_hsmmc_cmd_done(host, host->cmd);
 	if ((end_trans || (status & TC)) && host->mrq)
 		omap_hsmmc_xfer_done(host, data);
+}
 
-	spin_unlock(&host->irq_lock);
+/*
+ * MMC controller IRQ handler
+ */
+static irqreturn_t omap_hsmmc_irq(int irq, void *dev_id)
+{
+	struct omap_hsmmc_host *host = dev_id;
+	int status;
+
+	status = OMAP_HSMMC_READ(host->base, STAT);
+	do {
+		omap_hsmmc_do_irq(host, status);
+		/* Flush posted write */
+		status = OMAP_HSMMC_READ(host->base, STAT);
+	} while (status & INT_EN_MASK);
 
 	return IRQ_HANDLED;
 }
@@ -761,8 +1204,7 @@ static int omap_hsmmc_switch_opcond(struct omap_hsmmc_host *host, int vdd)
 	int ret;
 
 	/* Disable the clocks */
-	clk_disable(host->fclk);
-	clk_disable(host->iclk);
+	pm_runtime_put_sync(host->dev);
 	if (host->got_dbclk)
 		clk_disable(host->dbclk);
 
@@ -773,8 +1215,7 @@ static int omap_hsmmc_switch_opcond(struct omap_hsmmc_host *host, int vdd)
 	if (!ret)
 		ret = mmc_slot(host).set_power(host->dev, host->slot_id, 1,
 					       vdd);
-	clk_enable(host->iclk);
-	clk_enable(host->fclk);
+	pm_runtime_get_sync(host->dev);
 	if (host->got_dbclk)
 		clk_enable(host->dbclk);
 
@@ -854,21 +1295,16 @@ static void omap_hsmmc_detect(struct work_struct *work)
 	sysfs_notify(&host->mmc->class_dev.kobj, NULL, "cover_switch");
 
 	if (slot->card_detect)
-		carddetect = slot->card_detect(slot->card_detect_irq);
+		carddetect = slot->card_detect(host->dev, host->slot_id);
 	else {
 		omap_hsmmc_protect_card(host);
 		carddetect = -ENOSYS;
 	}
 
-	if (carddetect) {
+	if (carddetect)
 		mmc_detect_change(host->mmc, (HZ * 200) / 1000);
-	} else {
-		mmc_host_enable(host->mmc);
-		omap_hsmmc_reset_controller_fsm(host, SRD);
-		mmc_host_lazy_disable(host->mmc);
-
+	else
 		mmc_detect_change(host->mmc, (HZ * 50) / 1000);
-	}
 }
 
 /*
@@ -930,31 +1366,91 @@ static void omap_hsmmc_config_dma_params(struct omap_hsmmc_host *host,
 /*
  * DMA call back function
  */
-static void omap_hsmmc_dma_cb(int lch, u16 ch_status, void *data)
+static void omap_hsmmc_dma_cb(int lch, u16 ch_status, void *cb_data)
 {
-	struct omap_hsmmc_host *host = data;
+	struct omap_hsmmc_host *host = cb_data;
+	struct mmc_data *data;
+	int dma_ch, req_in_progress;
 
-	if (ch_status & OMAP2_DMA_MISALIGNED_ERR_IRQ)
-		dev_dbg(mmc_dev(host->mmc), "MISALIGNED_ADRS_ERR\n");
-
-	if (host->dma_ch < 0)
-		return;
-
-	host->dma_sg_idx++;
-	if (host->dma_sg_idx < host->dma_len) {
-		/* Fire up the next transfer. */
-		omap_hsmmc_config_dma_params(host, host->data,
-					   host->data->sg + host->dma_sg_idx);
+	if (!(ch_status & OMAP_DMA_BLOCK_IRQ)) {
+		dev_warn(mmc_dev(host->mmc), "unexpected dma status %x\n",
+			ch_status);
 		return;
 	}
 
-	omap_free_dma(host->dma_ch);
+	spin_lock(&host->irq_lock);
+	if (host->dma_ch < 0) {
+		spin_unlock(&host->irq_lock);
+		return;
+	}
+
+	data = host->mrq->data;
+	host->dma_sg_idx++;
+	if (host->dma_sg_idx < host->dma_len) {
+		/* Fire up the next transfer. */
+		omap_hsmmc_config_dma_params(host, data,
+					   data->sg + host->dma_sg_idx);
+		spin_unlock(&host->irq_lock);
+		return;
+	}
+
+	if (!data->host_cookie)
+		dma_unmap_sg(mmc_dev(host->mmc), data->sg, data->sg_len,
+			     omap_hsmmc_get_dma_dir(host, data));
+
+	req_in_progress = host->req_in_progress;
+	dma_ch = host->dma_ch;
 	host->dma_ch = -1;
-	/*
-	 * DMA Callback: run in interrupt context.
-	 * mutex_unlock will throw a kernel warning if used.
-	 */
-	up(&host->sem);
+	spin_unlock(&host->irq_lock);
+
+	omap_free_dma(dma_ch);
+
+	/* If DMA has finished after TC, complete the request */
+	if (!req_in_progress) {
+		struct mmc_request *mrq = host->mrq;
+
+		host->mrq = NULL;
+		mmc_request_done(host->mmc, mrq);
+	}
+}
+
+static int omap_hsmmc_pre_dma_transfer(struct omap_hsmmc_host *host,
+				       struct mmc_data *data,
+				       struct omap_hsmmc_next *next)
+{
+	int dma_len;
+
+	if (!next && data->host_cookie &&
+	    data->host_cookie != host->next_data.cookie) {
+		printk(KERN_WARNING "[%s] invalid cookie: data->host_cookie %d"
+		       " host->next_data.cookie %d\n",
+		       __func__, data->host_cookie, host->next_data.cookie);
+		data->host_cookie = 0;
+	}
+
+	/* Check if next job is already prepared */
+	if (next ||
+	    (!next && data->host_cookie != host->next_data.cookie)) {
+		dma_len = dma_map_sg(mmc_dev(host->mmc), data->sg,
+				     data->sg_len,
+				     omap_hsmmc_get_dma_dir(host, data));
+
+	} else {
+		dma_len = host->next_data.dma_len;
+		host->next_data.dma_len = 0;
+	}
+
+
+	if (dma_len == 0)
+		return -EINVAL;
+
+	if (next) {
+		next->dma_len = dma_len;
+		data->host_cookie = ++next->cookie < 0 ? 1 : next->cookie;
+	} else
+		host->dma_len = dma_len;
+
+	return 0;
 }
 
 /*
@@ -963,7 +1459,7 @@ static void omap_hsmmc_dma_cb(int lch, u16 ch_status, void *data)
 static int omap_hsmmc_start_dma_transfer(struct omap_hsmmc_host *host,
 					struct mmc_request *req)
 {
-	int dma_ch = 0, ret = 0, err = 1, i;
+	int dma_ch = 0, ret = 0, i;
 	struct mmc_data *data = req->data;
 
 	/* Sanity check: all the SG entries must be aligned by block size. */
@@ -980,23 +1476,7 @@ static int omap_hsmmc_start_dma_transfer(struct omap_hsmmc_host *host,
 		 */
 		return -EINVAL;
 
-	/*
-	 * If for some reason the DMA transfer is still active,
-	 * we wait for timeout period and free the dma
-	 */
-	if (host->dma_ch != -1) {
-		set_current_state(TASK_UNINTERRUPTIBLE);
-		schedule_timeout(100);
-		if (down_trylock(&host->sem)) {
-			omap_free_dma(host->dma_ch);
-			host->dma_ch = -1;
-			up(&host->sem);
-			return err;
-		}
-	} else {
-		if (down_trylock(&host->sem))
-			return err;
-	}
+	BUG_ON(host->dma_ch != -1);
 
 	ret = omap_request_dma(omap_hsmmc_get_dma_sync_dev(host, data),
 			       "MMC/SD", omap_hsmmc_dma_cb, host, &dma_ch);
@@ -1006,9 +1486,10 @@ static int omap_hsmmc_start_dma_transfer(struct omap_hsmmc_host *host,
 			mmc_hostname(host->mmc), ret);
 		return ret;
 	}
+	ret = omap_hsmmc_pre_dma_transfer(host, data, NULL);
+	if (ret)
+		return ret;
 
-	host->dma_len = dma_map_sg(mmc_dev(host->mmc), data->sg,
-			data->sg_len, omap_hsmmc_get_dma_dir(host, data));
 	host->dma_ch = dma_ch;
 	host->dma_sg_idx = 0;
 
@@ -1088,6 +1569,35 @@ omap_hsmmc_prepare_data(struct omap_hsmmc_host *host, struct mmc_request *req)
 	return 0;
 }
 
+static void omap_hsmmc_post_req(struct mmc_host *mmc, struct mmc_request *mrq,
+				int err)
+{
+	struct omap_hsmmc_host *host = mmc_priv(mmc);
+	struct mmc_data *data = mrq->data;
+
+	if (host->use_dma) {
+		dma_unmap_sg(mmc_dev(host->mmc), data->sg, data->sg_len,
+			     omap_hsmmc_get_dma_dir(host, data));
+		data->host_cookie = 0;
+	}
+}
+
+static void omap_hsmmc_pre_req(struct mmc_host *mmc, struct mmc_request *mrq,
+			       bool is_first_req)
+{
+	struct omap_hsmmc_host *host = mmc_priv(mmc);
+
+	if (mrq->data->host_cookie) {
+		mrq->data->host_cookie = 0;
+		return ;
+	}
+
+	if (host->use_dma)
+		if (omap_hsmmc_pre_dma_transfer(host, mrq->data,
+						&host->next_data))
+			mrq->data->host_cookie = 0;
+}
+
 /*
  * Request function. for read/write operation
  */
@@ -1096,37 +1606,27 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 	struct omap_hsmmc_host *host = mmc_priv(mmc);
 	int err;
 
-	/*
-	 * Prevent races with the interrupt handler because of unexpected
-	 * interrupts, but not if we are already in interrupt context i.e.
-	 * retries.
-	 */
-	if (!in_interrupt()) {
-		spin_lock_irqsave(&host->irq_lock, host->flags);
-		/*
-		 * Protect the card from I/O if there is a possibility
-		 * it can be removed.
-		 */
-		if (host->protect_card) {
-			if (host->reqs_blocked < 3) {
-				/*
-				 * Ensure the controller is left in a consistent
-				 * state by resetting the command and data state
-				 * machines.
-				 */
-				omap_hsmmc_reset_controller_fsm(host, SRD);
-				omap_hsmmc_reset_controller_fsm(host, SRC);
-				host->reqs_blocked += 1;
-			}
-			req->cmd->error = -EBADF;
-			if (req->data)
-				req->data->error = -EBADF;
-			spin_unlock_irqrestore(&host->irq_lock, host->flags);
-			mmc_request_done(mmc, req);
-			return;
-		} else if (host->reqs_blocked)
-			host->reqs_blocked = 0;
-	}
+	BUG_ON(host->req_in_progress);
+	BUG_ON(host->dma_ch != -1);
+	if (host->protect_card) {
+		if (host->reqs_blocked < 3) {
+			/*
+			 * Ensure the controller is left in a consistent
+			 * state by resetting the command and data state
+			 * machines.
+			 */
+			omap_hsmmc_reset_controller_fsm(host, SRD);
+			omap_hsmmc_reset_controller_fsm(host, SRC);
+			host->reqs_blocked += 1;
+		}
+		req->cmd->error = -EBADF;
+		if (req->data)
+			req->data->error = -EBADF;
+		req->cmd->retries = 0;
+		mmc_request_done(mmc, req);
+		return;
+	} else if (host->reqs_blocked)
+		host->reqs_blocked = 0;
 	WARN_ON(host->mrq != NULL);
 	host->mrq = req;
 	err = omap_hsmmc_prepare_data(host, req);
@@ -1135,8 +1635,6 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 		if (req->data)
 			req->data->error = err;
 		host->mrq = NULL;
-		if (!in_interrupt())
-			spin_unlock_irqrestore(&host->irq_lock, host->flags);
 		mmc_request_done(mmc, req);
 		return;
 	}
@@ -1148,13 +1646,9 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 static void omap_hsmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
 	struct omap_hsmmc_host *host = mmc_priv(mmc);
-	u16 dsor = 0;
-	unsigned long regval;
-	unsigned long timeout;
-	u32 con;
 	int do_send_init_stream = 0;
 
-	mmc_host_enable(host->mmc);
+	pm_runtime_get_sync(host->dev);
 
 	if (ios->power_mode != host->power_mode) {
 		switch (ios->power_mode) {
@@ -1177,24 +1671,9 @@ static void omap_hsmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	/* FIXME: set registers based only on changes to ios */
 
-	con = OMAP_HSMMC_READ(host->base, CON);
-	switch (mmc->ios.bus_width) {
-	case MMC_BUS_WIDTH_8:
-		OMAP_HSMMC_WRITE(host->base, CON, con | DW8);
-		break;
-	case MMC_BUS_WIDTH_4:
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
-		OMAP_HSMMC_WRITE(host->base, HCTL,
-			OMAP_HSMMC_READ(host->base, HCTL) | FOUR_BIT);
-		break;
-	case MMC_BUS_WIDTH_1:
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~DW8);
-		OMAP_HSMMC_WRITE(host->base, HCTL,
-			OMAP_HSMMC_READ(host->base, HCTL) & ~FOUR_BIT);
-		break;
-	}
+	omap_hsmmc_set_bus_width(host);
 
-	if (host->id == OMAP_MMC1_DEVID) {
+	if (host->pdata->controller_flags & OMAP_HSMMC_SUPPORTS_DUAL_VOLT) {
 		/* Only MMC1 can interface at 3V without some flavor
 		 * of external transceiver; but they all handle 1.8V.
 		 */
@@ -1212,47 +1691,14 @@ static void omap_hsmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		}
 	}
 
-	if (ios->clock) {
-		dsor = OMAP_MMC_MASTER_CLOCK / ios->clock;
-		if (dsor < 1)
-			dsor = 1;
-
-		if (OMAP_MMC_MASTER_CLOCK / dsor > ios->clock)
-			dsor++;
-
-		if (dsor > 250)
-			dsor = 250;
-	}
-	omap_hsmmc_stop_clock(host);
-	regval = OMAP_HSMMC_READ(host->base, SYSCTL);
-	regval = regval & ~(CLKD_MASK);
-	regval = regval | (dsor << 6) | (DTO << 16);
-	OMAP_HSMMC_WRITE(host->base, SYSCTL, regval);
-	OMAP_HSMMC_WRITE(host->base, SYSCTL,
-		OMAP_HSMMC_READ(host->base, SYSCTL) | ICE);
-
-	/* Wait till the ICS bit is set */
-	timeout = jiffies + msecs_to_jiffies(MMC_TIMEOUT_MS);
-	while ((OMAP_HSMMC_READ(host->base, SYSCTL) & ICS) != ICS
-		&& time_before(jiffies, timeout))
-		msleep(1);
-
-	OMAP_HSMMC_WRITE(host->base, SYSCTL,
-		OMAP_HSMMC_READ(host->base, SYSCTL) | CEN);
+	omap_hsmmc_set_clock(host);
 
 	if (do_send_init_stream)
 		send_init_stream(host);
 
-	con = OMAP_HSMMC_READ(host->base, CON);
-	if (ios->bus_mode == MMC_BUSMODE_OPENDRAIN)
-		OMAP_HSMMC_WRITE(host->base, CON, con | OD);
-	else
-		OMAP_HSMMC_WRITE(host->base, CON, con & ~OD);
+	omap_hsmmc_set_bus_mode(host);
 
-	if (host->power_mode == MMC_POWER_OFF)
-		mmc_host_disable(host->mmc);
-	else
-		mmc_host_lazy_disable(host->mmc);
+	pm_runtime_put_autosuspend(host->dev);
 }
 
 static int omap_hsmmc_get_cd(struct mmc_host *mmc)
@@ -1261,7 +1707,7 @@ static int omap_hsmmc_get_cd(struct mmc_host *mmc)
 
 	if (!mmc_slot(host).card_detect)
 		return -ENOSYS;
-	return mmc_slot(host).card_detect(mmc_slot(host).card_detect_irq);
+	return mmc_slot(host).card_detect(host->dev, host->slot_id);
 }
 
 static int omap_hsmmc_get_ro(struct mmc_host *mmc)
@@ -1273,23 +1719,12 @@ static int omap_hsmmc_get_ro(struct mmc_host *mmc)
 	return mmc_slot(host).get_ro(host->dev, 0);
 }
 
-static void omap_hsmmc_enable_sdio_irq(struct mmc_host *mmc, int enable)
+static void omap_hsmmc_init_card(struct mmc_host *mmc, struct mmc_card *card)
 {
 	struct omap_hsmmc_host *host = mmc_priv(mmc);
 
-	host->sdio_int = enable;
-	if (enable) {
-		OMAP_HSMMC_WRITE(host->base, ISE,
-			(OMAP_HSMMC_READ(host->base, ISE) | CIRQ_ENABLE));
-		OMAP_HSMMC_WRITE(host->base, IE,
-			(OMAP_HSMMC_READ(host->base, IE) | CIRQ_ENABLE));
-	} else {
-		OMAP_HSMMC_WRITE(host->base, IE,
-			(OMAP_HSMMC_READ(host->base, IE) & (~CIRQ_ENABLE)));
-		OMAP_HSMMC_WRITE(host->base, ISE,
-			(OMAP_HSMMC_READ(host->base, ISE) & (~CIRQ_ENABLE)));
-	}
-
+	if (mmc_slot(host).init_card)
+		mmc_slot(host).init_card(card);
 }
 
 static void omap_hsmmc_conf_bus_power(struct omap_hsmmc_host *host)
@@ -1297,7 +1732,7 @@ static void omap_hsmmc_conf_bus_power(struct omap_hsmmc_host *host)
 	u32 hctl, capa, value;
 
 	/* Only MMC1 supports 3.0V */
-	if (host->id == OMAP_MMC1_DEVID) {
+	if (host->pdata->controller_flags & OMAP_HSMMC_SUPPORTS_DUAL_VOLT) {
 		hctl = SDVS30;
 		capa = VS30 | VS18;
 	} else {
@@ -1319,224 +1754,12 @@ static void omap_hsmmc_conf_bus_power(struct omap_hsmmc_host *host)
 	set_sd_bus_power(host);
 }
 
-/*
- * Dynamic power saving handling, FSM:
- *   ENABLED -> DISABLED -> CARDSLEEP / REGSLEEP -> OFF
- *     ^___________|          |                      |
- *     |______________________|______________________|
- *
- * ENABLED:   mmc host is fully functional
- * DISABLED:  fclk is off
- * CARDSLEEP: fclk is off, card is asleep, voltage regulator is asleep
- * REGSLEEP:  fclk is off, voltage regulator is asleep
- * OFF:       fclk is off, voltage regulator is off
- *
- * Transition handlers return the timeout for the next state transition
- * or negative error.
- */
-
-enum {ENABLED = 0, DISABLED, CARDSLEEP, REGSLEEP, OFF};
-
-/* Handler for [ENABLED -> DISABLED] transition */
-static int omap_hsmmc_enabled_to_disabled(struct omap_hsmmc_host *host)
-{
-	omap_hsmmc_context_save(host);
-	clk_disable(host->fclk);
-	host->dpm_state = DISABLED;
-
-	dev_dbg(mmc_dev(host->mmc), "ENABLED -> DISABLED\n");
-
-	if (host->power_mode == MMC_POWER_OFF)
-		return 0;
-
-	return msecs_to_jiffies(OMAP_MMC_SLEEP_TIMEOUT);
-}
-
-/* Handler for [DISABLED -> REGSLEEP / CARDSLEEP] transition */
-static int omap_hsmmc_disabled_to_sleep(struct omap_hsmmc_host *host)
-{
-	int err, new_state;
-
-	if (!mmc_try_claim_host(host->mmc))
-		return 0;
-
-	clk_enable(host->fclk);
-	omap_hsmmc_context_restore(host);
-	if (mmc_card_can_sleep(host->mmc)) {
-		err = mmc_card_sleep(host->mmc);
-		if (err < 0) {
-			clk_disable(host->fclk);
-			mmc_release_host(host->mmc);
-			return err;
-		}
-		new_state = CARDSLEEP;
-	} else {
-		new_state = REGSLEEP;
-	}
-	if (mmc_slot(host).set_sleep)
-		mmc_slot(host).set_sleep(host->dev, host->slot_id, 1, 0,
-					 new_state == CARDSLEEP);
-	/* FIXME: turn off bus power and perhaps interrupts too */
-	clk_disable(host->fclk);
-	host->dpm_state = new_state;
-
-	mmc_release_host(host->mmc);
-
-	dev_dbg(mmc_dev(host->mmc), "DISABLED -> %s\n",
-		host->dpm_state == CARDSLEEP ? "CARDSLEEP" : "REGSLEEP");
-
-	if ((host->mmc->caps & MMC_CAP_NONREMOVABLE) ||
-	    mmc_slot(host).card_detect ||
-	    (mmc_slot(host).get_cover_state &&
-	     mmc_slot(host).get_cover_state(host->dev, host->slot_id)))
-		return msecs_to_jiffies(OMAP_MMC_OFF_TIMEOUT);
-
-	return 0;
-}
-
-/* Handler for [REGSLEEP / CARDSLEEP -> OFF] transition */
-static int omap_hsmmc_sleep_to_off(struct omap_hsmmc_host *host)
-{
-	if (!mmc_try_claim_host(host->mmc))
-		return 0;
-
-	if (!((host->mmc->caps & MMC_CAP_NONREMOVABLE) ||
-	      mmc_slot(host).card_detect ||
-	      (mmc_slot(host).get_cover_state &&
-	       mmc_slot(host).get_cover_state(host->dev, host->slot_id)))) {
-		mmc_release_host(host->mmc);
-		return 0;
-	}
-
-	mmc_slot(host).set_power(host->dev, host->slot_id, 0, 0);
-	host->vdd = 0;
-	host->power_mode = MMC_POWER_OFF;
-
-	dev_dbg(mmc_dev(host->mmc), "%s -> OFF\n",
-		host->dpm_state == CARDSLEEP ? "CARDSLEEP" : "REGSLEEP");
-
-	host->dpm_state = OFF;
-
-	mmc_release_host(host->mmc);
-
-	return 0;
-}
-
-/* Handler for [DISABLED -> ENABLED] transition */
-static int omap_hsmmc_disabled_to_enabled(struct omap_hsmmc_host *host)
-{
-	int err;
-
-	err = clk_enable(host->fclk);
-	if (err < 0)
-		return err;
-
-	omap_hsmmc_context_restore(host);
-	host->dpm_state = ENABLED;
-
-	dev_dbg(mmc_dev(host->mmc), "DISABLED -> ENABLED\n");
-
-	return 0;
-}
-
-/* Handler for [SLEEP -> ENABLED] transition */
-static int omap_hsmmc_sleep_to_enabled(struct omap_hsmmc_host *host)
-{
-	if (!mmc_try_claim_host(host->mmc))
-		return 0;
-
-	clk_enable(host->fclk);
-	omap_hsmmc_context_restore(host);
-	if (mmc_slot(host).set_sleep)
-		mmc_slot(host).set_sleep(host->dev, host->slot_id, 0,
-			 host->vdd, host->dpm_state == CARDSLEEP);
-	if (mmc_card_can_sleep(host->mmc))
-		mmc_card_awake(host->mmc);
-
-	dev_dbg(mmc_dev(host->mmc), "%s -> ENABLED\n",
-		host->dpm_state == CARDSLEEP ? "CARDSLEEP" : "REGSLEEP");
-
-	host->dpm_state = ENABLED;
-
-	mmc_release_host(host->mmc);
-
-	return 0;
-}
-
-/* Handler for [OFF -> ENABLED] transition */
-static int omap_hsmmc_off_to_enabled(struct omap_hsmmc_host *host)
-{
-	clk_enable(host->fclk);
-
-	omap_hsmmc_context_restore(host);
-	omap_hsmmc_conf_bus_power(host);
-	mmc_power_restore_host(host->mmc);
-
-	host->dpm_state = ENABLED;
-
-	dev_dbg(mmc_dev(host->mmc), "OFF -> ENABLED\n");
-
-	return 0;
-}
-
-/*
- * Bring MMC host to ENABLED from any other PM state.
- */
-static int omap_hsmmc_enable(struct mmc_host *mmc)
-{
-	struct omap_hsmmc_host *host = mmc_priv(mmc);
-
-	switch (host->dpm_state) {
-	case DISABLED:
-		return omap_hsmmc_disabled_to_enabled(host);
-	case CARDSLEEP:
-	case REGSLEEP:
-		return omap_hsmmc_sleep_to_enabled(host);
-	case OFF:
-		return omap_hsmmc_off_to_enabled(host);
-	default:
-		dev_dbg(mmc_dev(host->mmc), "UNKNOWN state\n");
-		return -EINVAL;
-	}
-}
-
-/*
- * Bring MMC host in PM state (one level deeper).
- */
-static int omap_hsmmc_disable(struct mmc_host *mmc, int lazy)
-{
-	struct omap_hsmmc_host *host = mmc_priv(mmc);
-
-	switch (host->dpm_state) {
-	case ENABLED: {
-		int delay;
-
-		delay = omap_hsmmc_enabled_to_disabled(host);
-		if (lazy || delay < 0)
-			return delay;
-		return 0;
-	}
-	case DISABLED:
-		return omap_hsmmc_disabled_to_sleep(host);
-	case CARDSLEEP:
-	case REGSLEEP:
-		return omap_hsmmc_sleep_to_off(host);
-	default:
-		dev_dbg(mmc_dev(host->mmc), "UNKNOWN state\n");
-		return -EINVAL;
-	}
-}
-
 static int omap_hsmmc_enable_fclk(struct mmc_host *mmc)
 {
 	struct omap_hsmmc_host *host = mmc_priv(mmc);
-	int err;
 
-	err = clk_enable(host->fclk);
-	if (err)
-		return err;
-	dev_dbg(mmc_dev(host->mmc), "mmc_fclk: enabled\n");
-	omap_hsmmc_context_restore(host);
+	pm_runtime_get_sync(host->dev);
+
 	return 0;
 }
 
@@ -1544,30 +1767,23 @@ static int omap_hsmmc_disable_fclk(struct mmc_host *mmc, int lazy)
 {
 	struct omap_hsmmc_host *host = mmc_priv(mmc);
 
-	omap_hsmmc_context_save(host);
-	clk_disable(host->fclk);
-	dev_dbg(mmc_dev(host->mmc), "mmc_fclk: disabled\n");
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
+
 	return 0;
 }
 
 static const struct mmc_host_ops omap_hsmmc_ops = {
 	.enable = omap_hsmmc_enable_fclk,
 	.disable = omap_hsmmc_disable_fclk,
+	.post_req = omap_hsmmc_post_req,
+	.pre_req = omap_hsmmc_pre_req,
 	.request = omap_hsmmc_request,
 	.set_ios = omap_hsmmc_set_ios,
 	.get_cd = omap_hsmmc_get_cd,
 	.get_ro = omap_hsmmc_get_ro,
-	.enable_sdio_irq = omap_hsmmc_enable_sdio_irq,
-};
-
-static const struct mmc_host_ops omap_hsmmc_ps_ops = {
-	.enable = omap_hsmmc_enable,
-	.disable = omap_hsmmc_disable,
-	.request = omap_hsmmc_request,
-	.set_ios = omap_hsmmc_set_ios,
-	.get_cd = omap_hsmmc_get_cd,
-	.get_ro = omap_hsmmc_get_ro,
-	.enable_sdio_irq = omap_hsmmc_enable_sdio_irq,
+	.init_card = omap_hsmmc_init_card,
+	/* NYET -- enable_sdio_irq */
 };
 
 #ifdef CONFIG_DEBUG_FS
@@ -1591,15 +1807,12 @@ static int omap_hsmmc_regs_show(struct seq_file *s, void *data)
 			host->dpm_state, mmc->nesting_cnt,
 			host->context_loss, context_loss);
 
-	if (host->suspended || host->dpm_state == OFF) {
+	if (host->suspended) {
 		seq_printf(s, "host suspended, can't read registers\n");
 		return 0;
 	}
 
-	if (clk_enable(host->fclk) != 0) {
-		seq_printf(s, "can't read the regs\n");
-		return 0;
-	}
+	pm_runtime_get_sync(host->dev);
 
 	seq_printf(s, "SYSCONFIG:\t0x%08x\n",
 			OMAP_HSMMC_READ(host->base, SYSCONFIG));
@@ -1616,7 +1829,8 @@ static int omap_hsmmc_regs_show(struct seq_file *s, void *data)
 	seq_printf(s, "CAPA:\t\t0x%08x\n",
 			OMAP_HSMMC_READ(host->base, CAPA));
 
-	clk_disable(host->fclk);
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 
 	return 0;
 }
@@ -1654,7 +1868,7 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 	struct mmc_host *mmc;
 	struct omap_hsmmc_host *host = NULL;
 	struct resource *res;
-	int ret = 0, irq;
+	int ret, irq;
 
 	if (pdata == NULL) {
 		dev_err(&pdev->dev, "Platform Data is missing\n");
@@ -1671,15 +1885,20 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 	if (res == NULL || irq < 0)
 		return -ENXIO;
 
-	res = request_mem_region(res->start, res->end - res->start + 1,
-							pdev->name);
+	res->start += pdata->reg_offset;
+	res->end += pdata->reg_offset;
+	res = request_mem_region(res->start, resource_size(res), pdev->name);
 	if (res == NULL)
 		return -EBUSY;
+
+	ret = omap_hsmmc_gpio_init(pdata);
+	if (ret)
+		goto err;
 
 	mmc = mmc_alloc_host(sizeof(struct omap_hsmmc_host), &pdev->dev);
 	if (!mmc) {
 		ret = -ENOMEM;
-		goto err;
+		goto err_alloc;
 	}
 
 	host		= mmc_priv(mmc);
@@ -1694,56 +1913,41 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 	host->slot_id	= 0;
 	host->mapbase	= res->start;
 	host->base	= ioremap(host->mapbase, SZ_4K);
-	host->power_mode = -1;
-	host->sdio_int = 0;
+	host->power_mode = MMC_POWER_OFF;
+	host->next_data.cookie = 1;
 
 	platform_set_drvdata(pdev, host);
 	INIT_WORK(&host->mmc_carddetect_work, omap_hsmmc_detect);
 
-	if (mmc_slot(host).power_saving)
-		mmc->ops	= &omap_hsmmc_ps_ops;
-	else
-		mmc->ops	= &omap_hsmmc_ops;
+	mmc->ops	= &omap_hsmmc_ops;
 
-	mmc->f_min	= 400000;
-	mmc->f_max	= 52000000;
+	/*
+	 * If regulator_disable can only put vcc_aux to sleep then there is
+	 * no off state.
+	 */
+	if (mmc_slot(host).vcc_aux_disable_is_sleep)
+		mmc_slot(host).no_off = 1;
 
-	sema_init(&host->sem, 1);
+	mmc->f_min	= OMAP_MMC_MIN_CLOCK;
+	mmc->f_max	= OMAP_MMC_MAX_CLOCK;
+
 	spin_lock_init(&host->irq_lock);
 
-	host->iclk = clk_get(&pdev->dev, "ick");
-	if (IS_ERR(host->iclk)) {
-		ret = PTR_ERR(host->iclk);
-		host->iclk = NULL;
-		goto err1;
-	}
 	host->fclk = clk_get(&pdev->dev, "fck");
 	if (IS_ERR(host->fclk)) {
 		ret = PTR_ERR(host->fclk);
 		host->fclk = NULL;
-		clk_put(host->iclk);
 		goto err1;
 	}
 
 	omap_hsmmc_context_save(host);
 
 	mmc->caps |= MMC_CAP_DISABLE;
-	mmc_set_disable_delay(mmc, OMAP_MMC_DISABLED_TIMEOUT);
-	/* we start off in DISABLED state */
-	host->dpm_state = DISABLED;
 
-	if (mmc_host_enable(host->mmc) != 0) {
-		clk_put(host->iclk);
-		clk_put(host->fclk);
-		goto err1;
-	}
-
-	if (clk_enable(host->iclk) != 0) {
-		mmc_host_disable(host->mmc);
-		clk_put(host->iclk);
-		clk_put(host->fclk);
-		goto err1;
-	}
+	pm_runtime_enable(host->dev);
+	pm_runtime_get_sync(host->dev);
+	pm_runtime_set_autosuspend_delay(host->dev, MMC_AUTOSUSPEND_DELAY);
+	pm_runtime_use_autosuspend(host->dev);
 
 	if (cpu_is_omap2430()) {
 		host->dbclk = clk_get(&pdev->dev, "mmchsdb_fck");
@@ -1764,8 +1968,7 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 
 	/* Since we do only SG emulation, we can have as many segs
 	 * as we want. */
-	mmc->max_phys_segs = 1024;
-	mmc->max_hw_segs = 1024;
+	mmc->max_segs = 1024;
 
 	mmc->max_blk_size = 512;       /* Block Length at max can be 1024 */
 	mmc->max_blk_count = 0xFFFF;    /* No. of Blocks is 16 bits */
@@ -1773,19 +1976,14 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 	mmc->max_seg_size = mmc->max_req_size;
 
 	mmc->caps |= MMC_CAP_MMC_HIGHSPEED | MMC_CAP_SD_HIGHSPEED |
-		     MMC_CAP_WAIT_WHILE_BUSY;
+		     MMC_CAP_WAIT_WHILE_BUSY | MMC_CAP_ERASE;
 
-	if (mmc_slot(host).wires >= 8)
-		mmc->caps |= MMC_CAP_8_BIT_DATA;
-	else if (mmc_slot(host).wires >= 4)
+	mmc->caps |= mmc_slot(host).caps;
+	if (mmc->caps & MMC_CAP_8_BIT_DATA)
 		mmc->caps |= MMC_CAP_4_BIT_DATA;
 
 	if (mmc_slot(host).nonremovable)
 		mmc->caps |= MMC_CAP_NONREMOVABLE;
-
-	mmc->caps |= MMC_CAP_SDIO_IRQ;
-	OMAP_HSMMC_WRITE(host->base, CON,
-			OMAP_HSMMC_READ(host->base, CON) | (CTPL | CLKEXTFREE));
 
 	omap_hsmmc_conf_bus_power(host);
 
@@ -1824,7 +2022,6 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 		goto err_irq;
 	}
 
-	/* initialize power supplies, gpios, etc */
 	if (pdata->init != NULL) {
 		if (pdata->init(&pdev->dev) != 0) {
 			dev_dbg(mmc_dev(host->mmc),
@@ -1832,6 +2029,14 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 			goto err_irq_cd_init;
 		}
 	}
+
+	if (omap_hsmmc_have_reg() && !mmc_slot(host).set_power) {
+		ret = omap_hsmmc_reg_get(host);
+		if (ret)
+			goto err_reg;
+		host->use_reg = 1;
+	}
+
 	mmc->ocr_avail = mmc_slot(host).ocr_mask;
 
 	/* Request IRQ for card detect */
@@ -1846,12 +2051,11 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 				"Unable to grab MMC CD IRQ\n");
 			goto err_irq_cd;
 		}
+		pdata->suspend = omap_hsmmc_suspend_cdirq;
+		pdata->resume = omap_hsmmc_resume_cdirq;
 	}
 
-	OMAP_HSMMC_WRITE(host->base, ISE, INT_EN_MASK);
-	OMAP_HSMMC_WRITE(host->base, IE, INT_EN_MASK);
-
-	mmc_host_lazy_disable(host->mmc);
+	omap_hsmmc_disable_irq(host);
 
 	omap_hsmmc_protect_card(host);
 
@@ -1866,38 +2070,42 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 		ret = device_create_file(&mmc->class_dev,
 					&dev_attr_cover_switch);
 		if (ret < 0)
-			goto err_cover_switch;
+			goto err_slot_name;
 	}
 
 	omap_hsmmc_debugfs(mmc);
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 
 	return 0;
 
-err_cover_switch:
-	device_remove_file(&mmc->class_dev, &dev_attr_cover_switch);
 err_slot_name:
 	mmc_remove_host(mmc);
-err_irq_cd:
 	free_irq(mmc_slot(host).card_detect_irq, host);
+err_irq_cd:
+	if (host->use_reg)
+		omap_hsmmc_reg_put(host);
+err_reg:
+	if (host->pdata->cleanup)
+		host->pdata->cleanup(&pdev->dev);
 err_irq_cd_init:
 	free_irq(host->irq, host);
 err_irq:
-	mmc_host_disable(host->mmc);
-	clk_disable(host->iclk);
+	pm_runtime_mark_last_busy(host->dev);
+	pm_runtime_put_autosuspend(host->dev);
 	clk_put(host->fclk);
-	clk_put(host->iclk);
 	if (host->got_dbclk) {
 		clk_disable(host->dbclk);
 		clk_put(host->dbclk);
 	}
-
 err1:
 	iounmap(host->base);
+	platform_set_drvdata(pdev, NULL);
+	mmc_free_host(mmc);
+err_alloc:
+	omap_hsmmc_gpio_free(pdata);
 err:
-	dev_dbg(mmc_dev(host->mmc), "Probe Failed\n");
-	release_mem_region(res->start, res->end - res->start + 1);
-	if (host)
-		mmc_free_host(mmc);
+	release_mem_region(res->start, resource_size(res));
 	return ret;
 }
 
@@ -1907,19 +2115,20 @@ static int omap_hsmmc_remove(struct platform_device *pdev)
 	struct resource *res;
 
 	if (host) {
-		mmc_host_enable(host->mmc);
+		pm_runtime_get_sync(host->dev);
 		mmc_remove_host(host->mmc);
+		if (host->use_reg)
+			omap_hsmmc_reg_put(host);
 		if (host->pdata->cleanup)
 			host->pdata->cleanup(&pdev->dev);
 		free_irq(host->irq, host);
 		if (mmc_slot(host).card_detect_irq)
 			free_irq(mmc_slot(host).card_detect_irq, host);
-		flush_scheduled_work();
+		flush_work_sync(&host->mmc_carddetect_work);
 
-		mmc_host_disable(host->mmc);
-		clk_disable(host->iclk);
+		pm_runtime_put_sync(host->dev);
+		pm_runtime_disable(host->dev);
 		clk_put(host->fclk);
-		clk_put(host->iclk);
 		if (host->got_dbclk) {
 			clk_disable(host->dbclk);
 			clk_put(host->dbclk);
@@ -1927,26 +2136,29 @@ static int omap_hsmmc_remove(struct platform_device *pdev)
 
 		mmc_free_host(host->mmc);
 		iounmap(host->base);
+		omap_hsmmc_gpio_free(pdev->dev.platform_data);
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (res)
-		release_mem_region(res->start, res->end - res->start + 1);
+		release_mem_region(res->start, resource_size(res));
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
 
 #ifdef CONFIG_PM
-static int omap_hsmmc_suspend(struct platform_device *pdev, pm_message_t state)
+static int omap_hsmmc_suspend(struct device *dev)
 {
 	int ret = 0;
+	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_hsmmc_host *host = platform_get_drvdata(pdev);
 
 	if (host && host->suspended)
 		return 0;
 
 	if (host) {
+		pm_runtime_get_sync(host->dev);
 		host->suspended = 1;
 		if (host->pdata->suspend) {
 			ret = host->pdata->suspend(&pdev->dev,
@@ -1960,17 +2172,12 @@ static int omap_hsmmc_suspend(struct platform_device *pdev, pm_message_t state)
 			}
 		}
 		cancel_work_sync(&host->mmc_carddetect_work);
-		mmc_host_enable(host->mmc);
-		ret = mmc_suspend_host(host->mmc, state);
+		ret = mmc_suspend_host(host->mmc);
+
 		if (ret == 0) {
-			OMAP_HSMMC_WRITE(host->base, ISE, 0);
-			OMAP_HSMMC_WRITE(host->base, IE, 0);
-
-
+			omap_hsmmc_disable_irq(host);
 			OMAP_HSMMC_WRITE(host->base, HCTL,
 				OMAP_HSMMC_READ(host->base, HCTL) & ~SDBP);
-			mmc_host_disable(host->mmc);
-			clk_disable(host->iclk);
 			if (host->got_dbclk)
 				clk_disable(host->dbclk);
 		} else {
@@ -1982,31 +2189,24 @@ static int omap_hsmmc_suspend(struct platform_device *pdev, pm_message_t state)
 					dev_dbg(mmc_dev(host->mmc),
 						"Unmask interrupt failed\n");
 			}
-			mmc_host_disable(host->mmc);
 		}
-
+		pm_runtime_put_sync(host->dev);
 	}
 	return ret;
 }
 
 /* Routine to resume the MMC device */
-static int omap_hsmmc_resume(struct platform_device *pdev)
+static int omap_hsmmc_resume(struct device *dev)
 {
 	int ret = 0;
+	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_hsmmc_host *host = platform_get_drvdata(pdev);
 
 	if (host && !host->suspended)
 		return 0;
 
 	if (host) {
-		ret = clk_enable(host->iclk);
-		if (ret)
-			goto clk_en_err;
-
-		if (mmc_host_enable(host->mmc) != 0) {
-			clk_disable(host->iclk);
-			goto clk_en_err;
-		}
+		pm_runtime_get_sync(host->dev);
 
 		if (host->got_dbclk)
 			clk_enable(host->dbclk);
@@ -2027,15 +2227,12 @@ static int omap_hsmmc_resume(struct platform_device *pdev)
 		if (ret == 0)
 			host->suspended = 0;
 
-		mmc_host_lazy_disable(host->mmc);
+		pm_runtime_mark_last_busy(host->dev);
+		pm_runtime_put_autosuspend(host->dev);
 	}
 
 	return ret;
 
-clk_en_err:
-	dev_dbg(mmc_dev(host->mmc),
-		"Failed to enable MMC clocks during resume\n");
-	return ret;
 }
 
 #else
@@ -2043,13 +2240,41 @@ clk_en_err:
 #define omap_hsmmc_resume		NULL
 #endif
 
-static struct platform_driver omap_hsmmc_driver = {
-	.remove		= omap_hsmmc_remove,
+static int omap_hsmmc_runtime_suspend(struct device *dev)
+{
+	struct omap_hsmmc_host *host;
+
+	host = platform_get_drvdata(to_platform_device(dev));
+	omap_hsmmc_context_save(host);
+	dev_dbg(mmc_dev(host->mmc), "disabled\n");
+
+	return 0;
+}
+
+static int omap_hsmmc_runtime_resume(struct device *dev)
+{
+	struct omap_hsmmc_host *host;
+
+	host = platform_get_drvdata(to_platform_device(dev));
+	omap_hsmmc_context_restore(host);
+	dev_dbg(mmc_dev(host->mmc), "enabled\n");
+
+	return 0;
+}
+
+static struct dev_pm_ops omap_hsmmc_dev_pm_ops = {
 	.suspend	= omap_hsmmc_suspend,
 	.resume		= omap_hsmmc_resume,
+	.runtime_suspend = omap_hsmmc_runtime_suspend,
+	.runtime_resume = omap_hsmmc_runtime_resume,
+};
+
+static struct platform_driver omap_hsmmc_driver = {
+	.remove		= omap_hsmmc_remove,
 	.driver		= {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
+		.pm = &omap_hsmmc_dev_pm_ops,
 	},
 };
 

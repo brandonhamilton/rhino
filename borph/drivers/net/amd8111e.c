@@ -73,9 +73,9 @@ Revision History:
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/compiler.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
@@ -107,13 +107,13 @@ MODULE_DESCRIPTION ("AMD8111 based 10/100 Ethernet Controller. Driver Version "M
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, amd8111e_pci_tbl);
 module_param_array(speed_duplex, int, NULL, 0);
-MODULE_PARM_DESC(speed_duplex, "Set device speed and duplex modes, 0: Auto Negotitate, 1: 10Mbps Half Duplex, 2: 10Mbps Full Duplex, 3: 100Mbps Half Duplex, 4: 100Mbps Full Duplex");
+MODULE_PARM_DESC(speed_duplex, "Set device speed and duplex modes, 0: Auto Negotiate, 1: 10Mbps Half Duplex, 2: 10Mbps Full Duplex, 3: 100Mbps Half Duplex, 4: 100Mbps Full Duplex");
 module_param_array(coalesce, bool, NULL, 0);
 MODULE_PARM_DESC(coalesce, "Enable or Disable interrupt coalescing, 1: Enable, 0: Disable");
 module_param_array(dynamic_ipg, bool, NULL, 0);
 MODULE_PARM_DESC(dynamic_ipg, "Enable or Disable dynamic IPG, 1: Enable, 0: Disable");
 
-static struct pci_device_id amd8111e_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(amd8111e_pci_tbl) = {
 
 	{ PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD8111E_7462,
 	 PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
@@ -397,7 +397,7 @@ static int amd8111e_set_coalesce(struct net_device * dev, enum coal_mode cmod)
 			event_count = coal_conf->rx_event_count;
 			if( timeout > MAX_TIMEOUT ||
 					event_count > MAX_EVENT_COUNT )
-			return -EINVAL;
+				return -EINVAL;
 
 			timeout = timeout * DELAY_TIMER_CONV;
 			writel(VAL0|STINTEN, mmio+INTEN0);
@@ -410,7 +410,7 @@ static int amd8111e_set_coalesce(struct net_device * dev, enum coal_mode cmod)
 			event_count = coal_conf->tx_event_count;
 			if( timeout > MAX_TIMEOUT ||
 					event_count > MAX_EVENT_COUNT )
-			return -EINVAL;
+				return -EINVAL;
 
 
 			timeout = timeout * DELAY_TIMER_CONV;
@@ -661,15 +661,6 @@ static void amd8111e_free_ring(struct amd8111e_priv* lp)
 	}
 
 }
-#if AMD8111E_VLAN_TAG_USED
-/*
-This is the receive indication function for packets with vlan tag.
-*/
-static int amd8111e_vlan_rx(struct amd8111e_priv *lp, struct sk_buff *skb, u16 vlan_tag)
-{
-	return vlan_hwaccel_receive_skb(skb, lp->vlgrp,vlan_tag);
-}
-#endif
 
 /*
 This function will free all the transmit skbs that are actually transmitted by the device. It will check the ownership of the skb before freeing the skb.
@@ -764,7 +755,7 @@ static int amd8111e_rx_poll(struct napi_struct *napi, int budget)
 #if AMD8111E_VLAN_TAG_USED
 			vtag = status & TT_MASK;
 			/*MAC will strip vlan tag*/
-			if(lp->vlgrp != NULL && vtag !=0)
+			if (vtag != 0)
 				min_pkt_len =MIN_PKT_LEN - 4;
 			else
 #endif
@@ -799,12 +790,12 @@ static int amd8111e_rx_poll(struct napi_struct *napi, int budget)
 			skb->protocol = eth_type_trans(skb, dev);
 
 #if AMD8111E_VLAN_TAG_USED
-			if(lp->vlgrp != NULL && (vtag == TT_VLAN_TAGGED)){
-				amd8111e_vlan_rx(lp, skb,
-					 le16_to_cpu(lp->rx_ring[rx_index].tag_ctrl_info));
-			} else
+			if (vtag == TT_VLAN_TAGGED){
+				u16 vlan_tag = le16_to_cpu(lp->rx_ring[rx_index].tag_ctrl_info);
+				__vlan_hwaccel_put_tag(skb, vlan_tag);
+			}
 #endif
-				netif_receive_skb(skb);
+			netif_receive_skb(skb);
 			/*COAL update rx coalescing parameters*/
 			lp->coal_conf.rx_packets++;
 			lp->coal_conf.rx_bytes += pkt_len;
@@ -904,18 +895,18 @@ static int amd8111e_read_mib(void __iomem *mmio, u8 MIB_COUNTER)
 }
 
 /*
-This function reads the mib registers and returns the hardware statistics. It  updates previous internal driver statistics with new values.
-*/
-static struct net_device_stats *amd8111e_get_stats(struct net_device * dev)
+ * This function reads the mib registers and returns the hardware statistics.
+ * It updates previous internal driver statistics with new values.
+ */
+static struct net_device_stats *amd8111e_get_stats(struct net_device *dev)
 {
 	struct amd8111e_priv *lp = netdev_priv(dev);
 	void __iomem *mmio = lp->mmio;
 	unsigned long flags;
-	/* struct net_device_stats *prev_stats = &lp->prev_stats; */
-	struct net_device_stats* new_stats = &lp->stats;
+	struct net_device_stats *new_stats = &dev->stats;
 
-	if(!lp->opened)
-		return &lp->stats;
+	if (!lp->opened)
+		return new_stats;
 	spin_lock_irqsave (&lp->lock, flags);
 
 	/* stats.rx_packets */
@@ -1176,8 +1167,7 @@ static irqreturn_t amd8111e_interrupt(int irq, void *dev_id)
 			/* Schedule a polling routine */
 			__napi_schedule(&lp->napi);
 		} else if (intren0 & RINTEN0) {
-			printk("************Driver bug! \
-				interrupt while in poll\n");
+			printk("************Driver bug! interrupt while in poll\n");
 			/* Fix by disable receive interrupts */
 			writel(RINTEN0, mmio + INTEN0);
 		}
@@ -1317,7 +1307,7 @@ static netdev_tx_t amd8111e_start_xmit(struct sk_buff *skb,
 	lp->tx_ring[tx_index].tx_flags = 0;
 
 #if AMD8111E_VLAN_TAG_USED
-	if((lp->vlgrp != NULL) && vlan_tx_tag_present(skb)){
+	if (vlan_tx_tag_present(skb)) {
 		lp->tx_ring[tx_index].tag_ctrl_cmd |=
 				cpu_to_le16(TCC_VLAN_INSERT);
 		lp->tx_ring[tx_index].tag_ctrl_info =
@@ -1340,8 +1330,6 @@ static netdev_tx_t amd8111e_start_xmit(struct sk_buff *skb,
 	/* Trigger an immediate send poll. */
 	writel( VAL1 | TDMD0, lp->mmio + CMD0);
 	writel( VAL2 | RDMD0,lp->mmio + CMD0);
-
-	dev->trans_start = jiffies;
 
 	if(amd8111e_tx_queue_avail(lp) < 0){
 		netif_stop_queue(dev);
@@ -1378,41 +1366,39 @@ list to the device.
 */
 static void amd8111e_set_multicast_list(struct net_device *dev)
 {
-	struct dev_mc_list* mc_ptr;
+	struct netdev_hw_addr *ha;
 	struct amd8111e_priv *lp = netdev_priv(dev);
 	u32 mc_filter[2] ;
-	int i,bit_num;
+	int bit_num;
+
 	if(dev->flags & IFF_PROMISC){
 		writel( VAL2 | PROM, lp->mmio + CMD2);
 		return;
 	}
 	else
 		writel( PROM, lp->mmio + CMD2);
-	if(dev->flags & IFF_ALLMULTI || dev->mc_count > MAX_FILTER_SIZE){
+	if (dev->flags & IFF_ALLMULTI ||
+	    netdev_mc_count(dev) > MAX_FILTER_SIZE) {
 		/* get all multicast packet */
 		mc_filter[1] = mc_filter[0] = 0xffffffff;
-		lp->mc_list = dev->mc_list;
 		lp->options |= OPTION_MULTICAST_ENABLE;
 		amd8111e_writeq(*(u64*)mc_filter,lp->mmio + LADRF);
 		return;
 	}
-	if( dev->mc_count == 0 ){
+	if (netdev_mc_empty(dev)) {
 		/* get only own packets */
 		mc_filter[1] = mc_filter[0] = 0;
-		lp->mc_list = NULL;
 		lp->options &= ~OPTION_MULTICAST_ENABLE;
 		amd8111e_writeq(*(u64*)mc_filter,lp->mmio + LADRF);
-		/* disable promiscous mode */
+		/* disable promiscuous mode */
 		writel(PROM, lp->mmio + CMD2);
 		return;
 	}
 	/* load all the multicast addresses in the logic filter */
 	lp->options |= OPTION_MULTICAST_ENABLE;
-	lp->mc_list = dev->mc_list;
 	mc_filter[1] = mc_filter[0] = 0;
-	for (i = 0, mc_ptr = dev->mc_list; mc_ptr && i < dev->mc_count;
-		     i++, mc_ptr = mc_ptr->next) {
-		bit_num = (ether_crc_le(ETH_ALEN, mc_ptr->dmi_addr) >> 26) & 0x3f;
+	netdev_for_each_mc_addr(ha, dev) {
+		bit_num = (ether_crc_le(ETH_ALEN, ha->addr) >> 26) & 0x3f;
 		mc_filter[bit_num >> 5] |= 1 << (bit_num & 31);
 	}
 	amd8111e_writeq(*(u64*)mc_filter,lp->mmio+ LADRF);
@@ -1602,16 +1588,6 @@ static int amd8111e_change_mtu(struct net_device *dev, int new_mtu)
 		netif_start_queue(dev);
 	return err;
 }
-
-#if AMD8111E_VLAN_TAG_USED
-static void amd8111e_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
-{
-	struct  amd8111e_priv *lp = netdev_priv(dev);
-	spin_lock_irq(&lp->lock);
-	lp->vlgrp = grp;
-	spin_unlock_irq(&lp->lock);
-}
-#endif
 
 static int amd8111e_enable_magicpkt(struct amd8111e_priv* lp)
 {
@@ -1827,9 +1803,6 @@ static const struct net_device_ops amd8111e_netdev_ops = {
 	.ndo_set_mac_address	= amd8111e_set_mac_address,
 	.ndo_do_ioctl		= amd8111e_ioctl,
 	.ndo_change_mtu		= amd8111e_change_mtu,
-#if AMD8111E_VLAN_TAG_USED
-	.ndo_vlan_rx_register	= amd8111e_vlan_rx_register,
-#endif
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	 = amd8111e_poll,
 #endif
@@ -1964,7 +1937,7 @@ static int __devinit amd8111e_probe_one(struct pci_dev *pdev,
 						 IPG_CONVERGE_JIFFIES;
 		lp->ipg_data.ipg = DEFAULT_IPG;
 		lp->ipg_data.ipg_state = CSTATE;
-	};
+	}
 
 	/*  display driver and device information */
 

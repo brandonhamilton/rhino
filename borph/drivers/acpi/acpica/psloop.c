@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2008, Intel Corp.
+ * Copyright (C) 2000 - 2011, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -136,7 +136,7 @@ static acpi_status acpi_ps_get_aml_opcode(struct acpi_walk_state *walk_state)
 		/* The opcode is unrecognized. Just skip unknown opcodes */
 
 		ACPI_ERROR((AE_INFO,
-			    "Found unknown opcode %X at AML address %p offset %X, ignoring",
+			    "Found unknown opcode 0x%X at AML address %p offset 0x%X, ignoring",
 			    walk_state->opcode, walk_state->parser_state.aml,
 			    walk_state->aml_offset));
 
@@ -655,7 +655,7 @@ acpi_ps_link_module_code(union acpi_parse_object *parent_op,
 		method_obj->method.aml_start = aml_start;
 		method_obj->method.aml_length = aml_length;
 		method_obj->method.owner_id = owner_id;
-		method_obj->method.flags |= AOPOBJ_MODULE_LEVEL;
+		method_obj->method.info_flags |= ACPI_METHOD_MODULE_LEVEL;
 
 		/*
 		 * Save the parent node in next_object. This is cheating, but we
@@ -1021,7 +1021,6 @@ acpi_status acpi_ps_parse_loop(struct acpi_walk_state *walk_state)
 					if (status == AE_AML_NO_RETURN_VALUE) {
 						ACPI_EXCEPTION((AE_INFO, status,
 								"Invoked method did not return a value"));
-
 					}
 
 					ACPI_EXCEPTION((AE_INFO, status,

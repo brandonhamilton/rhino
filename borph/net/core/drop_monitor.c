@@ -21,6 +21,7 @@
 #include <linux/percpu.h>
 #include <linux/timer.h>
 #include <linux/bitops.h>
+#include <linux/slab.h>
 #include <net/genetlink.h>
 #include <net/netevent.h>
 
@@ -171,12 +172,12 @@ out:
 	return;
 }
 
-static void trace_kfree_skb_hit(struct sk_buff *skb, void *location)
+static void trace_kfree_skb_hit(void *ignore, struct sk_buff *skb, void *location)
 {
 	trace_drop_common(skb, location);
 }
 
-static void trace_napi_poll_hit(struct napi_struct *napi)
+static void trace_napi_poll_hit(void *ignore, struct napi_struct *napi)
 {
 	struct dm_hw_stat_delta *new_stat;
 
@@ -206,14 +207,6 @@ static void trace_napi_poll_hit(struct napi_struct *napi)
 	rcu_read_unlock();
 }
 
-
-static void free_dm_hw_stat(struct rcu_head *head)
-{
-	struct dm_hw_stat_delta *n;
-	n = container_of(head, struct dm_hw_stat_delta, rcu);
-	kfree(n);
-}
-
 static int set_all_monitor_traces(int state)
 {
 	int rc = 0;
@@ -222,14 +215,19 @@ static int set_all_monitor_traces(int state)
 
 	spin_lock(&trace_state_lock);
 
+	if (state == trace_state) {
+		rc = -EAGAIN;
+		goto out_unlock;
+	}
+
 	switch (state) {
 	case TRACE_ON:
-		rc |= register_trace_kfree_skb(trace_kfree_skb_hit);
-		rc |= register_trace_napi_poll(trace_napi_poll_hit);
+		rc |= register_trace_kfree_skb(trace_kfree_skb_hit, NULL);
+		rc |= register_trace_napi_poll(trace_napi_poll_hit, NULL);
 		break;
 	case TRACE_OFF:
-		rc |= unregister_trace_kfree_skb(trace_kfree_skb_hit);
-		rc |= unregister_trace_napi_poll(trace_napi_poll_hit);
+		rc |= unregister_trace_kfree_skb(trace_kfree_skb_hit, NULL);
+		rc |= unregister_trace_napi_poll(trace_napi_poll_hit, NULL);
 
 		tracepoint_synchronize_unregister();
 
@@ -239,7 +237,7 @@ static int set_all_monitor_traces(int state)
 		list_for_each_entry_safe(new_stat, temp, &hw_stats_list, list) {
 			if (new_stat->dev == NULL) {
 				list_del_rcu(&new_stat->list);
-				call_rcu(&new_stat->rcu, free_dm_hw_stat);
+				kfree_rcu(new_stat, rcu);
 			}
 		}
 		break;
@@ -250,11 +248,12 @@ static int set_all_monitor_traces(int state)
 
 	if (!rc)
 		trace_state = state;
+	else
+		rc = -EINPROGRESS;
 
+out_unlock:
 	spin_unlock(&trace_state_lock);
 
-	if (rc)
-		return -EINPROGRESS;
 	return rc;
 }
 
@@ -296,7 +295,6 @@ static int dropmon_net_event(struct notifier_block *ev_block,
 
 		new_stat->dev = dev;
 		new_stat->last_rx = jiffies;
-		INIT_RCU_HEAD(&new_stat->rcu);
 		spin_lock(&trace_state_lock);
 		list_add_rcu(&new_stat->list, &hw_stats_list);
 		spin_unlock(&trace_state_lock);
@@ -308,7 +306,7 @@ static int dropmon_net_event(struct notifier_block *ev_block,
 				new_stat->dev = NULL;
 				if (trace_state == TRACE_OFF) {
 					list_del_rcu(&new_stat->list);
-					call_rcu(&new_stat->rcu, free_dm_hw_stat);
+					kfree_rcu(new_stat, rcu);
 					break;
 				}
 			}
@@ -341,31 +339,22 @@ static struct notifier_block dropmon_net_notifier = {
 
 static int __init init_net_drop_monitor(void)
 {
-	int cpu;
-	int rc, i, ret;
 	struct per_cpu_dm_data *data;
-	printk(KERN_INFO "Initalizing network drop monitor service\n");
+	int cpu, rc;
+
+	printk(KERN_INFO "Initializing network drop monitor service\n");
 
 	if (sizeof(void *) > 8) {
 		printk(KERN_ERR "Unable to store program counters on this arch, Drop monitor failed\n");
 		return -ENOSPC;
 	}
 
-	if (genl_register_family(&net_drop_monitor_family) < 0) {
+	rc = genl_register_family_with_ops(&net_drop_monitor_family,
+					   dropmon_ops,
+					   ARRAY_SIZE(dropmon_ops));
+	if (rc) {
 		printk(KERN_ERR "Could not create drop monitor netlink family\n");
-		return -EFAULT;
-	}
-
-	rc = -EFAULT;
-
-	for (i = 0; i < ARRAY_SIZE(dropmon_ops); i++) {
-		ret = genl_register_ops(&net_drop_monitor_family,
-					&dropmon_ops[i]);
-		if (ret) {
-			printk(KERN_CRIT "Failed to register operation %d\n",
-				dropmon_ops[i].cmd);
-			goto out_unreg;
-		}
+		return rc;
 	}
 
 	rc = register_netdevice_notifier(&dropmon_net_notifier);

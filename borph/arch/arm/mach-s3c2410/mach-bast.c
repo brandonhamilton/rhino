@@ -17,7 +17,7 @@
 #include <linux/timer.h>
 #include <linux/init.h>
 #include <linux/gpio.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/serial_core.h>
 #include <linux/platform_device.h>
 #include <linux/dm9000.h>
@@ -61,6 +61,7 @@
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/cpu-freq.h>
+#include <plat/gpio-cfg.h>
 #include <plat/audio-simtec.h>
 
 #include "usb-simtec.h"
@@ -213,19 +214,16 @@ static struct s3c2410_uartcfg bast_uartcfgs[] __initdata = {
 /* NAND Flash on BAST board */
 
 #ifdef CONFIG_PM
-static int bast_pm_suspend(struct sys_device *sd, pm_message_t state)
+static int bast_pm_suspend(void)
 {
 	/* ensure that an nRESET is not generated on resume. */
-	s3c2410_gpio_setpin(S3C2410_GPA(21), 1);
-	s3c2410_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPIO_OUTPUT);
-
+	gpio_direction_output(S3C2410_GPA(21), 1);
 	return 0;
 }
 
-static int bast_pm_resume(struct sys_device *sd)
+static void bast_pm_resume(void)
 {
-	s3c2410_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPA21_nRSTOUT);
-	return 0;
+	s3c_gpio_cfgpin(S3C2410_GPA(21), S3C2410_GPA21_nRSTOUT);
 }
 
 #else
@@ -233,14 +231,9 @@ static int bast_pm_resume(struct sys_device *sd)
 #define bast_pm_resume NULL
 #endif
 
-static struct sysdev_class bast_pm_sysclass = {
-	.name		= "mach-bast",
+static struct syscore_ops bast_pm_syscore_ops = {
 	.suspend	= bast_pm_suspend,
 	.resume		= bast_pm_resume,
-};
-
-static struct sys_device bast_pm_sysdev = {
-	.cls		= &bast_pm_sysclass,
 };
 
 static int smartmedia_map[] = { 0 };
@@ -279,6 +272,7 @@ static struct s3c2410_nand_set __initdata bast_nand_sets[] = {
 		.name		= "SmartMedia",
 		.nr_chips	= 1,
 		.nr_map		= smartmedia_map,
+		.options        = NAND_SCAN_SILENT_NODEV,
 		.nr_partitions	= ARRAY_SIZE(bast_default_nand_part),
 		.partitions	= bast_default_nand_part,
 	},
@@ -293,6 +287,7 @@ static struct s3c2410_nand_set __initdata bast_nand_sets[] = {
 		.name		= "chip1",
 		.nr_chips	= 1,
 		.nr_map		= chip1_map,
+		.options        = NAND_SCAN_SILENT_NODEV,
 		.nr_partitions	= ARRAY_SIZE(bast_default_nand_part),
 		.partitions	= bast_default_nand_part,
 	},
@@ -300,6 +295,7 @@ static struct s3c2410_nand_set __initdata bast_nand_sets[] = {
 		.name		= "chip2",
 		.nr_chips	= 1,
 		.nr_map		= chip2_map,
+		.options        = NAND_SCAN_SILENT_NODEV,
 		.nr_partitions	= ARRAY_SIZE(bast_default_nand_part),
 		.partitions	= bast_default_nand_part,
 	}
@@ -581,7 +577,7 @@ static struct s3c_hwmon_pdata bast_hwmon_info = {
 // cat /sys/devices/platform/s3c24xx-adc/s3c-hwmon/in_0
 
 static struct platform_device *bast_devices[] __initdata = {
-	&s3c_device_usb,
+	&s3c_device_ohci,
 	&s3c_device_lcd,
 	&s3c_device_wdt,
 	&s3c_device_i2c0,
@@ -631,7 +627,7 @@ static void __init bast_map_io(void)
 
 	s3c24xx_register_clocks(bast_clocks, ARRAY_SIZE(bast_clocks));
 
-	s3c_device_hwmon.dev.platform_data = &bast_hwmon_info;
+	s3c_hwmon_set_platdata(&bast_hwmon_info);
 
 	s3c24xx_init_io(bast_iodesc, ARRAY_SIZE(bast_iodesc));
 	s3c24xx_init_clocks(0);
@@ -640,8 +636,7 @@ static void __init bast_map_io(void)
 
 static void __init bast_init(void)
 {
-	sysdev_class_register(&bast_pm_sysclass);
-	sysdev_register(&bast_pm_sysdev);
+	register_syscore_ops(&bast_pm_syscore_ops);
 
 	s3c_i2c0_set_platdata(&bast_i2c_info);
 	s3c_nand_set_platdata(&bast_nand_info);
@@ -655,13 +650,13 @@ static void __init bast_init(void)
 	nor_simtec_init();
 	simtec_audio_add(NULL, true, &bast_audio);
 
+	WARN_ON(gpio_request(S3C2410_GPA(21), "bast nreset"));
+	
 	s3c_cpufreq_setboard(&bast_cpufreq);
 }
 
 MACHINE_START(BAST, "Simtec-BAST")
 	/* Maintainer: Ben Dooks <ben@simtec.co.uk> */
-	.phys_io	= S3C2410_PA_UART,
-	.io_pg_offst	= (((u32)S3C24XX_VA_UART) >> 18) & 0xfffc,
 	.boot_params	= S3C2410_SDRAM_PA + 0x100,
 	.map_io		= bast_map_io,
 	.init_irq	= s3c24xx_init_irq,

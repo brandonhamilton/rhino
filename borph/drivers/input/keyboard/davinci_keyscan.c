@@ -5,7 +5,7 @@
  *
  * Author: Miguel Aguilar <miguel.aguilar@ridgerun.com>
  *
- * Intial Code: Sandeep Paulraj <s-paulraj@ti.com>
+ * Initial Code: Sandeep Paulraj <s-paulraj@ti.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 
 #include <asm/irq.h>
 
@@ -173,6 +174,14 @@ static int __init davinci_ks_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct davinci_ks_platform_data *pdata = pdev->dev.platform_data;
 	int error, i;
+
+	if (pdata->device_enable) {
+		error = pdata->device_enable(dev);
+		if (error < 0) {
+			dev_dbg(dev, "device enable function failed\n");
+			return error;
+		}
+	}
 
 	if (!pdata->keymap) {
 		dev_dbg(dev, "no keymap from pdata\n");

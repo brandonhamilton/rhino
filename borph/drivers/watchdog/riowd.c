@@ -15,6 +15,7 @@
 #include <linux/of_device.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
+#include <linux/slab.h>
 
 
 /* RIO uses the NatSemi Super I/O power management logical device
@@ -85,7 +86,7 @@ static int riowd_release(struct inode *inode, struct file *filp)
 
 static long riowd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	static struct watchdog_info info = {
+	static const struct watchdog_info info = {
 		.options		= WDIOF_SETTIMEOUT,
 		.firmware_version	= 1,
 		.identity		= DRIVER_NAME,
@@ -171,8 +172,7 @@ static struct miscdevice riowd_miscdev = {
 	.fops	= &riowd_fops
 };
 
-static int __devinit riowd_probe(struct of_device *op,
-				 const struct of_device_id *match)
+static int __devinit riowd_probe(struct platform_device *op)
 {
 	struct riowd *p;
 	int err = -EINVAL;
@@ -218,7 +218,7 @@ out:
 	return err;
 }
 
-static int __devexit riowd_remove(struct of_device *op)
+static int __devexit riowd_remove(struct platform_device *op)
 {
 	struct riowd *p = dev_get_drvdata(&op->dev);
 
@@ -237,21 +237,24 @@ static const struct of_device_id riowd_match[] = {
 };
 MODULE_DEVICE_TABLE(of, riowd_match);
 
-static struct of_platform_driver riowd_driver = {
-	.name		= DRIVER_NAME,
-	.match_table	= riowd_match,
+static struct platform_driver riowd_driver = {
+	.driver = {
+		.name = DRIVER_NAME,
+		.owner = THIS_MODULE,
+		.of_match_table = riowd_match,
+	},
 	.probe		= riowd_probe,
 	.remove		= __devexit_p(riowd_remove),
 };
 
 static int __init riowd_init(void)
 {
-	return of_register_driver(&riowd_driver, &of_bus_type);
+	return platform_driver_register(&riowd_driver);
 }
 
 static void __exit riowd_exit(void)
 {
-	of_unregister_driver(&riowd_driver);
+	platform_driver_unregister(&riowd_driver);
 }
 
 module_init(riowd_init);

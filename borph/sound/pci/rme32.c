@@ -70,10 +70,10 @@
 
 
 #include <linux/delay.h>
+#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/moduleparam.h>
 
 #include <sound/core.h>
@@ -226,7 +226,7 @@ struct rme32 {
 	struct snd_kcontrol *spdif_ctl;
 };
 
-static struct pci_device_id snd_rme32_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_rme32_ids) = {
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32), 0,},
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32_8), 0,},
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32_PRO), 0,},
@@ -1355,7 +1355,7 @@ static int __devinit snd_rme32_create(struct rme32 * rme32)
 	}
 
 	if (request_irq(pci->irq, snd_rme32_interrupt, IRQF_SHARED,
-			"RME32", rme32)) {
+			KBUILD_MODNAME, rme32)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		return -EBUSY;
 	}
@@ -1985,7 +1985,7 @@ static void __devexit snd_rme32_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name =		"RME Digi32",
+	.name =		KBUILD_MODNAME,
 	.id_table =	snd_rme32_ids,
 	.probe =	snd_rme32_probe,
 	.remove =	__devexit_p(snd_rme32_remove),

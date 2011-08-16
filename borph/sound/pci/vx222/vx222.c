@@ -60,7 +60,7 @@ enum {
 	VX_PCI_VX222_NEW
 };
 
-static struct pci_device_id snd_vx222_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_vx222_ids) = {
 	{ 0x10b5, 0x9050, 0x1369, PCI_ANY_ID, 0, 0, VX_PCI_VX222_OLD, },   /* PLX */
 	{ 0x10b5, 0x9030, 0x1369, PCI_ANY_ID, 0, 0, VX_PCI_VX222_NEW, },   /* PLX */
 	{ 0, }
@@ -169,7 +169,7 @@ static int __devinit snd_vx222_create(struct snd_card *card, struct pci_dev *pci
 		vx->port[i] = pci_resource_start(pci, i + 1);
 
 	if (request_irq(pci->irq, snd_vx_irq_handler, IRQF_SHARED,
-			CARD_NAME, chip)) {
+			KBUILD_MODNAME, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_vx222_free(chip);
 		return -EBUSY;
@@ -290,7 +290,7 @@ static int snd_vx222_resume(struct pci_dev *pci)
 #endif
 
 static struct pci_driver driver = {
-	.name = "Digigram VX222",
+	.name = KBUILD_MODNAME,
 	.id_table = snd_vx222_ids,
 	.probe = snd_vx222_probe,
 	.remove = __devexit_p(snd_vx222_remove),

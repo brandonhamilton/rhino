@@ -21,36 +21,87 @@
 
 #include <plat/cpu.h>
 #include <plat/i2c.h>
-#include <plat/mux.h>
+#include <plat/common.h>
+#include <plat/omap_hwmod.h>
 
 #include "mux.h"
 
-int __init omap_register_i2c_bus(int bus_id, u32 clkrate,
-			  struct i2c_board_info const *info,
-			  unsigned len)
-{
-	if (cpu_is_omap24xx()) {
-		const int omap24xx_pins[][2] = {
-			{ M19_24XX_I2C1_SCL, L15_24XX_I2C1_SDA },
-			{ J15_24XX_I2C2_SCL, H19_24XX_I2C2_SDA },
-		};
-		int scl, sda;
+/* In register I2C_CON, Bit 15 is the I2C enable bit */
+#define I2C_EN					BIT(15)
+#define OMAP2_I2C_CON_OFFSET			0x24
+#define OMAP4_I2C_CON_OFFSET			0xA4
 
-		scl = omap24xx_pins[bus_id - 1][0];
-		sda = omap24xx_pins[bus_id - 1][1];
-		omap_cfg_reg(sda);
-		omap_cfg_reg(scl);
-	}
+/* Maximum microseconds to wait for OMAP module to softreset */
+#define MAX_MODULE_SOFTRESET_WAIT	10000
+
+void __init omap2_i2c_mux_pins(int bus_id)
+{
+	char mux_name[sizeof("i2c2_scl.i2c2_scl")];
 
 	/* First I2C bus is not muxable */
-	if (cpu_is_omap34xx() && bus_id > 1) {
-		char mux_name[sizeof("i2c2_scl.i2c2_scl")];
+	if (bus_id == 1)
+		return;
 
-		sprintf(mux_name, "i2c%i_scl.i2c%i_scl", bus_id, bus_id);
-		omap_mux_init_signal(mux_name, OMAP_PIN_INPUT);
-		sprintf(mux_name, "i2c%i_sda.i2c%i_sda", bus_id, bus_id);
-		omap_mux_init_signal(mux_name, OMAP_PIN_INPUT);
+	sprintf(mux_name, "i2c%i_scl.i2c%i_scl", bus_id, bus_id);
+	omap_mux_init_signal(mux_name, OMAP_PIN_INPUT);
+	sprintf(mux_name, "i2c%i_sda.i2c%i_sda", bus_id, bus_id);
+	omap_mux_init_signal(mux_name, OMAP_PIN_INPUT);
+}
+
+/**
+ * omap_i2c_reset - reset the omap i2c module.
+ * @oh: struct omap_hwmod *
+ *
+ * The i2c moudle in omap2, omap3 had a special sequence to reset. The
+ * sequence is:
+ * - Disable the I2C.
+ * - Write to SOFTRESET bit.
+ * - Enable the I2C.
+ * - Poll on the RESETDONE bit.
+ * The sequence is implemented in below function. This is called for 2420,
+ * 2430 and omap3.
+ */
+int omap_i2c_reset(struct omap_hwmod *oh)
+{
+	u32 v;
+	u16 i2c_con;
+	int c = 0;
+
+	if (oh->class->rev == OMAP_I2C_IP_VERSION_2) {
+		i2c_con = OMAP4_I2C_CON_OFFSET;
+	} else if (oh->class->rev == OMAP_I2C_IP_VERSION_1) {
+		i2c_con = OMAP2_I2C_CON_OFFSET;
+	} else {
+		WARN(1, "Cannot reset I2C block %s: unsupported revision\n",
+		     oh->name);
+		return -EINVAL;
 	}
 
-	return omap_plat_register_i2c_bus(bus_id, clkrate, info, len);
+	/* Disable I2C */
+	v = omap_hwmod_read(oh, i2c_con);
+	v &= ~I2C_EN;
+	omap_hwmod_write(v, oh, i2c_con);
+
+	/* Write to the SOFTRESET bit */
+	omap_hwmod_softreset(oh);
+
+	/* Enable I2C */
+	v = omap_hwmod_read(oh, i2c_con);
+	v |= I2C_EN;
+	omap_hwmod_write(v, oh, i2c_con);
+
+	/* Poll on RESETDONE bit */
+	omap_test_timeout((omap_hwmod_read(oh,
+				oh->class->sysc->syss_offs)
+				& SYSS_RESETDONE_MASK),
+				MAX_MODULE_SOFTRESET_WAIT, c);
+
+	if (c == MAX_MODULE_SOFTRESET_WAIT)
+		pr_warning("%s: %s: softreset failed (waited %d usec)\n",
+			__func__, oh->name, MAX_MODULE_SOFTRESET_WAIT);
+	else
+		pr_debug("%s: %s: softreset in %d usec\n", __func__,
+			oh->name, c);
+
+	return 0;
 }

@@ -16,6 +16,7 @@
 #include <linux/serio.h>
 #include <linux/libps2.h>
 #include <linux/dmi.h>
+#include <linux/slab.h>
 
 #include "psmouse.h"
 #include "lifebook.h"
@@ -32,7 +33,7 @@ static const char *desired_serio_phys;
 static int lifebook_limit_serio3(const struct dmi_system_id *d)
 {
 	desired_serio_phys = "isa0060/serio3";
-	return 0;
+	return 1;
 }
 
 static bool lifebook_use_6byte_proto;
@@ -40,15 +41,20 @@ static bool lifebook_use_6byte_proto;
 static int lifebook_set_6byte_proto(const struct dmi_system_id *d)
 {
 	lifebook_use_6byte_proto = true;
-	return 0;
+	return 1;
 }
 
 static const struct dmi_system_id __initconst lifebook_dmi_table[] = {
-#if defined(CONFIG_DMI) && defined(CONFIG_X86)
 	{
 		/* FLORA-ie 55mi */
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "FLORA-ie 55mi"),
+		},
+	},
+	{
+		/* LifeBook B */
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_NAME, "Lifebook B Series"),
 		},
 	},
 	{
@@ -118,7 +124,6 @@ static const struct dmi_system_id __initconst lifebook_dmi_table[] = {
 		},
 	},
 	{ }
-#endif
 };
 
 void __init lifebook_module_init(void)

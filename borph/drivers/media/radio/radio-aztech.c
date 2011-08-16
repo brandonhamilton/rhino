@@ -30,7 +30,6 @@
 #include <linux/ioport.h>	/* request_region		*/
 #include <linux/delay.h>	/* udelay			*/
 #include <linux/videodev2.h>	/* kernel radio structs		*/
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/io.h>		/* outb, outb_p			*/
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -38,6 +37,7 @@
 MODULE_AUTHOR("Russell Kroll, Quay Lu, Donald Song, Jason Lewis, Scott McGrath, William McGrath");
 MODULE_DESCRIPTION("A driver for the Aztech radio card.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 /* acceptable ports: 0x350 (JP3 shorted), 0x358 (JP3 open) */
 
@@ -52,8 +52,6 @@ static int radio_wait_time = 1000;
 module_param(io, int, 0);
 module_param(radio_nr, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the Aztech card (0x350 or 0x358)");
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 struct aztech
 {
@@ -188,7 +186,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->driver, "radio-aztech", sizeof(v->driver));
 	strlcpy(v->card, "Aztech Radio", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -254,6 +251,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct aztech *az = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	az_setfreq(az, f->frequency);
 	return 0;
 }
@@ -263,6 +262,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct aztech *az = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = az->curfreq;
 	return 0;
@@ -320,7 +321,7 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 
 static const struct v4l2_file_operations aztech_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops aztech_ioctl_ops = {
@@ -371,6 +372,8 @@ static int __init aztech_init(void)
 	az->vdev.ioctl_ops = &aztech_ioctl_ops;
 	az->vdev.release = video_device_release_empty;
 	video_set_drvdata(&az->vdev, az);
+	/* mute card - prevents noisy bootups */
+	outb(0, az->io);
 
 	if (video_register_device(&az->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
 		v4l2_device_unregister(v4l2_dev);
@@ -379,8 +382,6 @@ static int __init aztech_init(void)
 	}
 
 	v4l2_info(v4l2_dev, "Aztech radio card driver v1.00/19990224 rkroll@exploits.org\n");
-	/* mute card - prevents noisy bootups */
-	outb(0, az->io);
 	return 0;
 }
 

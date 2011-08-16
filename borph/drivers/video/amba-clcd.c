@@ -65,22 +65,25 @@ static void clcdfb_disable(struct clcd_fb *fb)
 	if (fb->board->disable)
 		fb->board->disable(fb);
 
-	val = readl(fb->regs + CLCD_CNTL);
+	val = readl(fb->regs + fb->off_cntl);
 	if (val & CNTL_LCDPWR) {
 		val &= ~CNTL_LCDPWR;
-		writel(val, fb->regs + CLCD_CNTL);
+		writel(val, fb->regs + fb->off_cntl);
 
 		clcdfb_sleep(20);
 	}
 	if (val & CNTL_LCDEN) {
 		val &= ~CNTL_LCDEN;
-		writel(val, fb->regs + CLCD_CNTL);
+		writel(val, fb->regs + fb->off_cntl);
 	}
 
 	/*
 	 * Disable CLCD clock source.
 	 */
-	clk_disable(fb->clk);
+	if (fb->clk_enabled) {
+		fb->clk_enabled = false;
+		clk_disable(fb->clk);
+	}
 }
 
 static void clcdfb_enable(struct clcd_fb *fb, u32 cntl)
@@ -88,13 +91,16 @@ static void clcdfb_enable(struct clcd_fb *fb, u32 cntl)
 	/*
 	 * Enable the CLCD clock source.
 	 */
-	clk_enable(fb->clk);
+	if (!fb->clk_enabled) {
+		fb->clk_enabled = true;
+		clk_enable(fb->clk);
+	}
 
 	/*
 	 * Bring up by first enabling..
 	 */
 	cntl |= CNTL_LCDEN;
-	writel(cntl, fb->regs + CLCD_CNTL);
+	writel(cntl, fb->regs + fb->off_cntl);
 
 	clcdfb_sleep(20);
 
@@ -102,7 +108,7 @@ static void clcdfb_enable(struct clcd_fb *fb, u32 cntl)
 	 * and now apply power.
 	 */
 	cntl |= CNTL_LCDPWR;
-	writel(cntl, fb->regs + CLCD_CNTL);
+	writel(cntl, fb->regs + fb->off_cntl);
 
 	/*
 	 * finally, enable the interface.
@@ -114,7 +120,22 @@ static void clcdfb_enable(struct clcd_fb *fb, u32 cntl)
 static int
 clcdfb_set_bitfields(struct clcd_fb *fb, struct fb_var_screeninfo *var)
 {
+	u32 caps;
 	int ret = 0;
+
+	if (fb->panel->caps && fb->board->caps)
+		caps = fb->panel->caps & fb->board->caps;
+	else {
+		/* Old way of specifying what can be used */
+		caps = fb->panel->cntl & CNTL_BGR ?
+			CLCD_CAP_BGR : CLCD_CAP_RGB;
+		/* But mask out 444 modes as they weren't supported */
+		caps &= ~CLCD_CAP_444;
+	}
+
+	/* Only TFT panels can do RGB888/BGR888 */
+	if (!(fb->panel->cntl & CNTL_LCDTFT))
+		caps &= ~CLCD_CAP_888;
 
 	memset(&var->transp, 0, sizeof(var->transp));
 
@@ -127,6 +148,13 @@ clcdfb_set_bitfields(struct clcd_fb *fb, struct fb_var_screeninfo *var)
 	case 2:
 	case 4:
 	case 8:
+		/* If we can't do 5551, reject */
+		caps &= CLCD_CAP_5551;
+		if (!caps) {
+			ret = -EINVAL;
+			break;
+		}
+
 		var->red.length		= var->bits_per_pixel;
 		var->red.offset		= 0;
 		var->green.length	= var->bits_per_pixel;
@@ -134,23 +162,61 @@ clcdfb_set_bitfields(struct clcd_fb *fb, struct fb_var_screeninfo *var)
 		var->blue.length	= var->bits_per_pixel;
 		var->blue.offset	= 0;
 		break;
+
 	case 16:
-		var->red.length = 5;
-		var->blue.length = 5;
-		/*
-		 * Green length can be 5 or 6 depending whether
-		 * we're operating in RGB555 or RGB565 mode.
-		 */
-		if (var->green.length != 5 && var->green.length != 6)
-			var->green.length = 6;
-		break;
-	case 32:
-		if (fb->panel->cntl & CNTL_LCDTFT) {
-			var->red.length		= 8;
-			var->green.length	= 8;
-			var->blue.length	= 8;
+		/* If we can't do 444, 5551 or 565, reject */
+		if (!(caps & (CLCD_CAP_444 | CLCD_CAP_5551 | CLCD_CAP_565))) {
+			ret = -EINVAL;
 			break;
 		}
+
+		/*
+		 * Green length can be 4, 5 or 6 depending whether
+		 * we're operating in 444, 5551 or 565 mode.
+		 */
+		if (var->green.length == 4 && caps & CLCD_CAP_444)
+			caps &= CLCD_CAP_444;
+		if (var->green.length == 5 && caps & CLCD_CAP_5551)
+			caps &= CLCD_CAP_5551;
+		else if (var->green.length == 6 && caps & CLCD_CAP_565)
+			caps &= CLCD_CAP_565;
+		else {
+			/*
+			 * PL110 officially only supports RGB555,
+			 * but may be wired up to allow RGB565.
+			 */
+			if (caps & CLCD_CAP_565) {
+				var->green.length = 6;
+				caps &= CLCD_CAP_565;
+			} else if (caps & CLCD_CAP_5551) {
+				var->green.length = 5;
+				caps &= CLCD_CAP_5551;
+			} else {
+				var->green.length = 4;
+				caps &= CLCD_CAP_444;
+			}
+		}
+
+		if (var->green.length >= 5) {
+			var->red.length = 5;
+			var->blue.length = 5;
+		} else {
+			var->red.length = 4;
+			var->blue.length = 4;
+		}
+		break;
+	case 32:
+		/* If we can't do 888, reject */
+		caps &= CLCD_CAP_888;
+		if (!caps) {
+			ret = -EINVAL;
+			break;
+		}
+
+		var->red.length = 8;
+		var->green.length = 8;
+		var->blue.length = 8;
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -162,7 +228,20 @@ clcdfb_set_bitfields(struct clcd_fb *fb, struct fb_var_screeninfo *var)
 	 * the bitfield length defined above.
 	 */
 	if (ret == 0 && var->bits_per_pixel >= 16) {
-		if (fb->panel->cntl & CNTL_BGR) {
+		bool bgr, rgb;
+
+		bgr = caps & CLCD_CAP_BGR && var->blue.offset == 0;
+		rgb = caps & CLCD_CAP_RGB && var->red.offset == 0;
+
+		if (!bgr && !rgb)
+			/*
+			 * The requested format was not possible, try just
+			 * our capabilities.  One of BGR or RGB must be
+			 * supported.
+			 */
+			bgr = caps & CLCD_CAP_BGR;
+
+		if (bgr) {
 			var->blue.offset = 0;
 			var->green.offset = var->blue.offset + var->blue.length;
 			var->red.offset = var->green.offset + var->green.length;
@@ -233,7 +312,7 @@ static int clcdfb_set_par(struct fb_info *info)
 		readl(fb->regs + CLCD_TIM0), readl(fb->regs + CLCD_TIM1),
 		readl(fb->regs + CLCD_TIM2), readl(fb->regs + CLCD_TIM3),
 		readl(fb->regs + CLCD_UBAS), readl(fb->regs + CLCD_LBAS),
-		readl(fb->regs + CLCD_IENB), readl(fb->regs + CLCD_CNTL));
+		readl(fb->regs + fb->off_ienb), readl(fb->regs + fb->off_cntl));
 #endif
 
 	return 0;
@@ -345,11 +424,30 @@ static int clcdfb_register(struct clcd_fb *fb)
 {
 	int ret;
 
+	/*
+	 * ARM PL111 always has IENB at 0x1c; it's only PL110
+	 * which is reversed on some platforms.
+	 */
+	if (amba_manf(fb->dev) == 0x41 && amba_part(fb->dev) == 0x111) {
+		fb->off_ienb = CLCD_PL111_IENB;
+		fb->off_cntl = CLCD_PL111_CNTL;
+	} else {
+#ifdef CONFIG_ARCH_VERSATILE
+		fb->off_ienb = CLCD_PL111_IENB;
+		fb->off_cntl = CLCD_PL111_CNTL;
+#else
+		fb->off_ienb = CLCD_PL110_IENB;
+		fb->off_cntl = CLCD_PL110_CNTL;
+#endif
+	}
+
 	fb->clk = clk_get(&fb->dev->dev, NULL);
 	if (IS_ERR(fb->clk)) {
 		ret = PTR_ERR(fb->clk);
 		goto out;
 	}
+
+	fb->fb.device		= &fb->dev->dev;
 
 	fb->fb.fix.mmio_start	= fb->dev->res.start;
 	fb->fb.fix.mmio_len	= resource_size(&fb->dev->res);
@@ -416,12 +514,12 @@ static int clcdfb_register(struct clcd_fb *fb)
 	/*
 	 * Ensure interrupts are disabled.
 	 */
-	writel(0, fb->regs + CLCD_IENB);
+	writel(0, fb->regs + fb->off_ienb);
 
 	fb_set_var(&fb->fb, &fb->fb.var);
 
-        printk(KERN_INFO "CLCD: %s hardware, %s display\n",
-               fb->board->name, fb->panel->mode.name);
+	dev_info(&fb->dev->dev, "%s hardware, %s display\n",
+	         fb->board->name, fb->panel->mode.name);
 
 	ret = register_framebuffer(&fb->fb);
 	if (ret == 0)
@@ -438,7 +536,7 @@ static int clcdfb_register(struct clcd_fb *fb)
 	return ret;
 }
 
-static int clcdfb_probe(struct amba_device *dev, struct amba_id *id)
+static int clcdfb_probe(struct amba_device *dev, const struct amba_id *id)
 {
 	struct clcd_board *board = dev->dev.platform_data;
 	struct clcd_fb *fb;
@@ -462,6 +560,10 @@ static int clcdfb_probe(struct amba_device *dev, struct amba_id *id)
 
 	fb->dev = dev;
 	fb->board = board;
+
+	dev_info(&fb->dev->dev, "PL%03x rev%u at 0x%08llx\n",
+		amba_part(dev), amba_rev(dev),
+		(unsigned long long)dev->res.start);
 
 	ret = fb->board->setup(fb);
 	if (ret)

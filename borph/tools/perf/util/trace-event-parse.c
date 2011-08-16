@@ -37,10 +37,12 @@ int header_page_ts_offset;
 int header_page_ts_size;
 int header_page_size_offset;
 int header_page_size_size;
+int header_page_overwrite_offset;
+int header_page_overwrite_size;
 int header_page_data_offset;
 int header_page_data_size;
 
-int latency_format;
+bool latency_format;
 
 static char *input_buf;
 static unsigned long long input_buf_ptr;
@@ -151,7 +153,7 @@ void parse_proc_kallsyms(char *file, unsigned int size __unused)
 	char *next = NULL;
 	char *addr_str;
 	char ch;
-	int ret;
+	int ret __used;
 	int i;
 
 	line = strtok_r(file, "\n", &next);
@@ -628,21 +630,30 @@ static int test_type(enum event_type type, enum event_type expect)
 	return 0;
 }
 
-static int test_type_token(enum event_type type, char *token,
-		    enum event_type expect, const char *expect_tok)
+static int __test_type_token(enum event_type type, char *token,
+			     enum event_type expect, const char *expect_tok,
+			     bool warn)
 {
 	if (type != expect) {
-		warning("Error: expected type %d but read %d",
-		    expect, type);
+		if (warn)
+			warning("Error: expected type %d but read %d",
+				expect, type);
 		return -1;
 	}
 
 	if (strcmp(token, expect_tok) != 0) {
-		warning("Error: expected '%s' but read '%s'",
-		    expect_tok, token);
+		if (warn)
+			warning("Error: expected '%s' but read '%s'",
+				expect_tok, token);
 		return -1;
 	}
 	return 0;
+}
+
+static int test_type_token(enum event_type type, char *token,
+			   enum event_type expect, const char *expect_tok)
+{
+	return __test_type_token(type, token, expect, expect_tok, true);
 }
 
 static int __read_expect_type(enum event_type expect, char **tok, int newline_ok)
@@ -661,7 +672,8 @@ static int read_expect_type(enum event_type expect, char **tok)
 	return __read_expect_type(expect, tok, 1);
 }
 
-static int __read_expected(enum event_type expect, const char *str, int newline_ok)
+static int __read_expected(enum event_type expect, const char *str,
+			   int newline_ok, bool warn)
 {
 	enum event_type type;
 	char *token;
@@ -672,7 +684,7 @@ static int __read_expected(enum event_type expect, const char *str, int newline_
 	else
 		type = read_token_item(&token);
 
-	ret = test_type_token(type, token, expect, str);
+	ret = __test_type_token(type, token, expect, str, warn);
 
 	free_token(token);
 
@@ -681,12 +693,12 @@ static int __read_expected(enum event_type expect, const char *str, int newline_
 
 static int read_expected(enum event_type expect, const char *str)
 {
-	return __read_expected(expect, str, 1);
+	return __read_expected(expect, str, 1, true);
 }
 
 static int read_expected_item(enum event_type expect, const char *str)
 {
-	return __read_expected(expect, str, 0);
+	return __read_expected(expect, str, 0, true);
 }
 
 static char *event_read_name(void)
@@ -744,7 +756,7 @@ static int field_is_string(struct format_field *field)
 
 static int field_is_dynamic(struct format_field *field)
 {
-	if (!strcmp(field->type, "__data_loc"))
+	if (!strncmp(field->type, "__data_loc", 10))
 		return 1;
 
 	return 0;
@@ -1925,6 +1937,15 @@ void *raw_field_ptr(struct event *event, const char *name, void *data)
 	if (!field)
 		return NULL;
 
+	if (field->flags & FIELD_IS_DYNAMIC) {
+		int offset;
+
+		offset = *(int *)(data + field->offset);
+		offset &= 0xffff;
+
+		return data + offset;
+	}
+
 	return data + field->offset;
 }
 
@@ -2622,67 +2643,12 @@ static void print_lat_fmt(void *data, int size __unused)
 		printf(".");
 
 	if (lock_depth < 0)
-		printf(".");
+		printf(". ");
 	else
-		printf("%d", lock_depth);
+		printf("%d ", lock_depth);
 }
 
-/* taken from Linux, written by Frederic Weisbecker */
-static void print_graph_cpu(int cpu)
-{
-	int i;
-	int log10_this = log10_cpu(cpu);
-	int log10_all = log10_cpu(cpus);
-
-
-	/*
-	 * Start with a space character - to make it stand out
-	 * to the right a bit when trace output is pasted into
-	 * email:
-	 */
-	printf(" ");
-
-	/*
-	 * Tricky - we space the CPU field according to the max
-	 * number of online CPUs. On a 2-cpu system it would take
-	 * a maximum of 1 digit - on a 128 cpu system it would
-	 * take up to 3 digits:
-	 */
-	for (i = 0; i < log10_all - log10_this; i++)
-		printf(" ");
-
-	printf("%d) ", cpu);
-}
-
-#define TRACE_GRAPH_PROCINFO_LENGTH	14
 #define TRACE_GRAPH_INDENT	2
-
-static void print_graph_proc(int pid, const char *comm)
-{
-	/* sign + log10(MAX_INT) + '\0' */
-	char pid_str[11];
-	int spaces = 0;
-	int len;
-	int i;
-
-	sprintf(pid_str, "%d", pid);
-
-	/* 1 stands for the "-" character */
-	len = strlen(comm) + strlen(pid_str) + 1;
-
-	if (len < TRACE_GRAPH_PROCINFO_LENGTH)
-		spaces = TRACE_GRAPH_PROCINFO_LENGTH - len;
-
-	/* First spaces to align center */
-	for (i = 0; i < spaces / 2; i++)
-		printf(" ");
-
-	printf("%s-%s", comm, pid_str);
-
-	/* Last spaces to align center */
-	for (i = 0; i < spaces - (spaces / 2); i++)
-		printf(" ");
-}
 
 static struct record *
 get_return_for_leaf(int cpu, int cur_pid, unsigned long long cur_func,
@@ -2855,20 +2821,12 @@ static void print_graph_nested(struct event *event, void *data)
 
 static void
 pretty_print_func_ent(void *data, int size, struct event *event,
-		      int cpu, int pid, const char *comm,
-		      unsigned long secs, unsigned long usecs)
+		      int cpu, int pid)
 {
 	struct format_field *field;
 	struct record *rec;
 	void *copy_data;
 	unsigned long val;
-
-	printf("%5lu.%06lu |  ", secs, usecs);
-
-	print_graph_cpu(cpu);
-	print_graph_proc(pid, comm);
-
-	printf(" | ");
 
 	if (latency_format) {
 		print_lat_fmt(data, size);
@@ -2902,21 +2860,12 @@ out_free:
 }
 
 static void
-pretty_print_func_ret(void *data, int size __unused, struct event *event,
-		      int cpu, int pid, const char *comm,
-		      unsigned long secs, unsigned long usecs)
+pretty_print_func_ret(void *data, int size __unused, struct event *event)
 {
 	unsigned long long rettime, calltime;
 	unsigned long long duration, depth;
 	struct format_field *field;
 	int i;
-
-	printf("%5lu.%06lu |  ", secs, usecs);
-
-	print_graph_cpu(cpu);
-	print_graph_proc(pid, comm);
-
-	printf(" | ");
 
 	if (latency_format) {
 		print_lat_fmt(data, size);
@@ -2955,30 +2904,20 @@ pretty_print_func_ret(void *data, int size __unused, struct event *event,
 
 static void
 pretty_print_func_graph(void *data, int size, struct event *event,
-			int cpu, int pid, const char *comm,
-			unsigned long secs, unsigned long usecs)
+			int cpu, int pid)
 {
 	if (event->flags & EVENT_FL_ISFUNCENT)
-		pretty_print_func_ent(data, size, event,
-				      cpu, pid, comm, secs, usecs);
+		pretty_print_func_ent(data, size, event, cpu, pid);
 	else if (event->flags & EVENT_FL_ISFUNCRET)
-		pretty_print_func_ret(data, size, event,
-				      cpu, pid, comm, secs, usecs);
+		pretty_print_func_ret(data, size, event);
 	printf("\n");
 }
 
-void print_event(int cpu, void *data, int size, unsigned long long nsecs,
-		  char *comm)
+void print_trace_event(int cpu, void *data, int size)
 {
 	struct event *event;
-	unsigned long secs;
-	unsigned long usecs;
 	int type;
 	int pid;
-
-	secs = nsecs / NSECS_PER_SEC;
-	nsecs -= secs * NSECS_PER_SEC;
-	usecs = nsecs / NSECS_PER_USEC;
 
 	type = trace_parse_common_type(data);
 
@@ -2991,17 +2930,10 @@ void print_event(int cpu, void *data, int size, unsigned long long nsecs,
 	pid = trace_parse_common_pid(data);
 
 	if (event->flags & (EVENT_FL_ISFUNCENT | EVENT_FL_ISFUNCRET))
-		return pretty_print_func_graph(data, size, event, cpu,
-					       pid, comm, secs, usecs);
+		return pretty_print_func_graph(data, size, event, cpu, pid);
 
-	if (latency_format) {
-		printf("%8.8s-%-5d %3d",
-		       comm, pid, cpu);
+	if (latency_format)
 		print_lat_fmt(data, size);
-	} else
-		printf("%16s-%-5d [%03d]", comm, pid,  cpu);
-
-	printf(" %5lu.%06lu: %s: ", secs, usecs, event->name);
 
 	if (event->flags & EVENT_FL_FAILED) {
 		printf("EVENT '%s' FAILED TO PARSE\n",
@@ -3010,7 +2942,6 @@ void print_event(int cpu, void *data, int size, unsigned long long nsecs,
 	}
 
 	pretty_print(data, size, event);
-	printf("\n");
 }
 
 static void print_fields(struct print_flag_sym *field)
@@ -3076,88 +3007,6 @@ static void print_args(struct print_arg *args)
 		printf("\n");
 		print_args(args->next);
 	}
-}
-
-static void parse_header_field(const char *field,
-			       int *offset, int *size)
-{
-	char *token;
-	int type;
-
-	if (read_expected(EVENT_ITEM, "field") < 0)
-		return;
-	if (read_expected(EVENT_OP, ":") < 0)
-		return;
-
-	/* type */
-	if (read_expect_type(EVENT_ITEM, &token) < 0)
-		goto fail;
-	free_token(token);
-
-	if (read_expected(EVENT_ITEM, field) < 0)
-		return;
-	if (read_expected(EVENT_OP, ";") < 0)
-		return;
-	if (read_expected(EVENT_ITEM, "offset") < 0)
-		return;
-	if (read_expected(EVENT_OP, ":") < 0)
-		return;
-	if (read_expect_type(EVENT_ITEM, &token) < 0)
-		goto fail;
-	*offset = atoi(token);
-	free_token(token);
-	if (read_expected(EVENT_OP, ";") < 0)
-		return;
-	if (read_expected(EVENT_ITEM, "size") < 0)
-		return;
-	if (read_expected(EVENT_OP, ":") < 0)
-		return;
-	if (read_expect_type(EVENT_ITEM, &token) < 0)
-		goto fail;
-	*size = atoi(token);
-	free_token(token);
-	if (read_expected(EVENT_OP, ";") < 0)
-		return;
-	type = read_token(&token);
-	if (type != EVENT_NEWLINE) {
-		/* newer versions of the kernel have a "signed" type */
-		if (type != EVENT_ITEM)
-			goto fail;
-
-		if (strcmp(token, "signed") != 0)
-			goto fail;
-
-		free_token(token);
-
-		if (read_expected(EVENT_OP, ":") < 0)
-			return;
-
-		if (read_expect_type(EVENT_ITEM, &token))
-			goto fail;
-
-		free_token(token);
-		if (read_expected(EVENT_OP, ";") < 0)
-			return;
-
-		if (read_expect_type(EVENT_NEWLINE, &token))
-			goto fail;
-	}
- fail:
-	free_token(token);
-}
-
-int parse_header_page(char *buf, unsigned long size)
-{
-	init_input_buf(buf, size);
-
-	parse_header_field("timestamp", &header_page_ts_offset,
-			   &header_page_ts_size);
-	parse_header_field("commit", &header_page_size_offset,
-			   &header_page_size_size);
-	parse_header_field("data", &header_page_data_offset,
-			   &header_page_data_size);
-
-	return 0;
 }
 
 int parse_ftrace_file(char *buf, unsigned long size)
@@ -3276,4 +3125,19 @@ void parse_set_info(int nr_cpus, int long_sz)
 {
 	cpus = nr_cpus;
 	long_size = long_sz;
+}
+
+int common_pc(struct scripting_context *context)
+{
+	return parse_common_pc(context->event_data);
+}
+
+int common_flags(struct scripting_context *context)
+{
+	return parse_common_flags(context->event_data);
+}
+
+int common_lock_depth(struct scripting_context *context)
+{
+	return parse_common_lock_depth(context->event_data);
 }

@@ -17,7 +17,7 @@
 #ifndef _LINUX_CRYPTO_H
 #define _LINUX_CRYPTO_H
 
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -99,13 +99,7 @@
  * as arm where pointers are 32-bit aligned but there are data types such as
  * u64 which require 64-bit alignment.
  */
-#if defined(ARCH_KMALLOC_MINALIGN)
 #define CRYPTO_MINALIGN ARCH_KMALLOC_MINALIGN
-#elif defined(ARCH_SLAB_MINALIGN)
-#define CRYPTO_MINALIGN ARCH_SLAB_MINALIGN
-#else
-#define CRYPTO_MINALIGN __alignof__(unsigned long long)
-#endif
 
 #define CRYPTO_MINALIGN_ATTR __attribute__ ((__aligned__(CRYPTO_MINALIGN)))
 

@@ -28,6 +28,7 @@
 #include <linux/platform_device.h>
 #include <linux/init.h>
 #include <linux/of_platform.h>
+#include <linux/slab.h>
 #include <asm/dcr.h>
 #include <asm/dcr-regs.h>
 #include <asm/cacheflush.h>
@@ -50,6 +51,7 @@ static void crypto4xx_hw_init(struct crypto4xx_device *dev)
 	union ce_io_threshold io_threshold;
 	u32 rand_num;
 	union ce_pe_dma_cfg pe_dma_cfg;
+	u32 device_ctrl;
 
 	writel(PPC4XX_BYTE_ORDER, dev->ce_base + CRYPTO4XX_BYTE_ORDER_CFG);
 	/* setup pe dma, include reset sg, pdr and pe, then release reset */
@@ -83,7 +85,9 @@ static void crypto4xx_hw_init(struct crypto4xx_device *dev)
 	writel(ring_size.w, dev->ce_base + CRYPTO4XX_RING_SIZE);
 	ring_ctrl.w = 0;
 	writel(ring_ctrl.w, dev->ce_base + CRYPTO4XX_RING_CTRL);
-	writel(PPC4XX_DC_3DES_EN, dev->ce_base + CRYPTO4XX_DEVICE_CTRL);
+	device_ctrl = readl(dev->ce_base + CRYPTO4XX_DEVICE_CTRL);
+	device_ctrl |= PPC4XX_DC_3DES_EN;
+	writel(device_ctrl, dev->ce_base + CRYPTO4XX_DEVICE_CTRL);
 	writel(dev->gdr_pa, dev->ce_base + CRYPTO4XX_GATH_RING_BASE);
 	writel(dev->sdr_pa, dev->ce_base + CRYPTO4XX_SCAT_RING_BASE);
 	part_ring_size.w = 0;
@@ -1149,15 +1153,14 @@ struct crypto4xx_alg_common crypto4xx_alg[] = {
 /**
  * Module Initialization Routine
  */
-static int __init crypto4xx_probe(struct of_device *ofdev,
-				  const struct of_device_id *match)
+static int __init crypto4xx_probe(struct platform_device *ofdev)
 {
 	int rc;
 	struct resource res;
 	struct device *dev = &ofdev->dev;
 	struct crypto4xx_core_device *core_dev;
 
-	rc = of_address_to_resource(ofdev->node, 0, &res);
+	rc = of_address_to_resource(ofdev->dev.of_node, 0, &res);
 	if (rc)
 		return -ENODEV;
 
@@ -1214,13 +1217,13 @@ static int __init crypto4xx_probe(struct of_device *ofdev,
 		     (unsigned long) dev);
 
 	/* Register for Crypto isr, Crypto Engine IRQ */
-	core_dev->irq = irq_of_parse_and_map(ofdev->node, 0);
+	core_dev->irq = irq_of_parse_and_map(ofdev->dev.of_node, 0);
 	rc = request_irq(core_dev->irq, crypto4xx_ce_interrupt_handler, 0,
 			 core_dev->dev->name, dev);
 	if (rc)
 		goto err_request_irq;
 
-	core_dev->dev->ce_base = of_iomap(ofdev->node, 0);
+	core_dev->dev->ce_base = of_iomap(ofdev->dev.of_node, 0);
 	if (!core_dev->dev->ce_base) {
 		dev_err(dev, "failed to of_iomap\n");
 		goto err_iomap;
@@ -1257,7 +1260,7 @@ err_alloc_dev:
 	return rc;
 }
 
-static int __exit crypto4xx_remove(struct of_device *ofdev)
+static int __exit crypto4xx_remove(struct platform_device *ofdev)
 {
 	struct device *dev = &ofdev->dev;
 	struct crypto4xx_core_device *core_dev = dev_get_drvdata(dev);
@@ -1274,26 +1277,29 @@ static int __exit crypto4xx_remove(struct of_device *ofdev)
 	return 0;
 }
 
-static struct of_device_id crypto4xx_match[] = {
+static const struct of_device_id crypto4xx_match[] = {
 	{ .compatible      = "amcc,ppc4xx-crypto",},
 	{ },
 };
 
-static struct of_platform_driver crypto4xx_driver = {
-	.name		= "crypto4xx",
-	.match_table	= crypto4xx_match,
+static struct platform_driver crypto4xx_driver = {
+	.driver = {
+		.name = "crypto4xx",
+		.owner = THIS_MODULE,
+		.of_match_table = crypto4xx_match,
+	},
 	.probe		= crypto4xx_probe,
 	.remove		= crypto4xx_remove,
 };
 
 static int __init crypto4xx_init(void)
 {
-	return of_register_platform_driver(&crypto4xx_driver);
+	return platform_driver_register(&crypto4xx_driver);
 }
 
 static void __exit crypto4xx_exit(void)
 {
-	of_unregister_platform_driver(&crypto4xx_driver);
+	platform_driver_unregister(&crypto4xx_driver);
 }
 
 module_init(crypto4xx_init);

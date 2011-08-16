@@ -3,9 +3,9 @@
  *
  * Licensed under the GPLv2
  *
- * Copyright (C) 2009 Lemote Inc. & Insititute of Computing Technology
+ * Copyright (C) 2009 Lemote Inc.
  * Author: Hu Hongbing <huhb@lemote.com>
- *         Wu Zhangjin <wuzj@lemote.com>
+ *         Wu Zhangjin <wuzhangjin@gmail.com>
  */
 #include <asm/asm-offsets.h>
 #include <asm/page.h>
@@ -35,7 +35,7 @@ LEAF(swsusp_arch_resume)
 0:
 	PTR_L t1, PBE_ADDRESS(t0)   /* source */
 	PTR_L t2, PBE_ORIG_ADDRESS(t0) /* destination */
-	PTR_ADDIU t3, t1, PAGE_SIZE
+	PTR_ADDU t3, t1, PAGE_SIZE
 1:
 	REG_L t8, (t1)
 	REG_S t8, (t2)

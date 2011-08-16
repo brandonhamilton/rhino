@@ -91,7 +91,7 @@
  * --------------------
  * The implementation goals were as follow :
  *	o Obvious : you should not need a PhD to understand what's happening,
- *		the benefit is easier maintainance.
+ *		the benefit is easier maintenance.
  *	o Flexible : it should accommodate a wide variety of driver
  *		implementations and be as flexible as the old API.
  *	o Lean : it should be efficient memory wise to minimise the impact
@@ -129,7 +129,7 @@
  *
  * Functions prototype uses union iwreq_data
  * -----------------------------------------
- * Some would have prefered functions defined this way :
+ * Some would have preferred functions defined this way :
  *	static int mydriver_ioctl_setrate(struct net_device *dev, 
  *					  long rate, int auto)
  * 1) The kernel code doesn't "validate" the content of iwreq_data, and
@@ -323,7 +323,7 @@ typedef int (*iw_handler)(struct net_device *dev, struct iw_request_info *info,
 struct iw_handler_def {
 
 	/* Array of handlers for standard ioctls
-	 * We will call dev->wireless_handlers->standard[ioctl - SIOCSIWCOMMIT]
+	 * We will call dev->wireless_handlers->standard[ioctl - SIOCIWFIRST]
 	 */
 	const iw_handler *	standard;
 	/* Number of handlers defined (more precisely, index of the

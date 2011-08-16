@@ -23,12 +23,17 @@ extern char cmd_line[COMMAND_LINE_SIZE];
 void early_printk(const char *fmt, ...);
 
 int setup_early_printk(char *opt);
+void remap_early_printk(void);
 void disable_early_printk(void);
+
+#if defined(CONFIG_EARLY_PRINTK)
+#define eprintk early_printk
+#else
+#define eprintk printk
+#endif
 
 void heartbeat(void);
 void setup_heartbeat(void);
-
-unsigned long long sched_clock(void);
 
 #   ifdef CONFIG_MMU
 extern void mmu_reset(void);

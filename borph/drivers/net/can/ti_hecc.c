@@ -28,9 +28,11 @@
  *         .mbx_offset             = 0x2000,
  *         .int_line               = 0,
  *         .revision               = 1,
+ *         .transceiver_switch     = hecc_phy_control,
  * };
  *
- * Please see include/can/platform/ti_hecc.h for description of above fields
+ * Please see include/linux/can/platform/ti_hecc.h for description of
+ * above fields.
  *
  */
 
@@ -44,9 +46,8 @@
 #include <linux/skbuff.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
-#include <linux/gpio.h>
+#include <linux/io.h>
 
-#include <linux/can.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
 #include <linux/can/platform/ti_hecc.h>
@@ -221,6 +222,7 @@ struct ti_hecc_priv {
 	u32 tx_head;
 	u32 tx_tail;
 	u32 rx_next;
+	void (*transceiver_switch)(int);
 };
 
 static inline int get_tx_head_mb(struct ti_hecc_priv *priv)
@@ -316,6 +318,13 @@ static int ti_hecc_set_btc(struct ti_hecc_priv *priv)
 	dev_info(priv->ndev->dev.parent, "setting CANBTC=%#x\n", can_btc);
 
 	return 0;
+}
+
+static void ti_hecc_transceiver_switch(const struct ti_hecc_priv *priv,
+					int on)
+{
+	if (priv->transceiver_switch)
+		priv->transceiver_switch(on);
 }
 
 static void ti_hecc_reset(struct net_device *ndev)
@@ -478,6 +487,9 @@ static netdev_tx_t ti_hecc_xmit(struct sk_buff *skb, struct net_device *ndev)
 	u32 mbxno, mbx_mask, data;
 	unsigned long flags;
 
+	if (can_dropped_invalid_skb(ndev, skb))
+		return NETDEV_TX_OK;
+
 	mbxno = get_tx_head_mb(priv);
 	mbx_mask = BIT(mbxno);
 	spin_lock_irqsave(&priv->mbx_lock, flags);
@@ -492,7 +504,6 @@ static netdev_tx_t ti_hecc_xmit(struct sk_buff *skb, struct net_device *ndev)
 	spin_unlock_irqrestore(&priv->mbx_lock, flags);
 
 	/* Prepare mailbox for transmission */
-	data = min_t(u8, cf->can_dlc, 8);
 	if (cf->can_id & CAN_RTR_FLAG) /* Remote transmission request */
 		data |= HECC_CANMCF_RTR;
 	data |= get_tx_head_prio(priv) << 8;
@@ -653,7 +664,7 @@ static int ti_hecc_error(struct net_device *ndev, int int_status,
 	struct can_frame *cf;
 	struct sk_buff *skb;
 
-	/* propogate the error condition to the can stack */
+	/* propagate the error condition to the can stack */
 	skb = alloc_can_err_skb(ndev, &cf);
 	if (!skb) {
 		if (printk_ratelimit())
@@ -817,10 +828,13 @@ static int ti_hecc_open(struct net_device *ndev)
 		return err;
 	}
 
+	ti_hecc_transceiver_switch(priv, 1);
+
 	/* Open common can device */
 	err = open_candev(ndev);
 	if (err) {
 		dev_err(ndev->dev.parent, "open_candev() failed %d\n", err);
+		ti_hecc_transceiver_switch(priv, 0);
 		free_irq(ndev->irq, ndev);
 		return err;
 	}
@@ -841,6 +855,7 @@ static int ti_hecc_close(struct net_device *ndev)
 	ti_hecc_stop(ndev);
 	free_irq(ndev->irq, ndev);
 	close_candev(ndev);
+	ti_hecc_transceiver_switch(priv, 0);
 
 	return 0;
 }
@@ -865,9 +880,6 @@ static int ti_hecc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "No platform data\n");
 		goto probe_exit;
 	}
-
-	if(pdata->platform_init)
-		pdata->platform_init();
 
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!mem) {
@@ -905,10 +917,12 @@ static int ti_hecc_probe(struct platform_device *pdev)
 	priv->hecc_ram_offset = pdata->hecc_ram_offset;
 	priv->mbx_offset = pdata->mbx_offset;
 	priv->int_line = pdata->int_line;
+	priv->transceiver_switch = pdata->transceiver_switch;
 
 	priv->can.bittiming_const = &ti_hecc_bittiming_const;
 	priv->can.do_set_mode = ti_hecc_do_set_mode;
 	priv->can.do_get_state = ti_hecc_get_state;
+	priv->can.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES;
 
 	ndev->irq = irq->start;
 	ndev->flags |= IFF_ECHO;

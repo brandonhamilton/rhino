@@ -28,7 +28,10 @@ int blk_should_fake_timeout(struct request_queue *q)
 
 static int __init fail_io_timeout_debugfs(void)
 {
-	return init_fault_attr_dentries(&fail_io_timeout, "fail_io_timeout");
+	struct dentry *dir = fault_create_debugfs_attr("fail_io_timeout",
+						NULL, &fail_io_timeout);
+
+	return IS_ERR(dir) ? PTR_ERR(dir) : 0;
 }
 
 late_initcall(fail_io_timeout_debugfs);
@@ -109,6 +112,7 @@ void blk_rq_timed_out_timer(unsigned long data)
 	struct request_queue *q = (struct request_queue *) data;
 	unsigned long flags, next = 0;
 	struct request *rq, *tmp;
+	int next_set = 0;
 
 	spin_lock_irqsave(q->queue_lock, flags);
 
@@ -122,16 +126,13 @@ void blk_rq_timed_out_timer(unsigned long data)
 			if (blk_mark_rq_complete(rq))
 				continue;
 			blk_rq_timed_out(rq);
-		} else if (!next || time_after(next, rq->deadline))
+		} else if (!next_set || time_after(next, rq->deadline)) {
 			next = rq->deadline;
+			next_set = 1;
+		}
 	}
 
-	/*
-	 * next can never be 0 here with the list non-empty, since we always
-	 * bump ->deadline to 1 so we can detect if the timer was ever added
-	 * or not. See comment in blk_add_timer()
-	 */
-	if (next)
+	if (next_set)
 		mod_timer(&q->timeout, round_jiffies_up(next));
 
 	spin_unlock_irqrestore(q->queue_lock, flags);

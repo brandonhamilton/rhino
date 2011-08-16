@@ -318,7 +318,7 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 	 * Advertisement Register (Address 4) and the 1000 mb speed bits in
 	 * the  1000Base-T control Register (Address 9).
 	 */
-	mii_autoneg_adv_reg &= ~MII_AR_SPEED_MASK;
+	mii_autoneg_adv_reg &= ~ADVERTISE_ALL;
 	mii_1000t_ctrl_reg  &= ~MII_AT001_CR_1000T_SPEED_MASK;
 
 	/*
@@ -327,44 +327,37 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 	 */
 	switch (hw->media_type) {
 	case MEDIA_TYPE_AUTO_SENSOR:
-		mii_autoneg_adv_reg |= (MII_AR_10T_HD_CAPS   |
-					MII_AR_10T_FD_CAPS   |
-					MII_AR_100TX_HD_CAPS |
-					MII_AR_100TX_FD_CAPS);
-		hw->autoneg_advertised = ADVERTISE_10_HALF  |
-					 ADVERTISE_10_FULL  |
-					 ADVERTISE_100_HALF |
-					 ADVERTISE_100_FULL;
+		mii_autoneg_adv_reg |= ADVERTISE_ALL;
+		hw->autoneg_advertised = ADVERTISE_ALL;
 		if (hw->nic_type == athr_l1e) {
-			mii_1000t_ctrl_reg |=
-				MII_AT001_CR_1000T_FD_CAPS;
+			mii_1000t_ctrl_reg |= ADVERTISE_1000FULL;
 			hw->autoneg_advertised |= ADVERTISE_1000_FULL;
 		}
 		break;
 
 	case MEDIA_TYPE_100M_FULL:
-		mii_autoneg_adv_reg   |= MII_AR_100TX_FD_CAPS;
+		mii_autoneg_adv_reg   |= ADVERTISE_100FULL;
 		hw->autoneg_advertised = ADVERTISE_100_FULL;
 		break;
 
 	case MEDIA_TYPE_100M_HALF:
-		mii_autoneg_adv_reg   |= MII_AR_100TX_HD_CAPS;
+		mii_autoneg_adv_reg   |= ADVERTISE_100_HALF;
 		hw->autoneg_advertised = ADVERTISE_100_HALF;
 		break;
 
 	case MEDIA_TYPE_10M_FULL:
-		mii_autoneg_adv_reg   |= MII_AR_10T_FD_CAPS;
+		mii_autoneg_adv_reg   |= ADVERTISE_10_FULL;
 		hw->autoneg_advertised = ADVERTISE_10_FULL;
 		break;
 
 	default:
-		mii_autoneg_adv_reg   |= MII_AR_10T_HD_CAPS;
+		mii_autoneg_adv_reg   |= ADVERTISE_10_HALF;
 		hw->autoneg_advertised = ADVERTISE_10_HALF;
 		break;
 	}
 
 	/* flow control fixed to enable all */
-	mii_autoneg_adv_reg |= (MII_AR_ASM_DIR | MII_AR_PAUSE);
+	mii_autoneg_adv_reg |= (ADVERTISE_PAUSE_ASYM | ADVERTISE_PAUSE_CAP);
 
 	hw->mii_autoneg_adv_reg = mii_autoneg_adv_reg;
 	hw->mii_1000t_ctrl_reg  = mii_1000t_ctrl_reg;
@@ -374,7 +367,7 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 		return ret_val;
 
 	if (hw->nic_type == athr_l1e || hw->nic_type == athr_l2e_revA) {
-		ret_val = atl1e_write_phy_reg(hw, MII_AT001_CR,
+		ret_val = atl1e_write_phy_reg(hw, MII_CTRL1000,
 					   mii_1000t_ctrl_reg);
 		if (ret_val)
 			return ret_val;
@@ -394,11 +387,10 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 int atl1e_phy_commit(struct atl1e_hw *hw)
 {
 	struct atl1e_adapter *adapter = hw->adapter;
-	struct pci_dev *pdev = adapter->pdev;
 	int ret_val;
 	u16 phy_data;
 
-	phy_data = MII_CR_RESET | MII_CR_AUTO_NEG_EN | MII_CR_RESTART_AUTO_NEG;
+	phy_data = BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART;
 
 	ret_val = atl1e_write_phy_reg(hw, MII_BMCR, phy_data);
 	if (ret_val) {
@@ -415,12 +407,12 @@ int atl1e_phy_commit(struct atl1e_hw *hw)
 		}
 
 		if (0 != (val & (MDIO_START | MDIO_BUSY))) {
-			dev_err(&pdev->dev,
-				"pcie linkdown at least for 25ms\n");
+			netdev_err(adapter->netdev,
+				   "pcie linkdown at least for 25ms\n");
 			return ret_val;
 		}
 
-		dev_err(&pdev->dev, "pcie linkup after %d ms\n", i);
+		netdev_err(adapter->netdev, "pcie linkup after %d ms\n", i);
 	}
 	return 0;
 }
@@ -428,7 +420,6 @@ int atl1e_phy_commit(struct atl1e_hw *hw)
 int atl1e_phy_init(struct atl1e_hw *hw)
 {
 	struct atl1e_adapter *adapter = hw->adapter;
-	struct pci_dev *pdev = adapter->pdev;
 	s32 ret_val;
 	u16 phy_val;
 
@@ -492,20 +483,22 @@ int atl1e_phy_init(struct atl1e_hw *hw)
 	/*Enable PHY LinkChange Interrupt */
 	ret_val = atl1e_write_phy_reg(hw, MII_INT_CTRL, 0xC00);
 	if (ret_val) {
-		dev_err(&pdev->dev, "Error enable PHY linkChange Interrupt\n");
+		netdev_err(adapter->netdev,
+			   "Error enable PHY linkChange Interrupt\n");
 		return ret_val;
 	}
 	/* setup AutoNeg parameters */
 	ret_val = atl1e_phy_setup_autoneg_adv(hw);
 	if (ret_val) {
-		dev_err(&pdev->dev, "Error Setting up Auto-Negotiation\n");
+		netdev_err(adapter->netdev,
+			   "Error Setting up Auto-Negotiation\n");
 		return ret_val;
 	}
 	/* SW.Reset & En-Auto-Neg to restart Auto-Neg*/
-	dev_dbg(&pdev->dev, "Restarting Auto-Neg");
+	netdev_dbg(adapter->netdev, "Restarting Auto-Negotiation\n");
 	ret_val = atl1e_phy_commit(hw);
 	if (ret_val) {
-		dev_err(&pdev->dev, "Error Resetting the phy");
+		netdev_err(adapter->netdev, "Error resetting the phy\n");
 		return ret_val;
 	}
 
@@ -559,9 +552,8 @@ int atl1e_reset_hw(struct atl1e_hw *hw)
 	}
 
 	if (timeout >= AT_HW_MAX_IDLE_DELAY) {
-		dev_err(&pdev->dev,
-			"MAC state machine cann't be idle since"
-			" disabled for 10ms second\n");
+		netdev_err(adapter->netdev,
+			   "MAC state machine can't be idle since disabled for 10ms second\n");
 		return AT_ERR_TIMEOUT;
 	}
 
@@ -646,15 +638,14 @@ int atl1e_restart_autoneg(struct atl1e_hw *hw)
 		return err;
 
 	if (hw->nic_type == athr_l1e || hw->nic_type == athr_l2e_revA) {
-		err = atl1e_write_phy_reg(hw, MII_AT001_CR,
+		err = atl1e_write_phy_reg(hw, MII_CTRL1000,
 				       hw->mii_1000t_ctrl_reg);
 		if (err)
 			return err;
 	}
 
 	err = atl1e_write_phy_reg(hw, MII_BMCR,
-			MII_CR_RESET | MII_CR_AUTO_NEG_EN |
-			MII_CR_RESTART_AUTO_NEG);
+			BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART);
 	return err;
 }
 

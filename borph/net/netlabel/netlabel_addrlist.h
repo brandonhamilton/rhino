@@ -6,7 +6,7 @@
  * system manages static and dynamic label mappings for network protocols such
  * as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul.moore@hp.com>
+ * Author: Paul Moore <paul@paul-moore.com>
  *
  */
 
@@ -96,12 +96,12 @@ static inline struct netlbl_af4list *__af4list_valid_rcu(struct list_head *s,
 
 #define netlbl_af4list_foreach(iter, head)				\
 	for (iter = __af4list_valid((head)->next, head);		\
-	     prefetch(iter->list.next), &iter->list != (head);		\
+	     &iter->list != (head);					\
 	     iter = __af4list_valid(iter->list.next, head))
 
 #define netlbl_af4list_foreach_rcu(iter, head)				\
 	for (iter = __af4list_valid_rcu((head)->next, head);		\
-	     prefetch(iter->list.next),	&iter->list != (head);		\
+	     &iter->list != (head);					\
 	     iter = __af4list_valid_rcu(iter->list.next, head))
 
 #define netlbl_af4list_foreach_safe(iter, tmp, head)			\
@@ -130,7 +130,6 @@ static inline void netlbl_af4list_audit_addr(struct audit_buffer *audit_buf,
 					     int src, const char *dev,
 					     __be32 addr, __be32 mask)
 {
-	return;
 }
 #endif
 
@@ -164,12 +163,12 @@ static inline struct netlbl_af6list *__af6list_valid_rcu(struct list_head *s,
 
 #define netlbl_af6list_foreach(iter, head)				\
 	for (iter = __af6list_valid((head)->next, head);		\
-	     prefetch(iter->list.next),	&iter->list != (head);		\
+	     &iter->list != (head);					\
 	     iter = __af6list_valid(iter->list.next, head))
 
 #define netlbl_af6list_foreach_rcu(iter, head)				\
 	for (iter = __af6list_valid_rcu((head)->next, head);		\
-	     prefetch(iter->list.next),	&iter->list != (head);		\
+	     &iter->list != (head);					\
 	     iter = __af6list_valid_rcu(iter->list.next, head))
 
 #define netlbl_af6list_foreach_safe(iter, tmp, head)			\
@@ -203,7 +202,6 @@ static inline void netlbl_af6list_audit_addr(struct audit_buffer *audit_buf,
 					     const struct in6_addr *addr,
 					     const struct in6_addr *mask)
 {
-	return;
 }
 #endif
 #endif /* IPV6 */

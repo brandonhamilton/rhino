@@ -17,6 +17,7 @@
 #include <linux/irq.h>
 #include <linux/types.h>
 #include <linux/bootmem.h>
+#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -24,7 +25,7 @@
 
 #include "pq2.h"
 
-static DEFINE_SPINLOCK(pci_pic_lock);
+static DEFINE_RAW_SPINLOCK(pci_pic_lock);
 
 struct pq2ads_pci_pic {
 	struct device_node *node;
@@ -38,50 +39,49 @@ struct pq2ads_pci_pic {
 
 #define NUM_IRQS 32
 
-static void pq2ads_pci_mask_irq(unsigned int virq)
+static void pq2ads_pci_mask_irq(struct irq_data *d)
 {
-	struct pq2ads_pci_pic *priv = get_irq_chip_data(virq);
-	int irq = NUM_IRQS - virq_to_hw(virq) - 1;
+	struct pq2ads_pci_pic *priv = irq_data_get_irq_chip_data(d);
+	int irq = NUM_IRQS - irqd_to_hwirq(d) - 1;
 
 	if (irq != -1) {
 		unsigned long flags;
-		spin_lock_irqsave(&pci_pic_lock, flags);
+		raw_spin_lock_irqsave(&pci_pic_lock, flags);
 
 		setbits32(&priv->regs->mask, 1 << irq);
 		mb();
 
-		spin_unlock_irqrestore(&pci_pic_lock, flags);
+		raw_spin_unlock_irqrestore(&pci_pic_lock, flags);
 	}
 }
 
-static void pq2ads_pci_unmask_irq(unsigned int virq)
+static void pq2ads_pci_unmask_irq(struct irq_data *d)
 {
-	struct pq2ads_pci_pic *priv = get_irq_chip_data(virq);
-	int irq = NUM_IRQS - virq_to_hw(virq) - 1;
+	struct pq2ads_pci_pic *priv = irq_data_get_irq_chip_data(d);
+	int irq = NUM_IRQS - irqd_to_hwirq(d) - 1;
 
 	if (irq != -1) {
 		unsigned long flags;
 
-		spin_lock_irqsave(&pci_pic_lock, flags);
+		raw_spin_lock_irqsave(&pci_pic_lock, flags);
 		clrbits32(&priv->regs->mask, 1 << irq);
-		spin_unlock_irqrestore(&pci_pic_lock, flags);
+		raw_spin_unlock_irqrestore(&pci_pic_lock, flags);
 	}
 }
 
 static struct irq_chip pq2ads_pci_ic = {
 	.name = "PQ2 ADS PCI",
-	.end = pq2ads_pci_unmask_irq,
-	.mask = pq2ads_pci_mask_irq,
-	.mask_ack = pq2ads_pci_mask_irq,
-	.ack = pq2ads_pci_mask_irq,
-	.unmask = pq2ads_pci_unmask_irq,
-	.enable = pq2ads_pci_unmask_irq,
-	.disable = pq2ads_pci_mask_irq
+	.irq_mask = pq2ads_pci_mask_irq,
+	.irq_mask_ack = pq2ads_pci_mask_irq,
+	.irq_ack = pq2ads_pci_mask_irq,
+	.irq_unmask = pq2ads_pci_unmask_irq,
+	.irq_enable = pq2ads_pci_unmask_irq,
+	.irq_disable = pq2ads_pci_mask_irq
 };
 
 static void pq2ads_pci_irq_demux(unsigned int irq, struct irq_desc *desc)
 {
-	struct pq2ads_pci_pic *priv = desc->handler_data;
+	struct pq2ads_pci_pic *priv = irq_desc_get_handler_data(desc);
 	u32 stat, mask, pend;
 	int bit;
 
@@ -106,22 +106,14 @@ static void pq2ads_pci_irq_demux(unsigned int irq, struct irq_desc *desc)
 static int pci_pic_host_map(struct irq_host *h, unsigned int virq,
 			    irq_hw_number_t hw)
 {
-	irq_to_desc(virq)->status |= IRQ_LEVEL;
-	set_irq_chip_data(virq, h->host_data);
-	set_irq_chip_and_handler(virq, &pq2ads_pci_ic, handle_level_irq);
+	irq_set_status_flags(virq, IRQ_LEVEL);
+	irq_set_chip_data(virq, h->host_data);
+	irq_set_chip_and_handler(virq, &pq2ads_pci_ic, handle_level_irq);
 	return 0;
-}
-
-static void pci_host_unmap(struct irq_host *h, unsigned int virq)
-{
-	/* remove chip and handler */
-	set_irq_chip_data(virq, NULL);
-	set_irq_chip(virq, NULL);
 }
 
 static struct irq_host_ops pci_pic_host_ops = {
 	.map = pci_pic_host_map,
-	.unmap = pci_host_unmap,
 };
 
 int __init pq2ads_pci_init_irq(void)
@@ -175,8 +167,8 @@ int __init pq2ads_pci_init_irq(void)
 
 	priv->host = host;
 	host->host_data = priv;
-	set_irq_data(irq, priv);
-	set_irq_chained_handler(irq, pq2ads_pci_irq_demux);
+	irq_set_handler_data(irq, priv);
+	irq_set_chained_handler(irq, pq2ads_pci_irq_demux);
 
 	of_node_put(np);
 	return 0;

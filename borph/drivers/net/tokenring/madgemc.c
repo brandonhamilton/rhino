@@ -21,6 +21,7 @@ static const char version[] = "madgemc.c: v0.91 23/01/2000 by Adam Fritzler\n";
 
 #include <linux/module.h>
 #include <linux/mca.h>
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -72,7 +73,7 @@ static void madgemc_setint(struct net_device *dev, int val);
 static irqreturn_t madgemc_interrupt(int irq, void *dev_id);
 
 /*
- * These work around paging, however they don't guarentee you're on the
+ * These work around paging, however they don't guarantee you're on the
  * right page.
  */
 #define SIFREADB(reg) (inb(dev->base_addr + ((reg<0x8)?reg:reg-0x8)))
@@ -108,7 +109,6 @@ static void madgemc_sifwriteb(struct net_device *dev, unsigned short val, unsign
 		SIFWRITEB(val, reg);
 		madgemc_setregpage(dev, 0);
 	}
-	return;
 }
 
 /*
@@ -139,7 +139,6 @@ static void madgemc_sifwritew(struct net_device *dev, unsigned short val, unsign
 		SIFWRITEW(val, reg);
 		madgemc_setregpage(dev, 0);
 	}
-	return;
 }
 
 static struct net_device_ops madgemc_netdev_ops __read_mostly;
@@ -388,7 +387,7 @@ getout:
  * both with their own disadvantages...
  *
  * 1)  	Read in the SIFSTS register from the TMS controller.  This
- *	is guarenteed to be accurate, however, there's a fairly
+ *	is guaranteed to be accurate, however, there's a fairly
  *	large performance penalty for doing so: the Madge chips
  *	must request the register from the Eagle, the Eagle must
  *	read them from its internal bus, and then take the route
@@ -419,7 +418,7 @@ static irqreturn_t madgemc_interrupt(int irq, void *dev_id)
 		return IRQ_NONE;
 	}
 
-	dev = (struct net_device *)dev_id;
+	dev = dev_id;
 
 	/* Make sure its really us. -- the Madge way */
 	pending = inb(dev->base_addr + MC_CONTROL_REG0);
@@ -455,7 +454,7 @@ static irqreturn_t madgemc_interrupt(int irq, void *dev_id)
 }
 
 /*
- * Set the card to the prefered ring speed.
+ * Set the card to the preferred ring speed.
  *
  * Unlike newer cards, the MC16/32 have their speed selection
  * circuit connected to the Madge ASICs and not to the TMS380
@@ -504,8 +503,6 @@ static void madgemc_setregpage(struct net_device *dev, int page)
 		     dev->base_addr + MC_CONTROL_REG1);
 	}
 	reg1 = inb(dev->base_addr + MC_CONTROL_REG1);
-
-	return;
 }
 
 /*
@@ -526,8 +523,6 @@ static void madgemc_setsifsel(struct net_device *dev, int val)
 		     dev->base_addr + MC_CONTROL_REG0);
 	}	
 	reg0 = inb(dev->base_addr + MC_CONTROL_REG0);
-
-	return;
 }
 
 /*
@@ -549,8 +544,6 @@ static void madgemc_setint(struct net_device *dev, int val)
 		outb(reg1 | MC_CONTROL_REG1_SINTEN, 
 		     dev->base_addr + MC_CONTROL_REG1);
 	}
-
-	return;
 }
 
 /*
@@ -593,8 +586,6 @@ static void madgemc_chipset_close(struct net_device *dev)
 	madgemc_setint(dev, 0);
 	/* unmap SIF registers */
 	madgemc_setsifsel(dev, 0);
-
-	return;
 }
 
 /*
@@ -655,8 +646,6 @@ static void madgemc_read_rom(struct net_device *dev, struct card_info *card)
 	/* Restore original register values */
 	outb(reg0, ioaddr + MC_CONTROL_REG0);
 	outb(reg1, ioaddr + MC_CONTROL_REG1);
-	
-	return;
 }
 
 static int madgemc_open(struct net_device *dev)

@@ -14,11 +14,10 @@
 #include <linux/of_platform.h>
 #include <linux/ata_platform.h>
 
-static int __devinit pata_of_platform_probe(struct of_device *ofdev,
-					    const struct of_device_id *match)
+static int __devinit pata_of_platform_probe(struct platform_device *ofdev)
 {
 	int ret;
-	struct device_node *dn = ofdev->node;
+	struct device_node *dn = ofdev->dev.of_node;
 	struct resource io_res;
 	struct resource ctl_res;
 	struct resource irq_res;
@@ -78,7 +77,7 @@ static int __devinit pata_of_platform_probe(struct of_device *ofdev,
 				     reg_shift, pio_mask);
 }
 
-static int __devexit pata_of_platform_remove(struct of_device *ofdev)
+static int __devexit pata_of_platform_remove(struct platform_device *ofdev)
 {
 	return __pata_platform_remove(&ofdev->dev);
 }
@@ -90,22 +89,25 @@ static struct of_device_id pata_of_platform_match[] = {
 };
 MODULE_DEVICE_TABLE(of, pata_of_platform_match);
 
-static struct of_platform_driver pata_of_platform_driver = {
-	.name		= "pata_of_platform",
-	.match_table	= pata_of_platform_match,
+static struct platform_driver pata_of_platform_driver = {
+	.driver = {
+		.name = "pata_of_platform",
+		.owner = THIS_MODULE,
+		.of_match_table = pata_of_platform_match,
+	},
 	.probe		= pata_of_platform_probe,
 	.remove		= __devexit_p(pata_of_platform_remove),
 };
 
 static int __init pata_of_platform_init(void)
 {
-	return of_register_platform_driver(&pata_of_platform_driver);
+	return platform_driver_register(&pata_of_platform_driver);
 }
 module_init(pata_of_platform_init);
 
 static void __exit pata_of_platform_exit(void)
 {
-	of_unregister_platform_driver(&pata_of_platform_driver);
+	platform_driver_unregister(&pata_of_platform_driver);
 }
 module_exit(pata_of_platform_exit);
 

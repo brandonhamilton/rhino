@@ -2,9 +2,9 @@
 #define S390_DEVICE_H
 
 #include <asm/ccwdev.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/wait.h>
-
+#include <linux/notifier.h>
 #include "io_sch.h"
 
 /*
@@ -71,7 +71,6 @@ dev_fsm_final_state(struct ccw_device *cdev)
 		cdev->private->state == DEV_STATE_BOXED);
 }
 
-extern struct workqueue_struct *ccw_device_work;
 extern wait_queue_head_t ccw_device_init_wq;
 extern atomic_t ccw_device_init_count;
 int __init io_subchannel_init(void);
@@ -134,7 +133,6 @@ void ccw_device_set_notoper(struct ccw_device *cdev);
 /* qdio needs this. */
 void ccw_device_set_timeout(struct ccw_device *, int);
 extern struct subchannel_id ccw_device_get_subchannel_id(struct ccw_device *);
-extern struct bus_type ccw_bus_type;
 
 /* Channel measurement facility related */
 void retry_set_schib(struct ccw_device *cdev);

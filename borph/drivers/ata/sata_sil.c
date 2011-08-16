@@ -61,8 +61,7 @@ enum {
 	SIL_FLAG_RERR_ON_DMA_ACT = (1 << 29),
 	SIL_FLAG_MOD15WRITE	= (1 << 30),
 
-	SIL_DFL_PORT_FLAGS	= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY |
-				  ATA_FLAG_MMIO,
+	SIL_DFL_PORT_FLAGS	= ATA_FLAG_SATA,
 
 	/*
 	 * Controller IDs
@@ -284,7 +283,7 @@ static void sil_bmdma_setup(struct ata_queued_cmd *qc)
 	void __iomem *bmdma = ap->ioaddr.bmdma_addr;
 
 	/* load PRD table addr. */
-	iowrite32(ap->prd_dma, bmdma + ATA_DMA_TABLE_OFS);
+	iowrite32(ap->bmdma_prd_dma, bmdma + ATA_DMA_TABLE_OFS);
 
 	/* issue r/w command */
 	ap->ops->sff_exec_command(ap, &qc->tf);
@@ -311,10 +310,10 @@ static void sil_fill_sg(struct ata_queued_cmd *qc)
 {
 	struct scatterlist *sg;
 	struct ata_port *ap = qc->ap;
-	struct ata_prd *prd, *last_prd = NULL;
+	struct ata_bmdma_prd *prd, *last_prd = NULL;
 	unsigned int si;
 
-	prd = &ap->prd[0];
+	prd = &ap->bmdma_prd[0];
 	for_each_sg(qc->sg, sg, qc->n_elem, si) {
 		/* Note h/w doesn't support 64-bit, so we unconditionally
 		 * truncate dma_addr_t to u32.
@@ -503,7 +502,7 @@ static void sil_host_intr(struct ata_port *ap, u32 bmdma2)
 		goto err_hsm;
 
 	/* ack bmdma irq events */
-	ata_sff_irq_clear(ap);
+	ata_bmdma_irq_clear(ap);
 
 	/* kick HSM in the ass */
 	ata_sff_hsm_move(ap, qc, status, 0);
@@ -531,9 +530,6 @@ static irqreturn_t sil_interrupt(int irq, void *dev_instance)
 	for (i = 0; i < host->n_ports; i++) {
 		struct ata_port *ap = host->ports[i];
 		u32 bmdma2 = readl(mmio_base + sil_port[ap->port_no].bmdma2);
-
-		if (unlikely(ap->flags & ATA_FLAG_DISABLED))
-			continue;
 
 		/* turn off SATA_IRQ if not supported */
 		if (ap->flags & SIL_FLAG_NO_SATA_IRQ)
@@ -587,7 +583,7 @@ static void sil_thaw(struct ata_port *ap)
 
 	/* clear IRQ */
 	ap->ops->sff_check_status(ap);
-	ata_sff_irq_clear(ap);
+	ata_bmdma_irq_clear(ap);
 
 	/* turn on SATA IRQ if supported */
 	if (!(ap->flags & SIL_FLAG_NO_SATA_IRQ))
@@ -647,8 +643,8 @@ static void sil_dev_config(struct ata_device *dev)
 	    ((ap->flags & SIL_FLAG_MOD15WRITE) &&
 	     (quirks & SIL_QUIRK_MOD15WRITE))) {
 		if (print_info)
-			ata_dev_printk(dev, KERN_INFO, "applying Seagate "
-				       "errata fix (mod15write workaround)\n");
+			ata_dev_info(dev,
+		"applying Seagate errata fix (mod15write workaround)\n");
 		dev->max_sectors = 15;
 		return;
 	}
@@ -656,8 +652,8 @@ static void sil_dev_config(struct ata_device *dev)
 	/* limit to udma5 */
 	if (quirks & SIL_QUIRK_UDMA5MAX) {
 		if (print_info)
-			ata_dev_printk(dev, KERN_INFO, "applying Maxtor "
-				       "errata fix %s\n", model_num);
+			ata_dev_info(dev, "applying Maxtor errata fix %s\n",
+				     model_num);
 		dev->udma_mask &= ATA_UDMA5;
 		return;
 	}
@@ -680,8 +676,8 @@ static void sil_init_controller(struct ata_host *host)
 			writew(cls << 8 | cls,
 			       mmio_base + sil_port[i].fifo_cfg);
 	} else
-		dev_printk(KERN_WARNING, &pdev->dev,
-			   "cache line size not set.  Driver may not function\n");
+		dev_warn(&pdev->dev,
+			 "cache line size not set.  Driver may not function\n");
 
 	/* Apply R_ERR on DMA activate FIS errata workaround */
 	if (host->ports[0]->flags & SIL_FLAG_RERR_ON_DMA_ACT) {
@@ -692,9 +688,8 @@ static void sil_init_controller(struct ata_host *host)
 			if ((tmp & 0x3) != 0x01)
 				continue;
 			if (!cnt)
-				dev_printk(KERN_INFO, &pdev->dev,
-					   "Applying R_ERR on DMA activate "
-					   "FIS errata fix\n");
+				dev_info(&pdev->dev,
+					 "Applying R_ERR on DMA activate FIS errata fix\n");
 			writel(tmp & ~0x3, mmio_base + sil_port[i].sfis_cfg);
 			cnt++;
 		}
@@ -737,7 +732,6 @@ static bool sil_broken_system_poweroff(struct pci_dev *pdev)
 
 static int sil_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	static int printed_version;
 	int board_id = ent->driver_data;
 	struct ata_port_info pi = sil_port_info[board_id];
 	const struct ata_port_info *ppi[] = { &pi, NULL };
@@ -746,8 +740,7 @@ static int sil_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int n_ports, rc;
 	unsigned int i;
 
-	if (!printed_version++)
-		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
+	ata_print_version_once(&pdev->dev, DRV_VERSION);
 
 	/* allocate host */
 	n_ports = 2;

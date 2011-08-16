@@ -25,15 +25,10 @@
  * Contact Cavium Networks for more information
 *********************************************************************/
 
-#define DEBUGPRINT(format, ...) do { if (printk_ratelimit()) 		\
-					printk(format, ##__VA_ARGS__);	\
-				} while (0)
-
 /**
- * Given a packet data address, return a pointer to the
- * beginning of the packet buffer.
- *
+ * cvm_oct_get_buffer_ptr - convert packet data address to pointer
  * @packet_ptr: Packet data hardware address
+ *
  * Returns Packet buffer pointer
  */
 static inline void *cvm_oct_get_buffer_ptr(union cvmx_buf_ptr packet_ptr)
@@ -43,9 +38,7 @@ static inline void *cvm_oct_get_buffer_ptr(union cvmx_buf_ptr packet_ptr)
 }
 
 /**
- * Given an IPD/PKO port number, return the logical interface it is
- * on.
- *
+ * INTERFACE - convert IPD port to locgical interface
  * @ipd_port: Port to check
  *
  * Returns Logical interface
@@ -58,16 +51,14 @@ static inline int INTERFACE(int ipd_port)
 		return 2;
 	else if (ipd_port < 40)	/* Interface 3 for loopback */
 		return 3;
-	else if (ipd_port == 40)	/* Non existant interface for POW0 */
+	else if (ipd_port == 40)	/* Non existent interface for POW0 */
 		return 4;
 	else
 		panic("Illegal ipd_port %d passed to INTERFACE\n", ipd_port);
 }
 
 /**
- * Given an IPD/PKO port number, return the port's index on a
- * logical interface.
- *
+ * INDEX - convert IPD/PKO port number to the port's interface index
  * @ipd_port: Port to check
  *
  * Returns Index into interface port list

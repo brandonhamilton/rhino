@@ -17,13 +17,13 @@
 #include <linux/mm.h>
 #include <linux/stddef.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/smp.h>
 #include <linux/reboot.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 
 #include <asm/auxio.h>
 #include <asm/oplib.h>
@@ -128,8 +128,16 @@ void cpu_idle(void)
         set_thread_flag(TIF_POLLING_NRFLAG);
 	/* endless idle loop with no priority at all */
 	while(1) {
-		while (!need_resched())
-			cpu_relax();
+#ifdef CONFIG_SPARC_LEON
+		if (pm_idle) {
+			while (!need_resched())
+				(*pm_idle)();
+		} else
+#endif
+		{
+			while (!need_resched())
+				cpu_relax();
+		}
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();
@@ -526,7 +534,7 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 			 * Set some valid stack frames to give to the child.
 			 */
 			childstack = (struct sparc_stackf __user *)
-				(sp & ~0x7UL);
+				(sp & ~0xfUL);
 			parentstack = (struct sparc_stackf __user *)
 				regs->u_regs[UREG_FP];
 
@@ -633,8 +641,10 @@ asmlinkage int sparc_execve(struct pt_regs *regs)
 	if(IS_ERR(filename))
 		goto out;
 	error = do_execve(filename,
-			  (char __user * __user *)regs->u_regs[base + UREG_I1],
-			  (char __user * __user *)regs->u_regs[base + UREG_I2],
+			  (const char __user *const  __user *)
+			  regs->u_regs[base + UREG_I1],
+			  (const char __user *const  __user *)
+			  regs->u_regs[base + UREG_I2],
 			  regs);
 	putname(filename);
 out:

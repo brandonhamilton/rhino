@@ -29,7 +29,6 @@
 #include <linux/ioport.h>	/* request_region		*/
 #include <linux/videodev2.h>	/* kernel radio structs		*/
 #include <linux/mutex.h>
-#include <linux/version.h>      /* for KERNEL_VERSION MACRO     */
 #include <linux/io.h>		/* outb, outb_p			*/
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -37,6 +36,7 @@
 MODULE_AUTHOR("R.OFFERMANNS & others");
 MODULE_DESCRIPTION("A driver for the TerraTec ActiveRadio Standalone radio card.");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.0.3");
 
 #ifndef CONFIG_RADIO_TERRATEC_PORT
 #define CONFIG_RADIO_TERRATEC_PORT 0x590
@@ -48,8 +48,6 @@ static int radio_nr = -1;
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "I/O address of the TerraTec ActiveRadio card (0x590 or 0x591)");
 module_param(radio_nr, int, 0);
-
-#define RADIO_VERSION KERNEL_VERSION(0, 0, 2)
 
 static struct v4l2_queryctrl radio_qctrl[] = {
 	{
@@ -205,7 +203,6 @@ static int vidioc_querycap(struct file *file, void *priv,
 	strlcpy(v->driver, "radio-terratec", sizeof(v->driver));
 	strlcpy(v->card, "ActiveRadio", sizeof(v->card));
 	strlcpy(v->bus_info, "ISA", sizeof(v->bus_info));
-	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -240,6 +237,8 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 {
 	struct terratec *tt = video_drvdata(file);
 
+	if (f->tuner != 0 || f->type != V4L2_TUNER_RADIO)
+		return -EINVAL;
 	tt_setfreq(tt, f->frequency);
 	return 0;
 }
@@ -249,6 +248,8 @@ static int vidioc_g_frequency(struct file *file, void *priv,
 {
 	struct terratec *tt = video_drvdata(file);
 
+	if (f->tuner != 0)
+		return -EINVAL;
 	f->type = V4L2_TUNER_RADIO;
 	f->frequency = tt->curfreq;
 	return 0;
@@ -334,7 +335,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static const struct v4l2_file_operations terratec_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= video_ioctl2,
+	.unlocked_ioctl	= video_ioctl2,
 };
 
 static const struct v4l2_ioctl_ops terratec_ioctl_ops = {
@@ -385,6 +386,9 @@ static int __init terratec_init(void)
 
 	mutex_init(&tt->lock);
 
+	/* mute card - prevents noisy bootups */
+	tt_write_vol(tt, 0);
+
 	if (video_register_device(&tt->vdev, VFL_TYPE_RADIO, radio_nr) < 0) {
 		v4l2_device_unregister(&tt->v4l2_dev);
 		release_region(tt->io, 2);
@@ -392,9 +396,6 @@ static int __init terratec_init(void)
 	}
 
 	v4l2_info(v4l2_dev, "TERRATEC ActivRadio Standalone card driver.\n");
-
-	/* mute card - prevents noisy bootups */
-	tt_write_vol(tt, 0);
 	return 0;
 }
 

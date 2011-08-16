@@ -23,21 +23,22 @@
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 #include <linux/kdev_t.h>
+#include <linux/slab.h>
 
 #include <media/v4l2-device.h>
 #include <media/tuner.h>
 #include <media/tveeprom.h>
 #include <media/videobuf-dma-sg.h>
 #include <media/videobuf-dvb.h>
+#include <media/rc-core.h>
 
 #include "btcx-risc.h"
 #include "cx23885-reg.h"
 #include "media/cx2341x.h"
 
-#include <linux/version.h>
 #include <linux/mutex.h>
 
-#define CX23885_VERSION_CODE KERNEL_VERSION(0, 0, 2)
+#define CX23885_VERSION "0.0.3"
 
 #define UNSET (-1U)
 
@@ -81,6 +82,10 @@
 #define CX23885_BOARD_COMPRO_VIDEOMATE_E800    25
 #define CX23885_BOARD_HAUPPAUGE_HVR1290        26
 #define CX23885_BOARD_MYGICA_X8558PRO          27
+#define CX23885_BOARD_LEADTEK_WINFAST_PXTV1200 28
+#define CX23885_BOARD_GOTVIEW_X5_3D_HYBRID     29
+#define CX23885_BOARD_NETUP_DUAL_DVB_T_C_CI_RF 30
+#define CX23885_BOARD_LEADTEK_WINFAST_PXDVR3200_H_XC4000 31
 
 #define GPIO_0 0x00000001
 #define GPIO_1 0x00000002
@@ -200,14 +205,16 @@ typedef enum {
 struct cx23885_board {
 	char                    *name;
 	port_t			porta, portb, portc;
+	int		num_fds_portb, num_fds_portc;
 	unsigned int		tuner_type;
 	unsigned int		radio_type;
 	unsigned char		tuner_addr;
 	unsigned char		radio_addr;
+	unsigned int		tuner_bus;
 
 	/* Vendors can and do run the PCIe bridge at different
 	 * clock rates, driven physically by crystals on the PCBs.
-	 * The core has to accomodate this. This allows the user
+	 * The core has to accommodate this. This allows the user
 	 * to add new boards with new frequencys. The value is
 	 * expressed in Hz.
 	 *
@@ -216,7 +223,7 @@ struct cx23885_board {
 	 */
 	u32			clk_freq;
 	struct cx23885_input    input[MAX_CX23885_INPUT];
-	int			cimax; /* for NetUP */
+	int			ci_type; /* for NetUP */
 };
 
 struct cx23885_subid {
@@ -299,11 +306,19 @@ struct cx23885_tsport {
 
 	/* Allow a single tsport to have multiple frontends */
 	u32                        num_frontends;
+	void                (*gate_ctrl)(struct cx23885_tsport *port, int open);
 	void                       *port_priv;
 };
 
+struct cx23885_kernel_ir {
+	struct cx23885_dev	*cx;
+	char			*name;
+	char			*phys;
+
+	struct rc_dev		*rc;
+};
+
 struct cx23885_dev {
-	struct list_head           devlist;
 	atomic_t                   refcount;
 	struct v4l2_device 	   v4l2_dev;
 
@@ -314,6 +329,7 @@ struct cx23885_dev {
 	u32                        __iomem *lmmio;
 	u8                         __iomem *bmmio;
 	int                        pci_irqmask;
+	spinlock_t		   pci_irqmask_lock; /* protects mask reg too */
 	int                        hwrevision;
 
 	/* This valud is board specific and is used to configure the
@@ -350,10 +366,12 @@ struct cx23885_dev {
 	v4l2_std_id                tvnorm;
 	unsigned int               tuner_type;
 	unsigned char              tuner_addr;
+	unsigned int               tuner_bus;
 	unsigned int               radio_type;
 	unsigned char              radio_addr;
 	unsigned int               has_radio;
 	struct v4l2_subdev 	   *sd_cx25840;
+	struct work_struct	   cx25840_work;
 
 	/* Infrared */
 	struct v4l2_subdev         *sd_ir;
@@ -362,7 +380,7 @@ struct cx23885_dev {
 	struct work_struct	   ir_tx_work;
 	unsigned long		   ir_tx_notifications;
 
-	struct card_ir		   *ir_input;
+	struct cx23885_kernel_ir   *kernel_ir;
 	atomic_t		   ir_input_stopping;
 
 	/* V4l */
@@ -392,14 +410,13 @@ static inline struct cx23885_dev *to_cx23885(struct v4l2_device *v4l2_dev)
 #define call_all(dev, o, f, args...) \
 	v4l2_device_call_all(&dev->v4l2_dev, 0, o, f, ##args)
 
-#define CX23885_HW_888_IR (1 << 0)
+#define CX23885_HW_888_IR  (1 << 0)
+#define CX23885_HW_AV_CORE (1 << 1)
 
 #define call_hw(dev, grpid, o, f, args...) \
 	v4l2_device_call_all(&dev->v4l2_dev, grpid, o, f, ##args)
 
 extern struct v4l2_subdev *cx23885_find_hw(struct cx23885_dev *dev, u32 hw);
-
-extern struct list_head cx23885_devlist;
 
 #define SRAM_CH01  0 /* Video A */
 #define SRAM_CH02  1 /* VBI A */
@@ -475,6 +492,10 @@ extern u32 cx23885_gpio_get(struct cx23885_dev *dev, u32 mask);
 extern void cx23885_gpio_enable(struct cx23885_dev *dev, u32 mask,
 	int asoutput);
 
+extern void cx23885_irq_add_enable(struct cx23885_dev *dev, u32 mask);
+extern void cx23885_irq_enable(struct cx23885_dev *dev, u32 mask);
+extern void cx23885_irq_disable(struct cx23885_dev *dev, u32 mask);
+extern void cx23885_irq_remove(struct cx23885_dev *dev, u32 mask);
 
 /* ----------------------------------------------------------- */
 /* cx23885-cards.c                                             */

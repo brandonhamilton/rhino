@@ -24,9 +24,6 @@
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/i2c/pca953x.h>
-#include <linux/mtd/mtd.h>
-#include <linux/mtd/partitions.h>
-#include <linux/mtd/nand.h>
 #include <linux/can/platform/ti_hecc.h>
 #include <linux/regulator/machine.h>
 #include <linux/davinci_emac.h>
@@ -39,139 +36,47 @@
 #include <asm/mach/map.h>
 
 #include <plat/board.h>
-#include <plat/control.h>
 #include <plat/common.h>
 #include <plat/usb.h>
-#include <plat/display.h>
-#include <plat/gpmc.h>
-#include <plat/nand.h>
+#include <plat/omap_hwmod.h>
 #include <plat/mcspi.h>
+#include <video/omapdss.h>
+#include <video/omap-panel-generic-dpi.h>
 
-#include "mmc-am3517evm.h"
 #include "mux.h"
+#include "control.h"
 
-#define GPMC_CS0_BASE  0x60
-#define GPMC_CS_SIZE   0x30
+#define AM35XX_EVM_MDIO_FREQUENCY	(1000000)
 
-#define NAND_BLOCK_SIZE        SZ_128K
-
-static struct mtd_partition rhino_nand_partitions[] = {
-/* All the partition sizes are listed in terms of NAND block size */
-{
-       .name           = "xloader-nand",
-       .offset         = 0,
-       .size           = 4*(SZ_128K),
-       .mask_flags     = MTD_WRITEABLE
-},
-{
-       .name           = "uboot-nand",
-       .offset         = MTDPART_OFS_APPEND,
-       .size           = 15*(SZ_128K),
-       .mask_flags     = MTD_WRITEABLE
-},
-{
-       .name           = "params-nand",
-       .offset         = MTDPART_OFS_APPEND,
-       .size           = SZ_128K
-},
-{
-       .name           = "linux-nand",
-       .offset         = MTDPART_OFS_APPEND,
-       .size           = 40*(SZ_128K)
-},
-{
-       .name           = "jffs2-nand",
-       .size           = MTDPART_SIZ_FULL,
-       .offset         = MTDPART_OFS_APPEND,
-},
+static struct mdio_platform_data rhino_mdio_pdata = {
+	.bus_freq	= AM35XX_EVM_MDIO_FREQUENCY,
 };
 
-static struct omap_nand_platform_data rhino_nand_data = {
-       .parts          = rhino_nand_partitions,
-       .nr_parts       = ARRAY_SIZE(rhino_nand_partitions),
-       .nand_setup     = NULL,
-       .dma_channel    = -1,           /* disable DMA in OMAP NAND driver */
-       .dev_ready      = NULL,
+static struct resource am3517_mdio_resources[] = {
+	{
+		.start  = AM35XX_IPSS_EMAC_BASE + AM35XX_EMAC_MDIO_OFFSET,
+		.end    = AM35XX_IPSS_EMAC_BASE + AM35XX_EMAC_MDIO_OFFSET +
+			  SZ_4K - 1,
+		.flags  = IORESOURCE_MEM,
+	},
 };
 
-static struct resource rhino_nand_resource = {
-       .flags          = IORESOURCE_MEM,
+static struct platform_device am3517_mdio_device = {
+	.name		= "davinci_mdio",
+	.id		= 0,
+	.num_resources	= ARRAY_SIZE(am3517_mdio_resources),
+	.resource	= am3517_mdio_resources,
+	.dev.platform_data = &rhino_mdio_pdata,
 };
-
-static struct platform_device rhino_nand_device = {
-       .name           = "omap2-nand",
-       .id             = 0,
-       .dev            = {
-                       .platform_data  = &rhino_nand_data,
-       },
-       .num_resources  = 1,
-       .resource       = &rhino_nand_resource,
-};
-
-void __init rhino_flash_init(void)
-{
-       u8 cs = 0;
-       u8 nandcs = GPMC_CS_NUM + 1;
-       u32 gpmc_base_add = OMAP34XX_GPMC_VIRT;
-
-       while (cs < GPMC_CS_NUM) {
-               u32 ret = 0;
-               ret = gpmc_cs_read_reg(cs, GPMC_CS_CONFIG1);
-
-               if ((ret & 0xC00) == 0x800) {
-                       /* Found it!! */
-                       if (nandcs > GPMC_CS_NUM)
-                               nandcs = cs;
-               }
-               cs++;
-       }
-       if (nandcs > GPMC_CS_NUM) {
-               printk(KERN_INFO "NAND: Unable to find configuration "
-                       " in GPMC\n ");
-               return;
-       }
-
-       if (nandcs < GPMC_CS_NUM) {
-               rhino_nand_data.cs   = nandcs;
-               rhino_nand_data.gpmc_cs_baseaddr = (void *)(gpmc_base_add +
-                                       GPMC_CS0_BASE + nandcs*GPMC_CS_SIZE);
-               rhino_nand_data.gpmc_baseaddr   = (void *) (gpmc_base_add);
-
-               if (platform_device_register(&rhino_nand_device) < 0)
-                       printk(KERN_ERR "Unable to register NAND device\n");
-
-       }
-}
-
-
-#define AM35XX_EVM_PHY_MASK		(0xF)
-#define AM35XX_EVM_MDIO_FREQUENCY    	(1000000)
 
 static struct emac_platform_data rhino_emac_pdata = {
-	.phy_mask       = AM35XX_EVM_PHY_MASK,
-	.mdio_max_freq  = AM35XX_EVM_MDIO_FREQUENCY,
 	.rmii_en        = 1,
 };
-
-static int __init eth_addr_setup(char *str)
-{
-	int i;
-
-	if(str == NULL)
-		return 0;
-	for(i = 0; i <  ETH_ALEN; i++)
-		rhino_emac_pdata.mac_addr[i] = simple_strtol(&str[i*3],
-							(char **)NULL, 16);
-	return 1;
-}
-
-/* Get MAC address from kernel boot parameter eth=AA:BB:CC:DD:EE:FF */
-__setup("eth=", eth_addr_setup);
 
 static struct resource am3517_emac_resources[] = {
 	{
 		.start  = AM35XX_IPSS_EMAC_BASE,
-		.end    = AM35XX_IPSS_EMAC_BASE + 0x3FFFF,
+		.end    = AM35XX_IPSS_EMAC_BASE + 0x2FFFF,
 		.flags  = IORESOURCE_MEM,
 	},
 	{
@@ -226,21 +131,22 @@ static void am3517_disable_ethernet_int(void)
 	regval = omap_ctrl_readl(AM35XX_CONTROL_LVL_INTR_CLEAR);
 }
 
-void rhino_ethernet_init(struct emac_platform_data *pdata)
+static void rhino_ethernet_init(struct emac_platform_data *pdata)
 {
 	unsigned int regval;
 
 	pdata->ctrl_reg_offset          = AM35XX_EMAC_CNTRL_OFFSET;
 	pdata->ctrl_mod_reg_offset      = AM35XX_EMAC_CNTRL_MOD_OFFSET;
 	pdata->ctrl_ram_offset          = AM35XX_EMAC_CNTRL_RAM_OFFSET;
-	pdata->mdio_reg_offset          = AM35XX_EMAC_MDIO_OFFSET;
 	pdata->ctrl_ram_size            = AM35XX_EMAC_CNTRL_RAM_SIZE;
 	pdata->version                  = EMAC_VERSION_2;
 	pdata->hw_ram_addr              = AM35XX_EMAC_HW_RAM_ADDR;
-	pdata->interrupt_enable 	= am3517_enable_ethernet_int;
-	pdata->interrupt_disable 	= am3517_disable_ethernet_int;
+	pdata->interrupt_enable 	    = am3517_enable_ethernet_int;
+	pdata->interrupt_disable 	    = am3517_disable_ethernet_int;
 	am3517_emac_device.dev.platform_data     = pdata;
 	platform_device_register(&am3517_emac_device);
+	platform_device_register(&am3517_mdio_device);
+	clk_add_alias(NULL, dev_name(&am3517_mdio_device.dev), NULL, &am3517_emac_device.dev);
 
 	regval = omap_ctrl_readl(AM35XX_CONTROL_IP_SW_RESET);
 	regval = regval & (~(AM35XX_CPGMACSS_SW_RST));
@@ -278,13 +184,18 @@ static void rhino_disable_dvi(struct omap_dss_device *dssdev)
 
 }
 
-static struct omap_dss_device rhino_dvi_device = {
-	.type				= OMAP_DISPLAY_TYPE_DPI,
-	.name				= "dvi",
-	.driver_name		= "generic_panel",
-	.phy.dpi.data_lines	= 24,
+static struct panel_generic_dpi_data dvi_panel = {
+	.name				= "generic",
 	.platform_enable	= rhino_enable_dvi,
 	.platform_disable	= rhino_disable_dvi,
+};
+
+static struct omap_dss_device rhino_dvi_device = {
+	.type			= OMAP_DISPLAY_TYPE_DPI,
+	.name			= "dvi",
+	.driver_name	= "generic_dpi_panel",
+	.data			= &dvi_panel,
+	.phy.dpi.data_lines	= 24,
 };
 
 static struct omap_dss_device *rhino_dss_devices[] = {
@@ -296,14 +207,6 @@ static struct omap_dss_board_info rhino_dss_data = {
 	.num_devices	= ARRAY_SIZE(rhino_dss_devices),
 	.devices		= rhino_dss_devices,
 	.default_device	= &rhino_dvi_device,
-};
-
-static struct platform_device rhino_dss_device = {
-		.name		= "omapdss",
-		.id		= -1,
-		.dev		= {
-			.platform_data	= &rhino_dss_data,
-		},
 };
 
 /* TPS65023 specific initialization */
@@ -497,45 +400,58 @@ static int __init rhino_spi_init(void)
 	return 0;
 }
 
+static char *rhino_unused_hwmods[] = {
+	"iva",
+	"sr1_hwmod",
+	"sr2_hwmod",
+	"mailbox",
+	"usb_otg_hs",
+	NULL,
+};
+
 /*
  * Board initialization
  */
-static struct omap_board_config_kernel rhino_config[] __initdata = {
-};
-
-static struct platform_device *rhino_devices[] __initdata = {
-	&rhino_dss_device,
-};
-
-static void __init rhino_init_irq(void)
+static void __init rhino_init_early(void)
 {
-	omap_board_config = rhino_config;
-	omap_board_config_size = ARRAY_SIZE(rhino_config);
-
-	omap2_init_common_hw(NULL, NULL, NULL, NULL, NULL);
-	omap_init_irq();
-	omap_gpio_init();
+	omap2_disable_unused_hwmods(rhino_unused_hwmods);
+	omap2_init_common_infrastructure();
+	omap2_init_common_devices(NULL, NULL);
 }
 
-static struct am3517_hsmmc_info mmc[] = {
-	{
-		.mmc            = 2,
-		.wires          = 8,
-		.gpio_cd        = 137,
-		.gpio_wp        = 136,
-	},
-	{}      /* Terminator */
+static struct omap_musb_board_data musb_board_data = {
+	.interface_type         = MUSB_INTERFACE_ULPI,
+	.mode                   = MUSB_OTG,
+	.power                  = 500,
+	.set_phy_power			= am35x_musb_phy_power,
+	.clear_irq				= am35x_musb_clear_irq,
+	.set_mode				= am35x_set_mode,
+	.reset					= am35x_musb_reset,
 };
 
 static __init void rhino_musb_init(void)
 {
-	usb_musb_init();
+	u32 devconf2;
+
+	/*
+	 * Set up USB clock/mode in the DEVCONF2 register.
+	 */
+	devconf2 = omap_ctrl_readl(AM35XX_CONTROL_DEVCONF2);
+
+	/* USB2.0 PHY reference clock is 13 MHz */
+	devconf2 &= ~(CONF2_REFFREQ | CONF2_OTGMODE | CONF2_PHY_GPIOMODE);
+	devconf2 |=  CONF2_REFFREQ_13MHZ | CONF2_SESENDEN | CONF2_VBDTCTEN
+			| CONF2_DATPOL;
+
+	omap_ctrl_writel(devconf2, AM35XX_CONTROL_DEVCONF2);
+
+	usb_musb_init(&musb_board_data);
 }
 
-static const struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
-	.port_mode[0] = EHCI_HCD_OMAP_MODE_PHY,
-	.port_mode[1] = EHCI_HCD_OMAP_MODE_PHY,
-	.port_mode[2] = EHCI_HCD_OMAP_MODE_UNKNOWN,
+static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
+	.port_mode[0] = OMAP_EHCI_PORT_MODE_PHY,
+	.port_mode[1] = OMAP_EHCI_PORT_MODE_PHY,
+	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
 
 	.phy_reset  = true,
 	.reset_gpio_port[0]  = 57,
@@ -543,28 +459,68 @@ static const struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 	.reset_gpio_port[2]  = -EINVAL
 };
 
+static struct resource am3517_hecc_resources[] = {
+	{
+		.start	= AM35XX_IPSS_HECC_BASE,
+		.end	= AM35XX_IPSS_HECC_BASE + 0x3FFF,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.start	= INT_35XX_HECC0_IRQ,
+		.end	= INT_35XX_HECC0_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device am3517_hecc_device = {
+	.name		= "ti_hecc",
+	.id		= -1,
+	.num_resources	= ARRAY_SIZE(am3517_hecc_resources),
+	.resource	= am3517_hecc_resources,
+};
+
+static struct ti_hecc_platform_data rhino_hecc_pdata = {
+	.scc_hecc_offset	= AM35XX_HECC_SCC_HECC_OFFSET,
+	.scc_ram_offset		= AM35XX_HECC_SCC_RAM_OFFSET,
+	.hecc_ram_offset	= AM35XX_HECC_RAM_OFFSET,
+	.mbx_offset		= AM35XX_HECC_MBOX_OFFSET,
+	.int_line		= AM35XX_HECC_INT_LINE,
+	.version		= AM35XX_HECC_VERSION,
+};
+
+static void rhino_hecc_init(struct ti_hecc_platform_data *pdata)
+{
+	am3517_hecc_device.dev.platform_data = pdata;
+	platform_device_register(&am3517_hecc_device);
+}
+
+static struct omap_board_config_kernel rhino_config[] __initdata = {
+};
+
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
+	/* USB OTG DRVVBUS offset = 0x212 */
+	OMAP3_MUX(SAD2D_MCAD23, OMAP_MUX_MODE0 | OMAP_PIN_INPUT_PULLDOWN),
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
-#else
-#define board_mux	NULL
 #endif
 
 static void __init rhino_init(void)
 {
-	rhino_i2c_init();
-	
+	omap_board_config = rhino_config;
+	omap_board_config_size = ARRAY_SIZE(rhino_config);
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	
-	platform_add_devices(rhino_devices, ARRAY_SIZE(rhino_devices));
-		
+
+	rhino_i2c_init();		
+	omap_display_init(&rhino_dss_data);
 	omap_serial_init();
-	rhino_flash_init();
-	rhino_musb_init();
 
-	usb_ehci_init(&ehci_pdata);
+	/* Configure GPIO for EHCI port */
+	omap_mux_init_gpio(57, OMAP_PIN_OUTPUT);
+	usbhs_init(&usbhs_bdata);
+	rhino_hecc_init(&rhino_hecc_pdata);
 
+	/* RTC */
 	omap_mux_init_gpio(GPIO_RTCDS1390_IRQ, OMAP_PIN_INPUT_PULLDOWN);
 	if (gpio_request(GPIO_RTCDS1390_IRQ, "rtcs35390a-irq") < 0)
 		printk(KERN_WARNING "failed to request GPIO#%d\n", GPIO_RTCDS1390_IRQ);
@@ -577,22 +533,16 @@ static void __init rhino_init(void)
 	/*Ethernet*/
 	rhino_ethernet_init(&rhino_emac_pdata);
 	
-	/* MMC init function */
-	am3517_mmc_init(mmc);
-}
-
-static void __init rhino_map_io(void)
-{
-	omap2_set_globals_343x();
-	omap2_map_common_io();
+	/* MUSB */
+	rhino_musb_init();
 }
 
 MACHINE_START(RHINO, "RHINO v1")
-	.phys_io	= 0x48000000,
-	.io_pg_offst	= ((0xd8000000) >> 18) & 0xfffc,
 	.boot_params	= 0x80000100,
-	.map_io			= rhino_map_io,
-	.init_irq		= rhino_init_irq,
+	.reserve		= omap_reserve,
+	.map_io			= omap3_map_io,
+	.init_early		= rhino_init_early,
+	.init_irq		= omap3_init_irq,
 	.init_machine	= rhino_init,
-	.timer			= &omap_timer,
+	.timer			= &omap3_timer,
 MACHINE_END

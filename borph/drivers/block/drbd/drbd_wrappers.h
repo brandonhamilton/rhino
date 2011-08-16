@@ -18,23 +18,9 @@ static inline void drbd_set_my_capacity(struct drbd_conf *mdev,
 
 #define drbd_bio_uptodate(bio) bio_flagged(bio, BIO_UPTODATE)
 
-static inline int drbd_bio_has_active_page(struct bio *bio)
-{
-	struct bio_vec *bvec;
-	int i;
-
-	__bio_for_each_segment(bvec, bio, i, 0) {
-		if (page_count(bvec->bv_page) > 1)
-			return 1;
-	}
-
-	return 0;
-}
-
 /* bi_end_io handlers */
 extern void drbd_md_io_complete(struct bio *bio, int error);
-extern void drbd_endio_read_sec(struct bio *bio, int error);
-extern void drbd_endio_write_sec(struct bio *bio, int error);
+extern void drbd_endio_sec(struct bio *bio, int error);
 extern void drbd_endio_pri(struct bio *bio, int error);
 
 /*
@@ -53,28 +39,10 @@ static inline void drbd_generic_make_request(struct drbd_conf *mdev,
 		return;
 	}
 
-	if (FAULT_ACTIVE(mdev, fault_type))
+	if (drbd_insert_fault(mdev, fault_type))
 		bio_endio(bio, -EIO);
 	else
 		generic_make_request(bio);
-}
-
-static inline void drbd_plug_device(struct drbd_conf *mdev)
-{
-	struct request_queue *q;
-	q = bdev_get_queue(mdev->this_bdev);
-
-	spin_lock_irq(q->queue_lock);
-
-/* XXX the check on !blk_queue_plugged is redundant,
- * implicitly checked in blk_plug_device */
-
-	if (!blk_queue_plugged(q)) {
-		blk_plug_device(q);
-		del_timer(&q->unplug_timer);
-		/* unplugging should not happen automatically... */
-	}
-	spin_unlock_irq(q->queue_lock);
 }
 
 static inline int drbd_crypto_is_hash(struct crypto_tfm *tfm)

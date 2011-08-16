@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
 #include <linux/mtd/physmap.h>
@@ -55,7 +54,7 @@ static struct sys_timer iq80331_timer = {
  * IQ80331 PCI.
  */
 static int __init
-iq80331_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
+iq80331_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 
@@ -142,8 +141,6 @@ static void __init iq80331_init_machine(void)
 
 MACHINE_START(IQ80331, "Intel IQ80331")
 	/* Maintainer: Intel Corp. */
-	.phys_io	= 0xfefff000,
-	.io_pg_offst	= ((0xfffff000) >> 18) & 0xfffc,
 	.boot_params	= 0x00000100,
 	.map_io		= iop3xx_map_io,
 	.init_irq	= iop33x_init_irq,

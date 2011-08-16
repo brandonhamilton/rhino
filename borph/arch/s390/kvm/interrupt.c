@@ -10,12 +10,13 @@
  *    Author(s): Carsten Otte <cotte@de.ibm.com>
  */
 
-#include <asm/lowcore.h>
-#include <asm/uaccess.h>
-#include <linux/hrtimer.h>
 #include <linux/interrupt.h>
 #include <linux/kvm_host.h>
+#include <linux/hrtimer.h>
 #include <linux/signal.h>
+#include <linux/slab.h>
+#include <asm/asm-offsets.h>
+#include <asm/uaccess.h>
 #include "kvm-s390.h"
 #include "gaccess.h"
 
@@ -127,6 +128,10 @@ static void __do_deliver_interrupt(struct kvm_vcpu *vcpu,
 		if (rc == -EFAULT)
 			exception = 1;
 
+		rc = put_guest_u16(vcpu, __LC_CPU_ADDRESS, inti->emerg.code);
+		if (rc == -EFAULT)
+			exception = 1;
+
 		rc = copy_to_guest(vcpu, __LC_EXT_OLD_PSW,
 			 &vcpu->arch.sie_block->gpsw, sizeof(psw_t));
 		if (rc == -EFAULT)
@@ -187,8 +192,8 @@ static void __do_deliver_interrupt(struct kvm_vcpu *vcpu,
 		if (rc == -EFAULT)
 			exception = 1;
 
-		rc = put_guest_u64(vcpu, __LC_PFAULT_INTPARM,
-			inti->ext.ext_params2);
+		rc = put_guest_u64(vcpu, __LC_EXT_PARAMS2,
+				   inti->ext.ext_params2);
 		if (rc == -EFAULT)
 			exception = 1;
 		break;
@@ -342,7 +347,7 @@ int kvm_s390_handle_wait(struct kvm_vcpu *vcpu)
 	if (psw_interrupts_disabled(vcpu)) {
 		VCPU_EVENT(vcpu, 3, "%s", "disabled wait");
 		__unset_cpu_idle(vcpu);
-		return -ENOTSUPP; /* disabled wait */
+		return -EOPNOTSUPP; /* disabled wait */
 	}
 
 	if (psw_extint_disabled(vcpu) ||

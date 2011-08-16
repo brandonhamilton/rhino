@@ -30,8 +30,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/pci.h>
-#include <linux/workqueue.h>
 #include "../pci.h"
 #include "pciehp.h"
 
@@ -49,7 +49,7 @@ static int queue_interrupt_event(struct slot *p_slot, u32 event_type)
 	info->p_slot = p_slot;
 	INIT_WORK(&info->work, interrupt_event_handler);
 
-	schedule_work(&info->work);
+	queue_work(pciehp_wq, &info->work);
 
 	return 0;
 }
@@ -213,6 +213,9 @@ static int board_added(struct slot *p_slot)
 		goto err_exit;
 	}
 
+	/* Wait for 1 second after checking link training status */
+	msleep(1000);
+
 	/* Check for a power fault */
 	if (ctrl->power_fault_detected || pciehp_query_power_fault(p_slot)) {
 		ctrl_err(ctrl, "Power fault on slot %s\n", slot_name(p_slot));
@@ -341,9 +344,10 @@ void pciehp_queue_pushbutton_work(struct work_struct *work)
 		p_slot->state = POWERON_STATE;
 		break;
 	default:
+		kfree(info);
 		goto out;
 	}
-	queue_work(pciehp_wq, &info->work);
+	queue_work(pciehp_ordered_wq, &info->work);
  out:
 	mutex_unlock(&p_slot->lock);
 }
@@ -376,7 +380,7 @@ static void handle_button_press_event(struct slot *p_slot)
 		if (ATTN_LED(ctrl))
 			pciehp_set_attention_status(p_slot, 0);
 
-		schedule_delayed_work(&p_slot->work, 5*HZ);
+		queue_delayed_work(pciehp_wq, &p_slot->work, 5*HZ);
 		break;
 	case BLINKINGOFF_STATE:
 	case BLINKINGON_STATE:
@@ -438,7 +442,7 @@ static void handle_surprise_event(struct slot *p_slot)
 	else
 		p_slot->state = POWERON_STATE;
 
-	queue_work(pciehp_wq, &info->work);
+	queue_work(pciehp_ordered_wq, &info->work);
 }
 
 static void interrupt_event_handler(struct work_struct *work)

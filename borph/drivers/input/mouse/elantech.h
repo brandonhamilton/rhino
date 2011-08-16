@@ -77,6 +77,11 @@
 #define ETP_YMIN_V2			(   0 + ETP_EDGE_FUZZ_V2)
 #define ETP_YMAX_V2			( 768 - ETP_EDGE_FUZZ_V2)
 
+#define ETP_PMIN_V2			0
+#define ETP_PMAX_V2			255
+#define ETP_WMIN_V2			0
+#define ETP_WMAX_V2			15
+
 /*
  * For two finger touches the coordinate of each finger gets reported
  * separately but with reduced resolution.
@@ -100,11 +105,12 @@ struct elantech_data {
 	unsigned char reg_26;
 	unsigned char debug;
 	unsigned char capabilities;
-	unsigned char fw_version_maj;
-	unsigned char fw_version_min;
+	bool paritycheck;
+	bool jumpy_cursor;
+	bool reports_pressure;
 	unsigned char hw_version;
-	unsigned char paritycheck;
-	unsigned char jumpy_cursor;
+	unsigned int fw_version;
+	unsigned int single_finger_reports;
 	unsigned char parity[256];
 };
 

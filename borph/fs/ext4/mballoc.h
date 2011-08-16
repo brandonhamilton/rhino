@@ -17,7 +17,6 @@
 #include <linux/proc_fs.h>
 #include <linux/pagemap.h>
 #include <linux/seq_file.h>
-#include <linux/version.h>
 #include <linux/blkdev.h>
 #include <linux/mutex.h>
 #include "ext4_jbd2.h"
@@ -170,7 +169,7 @@ struct ext4_allocation_context {
 	/* original request */
 	struct ext4_free_extent ac_o_ex;
 
-	/* goal request (after normalization) */
+	/* goal request (normalized ac_o_ex) */
 	struct ext4_free_extent ac_g_ex;
 
 	/* the best found extent */
@@ -188,17 +187,11 @@ struct ext4_allocation_context {
 	__u16 ac_flags;		/* allocation hints */
 	__u8 ac_status;
 	__u8 ac_criteria;
-	__u8 ac_repeats;
 	__u8 ac_2order;		/* if request is to allocate 2^N blocks and
 				 * N > 0, the field stores N, otherwise 0 */
 	__u8 ac_op;		/* operation, for history only */
 	struct page *ac_bitmap_page;
 	struct page *ac_buddy_page;
-	/*
-	 * pointer to the held semaphore upon successful
-	 * block allocation
-	 */
-	struct rw_semaphore *alloc_semp;
 	struct ext4_prealloc_space *ac_pa;
 	struct ext4_locality_group *ac_lg;
 };
@@ -216,21 +209,13 @@ struct ext4_buddy {
 	struct super_block *bd_sb;
 	__u16 bd_blkbits;
 	ext4_group_t bd_group;
-	struct rw_semaphore *alloc_semp;
 };
 #define EXT4_MB_BITMAP(e4b)	((e4b)->bd_bitmap)
 #define EXT4_MB_BUDDY(e4b)	((e4b)->bd_buddy)
 
-#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
-
 static inline ext4_fsblk_t ext4_grp_offs_to_block(struct super_block *sb,
 					struct ext4_free_extent *fex)
 {
-	ext4_fsblk_t block;
-
-	block = (ext4_fsblk_t) fex->fe_group * EXT4_BLOCKS_PER_GROUP(sb)
-			+ fex->fe_start
-			+ le32_to_cpu(EXT4_SB(sb)->s_es->s_first_data_block);
-	return block;
+	return ext4_group_first_block_no(sb, fex->fe_group) + fex->fe_start;
 }
 #endif

@@ -16,13 +16,6 @@
 
 #include <asm/stacktrace.h>
 
-#include "dumpstack.h"
-
-/* Just a stub for now */
-int x86_is_stack_id(int id, char *name)
-{
-	return 0;
-}
 
 void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
@@ -41,24 +34,15 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 			stack = (unsigned long *)task->thread.sp;
 	}
 
-#ifdef CONFIG_FRAME_POINTER
-	if (!bp) {
-		if (task == current) {
-			/* Grab bp right from our regs */
-			get_bp(bp);
-		} else {
-			/* bp is the last reg pushed by switch_to */
-			bp = *(unsigned long *) task->thread.sp;
-		}
-	}
-#endif
+	if (!bp)
+		bp = stack_frame(task, regs);
 
 	for (;;) {
 		struct thread_info *context;
 
 		context = (struct thread_info *)
 			((unsigned long)stack & (~(THREAD_SIZE - 1)));
-		bp = print_context_stack(context, stack, bp, ops, data, NULL, &graph);
+		bp = ops->walk_stack(context, stack, bp, ops, data, NULL, &graph);
 
 		stack = (unsigned long *)context->previous_esp;
 		if (!stack)
@@ -89,11 +73,11 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		if (kstack_end(stack))
 			break;
 		if (i && ((i % STACKSLOTS_PER_LINE) == 0))
-			printk("\n%s", log_lvl);
-		printk(" %08lx", *stack++);
+			printk(KERN_CONT "\n");
+		printk(KERN_CONT " %08lx", *stack++);
 		touch_nmi_watchdog();
 	}
-	printk("\n");
+	printk(KERN_CONT "\n");
 	show_trace_log_lvl(task, regs, sp, bp, log_lvl);
 }
 
@@ -119,8 +103,7 @@ void show_registers(struct pt_regs *regs)
 		u8 *ip;
 
 		printk(KERN_EMERG "Stack:\n");
-		show_stack_log_lvl(NULL, regs, &regs->sp,
-				0, KERN_EMERG);
+		show_stack_log_lvl(NULL, regs, &regs->sp, 0, KERN_EMERG);
 
 		printk(KERN_EMERG "Code: ");
 

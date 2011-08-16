@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2009 Analog Devices Inc.
+ * Copyright 2004-2010 Analog Devices Inc.
  *
  * Licensed under the GPL-2 or later.
  */
@@ -29,6 +29,7 @@
 #include <asm/cpu.h>
 #include <asm/fixed_code.h>
 #include <asm/early_printk.h>
+#include <asm/irq_handler.h>
 
 u16 _bfin_swrst;
 EXPORT_SYMBOL(_bfin_swrst);
@@ -53,8 +54,7 @@ EXPORT_SYMBOL(mtd_size);
 #endif
 
 char __initdata command_line[COMMAND_LINE_SIZE];
-void __initdata *init_retx, *init_saved_retx, *init_saved_seqstat,
-	*init_saved_icplb_fault_addr, *init_saved_dcplb_fault_addr;
+struct blackfin_initial_pda __initdata initial_pda;
 
 /* boot memmap, for parsing "memmap=" */
 #define BFIN_MEMMAP_MAX		128 /* number of entries in bfin_memmap */
@@ -104,6 +104,8 @@ void __cpuinit bfin_setup_caches(unsigned int cpu)
 #ifdef CONFIG_BFIN_DCACHE
 	bfin_dcache_init(dcplb_tbl[cpu]);
 #endif
+
+	bfin_setup_cpudata(cpu);
 
 	/*
 	 * In cache coherence emulation mode, we need to have the
@@ -163,7 +165,6 @@ void __cpuinit bfin_setup_cpudata(unsigned int cpu)
 {
 	struct blackfin_cpudata *cpudata = &per_cpu(cpu_data, cpu);
 
-	cpudata->idle = current;
 	cpudata->imemctl = bfin_read_IMEM_CONTROL();
 	cpudata->dmemctl = bfin_read_DMEM_CONTROL();
 }
@@ -178,10 +179,10 @@ void __init bfin_cache_init(void)
 
 void __init bfin_relocate_l1_mem(void)
 {
-	unsigned long l1_code_length;
-	unsigned long l1_data_a_length;
-	unsigned long l1_data_b_length;
-	unsigned long l2_length;
+	unsigned long text_l1_len = (unsigned long)_text_l1_len;
+	unsigned long data_l1_len = (unsigned long)_data_l1_len;
+	unsigned long data_b_l1_len = (unsigned long)_data_b_l1_len;
+	unsigned long l2_len = (unsigned long)_l2_len;
 
 	early_shadow_stamp();
 
@@ -201,31 +202,71 @@ void __init bfin_relocate_l1_mem(void)
 
 	blackfin_dma_early_init();
 
-	/* if necessary, copy _stext_l1 to _etext_l1 to L1 instruction SRAM */
-	l1_code_length = _etext_l1 - _stext_l1;
-	if (l1_code_length)
-		early_dma_memcpy(_stext_l1, _l1_lma_start, l1_code_length);
+	/* if necessary, copy L1 text to L1 instruction SRAM */
+	if (L1_CODE_LENGTH && text_l1_len)
+		early_dma_memcpy(_stext_l1, _text_l1_lma, text_l1_len);
 
-	/* if necessary, copy _sdata_l1 to _sbss_l1 to L1 data bank A SRAM */
-	l1_data_a_length = _sbss_l1 - _sdata_l1;
-	if (l1_data_a_length)
-		early_dma_memcpy(_sdata_l1, _l1_lma_start + l1_code_length, l1_data_a_length);
+	/* if necessary, copy L1 data to L1 data bank A SRAM */
+	if (L1_DATA_A_LENGTH && data_l1_len)
+		early_dma_memcpy(_sdata_l1, _data_l1_lma, data_l1_len);
 
-	/* if necessary, copy _sdata_b_l1 to _sbss_b_l1 to L1 data bank B SRAM */
-	l1_data_b_length = _sbss_b_l1 - _sdata_b_l1;
-	if (l1_data_b_length)
-		early_dma_memcpy(_sdata_b_l1, _l1_lma_start + l1_code_length +
-			l1_data_a_length, l1_data_b_length);
+	/* if necessary, copy L1 data B to L1 data bank B SRAM */
+	if (L1_DATA_B_LENGTH && data_b_l1_len)
+		early_dma_memcpy(_sdata_b_l1, _data_b_l1_lma, data_b_l1_len);
 
 	early_dma_memcpy_done();
 
-	/* if necessary, copy _stext_l2 to _edata_l2 to L2 SRAM */
-	if (L2_LENGTH != 0) {
-		l2_length = _sbss_l2 - _stext_l2;
-		if (l2_length)
-			memcpy(_stext_l2, _l2_lma_start, l2_length);
-	}
+#if defined(CONFIG_SMP) && defined(CONFIG_ICACHE_FLUSH_L1)
+	blackfin_iflush_l1_entry[0] = (unsigned long)blackfin_icache_flush_range_l1;
+#endif
+
+	/* if necessary, copy L2 text/data to L2 SRAM */
+	if (L2_LENGTH && l2_len)
+		memcpy(_stext_l2, _l2_lma, l2_len);
 }
+
+#ifdef CONFIG_SMP
+void __init bfin_relocate_coreb_l1_mem(void)
+{
+	unsigned long text_l1_len = (unsigned long)_text_l1_len;
+	unsigned long data_l1_len = (unsigned long)_data_l1_len;
+	unsigned long data_b_l1_len = (unsigned long)_data_b_l1_len;
+
+	blackfin_dma_early_init();
+
+	/* if necessary, copy L1 text to L1 instruction SRAM */
+	if (L1_CODE_LENGTH && text_l1_len)
+		early_dma_memcpy((void *)COREB_L1_CODE_START, _text_l1_lma,
+				text_l1_len);
+
+	/* if necessary, copy L1 data to L1 data bank A SRAM */
+	if (L1_DATA_A_LENGTH && data_l1_len)
+		early_dma_memcpy((void *)COREB_L1_DATA_A_START, _data_l1_lma,
+				data_l1_len);
+
+	/* if necessary, copy L1 data B to L1 data bank B SRAM */
+	if (L1_DATA_B_LENGTH && data_b_l1_len)
+		early_dma_memcpy((void *)COREB_L1_DATA_B_START, _data_b_l1_lma,
+				data_b_l1_len);
+
+	early_dma_memcpy_done();
+
+#ifdef CONFIG_ICACHE_FLUSH_L1
+	blackfin_iflush_l1_entry[1] = (unsigned long)blackfin_icache_flush_range_l1 -
+			(unsigned long)_stext_l1 + COREB_L1_CODE_START;
+#endif
+}
+#endif
+
+#ifdef CONFIG_ROMKERNEL
+void __init bfin_relocate_xip_data(void)
+{
+	early_shadow_stamp();
+
+	memcpy(_sdata, _data_lma, (unsigned long)_data_len - THREAD_SIZE + sizeof(struct thread_info));
+	memcpy(_sinitdata, _init_data_lma, (unsigned long)_init_data_len);
+}
+#endif
 
 /* add_memory_region to memmap */
 static void __init add_memory_region(unsigned long long start,
@@ -511,7 +552,7 @@ static __init void memory_setup(void)
 #endif
 	unsigned long max_mem;
 
-	_rambase = (unsigned long)_stext;
+	_rambase = CONFIG_BOOT_LOAD;
 	_ramstart = (unsigned long)_end;
 
 	if (DMA_UNCACHED_REGION > (_ramend - _ramstart)) {
@@ -604,13 +645,13 @@ static __init void memory_setup(void)
 	}
 
 #ifdef CONFIG_MPU
+#if defined(CONFIG_ROMFS_ON_MTD) && defined(CONFIG_MTD_ROM)
+	page_mask_nelts = (((_ramend + ASYNC_BANK3_BASE + ASYNC_BANK3_SIZE -
+					ASYNC_BANK0_BASE) >> PAGE_SHIFT) + 31) / 32;
+#else
 	page_mask_nelts = ((_ramend >> PAGE_SHIFT) + 31) / 32;
-	page_mask_order = get_order(3 * page_mask_nelts * sizeof(long));
 #endif
-
-#if !defined(CONFIG_MTD_UCLINUX)
-	/*In case there is no valid CPLB behind memory_end make sure we don't get to close*/
-	memory_end -= SIZE_4K;
+	page_mask_order = get_order(3 * page_mask_nelts * sizeof(long));
 #endif
 
 	init_mm.start_code = (unsigned long)_stext;
@@ -642,7 +683,7 @@ static __init void memory_setup(void)
 		__bss_start, __bss_stop,
 		_sdata, _edata,
 		(void *)&init_thread_union,
-		(void *)((int)(&init_thread_union) + 0x2000),
+		(void *)((int)(&init_thread_union) + THREAD_SIZE),
 		__init_begin, __init_end,
 		(void *)_ramstart, (void *)memory_end
 #ifdef CONFIG_MTD_UCLINUX
@@ -804,9 +845,17 @@ static inline int __init get_mem_size(void)
 	BUG();
 }
 
+__attribute__((weak))
+void __init native_machine_early_platform_add_devices(void)
+{
+}
+
 void __init setup_arch(char **cmdline_p)
 {
+	u32 mmr;
 	unsigned long sclk, cclk;
+
+	native_machine_early_platform_add_devices();
 
 	enable_shadow_console();
 
@@ -854,6 +903,13 @@ void __init setup_arch(char **cmdline_p)
 	bfin_write_EBIU_MODE(CONFIG_EBIU_MODEVAL);
 	bfin_write_EBIU_FCTL(CONFIG_EBIU_FCTLVAL);
 #endif
+#ifdef CONFIG_BFIN_HYSTERESIS_CONTROL
+	bfin_write_PORTF_HYSTERESIS(HYST_PORTF_0_15);
+	bfin_write_PORTG_HYSTERESIS(HYST_PORTG_0_15);
+	bfin_write_PORTH_HYSTERESIS(HYST_PORTH_0_15);
+	bfin_write_MISCPORT_HYSTERESIS((bfin_read_MISCPORT_HYSTERESIS() &
+					~HYST_NONEGPIO_MASK) | HYST_NONEGPIO);
+#endif
 
 	cclk = get_cclk();
 	sclk = get_sclk();
@@ -867,17 +923,14 @@ void __init setup_arch(char **cmdline_p)
 		bfin_read_IMDMA_D1_IRQ_STATUS();
 	}
 #endif
-	printk(KERN_INFO "Hardware Trace ");
-	if (bfin_read_TBUFCTL() & 0x1)
-		printk(KERN_CONT "Active ");
-	else
-		printk(KERN_CONT "Off ");
-	if (bfin_read_TBUFCTL() & 0x2)
-		printk(KERN_CONT "and Enabled\n");
-	else
-		printk(KERN_CONT "and Disabled\n");
 
-	printk(KERN_INFO "Boot Mode: %i\n", bfin_read_SYSCR() & 0xF);
+	mmr = bfin_read_TBUFCTL();
+	printk(KERN_INFO "Hardware Trace %s and %sabled\n",
+		(mmr & 0x1) ? "active" : "off",
+		(mmr & 0x2) ? "en" : "dis");
+
+	mmr = bfin_read_SYSCR();
+	printk(KERN_INFO "Boot Mode: %i\n", mmr & 0xF);
 
 	/* Newer parts mirror SWRST bits in SYSCR */
 #if defined(CONFIG_BF53x) || defined(CONFIG_BF561) || \
@@ -885,7 +938,7 @@ void __init setup_arch(char **cmdline_p)
 	_bfin_swrst = bfin_read_SWRST();
 #else
 	/* Clear boot mode field */
-	_bfin_swrst = bfin_read_SYSCR() & ~0xf;
+	_bfin_swrst = mmr & ~0xf;
 #endif
 
 #ifdef CONFIG_DEBUG_DOUBLEFAULT_PRINT
@@ -903,21 +956,24 @@ void __init setup_arch(char **cmdline_p)
 		printk(KERN_EMERG "Recovering from DOUBLE FAULT event\n");
 #ifdef CONFIG_DEBUG_DOUBLEFAULT
 		/* We assume the crashing kernel, and the current symbol table match */
-		printk(KERN_EMERG " While handling exception (EXCAUSE = 0x%x) at %pF\n",
-			(int)init_saved_seqstat & SEQSTAT_EXCAUSE, init_saved_retx);
-		printk(KERN_NOTICE "   DCPLB_FAULT_ADDR: %pF\n", init_saved_dcplb_fault_addr);
-		printk(KERN_NOTICE "   ICPLB_FAULT_ADDR: %pF\n", init_saved_icplb_fault_addr);
+		printk(KERN_EMERG " While handling exception (EXCAUSE = %#x) at %pF\n",
+			initial_pda.seqstat_doublefault & SEQSTAT_EXCAUSE,
+			initial_pda.retx_doublefault);
+		printk(KERN_NOTICE "   DCPLB_FAULT_ADDR: %pF\n",
+			initial_pda.dcplb_doublefault_addr);
+		printk(KERN_NOTICE "   ICPLB_FAULT_ADDR: %pF\n",
+			initial_pda.icplb_doublefault_addr);
 #endif
 		printk(KERN_NOTICE " The instruction at %pF caused a double exception\n",
-			init_retx);
+			initial_pda.retx);
 	} else if (_bfin_swrst & RESET_WDOG)
 		printk(KERN_INFO "Recovering from Watchdog event\n");
 	else if (_bfin_swrst & RESET_SOFTWARE)
 		printk(KERN_NOTICE "Reset caused by Software reset\n");
 
-	printk(KERN_INFO "Blackfin support (C) 2004-2009 Analog Devices, Inc.\n");
+	printk(KERN_INFO "Blackfin support (C) 2004-2010 Analog Devices, Inc.\n");
 	if (bfin_compiled_revid() == 0xffff)
-		printk(KERN_INFO "Compiled for ADSP-%s Rev any\n", CPU);
+		printk(KERN_INFO "Compiled for ADSP-%s Rev any, running on 0.%d\n", CPU, bfin_revid());
 	else if (bfin_compiled_revid() == -1)
 		printk(KERN_INFO "Compiled for ADSP-%s Rev none\n", CPU);
 	else
@@ -982,8 +1038,6 @@ void __init setup_arch(char **cmdline_p)
 static int __init topology_init(void)
 {
 	unsigned int cpu;
-	/* Record CPU-private information for the boot processor. */
-	bfin_setup_cpudata(0);
 
 	for_each_possible_cpu(cpu) {
 		register_cpu(&per_cpu(cpu_data, cpu).cpu, cpu);
@@ -1229,11 +1283,13 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 		   dsup_banks, BFIN_DSUBBANKS, BFIN_DWAYS,
 		   BFIN_DLINES);
 #ifdef __ARCH_SYNC_CORE_DCACHE
-	seq_printf(m, "SMP Dcache Flushes\t: %lu\n\n", cpudata->dcache_invld_count);
+	seq_printf(m, "dcache flushes\t: %lu\n", dcache_invld_count[cpu_num]);
 #endif
 #ifdef __ARCH_SYNC_CORE_ICACHE
-	seq_printf(m, "SMP Icache Flushes\t: %lu\n\n", cpudata->icache_invld_count);
+	seq_printf(m, "icache flushes\t: %lu\n", icache_invld_count[cpu_num]);
 #endif
+
+	seq_printf(m, "\n");
 
 	if (cpu_num != num_possible_cpus() - 1)
 		return 0;
@@ -1258,13 +1314,11 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 			      " in data cache\n");
 	}
 	seq_printf(m, "board name\t: %s\n", bfin_board_name);
-	seq_printf(m, "board memory\t: %ld kB (0x%p -> 0x%p)\n",
-		 physical_mem_end >> 10, (void *)0, (void *)physical_mem_end);
-	seq_printf(m, "kernel memory\t: %d kB (0x%p -> 0x%p)\n",
-		((int)memory_end - (int)_stext) >> 10,
-		_stext,
-		(void *)memory_end);
-	seq_printf(m, "\n");
+	seq_printf(m, "board memory\t: %ld kB (0x%08lx -> 0x%08lx)\n",
+		physical_mem_end >> 10, 0ul, physical_mem_end);
+	seq_printf(m, "kernel memory\t: %d kB (0x%08lx -> 0x%08lx)\n",
+		((int)memory_end - (int)_rambase) >> 10,
+		_rambase, memory_end);
 
 	return 0;
 }
@@ -1272,7 +1326,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
 	if (*pos == 0)
-		*pos = first_cpu(cpu_online_map);
+		*pos = cpumask_first(cpu_online_mask);
 	if (*pos >= num_online_cpus())
 		return NULL;
 
@@ -1281,7 +1335,7 @@ static void *c_start(struct seq_file *m, loff_t *pos)
 
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)
 {
-	*pos = next_cpu(*pos, cpu_online_map);
+	*pos = cpumask_next(*pos, cpu_online_mask);
 
 	return c_start(m, pos);
 }

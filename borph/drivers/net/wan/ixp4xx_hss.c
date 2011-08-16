@@ -8,6 +8,8 @@
  * as published by the Free Software Foundation.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/bitops.h>
 #include <linux/cdev.h>
 #include <linux/dma-mapping.h>
@@ -18,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/poll.h>
+#include <linux/slab.h>
 #include <mach/npe.h>
 #include <mach/qmgr.h>
 
@@ -177,7 +180,7 @@
  *
  * The resulting average clock frequency (assuming 33.333 MHz oscillator) is:
  * freq = 66.666 MHz / (A + (B + 1) / (C + 1))
- * minumum freq = 66.666 MHz / (A + 1)
+ * minimum freq = 66.666 MHz / (A + 1)
  * maximum freq = 66.666 MHz / A
  *
  * Example: A = 2, B = 2, C = 7, CLOCK_CR register = 2 << 22 | 2 << 12 | 7
@@ -229,7 +232,7 @@
 #define PKT_PIPE_MODE_WRITE		0x57
 
 /* HDLC packet status values - desc->status */
-#define ERR_SHUTDOWN		1 /* stop or shutdown occurrance */
+#define ERR_SHUTDOWN		1 /* stop or shutdown occurrence */
 #define ERR_HDLC_ALIGN		2 /* HDLC alignment error */
 #define ERR_HDLC_FCS		3 /* HDLC Frame Check Sum error */
 #define ERR_RXFREE_Q_EMPTY	4 /* RX-free queue became empty while receiving
@@ -357,9 +360,8 @@ static void hss_npe_send(struct port *port, struct msg *msg, const char* what)
 {
 	u32 *val = (u32*)msg;
 	if (npe_send_message(port->npe, msg, what)) {
-		printk(KERN_CRIT "HSS-%i: unable to send command [%08X:%08X]"
-		       " to %s\n", port->id, val[0], val[1],
-		       npe_name(port->npe));
+		pr_crit("HSS-%i: unable to send command [%08X:%08X] to %s\n",
+			port->id, val[0], val[1], npe_name(port->npe));
 		BUG();
 	}
 }
@@ -395,7 +397,7 @@ static void hss_config(struct port *port)
 	msg.cmd = PORT_CONFIG_WRITE;
 	msg.hss_port = port->id;
 	msg.index = HSS_CONFIG_TX_PCR;
-	msg.data32 = PCR_FRM_SYNC_OUTPUT_RISING | PCR_MSB_ENDIAN |
+	msg.data32 = PCR_FRM_PULSE_DISABLED | PCR_MSB_ENDIAN |
 		PCR_TX_DATA_ENABLE | PCR_SOF_NO_FBIT;
 	if (port->clock_type == CLOCK_INT)
 		msg.data32 |= PCR_SYNC_CLK_DIR_OUTPUT;
@@ -446,8 +448,7 @@ static void hss_config(struct port *port)
 	if (npe_recv_message(port->npe, &msg, "HSS_LOAD_CONFIG") ||
 	    /* HSS_LOAD_CONFIG for port #1 returns port_id = #4 */
 	    msg.cmd != PORT_CONFIG_LOAD || msg.data32) {
-		printk(KERN_CRIT "HSS-%i: HSS_LOAD_CONFIG failed\n",
-		       port->id);
+		pr_crit("HSS-%i: HSS_LOAD_CONFIG failed\n", port->id);
 		BUG();
 	}
 
@@ -476,8 +477,7 @@ static u32 hss_get_status(struct port *port)
 	msg.hss_port = port->id;
 	hss_npe_send(port, &msg, "PORT_ERROR_READ");
 	if (npe_recv_message(port->npe, &msg, "PORT_ERROR_READ")) {
-		printk(KERN_CRIT "HSS-%i: unable to read HSS status\n",
-		       port->id);
+		pr_crit("HSS-%i: unable to read HSS status\n", port->id);
 		BUG();
 	}
 
@@ -735,9 +735,8 @@ static int hss_hdlc_poll(struct napi_struct *napi, int budget)
 			dev->stats.rx_errors++;
 			break;
 		default:	/* FIXME - remove printk */
-			printk(KERN_ERR "%s: hss_hdlc_poll: status 0x%02X"
-			       " errors %u\n", dev->name, desc->status,
-			       desc->error_count);
+			netdev_err(dev, "hss_hdlc_poll: status 0x%02X errors %u\n",
+				   desc->status, desc->error_count);
 			dev->stats.rx_errors++;
 		}
 
@@ -890,7 +889,6 @@ static int hss_hdlc_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	wmb();
 	queue_put_desc(queue_ids[port->id].tx, tx_desc_phys(port, n), desc);
-	dev->trans_start = jiffies;
 
 	if (qmgr_stat_below_low_watermark(txreadyq)) { /* empty */
 #if DEBUG_TX
@@ -1127,8 +1125,8 @@ static int hss_hdlc_close(struct net_device *dev)
 		buffs--;
 
 	if (buffs)
-		printk(KERN_CRIT "%s: unable to drain RX queue, %i buffer(s)"
-		       " left in NPE\n", dev->name, buffs);
+		netdev_crit(dev, "unable to drain RX queue, %i buffer(s) left in NPE\n",
+			    buffs);
 
 	buffs = TX_DESCS;
 	while (queue_get_desc(queue_ids[port->id].tx, port, 1) >= 0)
@@ -1143,8 +1141,8 @@ static int hss_hdlc_close(struct net_device *dev)
 	} while (++i < MAX_CLOSE_WAIT);
 
 	if (buffs)
-		printk(KERN_CRIT "%s: unable to drain TX queue, %i buffer(s) "
-		       "left in NPE\n", dev->name, buffs);
+		netdev_crit(dev, "unable to drain TX queue, %i buffer(s) left in NPE\n",
+			    buffs);
 #if DEBUG_CLOSE
 	if (!buffs)
 		printk(KERN_DEBUG "Draining TX queues took %i cycles\n", i);
@@ -1364,7 +1362,7 @@ static int __devinit hss_init_one(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, port);
 
-	printk(KERN_INFO "%s: HSS-%i\n", dev->name, port->id);
+	netdev_info(dev, "HSS-%i\n", port->id);
 	return 0;
 
 err_free_netdev:

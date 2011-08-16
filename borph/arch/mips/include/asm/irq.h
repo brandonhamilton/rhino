@@ -16,6 +16,10 @@
 
 #include <irq.h>
 
+static inline void irq_dispose_mapping(unsigned int virq)
+{
+}
+
 #ifdef CONFIG_I8259
 static inline int irq_canonicalize(int irq)
 {
@@ -50,9 +54,9 @@ static inline void smtc_im_ack_irq(unsigned int irq)
 #ifdef CONFIG_MIPS_MT_SMTC_IRQAFF
 #include <linux/cpumask.h>
 
-extern int plat_set_irq_affinity(unsigned int irq,
-				  const struct cpumask *affinity);
-extern void smtc_forward_irq(unsigned int irq);
+extern int plat_set_irq_affinity(struct irq_data *d,
+				 const struct cpumask *affinity, bool force);
+extern void smtc_forward_irq(struct irq_data *d);
 
 /*
  * IRQ affinity hook invoked at the beginning of interrupt dispatch
@@ -65,22 +69,30 @@ extern void smtc_forward_irq(unsigned int irq);
  * cpumask implementations, this version is optimistically assuming
  * that cpumask.h macro overhead is reasonable during interrupt dispatch.
  */
-#define IRQ_AFFINITY_HOOK(irq)						\
-do {									\
-    if (!cpumask_test_cpu(smp_processor_id(), irq_desc[irq].affinity)) {\
-	smtc_forward_irq(irq);						\
-	irq_exit();							\
-	return;								\
-    }									\
-} while (0)
+static inline int handle_on_other_cpu(unsigned int irq)
+{
+	struct irq_data *d = irq_get_irq_data(irq);
+
+	if (cpumask_test_cpu(smp_processor_id(), d->affinity))
+		return 0;
+	smtc_forward_irq(d);
+	return 1;
+}
 
 #else /* Not doing SMTC affinity */
 
-#define IRQ_AFFINITY_HOOK(irq) do { } while (0)
+static inline int handle_on_other_cpu(unsigned int irq) { return 0; }
 
 #endif /* CONFIG_MIPS_MT_SMTC_IRQAFF */
 
 #ifdef CONFIG_MIPS_MT_SMTC_IM_BACKSTOP
+
+static inline void smtc_im_backstop(unsigned int irq)
+{
+	if (irq_hwmask[irq] & 0x0000ff00)
+		write_c0_tccontext(read_c0_tccontext() &
+				   ~(irq_hwmask[irq] & 0x0000ff00));
+}
 
 /*
  * Clear interrupt mask handling "backstop" if irq_hwmask
@@ -88,61 +100,30 @@ do {									\
  * functions will take over re-enabling the low-level mask.
  * Otherwise it will be done on return from exception.
  */
-#define __DO_IRQ_SMTC_HOOK(irq)						\
-do {									\
-	IRQ_AFFINITY_HOOK(irq);						\
-	if (irq_hwmask[irq] & 0x0000ff00)				\
-		write_c0_tccontext(read_c0_tccontext() &		\
-				   ~(irq_hwmask[irq] & 0x0000ff00));	\
-} while (0)
+static inline int smtc_handle_on_other_cpu(unsigned int irq)
+{
+	int ret = handle_on_other_cpu(irq);
 
-#define __NO_AFFINITY_IRQ_SMTC_HOOK(irq)				\
-do {									\
-	if (irq_hwmask[irq] & 0x0000ff00)                               \
-		write_c0_tccontext(read_c0_tccontext() &		\
-				   ~(irq_hwmask[irq] & 0x0000ff00));	\
-} while (0)
+	if (!ret)
+		smtc_im_backstop(irq);
+	return ret;
+}
 
 #else
 
-#define __DO_IRQ_SMTC_HOOK(irq)						\
-do {									\
-	IRQ_AFFINITY_HOOK(irq);						\
-} while (0)
-#define __NO_AFFINITY_IRQ_SMTC_HOOK(irq) do { } while (0)
+static inline void smtc_im_backstop(unsigned int irq) { }
+static inline int smtc_handle_on_other_cpu(unsigned int irq)
+{
+	return handle_on_other_cpu(irq);
+}
 
 #endif
 
-/*
- * do_IRQ handles all normal device IRQ's (the special
- * SMP cross-CPU interrupts have their own specific
- * handlers).
- *
- * Ideally there should be away to get this into kernel/irq/handle.c to
- * avoid the overhead of a call for just a tiny function ...
- */
-#define do_IRQ(irq)							\
-do {									\
-	irq_enter();							\
-	__DO_IRQ_SMTC_HOOK(irq);					\
-	generic_handle_irq(irq);					\
-	irq_exit();							\
-} while (0)
+extern void do_IRQ(unsigned int irq);
 
 #ifdef CONFIG_MIPS_MT_SMTC_IRQAFF
-/*
- * To avoid inefficient and in some cases pathological re-checking of
- * IRQ affinity, we have this variant that skips the affinity check.
- */
 
-
-#define do_IRQ_no_affinity(irq)						\
-do {									\
-	irq_enter();							\
-	__NO_AFFINITY_IRQ_SMTC_HOOK(irq);				\
-	generic_handle_irq(irq);					\
-	irq_exit();							\
-} while (0)
+extern void do_IRQ_no_affinity(unsigned int irq);
 
 #endif /* CONFIG_MIPS_MT_SMTC_IRQAFF */
 
@@ -160,6 +141,7 @@ extern void free_irqno(unsigned int irq);
 #define CP0_LEGACY_COMPARE_IRQ 7
 
 extern int cp0_compare_irq;
+extern int cp0_compare_irq_shift;
 extern int cp0_perfcount_irq;
 
 #endif /* _ASM_IRQ_H */

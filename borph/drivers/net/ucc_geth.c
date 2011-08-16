@@ -28,6 +28,7 @@
 #include <linux/phy.h>
 #include <linux/workqueue.h>
 #include <linux/of_mdio.h>
+#include <linux/of_net.h>
 #include <linux/of_platform.h>
 
 #include <asm/uaccess.h>
@@ -37,6 +38,7 @@
 #include <asm/qe.h>
 #include <asm/ucc.h>
 #include <asm/ucc_fast.h>
+#include <asm/machdep.h>
 
 #include "ucc_geth.h"
 #include "fsl_pq_mdio.h"
@@ -429,7 +431,7 @@ static void hw_add_addr_in_hash(struct ucc_geth_private *ugeth,
 	    ucc_fast_get_qe_cr_subblock(ugeth->ug_info->uf_info.ucc_num);
 
 	/* Ethernet frames are defined in Little Endian mode,
-	therefor to insert */
+	therefore to insert */
 	/* the address to the hash (Big Endian mode), we reverse the bytes.*/
 
 	set_mac_addr(&p_82xx_addr_filt->taddr.h, p_enet_addr);
@@ -593,7 +595,7 @@ static void dump_regs(struct ucc_geth_private *ugeth)
 {
 	int i;
 
-	ugeth_info("UCC%d Geth registers:", ugeth->ug_info->uf_info.ucc_num);
+	ugeth_info("UCC%d Geth registers:", ugeth->ug_info->uf_info.ucc_num + 1);
 	ugeth_info("Base address: 0x%08x", (u32) ugeth->ug_regs);
 
 	ugeth_info("maccfg1    : addr - 0x%08x, val - 0x%08x",
@@ -1334,7 +1336,7 @@ static int adjust_enet_interface(struct ucc_geth_private *ugeth)
 	struct ucc_geth __iomem *ug_regs;
 	struct ucc_fast __iomem *uf_regs;
 	int ret_val;
-	u32 upsmr, maccfg2, tbiBaseAddress;
+	u32 upsmr, maccfg2;
 	u16 value;
 
 	ugeth_vdbg("%s: IN", __func__);
@@ -1389,14 +1391,20 @@ static int adjust_enet_interface(struct ucc_geth_private *ugeth)
 	/* Note that this depends on proper setting in utbipar register. */
 	if ((ugeth->phy_interface == PHY_INTERFACE_MODE_TBI) ||
 	    (ugeth->phy_interface == PHY_INTERFACE_MODE_RTBI)) {
-		tbiBaseAddress = in_be32(&ug_regs->utbipar);
-		tbiBaseAddress &= UTBIPAR_PHY_ADDRESS_MASK;
-		tbiBaseAddress >>= UTBIPAR_PHY_ADDRESS_SHIFT;
-		value = ugeth->phydev->bus->read(ugeth->phydev->bus,
-				(u8) tbiBaseAddress, ENET_TBI_MII_CR);
+		struct ucc_geth_info *ug_info = ugeth->ug_info;
+		struct phy_device *tbiphy;
+
+		if (!ug_info->tbi_node)
+			ugeth_warn("TBI mode requires that the device "
+				"tree specify a tbi-handle\n");
+
+		tbiphy = of_phy_find_device(ug_info->tbi_node);
+		if (!tbiphy)
+			ugeth_warn("Could not get TBI device\n");
+
+		value = phy_read(tbiphy, ENET_TBI_MII_CR);
 		value &= ~0x1000;	/* Turn off autonegotiation */
-		ugeth->phydev->bus->write(ugeth->phydev->bus,
-				(u8) tbiBaseAddress, ENET_TBI_MII_CR, value);
+		phy_write(tbiphy, ENET_TBI_MII_CR, value);
 	}
 
 	init_check_frame_length_mode(ug_info->lengthCheckRx, &ug_regs->maccfg2);
@@ -1563,7 +1571,10 @@ static int ugeth_disable(struct ucc_geth_private *ugeth, enum comm_dir mode)
 
 static void ugeth_quiesce(struct ucc_geth_private *ugeth)
 {
-	/* Wait for and prevent any further xmits. */
+	/* Prevent any further xmits, plus detach the device. */
+	netif_device_detach(ugeth->ndev);
+
+	/* Wait for any current xmits to finish. */
 	netif_tx_disable(ugeth->ndev);
 
 	/* Disable the interrupt to avoid NAPI rescheduling. */
@@ -1577,7 +1588,7 @@ static void ugeth_activate(struct ucc_geth_private *ugeth)
 {
 	napi_enable(&ugeth->napi);
 	enable_irq(ugeth->ug_info->uf_info.irq);
-	netif_tx_wake_all_queues(ugeth->ndev);
+	netif_device_attach(ugeth->ndev);
 }
 
 /* Called every time the controller might need to be made
@@ -1648,24 +1659,27 @@ static void adjust_link(struct net_device *dev)
 			ugeth->oldspeed = phydev->speed;
 		}
 
-		/*
-		 * To change the MAC configuration we need to disable the
-		 * controller. To do so, we have to either grab ugeth->lock,
-		 * which is a bad idea since 'graceful stop' commands might
-		 * take quite a while, or we can quiesce driver's activity.
-		 */
-		ugeth_quiesce(ugeth);
-		ugeth_disable(ugeth, COMM_DIR_RX_AND_TX);
-
-		out_be32(&ug_regs->maccfg2, tempval);
-		out_be32(&uf_regs->upsmr, upsmr);
-
-		ugeth_enable(ugeth, COMM_DIR_RX_AND_TX);
-		ugeth_activate(ugeth);
-
 		if (!ugeth->oldlink) {
 			new_state = 1;
 			ugeth->oldlink = 1;
+		}
+
+		if (new_state) {
+			/*
+			 * To change the MAC configuration we need to disable
+			 * the controller. To do so, we have to either grab
+			 * ugeth->lock, which is a bad idea since 'graceful
+			 * stop' commands might take quite a while, or we can
+			 * quiesce driver's activity.
+			 */
+			ugeth_quiesce(ugeth);
+			ugeth_disable(ugeth, COMM_DIR_RX_AND_TX);
+
+			out_be32(&ug_regs->maccfg2, tempval);
+			out_be32(&uf_regs->upsmr, upsmr);
+
+			ugeth_enable(ugeth, COMM_DIR_RX_AND_TX);
+			ugeth_activate(ugeth);
 		}
 	} else if (ugeth->oldlink) {
 			new_state = 1;
@@ -1986,10 +2000,9 @@ static void ucc_geth_memclean(struct ucc_geth_private *ugeth)
 static void ucc_geth_set_multi(struct net_device *dev)
 {
 	struct ucc_geth_private *ugeth;
-	struct dev_mc_list *dmi;
+	struct netdev_hw_addr *ha;
 	struct ucc_fast __iomem *uf_regs;
 	struct ucc_geth_82xx_address_filtering_pram __iomem *p_82xx_addr_filt;
-	int i;
 
 	ugeth = netdev_priv(dev);
 
@@ -2016,19 +2029,11 @@ static void ucc_geth_set_multi(struct net_device *dev)
 			out_be32(&p_82xx_addr_filt->gaddr_h, 0x0);
 			out_be32(&p_82xx_addr_filt->gaddr_l, 0x0);
 
-			dmi = dev->mc_list;
-
-			for (i = 0; i < dev->mc_count; i++, dmi = dmi->next) {
-
-				/* Only support group multicast for now.
-				 */
-				if (!(dmi->dmi_addr[0] & 1))
-					continue;
-
+			netdev_for_each_mc_addr(ha, dev) {
 				/* Ask CPM to run CRC and set bit in
 				 * filter mask.
 				 */
-				hw_add_addr_in_hash(ugeth, dmi->dmi_addr);
+				hw_add_addr_in_hash(ugeth, ha->addr);
 			}
 		}
 	}
@@ -2041,11 +2046,15 @@ static void ucc_geth_stop(struct ucc_geth_private *ugeth)
 
 	ugeth_vdbg("%s: IN", __func__);
 
+	/*
+	 * Tell the kernel the link is down.
+	 * Must be done before disabling the controller
+	 * or deadlock may happen.
+	 */
+	phy_stop(phydev);
+
 	/* Disable the controller */
 	ugeth_disable(ugeth, COMM_DIR_RX_AND_TX);
-
-	/* Tell the kernel the link is down */
-	phy_stop(phydev);
 
 	/* Mask all interrupts */
 	out_be32(ugeth->uccf->p_uccm, 0x00000000);
@@ -2055,9 +2064,6 @@ static void ucc_geth_stop(struct ucc_geth_private *ugeth)
 
 	/* Disable Rx and Tx */
 	clrbits32(&ug_regs->maccfg1, MACCFG1_ENABLE_RX | MACCFG1_ENABLE_TX);
-
-	phy_disconnect(ugeth->phydev);
-	ugeth->phydev = NULL;
 
 	ucc_geth_memclean(ugeth);
 }
@@ -3139,8 +3145,6 @@ static int ucc_geth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* set bd status and length */
 	out_be32((u32 __iomem *)bd, bd_status);
 
-	dev->trans_start = jiffies;
-
 	/* Move to next BD in the ring */
 	if (!(bd_status & T_W))
 		bd += sizeof(struct qe_bd);
@@ -3155,6 +3159,8 @@ static int ucc_geth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	ugeth->txBd[txQ] = bd;
+
+	skb_tx_timestamp(skb);
 
 	if (ugeth->p_scheduler) {
 		ugeth->cpucount[txQ]++;
@@ -3208,6 +3214,8 @@ static int ucc_geth_rx(struct ucc_geth_private *ugeth, u8 rxQ, int rx_work_limit
 					   __func__, __LINE__, (u32) skb);
 			if (skb) {
 				skb->data = skb->head + NET_SKB_PAD;
+				skb->len = 0;
+				skb_reset_tail_pointer(skb);
 				__skb_queue_head(&ugeth->rx_recycle, skb);
 			}
 
@@ -3273,12 +3281,11 @@ static int ucc_geth_tx(struct net_device *dev, u8 txQ)
 		/* Handle the transmitted buffer and release */
 		/* the BD to be used with the current frame  */
 
-		if ((bd == ugeth->txBd[txQ]) && (netif_queue_stopped(dev) == 0))
+		skb = ugeth->tx_skbuff[txQ][ugeth->skb_dirtytx[txQ]];
+		if (!skb)
 			break;
 
 		dev->stats.tx_packets++;
-
-		skb = ugeth->tx_skbuff[txQ][ugeth->skb_dirtytx[txQ]];
 
 		if (skb_queue_len(&ugeth->rx_recycle) < RX_BD_RING_LEN &&
 			     skb_recycle_check(skb,
@@ -3542,7 +3549,10 @@ static int ucc_geth_close(struct net_device *dev)
 
 	napi_disable(&ugeth->napi);
 
+	cancel_work_sync(&ugeth->timeout_work);
 	ucc_geth_stop(ugeth);
+	phy_disconnect(ugeth->phydev);
+	ugeth->phydev = NULL;
 
 	free_irq(ugeth->ug_info->uf_info.irq, ugeth->ndev);
 
@@ -3571,8 +3581,12 @@ static void ucc_geth_timeout_work(struct work_struct *work)
 		 * Must reset MAC *and* PHY. This is done by reopening
 		 * the device.
 		 */
-		ucc_geth_close(dev);
-		ucc_geth_open(dev);
+		netif_tx_stop_all_queues(dev);
+		ucc_geth_stop(ugeth);
+		ucc_geth_init_mac(ugeth);
+		/* Must start PHY here */
+		phy_start(ugeth->phydev);
+		netif_tx_start_all_queues(dev);
 	}
 
 	netif_tx_schedule_all(dev);
@@ -3586,14 +3600,13 @@ static void ucc_geth_timeout(struct net_device *dev)
 {
 	struct ucc_geth_private *ugeth = netdev_priv(dev);
 
-	netif_carrier_off(dev);
 	schedule_work(&ugeth->timeout_work);
 }
 
 
 #ifdef CONFIG_PM
 
-static int ucc_geth_suspend(struct of_device *ofdev, pm_message_t state)
+static int ucc_geth_suspend(struct platform_device *ofdev, pm_message_t state)
 {
 	struct net_device *ndev = dev_get_drvdata(&ofdev->dev);
 	struct ucc_geth_private *ugeth = netdev_priv(ndev);
@@ -3601,6 +3614,7 @@ static int ucc_geth_suspend(struct of_device *ofdev, pm_message_t state)
 	if (!netif_running(ndev))
 		return 0;
 
+	netif_device_detach(ndev);
 	napi_disable(&ugeth->napi);
 
 	/*
@@ -3620,7 +3634,7 @@ static int ucc_geth_suspend(struct of_device *ofdev, pm_message_t state)
 	return 0;
 }
 
-static int ucc_geth_resume(struct of_device *ofdev)
+static int ucc_geth_resume(struct platform_device *ofdev)
 {
 	struct net_device *ndev = dev_get_drvdata(&ofdev->dev);
 	struct ucc_geth_private *ugeth = netdev_priv(ndev);
@@ -3659,7 +3673,7 @@ static int ucc_geth_resume(struct of_device *ofdev)
 	phy_start(ugeth->phydev);
 
 	napi_enable(&ugeth->napi);
-	netif_start_queue(ndev);
+	netif_device_attach(ndev);
 
 	return 0;
 }
@@ -3695,6 +3709,19 @@ static phy_interface_t to_phy_interface(const char *phy_connection_type)
 	return PHY_INTERFACE_MODE_MII;
 }
 
+static int ucc_geth_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+{
+	struct ucc_geth_private *ugeth = netdev_priv(dev);
+
+	if (!netif_running(dev))
+		return -EINVAL;
+
+	if (!ugeth->phydev)
+		return -ENODEV;
+
+	return phy_mii_ioctl(ugeth->phydev, rq, cmd);
+}
+
 static const struct net_device_ops ucc_geth_netdev_ops = {
 	.ndo_open		= ucc_geth_open,
 	.ndo_stop		= ucc_geth_close,
@@ -3704,15 +3731,16 @@ static const struct net_device_ops ucc_geth_netdev_ops = {
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_multicast_list	= ucc_geth_set_multi,
 	.ndo_tx_timeout		= ucc_geth_timeout,
+	.ndo_do_ioctl		= ucc_geth_ioctl,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= ucc_netpoll,
 #endif
 };
 
-static int ucc_geth_probe(struct of_device* ofdev, const struct of_device_id *match)
+static int ucc_geth_probe(struct platform_device* ofdev)
 {
 	struct device *device = &ofdev->dev;
-	struct device_node *np = ofdev->node;
+	struct device_node *np = ofdev->dev.of_node;
 	struct net_device *dev = NULL;
 	struct ucc_geth_private *ugeth = NULL;
 	struct ucc_geth_info *ug_info;
@@ -3874,7 +3902,7 @@ static int ucc_geth_probe(struct of_device* ofdev, const struct of_device_id *ma
 	}
 
 	if (netif_msg_probe(&debug))
-		printk(KERN_INFO "ucc_geth: UCC%1d at 0x%8x (irq = %d) \n",
+		printk(KERN_INFO "ucc_geth: UCC%1d at 0x%8x (irq = %d)\n",
 			ug_info->uf_info.ucc_num + 1, ug_info->uf_info.regs,
 			ug_info->uf_info.irq);
 
@@ -3931,7 +3959,7 @@ static int ucc_geth_probe(struct of_device* ofdev, const struct of_device_id *ma
 	return 0;
 }
 
-static int ucc_geth_remove(struct of_device* ofdev)
+static int ucc_geth_remove(struct platform_device* ofdev)
 {
 	struct device *device = &ofdev->dev;
 	struct net_device *dev = dev_get_drvdata(device);
@@ -3955,9 +3983,12 @@ static struct of_device_id ucc_geth_match[] = {
 
 MODULE_DEVICE_TABLE(of, ucc_geth_match);
 
-static struct of_platform_driver ucc_geth_driver = {
-	.name		= DRV_NAME,
-	.match_table	= ucc_geth_match,
+static struct platform_driver ucc_geth_driver = {
+	.driver = {
+		.name = DRV_NAME,
+		.owner = THIS_MODULE,
+		.of_match_table = ucc_geth_match,
+	},
 	.probe		= ucc_geth_probe,
 	.remove		= ucc_geth_remove,
 	.suspend	= ucc_geth_suspend,
@@ -3974,14 +4005,14 @@ static int __init ucc_geth_init(void)
 		memcpy(&(ugeth_info[i]), &ugeth_primary_info,
 		       sizeof(ugeth_primary_info));
 
-	ret = of_register_platform_driver(&ucc_geth_driver);
+	ret = platform_driver_register(&ucc_geth_driver);
 
 	return ret;
 }
 
 static void __exit ucc_geth_exit(void)
 {
-	of_unregister_platform_driver(&ucc_geth_driver);
+	platform_driver_unregister(&ucc_geth_driver);
 }
 
 module_init(ucc_geth_init);
