@@ -169,19 +169,25 @@ static int mv_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 	return 0;
 }
 
-static int mv_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+static int mv_rtc_ioctl(struct device *dev, unsigned int cmd,
+			unsigned long arg)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr;
 
 	if (pdata->irq < 0)
-		return -EINVAL; /* fall back into rtc-dev's emulation */
-
-	if (enabled)
-		writel(1, ioaddr + RTC_ALARM_INTERRUPT_MASK_REG_OFFS);
-	else
+		return -ENOIOCTLCMD; /* fall back into rtc-dev's emulation */
+	switch (cmd) {
+	case RTC_AIE_OFF:
 		writel(0, ioaddr + RTC_ALARM_INTERRUPT_MASK_REG_OFFS);
+		break;
+	case RTC_AIE_ON:
+		writel(1, ioaddr + RTC_ALARM_INTERRUPT_MASK_REG_OFFS);
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
 	return 0;
 }
 
@@ -210,7 +216,7 @@ static const struct rtc_class_ops mv_rtc_alarm_ops = {
 	.set_time	= mv_rtc_set_time,
 	.read_alarm	= mv_rtc_read_alarm,
 	.set_alarm	= mv_rtc_set_alarm,
-	.alarm_irq_enable = mv_rtc_alarm_irq_enable,
+	.ioctl		= mv_rtc_ioctl,
 };
 
 static int __devinit mv_rtc_probe(struct platform_device *pdev)

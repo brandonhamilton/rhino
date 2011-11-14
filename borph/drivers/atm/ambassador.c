@@ -38,7 +38,7 @@
 #include <linux/ihex.h>
 #include <linux/slab.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/io.h>
 #include <asm/byteorder.h>
 
@@ -497,7 +497,7 @@ static void rx_complete (amb_dev * dev, rx_out * rx) {
 	  // VC layer stats
 	  atomic_inc(&atm_vcc->stats->rx);
 	  __net_timestamp(skb);
-	  // end of our responsibility
+	  // end of our responsability
 	  atm_vcc->push (atm_vcc, skb);
 	  return;
 	  
@@ -813,7 +813,7 @@ static void fill_rx_pool (amb_dev * dev, unsigned char pool,
   return;
 }
 
-// top up all RX pools
+// top up all RX pools (can also be called as a bottom half)
 static void fill_rx_pools (amb_dev * dev) {
   unsigned char pool;
   
@@ -872,7 +872,11 @@ static irqreturn_t interrupt_handler(int irq, void *dev_id) {
       ++irq_work;
   
     if (irq_work) {
+#ifdef FILL_RX_POOLS_IN_BH
+      schedule_work (&dev->bh);
+#else
       fill_rx_pools (dev);
+#endif
 
       PRINTD (DBG_IRQ, "work done: %u", irq_work);
     } else {
@@ -1922,9 +1926,8 @@ static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
   const struct firmware *fw;
   unsigned long start_address;
   const struct ihex_binrec *rec;
-  const char *errmsg = 0;
   int res;
-
+  
   res = request_ihex_firmware(&fw, "atmsar11.fw", &dev->pci_dev->dev);
   if (res) {
     PRINTK (KERN_ERR, "Cannot load microcode data");
@@ -1934,8 +1937,8 @@ static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
   /* First record contains just the start address */
   rec = (const struct ihex_binrec *)fw->data;
   if (be16_to_cpu(rec->len) != sizeof(__be32) || be32_to_cpu(rec->addr)) {
-    errmsg = "no start record";
-    goto fail;
+    PRINTK (KERN_ERR, "Bad microcode data (no start record)");
+    return -EINVAL;
   }
   start_address = be32_to_cpup((__be32 *)rec->data);
 
@@ -1947,12 +1950,12 @@ static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
     PRINTD (DBG_LOAD, "starting region (%x, %u)", be32_to_cpu(rec->addr),
 	    be16_to_cpu(rec->len));
     if (be16_to_cpu(rec->len) > 4 * MAX_TRANSFER_DATA) {
-	    errmsg = "record too long";
-	    goto fail;
+	    PRINTK (KERN_ERR, "Bad microcode data (record too long)");
+	    return -EINVAL;
     }
     if (be16_to_cpu(rec->len) & 3) {
-	    errmsg = "odd number of bytes";
-	    goto fail;
+	    PRINTK (KERN_ERR, "Bad microcode data (odd number of bytes)");
+	    return -EINVAL;
     }
     res = loader_write(lb, dev, rec);
     if (res)
@@ -1967,10 +1970,6 @@ static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
     res = loader_start(lb, dev, start_address);
 
   return res;
-fail:
-  release_firmware(fw);
-  PRINTK(KERN_ERR, "Bad microcode data (%s)", errmsg);
-  return -EINVAL;
 }
 
 /********** give adapter parameters **********/
@@ -2149,6 +2148,11 @@ static void setup_dev(amb_dev *dev, struct pci_dev *pci_dev)
       // to be really pedantic, this should be ATM_OC3c_PCR
       dev->tx_avail = ATM_OC3_PCR;
       dev->rx_avail = ATM_OC3_PCR;
+      
+#ifdef FILL_RX_POOLS_IN_BH
+      // initialise bottom half
+      INIT_WORK(&dev->bh, (void (*)(void *)) fill_rx_pools, dev);
+#endif
       
       // semaphore for txer/rxer modifications - we cannot use a
       // spinlock as the critical region needs to switch processes

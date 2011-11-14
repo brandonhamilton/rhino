@@ -143,7 +143,12 @@ static void davinci_musb_disable(struct musb *musb)
 }
 
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 #define	portstate(stmt)		stmt
+#else
+#define	portstate(stmt)
+#endif
+
 
 /*
  * VBUS SWITCHING IS BOARD-SPECIFIC ... at least for the DM6446 EVM,
@@ -215,8 +220,7 @@ static void otg_timer(unsigned long _musb)
 	* status change events (from the transceiver) otherwise.
 	 */
 	devctl = musb_readb(mregs, MUSB_DEVCTL);
-	dev_dbg(musb->controller, "poll devctl %02x (%s)\n", devctl,
-		otg_state_string(musb->xceiv->state));
+	DBG(7, "poll devctl %02x (%s)\n", devctl, otg_state_string(musb));
 
 	spin_lock_irqsave(&musb->lock, flags);
 	switch (musb->xceiv->state) {
@@ -287,13 +291,13 @@ static irqreturn_t davinci_musb_interrupt(int irq, void *__hci)
 	 * mask, state, "vector", and EOI registers.
 	 */
 	cppi = container_of(musb->dma_controller, struct cppi, controller);
-	if (is_cppi_enabled() && musb->dma_controller && !cppi->irq)
+	if (is_cppi_enabled(musb) && musb->dma_controller && !cppi->irq)
 		retval = cppi_interrupt(irq, __hci);
 
 	/* ack and handle non-CPPI interrupts */
 	tmp = musb_readl(tibase, DAVINCI_USB_INT_SRC_MASKED_REG);
 	musb_writel(tibase, DAVINCI_USB_INT_SRC_CLR_REG, tmp);
-	dev_dbg(musb->controller, "IRQ %08x\n", tmp);
+	DBG(4, "IRQ %08x\n", tmp);
 
 	musb->int_rx = (tmp & DAVINCI_USB_RXINT_MASK)
 			>> DAVINCI_USB_RXINT_SHIFT;
@@ -350,9 +354,9 @@ static irqreturn_t davinci_musb_interrupt(int irq, void *__hci)
 		 * (OTG_TIME_A_WAIT_VRISE) but we don't check for that.
 		 */
 		davinci_musb_source_power(musb, drvvbus, 0);
-		dev_dbg(musb->controller, "VBUS %s (%s)%s, devctl %02x\n",
+		DBG(2, "VBUS %s (%s)%s, devctl %02x\n",
 				drvvbus ? "on" : "off",
-				otg_state_string(musb->xceiv->state),
+				otg_state_string(musb),
 				err ? " ERROR" : "",
 				devctl);
 		retval = IRQ_HANDLED;
@@ -385,8 +389,8 @@ static int davinci_musb_init(struct musb *musb)
 	void __iomem	*tibase = musb->ctrl_base;
 	u32		revision;
 
-	usb_nop_xceiv_register();
-	musb->xceiv = otg_get_transceiver();
+	usb_nop_xceiv_register(musb->id);
+	musb->xceiv = otg_get_transceiver(musb->id);
 	if (!musb->xceiv)
 		return -ENODEV;
 
@@ -446,7 +450,7 @@ static int davinci_musb_init(struct musb *musb)
 
 fail:
 	otg_put_transceiver(musb->xceiv);
-	usb_nop_xceiv_unregister();
+	usb_nop_xceiv_unregister(musb->id);
 	return -ENODEV;
 }
 
@@ -480,7 +484,7 @@ static int davinci_musb_exit(struct musb *musb)
 				break;
 			if ((devctl & MUSB_DEVCTL_VBUS) != warn) {
 				warn = devctl & MUSB_DEVCTL_VBUS;
-				dev_dbg(musb->controller, "VBUS %d\n",
+				DBG(1, "VBUS %d\n",
 					warn >> MUSB_DEVCTL_VBUS_SHIFT);
 			}
 			msleep(1000);
@@ -489,18 +493,20 @@ static int davinci_musb_exit(struct musb *musb)
 
 		/* in OTG mode, another host might be connected */
 		if (devctl & MUSB_DEVCTL_VBUS)
-			dev_dbg(musb->controller, "VBUS off timeout (devctl %02x)\n", devctl);
+			DBG(1, "VBUS off timeout (devctl %02x)\n", devctl);
 	}
 
 	phy_off();
 
 	otg_put_transceiver(musb->xceiv);
-	usb_nop_xceiv_unregister();
+	usb_nop_xceiv_unregister(musb->id);
 
 	return 0;
 }
 
 static const struct musb_platform_ops davinci_ops = {
+	.fifo_mode	= 2,
+	.flags		= MUSB_GLUE_EP_ADDR_FLAT_MAPPING | MUSB_GLUE_DMA_CPPI,
 	.init		= davinci_musb_init,
 	.exit		= davinci_musb_exit,
 
@@ -510,6 +516,12 @@ static const struct musb_platform_ops davinci_ops = {
 	.set_mode	= davinci_musb_set_mode,
 
 	.set_vbus	= davinci_musb_set_vbus,
+
+	.read_fifo	= musb_read_fifo,
+	.write_fifo	= musb_write_fifo,
+
+	.dma_controller_create = cppi_dma_controller_create,
+	.dma_controller_destroy = cppi_dma_controller_destroy,
 };
 
 static u64 davinci_dmamask = DMA_BIT_MASK(32);

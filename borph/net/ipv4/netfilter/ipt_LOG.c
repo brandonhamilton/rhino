@@ -442,7 +442,8 @@ ipt_log_packet(u_int8_t pf,
 	}
 #endif
 
-	if (in != NULL)
+	/* MAC logging for input path only. */
+	if (in && !out)
 		dump_mac_header(m, loginfo, skb);
 
 	dump_packet(m, loginfo, skb, 0);

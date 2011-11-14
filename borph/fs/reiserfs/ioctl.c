@@ -59,7 +59,7 @@ long reiserfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			if (err)
 				break;
 
-			if (!inode_owner_or_capable(inode)) {
+			if (!is_owner_or_cap(inode)) {
 				err = -EPERM;
 				goto setflags_out;
 			}
@@ -103,7 +103,7 @@ setflags_out:
 		err = put_user(inode->i_generation, (int __user *)arg);
 		break;
 	case REISERFS_IOC_SETVERSION:
-		if (!inode_owner_or_capable(inode)) {
+		if (!is_owner_or_cap(inode)) {
 			err = -EPERM;
 			break;
 		}

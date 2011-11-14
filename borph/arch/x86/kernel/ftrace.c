@@ -19,7 +19,6 @@
 #include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/list.h>
-#include <linux/module.h>
 
 #include <trace/syscall.h>
 
@@ -50,7 +49,6 @@ static DEFINE_PER_CPU(int, save_modifying_code);
 int ftrace_arch_code_modify_prepare(void)
 {
 	set_kernel_text_rw();
-	set_all_modules_text_rw();
 	modifying_code = 1;
 	return 0;
 }
@@ -58,7 +56,6 @@ int ftrace_arch_code_modify_prepare(void)
 int ftrace_arch_code_modify_post_process(void)
 {
 	modifying_code = 0;
-	set_all_modules_text_ro();
 	set_kernel_text_ro();
 	return 0;
 }
@@ -123,7 +120,7 @@ static unsigned char *ftrace_call_replace(unsigned long ip, unsigned long addr)
 static atomic_t nmi_running = ATOMIC_INIT(0);
 static int mod_code_status;		/* holds return value of text write */
 static void *mod_code_ip;		/* holds the IP to write to */
-static const void *mod_code_newcode;	/* holds the text to write to the IP */
+static void *mod_code_newcode;		/* holds the text to write to the IP */
 
 static unsigned nmi_wait_count;
 static atomic_t nmi_update_count = ATOMIC_INIT(0);
@@ -170,9 +167,9 @@ static void ftrace_mod_code(void)
 
 void ftrace_nmi_enter(void)
 {
-	__this_cpu_write(save_modifying_code, modifying_code);
+	__get_cpu_var(save_modifying_code) = modifying_code;
 
-	if (!__this_cpu_read(save_modifying_code))
+	if (!__get_cpu_var(save_modifying_code))
 		return;
 
 	if (atomic_inc_return(&nmi_running) & MOD_CODE_WRITE_FLAG) {
@@ -186,7 +183,7 @@ void ftrace_nmi_enter(void)
 
 void ftrace_nmi_exit(void)
 {
-	if (!__this_cpu_read(save_modifying_code))
+	if (!__get_cpu_var(save_modifying_code))
 		return;
 
 	/* Finish all executions before clearing nmi_running */
@@ -225,7 +222,7 @@ within(unsigned long addr, unsigned long start, unsigned long end)
 }
 
 static int
-do_ftrace_mod_code(unsigned long ip, const void *new_code)
+do_ftrace_mod_code(unsigned long ip, void *new_code)
 {
 	/*
 	 * On x86_64, kernel text mappings are mapped read-only with
@@ -260,14 +257,14 @@ do_ftrace_mod_code(unsigned long ip, const void *new_code)
 	return mod_code_status;
 }
 
-static const unsigned char *ftrace_nop_replace(void)
+static unsigned char *ftrace_nop_replace(void)
 {
-	return ideal_nops[NOP_ATOMIC5];
+	return ideal_nop5;
 }
 
 static int
-ftrace_modify_code(unsigned long ip, unsigned const char *old_code,
-		   unsigned const char *new_code)
+ftrace_modify_code(unsigned long ip, unsigned char *old_code,
+		   unsigned char *new_code)
 {
 	unsigned char replaced[MCOUNT_INSN_SIZE];
 
@@ -301,7 +298,7 @@ ftrace_modify_code(unsigned long ip, unsigned const char *old_code,
 int ftrace_make_nop(struct module *mod,
 		    struct dyn_ftrace *rec, unsigned long addr)
 {
-	unsigned const char *new, *old;
+	unsigned char *new, *old;
 	unsigned long ip = rec->ip;
 
 	old = ftrace_call_replace(ip, addr);
@@ -312,7 +309,7 @@ int ftrace_make_nop(struct module *mod,
 
 int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 {
-	unsigned const char *new, *old;
+	unsigned char *new, *old;
 	unsigned long ip = rec->ip;
 
 	old = ftrace_nop_replace();
@@ -437,19 +434,18 @@ void prepare_ftrace_return(unsigned long *parent, unsigned long self_addr,
 		return;
 	}
 
-	trace.func = self_addr;
-	trace.depth = current->curr_ret_stack + 1;
-
-	/* Only trace if the calling function expects to */
-	if (!ftrace_graph_entry(&trace)) {
-		*parent = old;
-		return;
-	}
-
 	if (ftrace_push_return_trace(old, self_addr, &trace.depth,
 		    frame_pointer) == -EBUSY) {
 		*parent = old;
 		return;
+	}
+
+	trace.func = self_addr;
+
+	/* Only trace if the calling function expects to */
+	if (!ftrace_graph_entry(&trace)) {
+		current->curr_ret_stack--;
+		*parent = old;
 	}
 }
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */

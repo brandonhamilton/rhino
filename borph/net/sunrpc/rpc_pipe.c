@@ -162,17 +162,9 @@ rpc_alloc_inode(struct super_block *sb)
 }
 
 static void
-rpc_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(rpc_inode_cachep, RPC_I(inode));
-}
-
-static void
 rpc_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, rpc_i_callback);
+	kmem_cache_free(rpc_inode_cachep, RPC_I(inode));
 }
 
 static int
@@ -438,7 +430,7 @@ void rpc_put_mount(void)
 }
 EXPORT_SYMBOL_GPL(rpc_put_mount);
 
-static int rpc_delete_dentry(const struct dentry *dentry)
+static int rpc_delete_dentry(struct dentry *dentry)
 {
 	return 1;
 }
@@ -456,13 +448,13 @@ rpc_get_inode(struct super_block *sb, umode_t mode)
 	inode->i_ino = get_next_ino();
 	inode->i_mode = mode;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
-	switch (mode & S_IFMT) {
-	case S_IFDIR:
-		inode->i_fop = &simple_dir_operations;
-		inode->i_op = &simple_dir_inode_operations;
-		inc_nlink(inode);
-	default:
-		break;
+	switch(mode & S_IFMT) {
+		case S_IFDIR:
+			inode->i_fop = &simple_dir_operations;
+			inode->i_op = &simple_dir_inode_operations;
+			inc_nlink(inode);
+		default:
+			break;
 	}
 	return inode;
 }
@@ -474,7 +466,7 @@ static int __rpc_create_common(struct inode *dir, struct dentry *dentry,
 {
 	struct inode *inode;
 
-	d_drop(dentry);
+	BUG_ON(!d_unhashed(dentry));
 	inode = rpc_get_inode(dir->i_sb, mode);
 	if (!inode)
 		goto out_err;
@@ -591,7 +583,7 @@ static struct dentry *__rpc_lookup_create(struct dentry *parent,
 		}
 	}
 	if (!dentry->d_inode)
-		d_set_d_op(dentry, &rpc_dentry_operations);
+		dentry->d_op = &rpc_dentry_operations;
 out_err:
 	return dentry;
 }

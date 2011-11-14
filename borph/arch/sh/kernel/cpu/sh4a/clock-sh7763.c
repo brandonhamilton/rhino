@@ -13,7 +13,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/io.h>
-#include <linux/clkdev.h>
+#include <asm/clkdev.h>
 #include <asm/clock.h>
 #include <asm/freq.h>
 #include <asm/io.h>
@@ -90,6 +90,8 @@ static struct clk sh7763_shyway_clk = {
 static struct clk *sh7763_onchip_clocks[] = {
 	&sh7763_shyway_clk,
 };
+
+#define CLKDEV_CON_ID(_id, _clk) { .con_id = _id, .clk = _clk }
 
 static struct clk_lookup lookups[] = {
 	/* main clocks */

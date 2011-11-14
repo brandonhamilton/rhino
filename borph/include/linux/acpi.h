@@ -150,7 +150,8 @@ extern int ec_read(u8 addr, u8 *val);
 extern int ec_write(u8 addr, u8 val);
 extern int ec_transaction(u8 command,
                           const u8 *wdata, unsigned wdata_len,
-                          u8 *rdata, unsigned rdata_len);
+                          u8 *rdata, unsigned rdata_len,
+			  int force_poll);
 
 #if defined(CONFIG_ACPI_WMI) || defined(CONFIG_ACPI_WMI_MODULE)
 
@@ -238,6 +239,7 @@ extern int acpi_paddr_to_node(u64 start_addr, u64 size);
 extern int pnpacpi_disabled;
 
 #define PXM_INVAL	(-1)
+#define NID_INVAL	(-1)
 
 int acpi_check_resource_conflict(const struct resource *res);
 
@@ -279,8 +281,6 @@ acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context);
 #define OSC_SB_CPUHP_OST_SUPPORT	8
 #define OSC_SB_APEI_SUPPORT		16
 
-extern bool osc_sb_apei_support_acked;
-
 /* PCI defined _OSC bits */
 /* _OSC DW1 Definition (OS Support Fields) */
 #define OSC_EXT_PCI_CONFIG_SUPPORT		1
@@ -305,6 +305,9 @@ extern bool osc_sb_apei_support_acked;
 extern acpi_status acpi_pci_osc_control_set(acpi_handle handle,
 					     u32 *mask, u32 req);
 extern void acpi_early_init(void);
+
+int acpi_os_map_generic_address(struct acpi_generic_address *addr);
+void acpi_os_unmap_generic_address(struct acpi_generic_address *addr);
 
 #else	/* !CONFIG_ACPI */
 
@@ -349,14 +352,4 @@ static inline int acpi_table_parse(char *id,
 	return -1;
 }
 #endif	/* !CONFIG_ACPI */
-
-#ifdef CONFIG_ACPI_SLEEP
-int suspend_nvs_register(unsigned long start, unsigned long size);
-#else
-static inline int suspend_nvs_register(unsigned long a, unsigned long b)
-{
-	return 0;
-}
-#endif
-
 #endif	/*_LINUX_ACPI_H*/

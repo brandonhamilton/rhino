@@ -31,8 +31,6 @@
 
 #include "ov9640.h"
 
-#define to_ov9640_sensor(sd)	container_of(sd, struct ov9640_priv, subdev)
-
 /* default register setup */
 static const struct ov9640_reg ov9640_regs_dflt[] = {
 	{ OV9640_COM5,	OV9640_COM5_SYSCLK | OV9640_COM5_LONGEXP },
@@ -273,7 +271,7 @@ static int ov9640_reset(struct i2c_client *client)
 	ret = ov9640_reg_write(client, OV9640_COM7, OV9640_COM7_SCCB_RESET);
 	if (ret)
 		dev_err(&client->dev,
-			"An error occurred while entering soft reset!\n");
+			"An error occured while entering soft reset!\n");
 
 	return ret;
 }
@@ -310,7 +308,9 @@ static unsigned long ov9640_query_bus_param(struct soc_camera_device *icd)
 /* Get status of additional camera capabilities */
 static int ov9640_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 {
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	switch (ctrl->id) {
 	case V4L2_CID_VFLIP:
@@ -327,7 +327,8 @@ static int ov9640_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 static int ov9640_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	int ret = 0;
 
@@ -359,7 +360,9 @@ static int ov9640_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 static int ov9640_g_chip_ident(struct v4l2_subdev *sd,
 				struct v4l2_dbg_chip_ident *id)
 {
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	id->ident	= priv->model;
 	id->revision	= priv->revision;
@@ -651,15 +654,21 @@ static int ov9640_cropcap(struct v4l2_subdev *sd, struct v4l2_cropcap *a)
 static int ov9640_video_probe(struct soc_camera_device *icd,
 				struct i2c_client *client)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct ov9640_priv *priv = i2c_get_clientdata(client);
 	u8		pid, ver, midh, midl;
 	const char	*devname;
 	int		ret = 0;
 
-	/* We must have a parent by now. And it cannot be a wrong one. */
-	BUG_ON(!icd->parent ||
-	       to_soc_camera_host(icd->parent)->nr != icd->iface);
+	/*
+	 * We must have a parent by now. And it cannot be a wrong one.
+	 * So this entire test is completely redundant.
+	 */
+	if (!icd->dev.parent ||
+	    to_soc_camera_host(icd->dev.parent)->nr != icd->iface) {
+		dev_err(&client->dev, "Parent missing or invalid!\n");
+		ret = -ENODEV;
+		goto err;
+	}
 
 	/*
 	 * check and show product ID and manufacturer ID
@@ -782,8 +791,7 @@ static int ov9640_probe(struct i2c_client *client,
 
 static int ov9640_remove(struct i2c_client *client)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct ov9640_priv *priv = i2c_get_clientdata(client);
 
 	kfree(priv);
 	return 0;

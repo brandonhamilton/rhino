@@ -167,8 +167,7 @@ static struct FsmNode L1FnList[] __initdata =
 	{ST_L1_F8, EV_IND_RSY,           l1_ignore},
 };
 
-static __attribute__((format(printf, 2, 3)))
-void l1m_debug(struct FsmInst *fi, char *fmt, ...)
+static void l1m_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	va_list args;
 	char buf[256];
@@ -270,8 +269,7 @@ static char *strDoutEvent[] =
 	"EV_DOUT_UNDERRUN",
 };
 
-static __attribute__((format(printf, 2, 3)))
-void dout_debug(struct FsmInst *fi, char *fmt, ...)
+static void dout_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	va_list args;
 	char buf[256];

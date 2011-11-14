@@ -19,10 +19,6 @@ config OF_FLATTREE
 	bool
 	select DTC
 
-config OF_EARLY_FLATTREE
-	bool
-	select OF_FLATTREE
-
 config OF_PROMTREE
 	bool
 
@@ -53,10 +49,6 @@ config OF_I2C
 	help
 	  OpenFirmware I2C accessors
 
-config OF_NET
-	depends on NETDEVICES
-	def_bool y
-
 config OF_SPI
 	def_tristate SPI
 	depends on SPI && !SPARC
@@ -68,17 +60,5 @@ config OF_MDIO
 	depends on PHYLIB
 	help
 	  OpenFirmware MDIO bus (Ethernet PHY) accessors
-
-config OF_PCI
-	def_tristate PCI
-	depends on PCI
-	help
-	  OpenFirmware PCI bus accessors
-
-config OF_PCI_IRQ
-	def_tristate PCI
-	depends on OF_PCI && OF_IRQ
-	help
-	  OpenFirmware PCI IRQ routing helpers
 
 endmenu # OF

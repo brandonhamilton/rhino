@@ -32,6 +32,7 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 
 #define DEFLATE_DEF_LEVEL		Z_DEFAULT_COMPRESSION
 #define DEFLATE_DEF_WINBITS		11
@@ -47,12 +48,12 @@ static int deflate_comp_init(struct deflate_ctx *ctx)
 	int ret = 0;
 	struct z_stream_s *stream = &ctx->comp_stream;
 
-	stream->workspace = vzalloc(zlib_deflate_workspacesize(
-				-DEFLATE_DEF_WINBITS, DEFLATE_DEF_MEMLEVEL));
+	stream->workspace = vmalloc(zlib_deflate_workspacesize());
 	if (!stream->workspace) {
 		ret = -ENOMEM;
 		goto out;
 	}
+	memset(stream->workspace, 0, zlib_deflate_workspacesize());
 	ret = zlib_deflateInit2(stream, DEFLATE_DEF_LEVEL, Z_DEFLATED,
 	                        -DEFLATE_DEF_WINBITS, DEFLATE_DEF_MEMLEVEL,
 	                        Z_DEFAULT_STRATEGY);
@@ -72,7 +73,7 @@ static int deflate_decomp_init(struct deflate_ctx *ctx)
 	int ret = 0;
 	struct z_stream_s *stream = &ctx->decomp_stream;
 
-	stream->workspace = vzalloc(zlib_inflate_workspacesize());
+	stream->workspace = kzalloc(zlib_inflate_workspacesize(), GFP_KERNEL);
 	if (!stream->workspace) {
 		ret = -ENOMEM;
 		goto out;
@@ -85,7 +86,7 @@ static int deflate_decomp_init(struct deflate_ctx *ctx)
 out:
 	return ret;
 out_free:
-	vfree(stream->workspace);
+	kfree(stream->workspace);
 	goto out;
 }
 
@@ -98,7 +99,7 @@ static void deflate_comp_exit(struct deflate_ctx *ctx)
 static void deflate_decomp_exit(struct deflate_ctx *ctx)
 {
 	zlib_inflateEnd(&ctx->decomp_stream);
-	vfree(ctx->decomp_stream.workspace);
+	kfree(ctx->decomp_stream.workspace);
 }
 
 static int deflate_init(struct crypto_tfm *tfm)

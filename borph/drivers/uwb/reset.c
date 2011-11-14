@@ -52,7 +52,7 @@ const char *__strerror[] = {
 	"cancelled",
 	"invalid state",
 	"invalid size",
-	"ack not received",
+	"ack not recieved",
 	"no more asie notification",
 };
 

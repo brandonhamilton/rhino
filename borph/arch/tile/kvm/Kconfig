@@ -33,5 +33,6 @@ config KVM
 	  If unsure, say N.
 
 source drivers/vhost/Kconfig
+source drivers/virtio/Kconfig
 
 endif # VIRTUALIZATION

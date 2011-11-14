@@ -518,21 +518,22 @@ static int prism2_config(struct pcmcia_device *link)
 	hw_priv->link = link;
 
 	/*
-	 * We enable IRQ here, but IRQ handler will not proceed
-	 * until dev->base_addr is set below. This protect us from
-	 * receive interrupts when driver is not initialized.
+	 * Make sure the IRQ handler cannot proceed until at least
+	 * dev->base_addr is initialized.
 	 */
+	spin_lock_irqsave(&local->irq_init_lock, flags);
+
 	ret = pcmcia_request_irq(link, prism2_interrupt);
 	if (ret)
-		goto failed;
+		goto failed_unlock;
 
 	ret = pcmcia_enable_device(link);
 	if (ret)
-		goto failed;
+		goto failed_unlock;
 
-	spin_lock_irqsave(&local->irq_init_lock, flags);
 	dev->irq = link->irq;
 	dev->base_addr = link->resource[0]->start;
+
 	spin_unlock_irqrestore(&local->irq_init_lock, flags);
 
 	local->shutdown = 0;
@@ -545,6 +546,8 @@ static int prism2_config(struct pcmcia_device *link)
 
 	return ret;
 
+ failed_unlock:
+	spin_unlock_irqrestore(&local->irq_init_lock, flags);
  failed:
 	kfree(hw_priv);
 	prism2_release((u_long)link);
@@ -620,7 +623,7 @@ static int hostap_cs_resume(struct pcmcia_device *link)
 	return 0;
 }
 
-static const struct pcmcia_device_id hostap_cs_ids[] = {
+static struct pcmcia_device_id hostap_cs_ids[] = {
 	PCMCIA_DEVICE_MANF_CARD(0x000b, 0x7100),
 	PCMCIA_DEVICE_MANF_CARD(0x000b, 0x7300),
 	PCMCIA_DEVICE_MANF_CARD(0x0101, 0x0777),
@@ -648,8 +651,6 @@ static const struct pcmcia_device_id hostap_cs_ids[] = {
 					 0x74c5e40d),
 	PCMCIA_DEVICE_MANF_CARD_PROD_ID1(0x0156, 0x0002, "Intersil",
 					 0x4b801a17),
-	PCMCIA_DEVICE_MANF_CARD_PROD_ID3(0x0156, 0x0002, "Version 01.02",
-					 0x4b74baa0),
 	PCMCIA_MFC_DEVICE_PROD_ID12(0, "SanDisk", "ConnectPlus",
 				    0x7a954bd9, 0x74be00c6),
 	PCMCIA_DEVICE_PROD_ID123(

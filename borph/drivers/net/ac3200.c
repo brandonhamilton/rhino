@@ -32,7 +32,6 @@ static const char version[] =
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 
 #include <asm/system.h>
 #include <asm/io.h>

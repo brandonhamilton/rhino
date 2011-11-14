@@ -1,6 +1,5 @@
 #include "symbol.h"
 #include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -196,7 +195,7 @@ int map__overlap(struct map *l, struct map *r)
 
 size_t map__fprintf(struct map *self, FILE *fp)
 {
-	return fprintf(fp, " %" PRIx64 "-%" PRIx64 " %" PRIx64 " %s\n",
+	return fprintf(fp, " %Lx-%Lx %Lx %s\n",
 		       self->start, self->end, self->pgoff, self->dso->name);
 }
 

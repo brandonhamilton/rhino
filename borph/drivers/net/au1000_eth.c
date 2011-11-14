@@ -106,6 +106,8 @@ MODULE_VERSION(DRV_VERSION);
  * complete immediately.
  */
 
+struct au1000_private *au_macs[NUM_ETH_INTERFACES];
+
 /*
  * board-specific configurations
  *

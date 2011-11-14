@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2010, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -62,10 +62,10 @@ acpi_hw_enable_wakeup_gpe_block(struct acpi_gpe_xrupt_info *gpe_xrupt_info,
  * PARAMETERS:	gpe_event_info	    - Info block for the GPE
  *		gpe_register_info   - Info block for the GPE register
  *
- * RETURN:	Register mask with a one in the GPE bit position
+ * RETURN:	Status
  *
- * DESCRIPTION: Compute the register mask for this GPE. One bit is set in the
- *              correct position for the input GPE.
+ * DESCRIPTION:	Compute GPE enable mask with one bit corresponding to the given
+ *		GPE set.
  *
  ******************************************************************************/
 
@@ -85,12 +85,12 @@ u32 acpi_hw_get_gpe_register_bit(struct acpi_gpe_event_info *gpe_event_info,
  *
  * RETURN:	Status
  *
- * DESCRIPTION: Enable or disable a single GPE in the parent enable register.
+ * DESCRIPTION: Enable or disable a single GPE in its enable register.
  *
  ******************************************************************************/
 
 acpi_status
-acpi_hw_low_set_gpe(struct acpi_gpe_event_info *gpe_event_info, u32 action)
+acpi_hw_low_set_gpe(struct acpi_gpe_event_info *gpe_event_info, u8 action)
 {
 	struct acpi_gpe_register_info *gpe_register_info;
 	acpi_status status;
@@ -113,20 +113,14 @@ acpi_hw_low_set_gpe(struct acpi_gpe_event_info *gpe_event_info, u32 action)
 		return (status);
 	}
 
-	/* Set or clear just the bit that corresponds to this GPE */
+	/* Set ot clear just the bit that corresponds to this GPE */
 
 	register_bit = acpi_hw_get_gpe_register_bit(gpe_event_info,
 						gpe_register_info);
 	switch (action) {
-	case ACPI_GPE_CONDITIONAL_ENABLE:
-
-		/* Only enable if the enable_for_run bit is set */
-
-		if (!(register_bit & gpe_register_info->enable_for_run)) {
+	case ACPI_GPE_COND_ENABLE:
+		if (!(register_bit & gpe_register_info->enable_for_run))
 			return (AE_BAD_PARAMETER);
-		}
-
-		/*lint -fallthrough */
 
 	case ACPI_GPE_ENABLE:
 		ACPI_SET_BIT(enable_mask, register_bit);
@@ -137,7 +131,7 @@ acpi_hw_low_set_gpe(struct acpi_gpe_event_info *gpe_event_info, u32 action)
 		break;
 
 	default:
-		ACPI_ERROR((AE_INFO, "Invalid GPE Action, %u\n", action));
+		ACPI_ERROR((AE_INFO, "Invalid action\n"));
 		return (AE_BAD_PARAMETER);
 	}
 
@@ -174,13 +168,13 @@ acpi_status acpi_hw_clear_gpe(struct acpi_gpe_event_info * gpe_event_info)
 		return (AE_NOT_EXIST);
 	}
 
+	register_bit = acpi_hw_get_gpe_register_bit(gpe_event_info,
+						gpe_register_info);
+
 	/*
 	 * Write a one to the appropriate bit in the status register to
 	 * clear this GPE.
 	 */
-	register_bit =
-	    acpi_hw_get_gpe_register_bit(gpe_event_info, gpe_register_info);
-
 	status = acpi_hw_write(register_bit,
 			       &gpe_register_info->status_address);
 
@@ -207,8 +201,8 @@ acpi_hw_get_gpe_status(struct acpi_gpe_event_info * gpe_event_info,
 	u32 in_byte;
 	u32 register_bit;
 	struct acpi_gpe_register_info *gpe_register_info;
-	acpi_event_status local_event_status = 0;
 	acpi_status status;
+	acpi_event_status local_event_status = 0;
 
 	ACPI_FUNCTION_ENTRY();
 

@@ -32,43 +32,14 @@
 #define MXC_CPU_MX27		27
 #define MXC_CPU_MX31		31
 #define MXC_CPU_MX35		35
-#define MXC_CPU_MX50		50
 #define MXC_CPU_MX51		51
-#define MXC_CPU_MX53		53
-
-#define IMX_CHIP_REVISION_1_0		0x10
-#define IMX_CHIP_REVISION_1_1		0x11
-#define IMX_CHIP_REVISION_1_2		0x12
-#define IMX_CHIP_REVISION_1_3		0x13
-#define IMX_CHIP_REVISION_2_0		0x20
-#define IMX_CHIP_REVISION_2_1		0x21
-#define IMX_CHIP_REVISION_2_2		0x22
-#define IMX_CHIP_REVISION_2_3		0x23
-#define IMX_CHIP_REVISION_3_0		0x30
-#define IMX_CHIP_REVISION_3_1		0x31
-#define IMX_CHIP_REVISION_3_2		0x32
-#define IMX_CHIP_REVISION_3_3		0x33
-#define IMX_CHIP_REVISION_UNKNOWN	0xff
-
-#define IMX_CHIP_REVISION_1_0_STRING		"1.0"
-#define IMX_CHIP_REVISION_1_1_STRING		"1.1"
-#define IMX_CHIP_REVISION_1_2_STRING		"1.2"
-#define IMX_CHIP_REVISION_1_3_STRING		"1.3"
-#define IMX_CHIP_REVISION_2_0_STRING		"2.0"
-#define IMX_CHIP_REVISION_2_1_STRING		"2.1"
-#define IMX_CHIP_REVISION_2_2_STRING		"2.2"
-#define IMX_CHIP_REVISION_2_3_STRING		"2.3"
-#define IMX_CHIP_REVISION_3_0_STRING		"3.0"
-#define IMX_CHIP_REVISION_3_1_STRING		"3.1"
-#define IMX_CHIP_REVISION_3_2_STRING		"3.2"
-#define IMX_CHIP_REVISION_3_3_STRING		"3.3"
-#define IMX_CHIP_REVISION_UNKNOWN_STRING	"unknown"
+#define MXC_CPU_MXC91231	91231
 
 #ifndef __ASSEMBLY__
 extern unsigned int __mxc_cpu_type;
 #endif
 
-#ifdef CONFIG_SOC_IMX1
+#ifdef CONFIG_ARCH_MX1
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -80,7 +51,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx1()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX21
+#ifdef CONFIG_MACH_MX21
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -92,7 +63,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx21()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX25
+#ifdef CONFIG_ARCH_MX25
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -104,7 +75,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx25()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX27
+#ifdef CONFIG_MACH_MX27
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -116,7 +87,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx27()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX31
+#ifdef CONFIG_ARCH_MX31
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -128,7 +99,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx31()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX35
+#ifdef CONFIG_ARCH_MX35
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -140,19 +111,7 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx35()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX50
-# ifdef mxc_cpu_type
-#  undef mxc_cpu_type
-#  define mxc_cpu_type __mxc_cpu_type
-# else
-#  define mxc_cpu_type MXC_CPU_MX50
-# endif
-# define cpu_is_mx50()		(mxc_cpu_type == MXC_CPU_MX50)
-#else
-# define cpu_is_mx50()		(0)
-#endif
-
-#ifdef CONFIG_SOC_IMX51
+#ifdef CONFIG_ARCH_MX5
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
@@ -164,16 +123,16 @@ extern unsigned int __mxc_cpu_type;
 # define cpu_is_mx51()		(0)
 #endif
 
-#ifdef CONFIG_SOC_IMX53
+#ifdef CONFIG_ARCH_MXC91231
 # ifdef mxc_cpu_type
 #  undef mxc_cpu_type
 #  define mxc_cpu_type __mxc_cpu_type
 # else
-#  define mxc_cpu_type MXC_CPU_MX53
+#  define mxc_cpu_type MXC_CPU_MXC91231
 # endif
-# define cpu_is_mx53()		(mxc_cpu_type == MXC_CPU_MX53)
+# define cpu_is_mxc91231()	(mxc_cpu_type == MXC_CPU_MXC91231)
 #else
-# define cpu_is_mx53()		(0)
+# define cpu_is_mxc91231()	(0)
 #endif
 
 #ifndef __ASSEMBLY__
@@ -182,19 +141,17 @@ struct cpu_op {
 	u32 cpu_rate;
 };
 
-int tzic_enable_wake(int is_idle);
-enum mxc_cpu_pwr_mode {
-	WAIT_CLOCKED,		/* wfi only */
-	WAIT_UNCLOCKED,		/* WAIT */
-	WAIT_UNCLOCKED_POWER_OFF,	/* WAIT + SRPG */
-	STOP_POWER_ON,		/* just STOP */
-	STOP_POWER_OFF,		/* STOP + SRPG */
-};
-
 extern struct cpu_op *(*get_cpu_op)(int *op);
 #endif
 
-#define cpu_is_mx3()	(cpu_is_mx31() || cpu_is_mx35())
+#if defined(CONFIG_ARCH_MX3) || defined(CONFIG_ARCH_MX2)
+/* These are deprecated, use mx[23][157]_setup_weimcs instead. */
+#define CSCR_U(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10))
+#define CSCR_L(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10 + 0x4))
+#define CSCR_A(n) (IO_ADDRESS(WEIM_BASE_ADDR + n * 0x10 + 0x8))
+#endif
+
+#define cpu_is_mx3()	(cpu_is_mx31() || cpu_is_mx35() || cpu_is_mxc91231())
 #define cpu_is_mx2()	(cpu_is_mx21() || cpu_is_mx27())
 
 #endif /*  __ASM_ARCH_MXC_H__ */

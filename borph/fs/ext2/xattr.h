@@ -116,11 +116,9 @@ exit_ext2_xattr(void)
 # endif  /* CONFIG_EXT2_FS_XATTR */
 
 #ifdef CONFIG_EXT2_FS_SECURITY
-extern int ext2_init_security(struct inode *inode, struct inode *dir,
-			      const struct qstr *qstr);
+extern int ext2_init_security(struct inode *inode, struct inode *dir);
 #else
-static inline int ext2_init_security(struct inode *inode, struct inode *dir,
-				     const struct qstr *qstr)
+static inline int ext2_init_security(struct inode *inode, struct inode *dir)
 {
 	return 0;
 }

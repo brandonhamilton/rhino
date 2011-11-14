@@ -792,7 +792,7 @@ isdn_tty_suspend(char *id, modem_info * info, atemu * m)
 }
 
 /* isdn_tty_resume() tries to resume a suspended call
- * setup of the lower levels before that. unfortunately here is no
+ * setup of the lower levels before that. unfortunatly here is no
  * checking for compatibility of used protocols implemented by Q931
  * It does the same things like isdn_tty_dial, the last command
  * is different, may be we can merge it.
@@ -998,6 +998,7 @@ isdn_tty_change_speed(modem_info * info)
 {
 	uint cflag,
 	 cval,
+	 fcr,
 	 quot;
 	int i;
 
@@ -1036,6 +1037,7 @@ isdn_tty_change_speed(modem_info * info)
 		cval |= UART_LCR_PARITY;
 	if (!(cflag & PARODD))
 		cval |= UART_LCR_EPAR;
+	fcr = 0;
 
 	/* CTS flow control flag and modem status interrupts */
 	if (cflag & CRTSCTS) {
@@ -1343,7 +1345,7 @@ isdn_tty_get_lsr_info(modem_info * info, uint __user * value)
 
 
 static int
-isdn_tty_tiocmget(struct tty_struct *tty)
+isdn_tty_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 	u_char control, status;
@@ -1370,7 +1372,7 @@ isdn_tty_tiocmget(struct tty_struct *tty)
 }
 
 static int
-isdn_tty_tiocmset(struct tty_struct *tty,
+isdn_tty_tiocmset(struct tty_struct *tty, struct file *file,
 		unsigned int set, unsigned int clear)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
@@ -1411,7 +1413,8 @@ isdn_tty_tiocmset(struct tty_struct *tty,
 }
 
 static int
-isdn_tty_ioctl(struct tty_struct *tty, uint cmd, ulong arg)
+isdn_tty_ioctl(struct tty_struct *tty, struct file *file,
+	       uint cmd, ulong arg)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 	int retval;

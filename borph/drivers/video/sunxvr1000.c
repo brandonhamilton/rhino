@@ -111,7 +111,8 @@ static int __devinit gfb_set_fbinfo(struct gfb_info *gp)
         return 0;
 }
 
-static int __devinit gfb_probe(struct platform_device *op)
+static int __devinit gfb_probe(struct platform_device *op,
+			       const struct of_device_id *match)
 {
 	struct device_node *dp = op->dev.of_node;
 	struct fb_info *info;
@@ -197,7 +198,7 @@ static const struct of_device_id gfb_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ffb_match);
 
-static struct platform_driver gfb_driver = {
+static struct of_platform_driver gfb_driver = {
 	.probe		= gfb_probe,
 	.remove		= __devexit_p(gfb_remove),
 	.driver = {
@@ -212,12 +213,12 @@ static int __init gfb_init(void)
 	if (fb_get_options("gfb", NULL))
 		return -ENODEV;
 
-	return platform_driver_register(&gfb_driver);
+	return of_register_platform_driver(&gfb_driver);
 }
 
 static void __exit gfb_exit(void)
 {
-	platform_driver_unregister(&gfb_driver);
+	of_unregister_platform_driver(&gfb_driver);
 }
 
 module_init(gfb_init);

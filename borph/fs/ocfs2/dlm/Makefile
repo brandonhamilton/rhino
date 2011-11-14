@@ -1,4 +1,4 @@
-ccflags-y := -Ifs/ocfs2
+EXTRA_CFLAGS += -Ifs/ocfs2
 
 obj-$(CONFIG_OCFS2_FS_O2CB) += ocfs2_dlm.o
 

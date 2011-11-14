@@ -189,7 +189,7 @@ ISARVersion(struct IsdnCardState *cs, char *s)
 static int
 isar_load_firmware(struct IsdnCardState *cs, u_char __user *buf)
 {
-	int cfu_ret, ret, size, cnt, debug;
+	int ret, size, cnt, debug;
 	u_char len, nom, noc;
 	u_short sadr, left, *sp;
 	u_char __user *p = buf;
@@ -212,10 +212,9 @@ isar_load_firmware(struct IsdnCardState *cs, u_char __user *buf)
 	cs->debug &= ~(L1_DEB_HSCX | L1_DEB_HSCX_FIFO);
 #endif
 	
-	cfu_ret = copy_from_user(&size, p, sizeof(int));
-	if (cfu_ret) {
-		printk(KERN_ERR"isar_load_firmware copy_from_user ret %d\n", cfu_ret);
-		return -EFAULT;
+	if ((ret = copy_from_user(&size, p, sizeof(int)))) {
+		printk(KERN_ERR"isar_load_firmware copy_from_user ret %d\n", ret);
+		return ret;
 	}
 	p += sizeof(int);
 	printk(KERN_DEBUG"isar_load_firmware size: %d\n", size);
@@ -954,7 +953,7 @@ isar_pump_statev_modem(struct BCState *bcs, u_char devt) {
 			break;
 		case PSEV_GSTN_CLR:
 			if (cs->debug & L1_DEB_HSCX)
-				debugl1(cs, "pump stev GSTN CLEAR");
+				debugl1(cs, "pump stev GSTN CLEAR", devt);
 			break;
 		default:
 			if (cs->debug & L1_DEB_HSCX)
@@ -1269,7 +1268,7 @@ isar_int_main(struct IsdnCardState *cs)
 static void
 ftimer_handler(struct BCState *bcs) {
 	if (bcs->cs->debug)
-		debugl1(bcs->cs, "ftimer flags %04lx",
+		debugl1(bcs->cs, "ftimer flags %04x",
 			bcs->Flag);
 	test_and_clear_bit(BC_FLG_FTI_RUN, &bcs->Flag);
 	if (test_and_clear_bit(BC_FLG_LL_CONN, &bcs->Flag)) {
@@ -1749,7 +1748,7 @@ isar_auxcmd(struct IsdnCardState *cs, isdn_ctrl *ic) {
 	struct BCState *bcs;
 
 	if (cs->debug & L1_DEB_HSCX)
-		debugl1(cs, "isar_auxcmd cmd/ch %x/%ld", ic->command, ic->arg);
+		debugl1(cs, "isar_auxcmd cmd/ch %x/%d", ic->command, ic->arg);
 	switch (ic->command) {
 		case (ISDN_CMD_FAXCMD):
 			bcs = cs->channel[ic->arg].bcs;

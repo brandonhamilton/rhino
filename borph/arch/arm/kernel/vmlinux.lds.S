@@ -21,12 +21,6 @@
 #define ARM_CPU_KEEP(x)
 #endif
 
-#if defined(CONFIG_SMP_ON_UP) && !defined(CONFIG_DEBUG_SPINLOCK)
-#define ARM_EXIT_KEEP(x)	x
-#else
-#define ARM_EXIT_KEEP(x)
-#endif
-
 OUTPUT_ARCH(arm)
 ENTRY(stext)
 
@@ -38,6 +32,51 @@ jiffies = jiffies_64 + 4;
 
 SECTIONS
 {
+#ifdef CONFIG_XIP_KERNEL
+	. = XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR);
+#else
+	. = PAGE_OFFSET + TEXT_OFFSET;
+#endif
+
+	.init : {			/* Init code and data		*/
+		_stext = .;
+		_sinittext = .;
+			HEAD_TEXT
+			INIT_TEXT
+		_einittext = .;
+		ARM_CPU_DISCARD(PROC_INFO)
+		__arch_info_begin = .;
+			*(.arch.info.init)
+		__arch_info_end = .;
+		__tagtable_begin = .;
+			*(.taglist.init)
+		__tagtable_end = .;
+#ifdef CONFIG_SMP_ON_UP
+		__smpalt_begin = .;
+			*(.alt.smp.init)
+		__smpalt_end = .;
+#endif
+
+		INIT_SETUP(16)
+
+		INIT_CALLS
+		CON_INITCALL
+		SECURITY_INITCALL
+		INIT_RAM_FS
+
+#ifndef CONFIG_XIP_KERNEL
+		__init_begin = _stext;
+		INIT_DATA
+#endif
+	}
+
+	PERCPU(PAGE_SIZE)
+
+#ifndef CONFIG_XIP_KERNEL
+	. = ALIGN(PAGE_SIZE);
+	__init_end = .;
+#endif
+
 	/*
 	 * unwind exit sections must be discarded before the rest of the
 	 * unwind sections get included.
@@ -55,26 +94,13 @@ SECTIONS
 		*(.fixup)
 		*(__ex_table)
 #endif
-#ifndef CONFIG_SMP_ON_UP
-		*(.alt.smp.init)
-#endif
 	}
 
-#ifdef CONFIG_XIP_KERNEL
-	. = XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR);
-#else
-	. = PAGE_OFFSET + TEXT_OFFSET;
-#endif
-	.head.text : {
-		_text = .;
-		HEAD_TEXT
-	}
 	.text : {			/* Real text segment		*/
-		_stext = .;		/* Text and read-only data	*/
+		_text = .;		/* Text and read-only data	*/
 			__exception_text_start = .;
 			*(.exception.text)
 			__exception_text_end = .;
-			IRQENTRY_TEXT
 			TEXT_TEXT
 			SCHED_TEXT
 			LOCK_TEXT
@@ -83,6 +109,8 @@ SECTIONS
 			*(.fixup)
 #endif
 			*(.gnu.warning)
+			*(.rodata)
+			*(.rodata.*)
 			*(.glue_7)
 			*(.glue_7t)
 		. = ALIGN(4);
@@ -111,63 +139,10 @@ SECTIONS
 
 	_etext = .;			/* End of text and rodata section */
 
-#ifndef CONFIG_XIP_KERNEL
-	. = ALIGN(PAGE_SIZE);
-	__init_begin = .;
-#endif
-
-	INIT_TEXT_SECTION(8)
-	.exit.text : {
-		ARM_EXIT_KEEP(EXIT_TEXT)
-	}
-	.init.proc.info : {
-		ARM_CPU_DISCARD(PROC_INFO)
-	}
-	.init.arch.info : {
-		__arch_info_begin = .;
-		*(.arch.info.init)
-		__arch_info_end = .;
-	}
-	.init.tagtable : {
-		__tagtable_begin = .;
-		*(.taglist.init)
-		__tagtable_end = .;
-	}
-#ifdef CONFIG_SMP_ON_UP
-	.init.smpalt : {
-		__smpalt_begin = .;
-		*(.alt.smp.init)
-		__smpalt_end = .;
-	}
-#endif
-	.init.pv_table : {
-		__pv_table_begin = .;
-		*(.pv_table)
-		__pv_table_end = .;
-	}
-	.init.data : {
-#ifndef CONFIG_XIP_KERNEL
-		INIT_DATA
-#endif
-		INIT_SETUP(16)
-		INIT_CALLS
-		CON_INITCALL
-		SECURITY_INITCALL
-		INIT_RAM_FS
-	}
-#ifndef CONFIG_XIP_KERNEL
-	.exit.data : {
-		ARM_EXIT_KEEP(EXIT_DATA)
-	}
-#endif
-
-	PERCPU_SECTION(32)
-
 #ifdef CONFIG_XIP_KERNEL
 	__data_loc = ALIGN(4);		/* location in binary */
 	. = PAGE_OFFSET + TEXT_OFFSET;
 #else
-	__init_end = .;
 	. = ALIGN(THREAD_SIZE);
 	__data_loc = .;
 #endif
@@ -186,14 +161,12 @@ SECTIONS
 		. = ALIGN(PAGE_SIZE);
 		__init_begin = .;
 		INIT_DATA
-		ARM_EXIT_KEEP(EXIT_DATA)
 		. = ALIGN(PAGE_SIZE);
 		__init_end = .;
 #endif
 
 		NOSAVE_DATA
 		CACHELINE_ALIGNED_DATA(32)
-		READ_MOSTLY_DATA(32)
 
 		/*
 		 * The exception fixup table (might need resorting at runtime)
@@ -272,8 +245,6 @@ SECTIONS
 	}
 #endif
 
-	NOTES
-
 	BSS_SECTION(0, 0, 0)
 	_end = .;
 
@@ -282,6 +253,12 @@ SECTIONS
 
 	/* Default discards */
 	DISCARDS
+
+#ifndef CONFIG_SMP_ON_UP
+	/DISCARD/ : {
+		*(.alt.smp.init)
+	}
+#endif
 }
 
 /*

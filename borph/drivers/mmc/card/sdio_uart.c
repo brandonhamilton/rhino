@@ -956,7 +956,7 @@ static int sdio_uart_break_ctl(struct tty_struct *tty, int break_state)
 	return 0;
 }
 
-static int sdio_uart_tiocmget(struct tty_struct *tty)
+static int sdio_uart_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct sdio_uart_port *port = tty->driver_data;
 	int result;
@@ -970,7 +970,7 @@ static int sdio_uart_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-static int sdio_uart_tiocmset(struct tty_struct *tty,
+static int sdio_uart_tiocmset(struct tty_struct *tty, struct file *file,
 			      unsigned int set, unsigned int clear)
 {
 	struct sdio_uart_port *port = tty->driver_data;

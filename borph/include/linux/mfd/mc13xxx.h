@@ -146,7 +146,8 @@ struct mc13xxx_platform_data {
 #define MC13XXX_USE_LED		(1 << 5)
 	unsigned int flags;
 
-	struct mc13xxx_regulator_platform_data regulators;
+	int num_regulators;
+	struct mc13xxx_regulator_init_data *regulators;
 	struct mc13xxx_leds_platform_data *leds;
 };
 

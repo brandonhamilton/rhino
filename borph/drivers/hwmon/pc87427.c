@@ -22,8 +22,6 @@
  *  mode, and voltages aren't supported at all.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -1079,7 +1077,7 @@ static int __devinit pc87427_probe(struct platform_device *pdev)
 	data = kzalloc(sizeof(struct pc87427_data), GFP_KERNEL);
 	if (!data) {
 		err = -ENOMEM;
-		pr_err("Out of memory\n");
+		printk(KERN_ERR DRVNAME ": Out of memory\n");
 		goto exit;
 	}
 
@@ -1198,26 +1196,28 @@ static int __init pc87427_device_add(const struct pc87427_sio_data *sio_data)
 	pdev = platform_device_alloc(DRVNAME, res[0].start);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Device allocation failed\n");
 		goto exit;
 	}
 
 	err = platform_device_add_resources(pdev, res, res_count);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device resource addition failed "
+		       "(%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add_data(pdev, sio_data,
 				       sizeof(struct pc87427_sio_data));
 	if (err) {
-		pr_err("Platform data allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto exit_device_put;
 	}
 
@@ -1249,23 +1249,23 @@ static int __init pc87427_find(int sioaddr, struct pc87427_sio_data *sio_data)
 
 		val = superio_inb(sioaddr, SIOREG_ACT);
 		if (!(val & 0x01)) {
-			pr_info("Logical device 0x%02x not activated\n",
-				logdev[i]);
+			printk(KERN_INFO DRVNAME ": Logical device 0x%02x "
+			       "not activated\n", logdev[i]);
 			continue;
 		}
 
 		val = superio_inb(sioaddr, SIOREG_MAP);
 		if (val & 0x01) {
-			pr_warn("Logical device 0x%02x is memory-mapped, "
-				"can't use\n", logdev[i]);
+			printk(KERN_WARNING DRVNAME ": Logical device 0x%02x "
+			       "is memory-mapped, can't use\n", logdev[i]);
 			continue;
 		}
 
 		val = (superio_inb(sioaddr, SIOREG_IOBASE) << 8)
 		    | superio_inb(sioaddr, SIOREG_IOBASE + 1);
 		if (!val) {
-			pr_info("I/O base address not set for logical device "
-				"0x%02x\n", logdev[i]);
+			printk(KERN_INFO DRVNAME ": I/O base address not set "
+			       "for logical device 0x%02x\n", logdev[i]);
 			continue;
 		}
 		sio_data->address[i] = val;

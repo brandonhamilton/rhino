@@ -45,18 +45,24 @@ static struct omap_board_config_kernel am3517_crane_config[] __initdata = {
 static struct omap_board_mux board_mux[] __initdata = {
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
+#else
+#define board_mux	NULL
 #endif
 
-static void __init am3517_crane_init_early(void)
+static void __init am3517_crane_init_irq(void)
 {
+	omap_board_config = am3517_crane_config;
+	omap_board_config_size = ARRAY_SIZE(am3517_crane_config);
+
 	omap2_init_common_infrastructure();
 	omap2_init_common_devices(NULL, NULL);
+	omap_init_irq();
 }
 
-static struct usbhs_omap_board_data usbhs_bdata __initdata = {
-	.port_mode[0] = OMAP_EHCI_PORT_MODE_PHY,
-	.port_mode[1] = OMAP_USBHS_PORT_MODE_UNUSED,
-	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
+static struct ehci_hcd_omap_platform_data ehci_pdata __initdata = {
+	.port_mode[0] = EHCI_HCD_OMAP_MODE_PHY,
+	.port_mode[1] = EHCI_HCD_OMAP_MODE_UNKNOWN,
+	.port_mode[2] = EHCI_HCD_OMAP_MODE_UNKNOWN,
 
 	.phy_reset  = true,
 	.reset_gpio_port[0]  = GPIO_USB_NRESET,
@@ -71,9 +77,6 @@ static void __init am3517_crane_init(void)
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	omap_serial_init();
 
-	omap_board_config = am3517_crane_config;
-	omap_board_config_size = ARRAY_SIZE(am3517_crane_config);
-
 	/* Configure GPIO for EHCI port */
 	if (omap_mux_init_gpio(GPIO_USB_NRESET, OMAP_PIN_OUTPUT)) {
 		pr_err("Can not configure mux for GPIO_USB_NRESET %d\n",
@@ -87,22 +90,27 @@ static void __init am3517_crane_init(void)
 		return;
 	}
 
-	ret = gpio_request_one(GPIO_USB_POWER, GPIOF_OUT_INIT_HIGH,
-			       "usb_ehci_enable");
+	ret = gpio_request(GPIO_USB_POWER, "usb_ehci_enable");
 	if (ret < 0) {
 		pr_err("Can not request GPIO %d\n", GPIO_USB_POWER);
 		return;
 	}
 
-	usbhs_init(&usbhs_bdata);
+	ret = gpio_direction_output(GPIO_USB_POWER, 1);
+	if (ret < 0) {
+		gpio_free(GPIO_USB_POWER);
+		pr_err("Unable to initialize EHCI power\n");
+		return;
+	}
+
+	usb_ehci_init(&ehci_pdata);
 }
 
 MACHINE_START(CRANEBOARD, "AM3517/05 CRANEBOARD")
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= omap3_map_io,
-	.init_early	= am3517_crane_init_early,
-	.init_irq	= omap3_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= am3517_crane_init_irq,
 	.init_machine	= am3517_crane_init,
-	.timer		= &omap3_timer,
+	.timer		= &omap_timer,
 MACHINE_END

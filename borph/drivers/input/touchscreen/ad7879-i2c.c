@@ -10,16 +10,14 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/pm.h>
 
 #include "ad7879.h"
 
 #define AD7879_DEVID		0x79	/* AD7879-1/AD7889-1 */
 
 #ifdef CONFIG_PM
-static int ad7879_i2c_suspend(struct device *dev)
+static int ad7879_i2c_suspend(struct i2c_client *client, pm_message_t message)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct ad7879 *ts = i2c_get_clientdata(client);
 
 	ad7879_suspend(ts);
@@ -27,17 +25,17 @@ static int ad7879_i2c_suspend(struct device *dev)
 	return 0;
 }
 
-static int ad7879_i2c_resume(struct device *dev)
+static int ad7879_i2c_resume(struct i2c_client *client)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct ad7879 *ts = i2c_get_clientdata(client);
 
 	ad7879_resume(ts);
 
 	return 0;
 }
-
-static SIMPLE_DEV_PM_OPS(ad7879_i2c_pm, ad7879_i2c_suspend, ad7879_i2c_resume);
+#else
+# define ad7879_i2c_suspend NULL
+# define ad7879_i2c_resume  NULL
 #endif
 
 /* All registers are word-sized.
@@ -119,12 +117,11 @@ static struct i2c_driver ad7879_i2c_driver = {
 	.driver = {
 		.name	= "ad7879",
 		.owner	= THIS_MODULE,
-#ifdef CONFIG_PM
-		.pm	= &ad7879_i2c_pm,
-#endif
 	},
 	.probe		= ad7879_i2c_probe,
 	.remove		= __devexit_p(ad7879_i2c_remove),
+	.suspend	= ad7879_i2c_suspend,
+	.resume		= ad7879_i2c_resume,
 	.id_table	= ad7879_id,
 };
 

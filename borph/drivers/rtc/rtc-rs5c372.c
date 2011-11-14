@@ -281,8 +281,10 @@ static int rs5c372_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	return rs5c372_set_datetime(to_i2c_client(dev), tm);
 }
 
+#if defined(CONFIG_RTC_INTF_DEV) || defined(CONFIG_RTC_INTF_DEV_MODULE)
 
-static int rs5c_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+static int
+rs5c_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
 	struct i2c_client	*client = to_i2c_client(dev);
 	struct rs5c372		*rs5c = i2c_get_clientdata(client);
@@ -290,19 +292,45 @@ static int rs5c_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 	int			status, addr;
 
 	buf = rs5c->regs[RS5C_REG_CTRL1];
-
-	if (!rs5c->has_irq)
-		return -EINVAL;
+	switch (cmd) {
+	case RTC_UIE_OFF:
+	case RTC_UIE_ON:
+		/* some 327a modes use a different IRQ pin for 1Hz irqs */
+		if (rs5c->type == rtc_rs5c372a
+				&& (buf & RS5C372A_CTRL1_SL1))
+			return -ENOIOCTLCMD;
+	case RTC_AIE_OFF:
+	case RTC_AIE_ON:
+		/* these irq management calls only make sense for chips
+		 * which are wired up to an IRQ.
+		 */
+		if (!rs5c->has_irq)
+			return -ENOIOCTLCMD;
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
 
 	status = rs5c_get_regs(rs5c);
 	if (status < 0)
 		return status;
 
 	addr = RS5C_ADDR(RS5C_REG_CTRL1);
-	if (enabled)
-		buf |= RS5C_CTRL1_AALE;
-	else
+	switch (cmd) {
+	case RTC_AIE_OFF:	/* alarm off */
 		buf &= ~RS5C_CTRL1_AALE;
+		break;
+	case RTC_AIE_ON:	/* alarm on */
+		buf |= RS5C_CTRL1_AALE;
+		break;
+	case RTC_UIE_OFF:	/* update off */
+		buf &= ~RS5C_CTRL1_CT_MASK;
+		break;
+	case RTC_UIE_ON:	/* update on */
+		buf &= ~RS5C_CTRL1_CT_MASK;
+		buf |= RS5C_CTRL1_CT4;
+		break;
+	}
 
 	if (i2c_smbus_write_byte_data(client, addr, buf) < 0) {
 		printk(KERN_WARNING "%s: can't update alarm\n",
@@ -313,6 +341,10 @@ static int rs5c_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 
 	return status;
 }
+
+#else
+#define	rs5c_rtc_ioctl	NULL
+#endif
 
 
 /* NOTE:  Since RTC_WKALM_{RD,SET} were originally defined for EFI,
@@ -429,11 +461,11 @@ static int rs5c372_rtc_proc(struct device *dev, struct seq_file *seq)
 
 static const struct rtc_class_ops rs5c372_rtc_ops = {
 	.proc		= rs5c372_rtc_proc,
+	.ioctl		= rs5c_rtc_ioctl,
 	.read_time	= rs5c372_rtc_read_time,
 	.set_time	= rs5c372_rtc_set_time,
 	.read_alarm	= rs5c_read_alarm,
 	.set_alarm	= rs5c_set_alarm,
-	.alarm_irq_enable = rs5c_rtc_alarm_irq_enable,
 };
 
 #if defined(CONFIG_RTC_INTF_SYSFS) || defined(CONFIG_RTC_INTF_SYSFS_MODULE)

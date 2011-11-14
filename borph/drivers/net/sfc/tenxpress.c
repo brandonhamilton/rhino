@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2007-2011 Solarflare Communications Inc.
+ * Copyright 2007-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -15,7 +15,9 @@
 #include "mdio_10g.h"
 #include "nic.h"
 #include "phy.h"
+#include "regs.h"
 #include "workarounds.h"
+#include "selftest.h"
 
 /* We expect these MMDs to be in the package. */
 #define TENXPRESS_REQUIRED_DEVS (MDIO_DEVS_PMAPMD	| \
@@ -196,7 +198,7 @@ static int tenxpress_phy_init(struct efx_nic *efx)
 		if (rc < 0)
 			return rc;
 
-		rc = efx_mdio_check_mmds(efx, TENXPRESS_REQUIRED_DEVS);
+		rc = efx_mdio_check_mmds(efx, TENXPRESS_REQUIRED_DEVS, 0);
 		if (rc < 0)
 			return rc;
 	}
@@ -460,7 +462,7 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
 	/* In loopback, the PHY automatically brings up the correct interface,
 	 * but doesn't advertise the correct speed. So override it */
 	if (LOOPBACK_EXTERNAL(efx))
-		ethtool_cmd_speed_set(ecmd, SPEED_10000);
+		ecmd->speed = SPEED_10000;
 }
 
 static int tenxpress_set_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
@@ -478,7 +480,7 @@ static void sfx7101_set_npage_adv(struct efx_nic *efx, u32 advertising)
 			  advertising & ADVERTISED_10000baseT_Full);
 }
 
-const struct efx_phy_operations falcon_sfx7101_phy_ops = {
+struct efx_phy_operations falcon_sfx7101_phy_ops = {
 	.probe		  = tenxpress_phy_probe,
 	.init             = tenxpress_phy_init,
 	.reconfigure      = tenxpress_phy_reconfigure,

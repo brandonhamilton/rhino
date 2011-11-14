@@ -138,7 +138,7 @@ void ams_delta_latch2_write(u16 mask, u16 value)
 static void __init ams_delta_init_irq(void)
 {
 	omap1_init_common_hw();
-	omap1_init_irq();
+	omap_init_irq();
 }
 
 static struct map_desc ams_delta_io_desc[] __initdata = {
@@ -165,7 +165,7 @@ static struct map_desc ams_delta_io_desc[] __initdata = {
 	}
 };
 
-static struct omap_lcd_config ams_delta_lcd_config = {
+static struct omap_lcd_config ams_delta_lcd_config __initdata = {
 	.ctrl_name	= "internal",
 };
 
@@ -175,24 +175,8 @@ static struct omap_usb_config ams_delta_usb_config __initdata = {
 	.pins[0]	= 2,
 };
 
-static struct omap_board_config_kernel ams_delta_config[] __initdata = {
+static struct omap_board_config_kernel ams_delta_config[] = {
 	{ OMAP_TAG_LCD,		&ams_delta_lcd_config },
-};
-
-static struct resource ams_delta_nand_resources[] = {
-	[0] = {
-		.start	= OMAP1_MPUIO_BASE,
-		.end	= OMAP1_MPUIO_BASE +
-				OMAP_MPUIO_IO_CNTL + sizeof(u32) - 1,
-		.flags	= IORESOURCE_MEM,
-	},
-};
-
-static struct platform_device ams_delta_nand_device = {
-	.name	= "ams-delta-nand",
-	.id	= -1,
-	.num_resources	= ARRAY_SIZE(ams_delta_nand_resources),
-	.resource	= ams_delta_nand_resources,
 };
 
 static struct resource ams_delta_kp_resources[] = {
@@ -208,7 +192,7 @@ static const struct matrix_keymap_data ams_delta_keymap_data = {
 	.keymap_size	= ARRAY_SIZE(ams_delta_keymap),
 };
 
-static struct omap_kp_platform_data ams_delta_kp_data __initdata = {
+static struct omap_kp_platform_data ams_delta_kp_data = {
 	.rows		= 8,
 	.cols		= 8,
 	.keymap_data	= &ams_delta_keymap_data,
@@ -259,7 +243,7 @@ static int ams_delta_camera_power(struct device *dev, int power)
 #define ams_delta_camera_power	NULL
 #endif
 
-static struct soc_camera_link ams_delta_iclink = {
+static struct soc_camera_link __initdata ams_delta_iclink = {
 	.bus_id         = 0,	/* OMAP1 SoC camera bus */
 	.i2c_adapter_id = 1,
 	.board_info     = &ams_delta_camera_board_info[0],
@@ -281,7 +265,6 @@ static struct omap1_cam_platform_data ams_delta_camera_platform_data = {
 };
 
 static struct platform_device *ams_delta_devices[] __initdata = {
-	&ams_delta_nand_device,
 	&ams_delta_kp_device,
 	&ams_delta_lcd_device,
 	&ams_delta_led_device,
@@ -391,7 +374,7 @@ MACHINE_START(AMS_DELTA, "Amstrad E3 (Delta)")
 	.reserve	= omap_reserve,
 	.init_irq	= ams_delta_init_irq,
 	.init_machine	= ams_delta_init,
-	.timer		= &omap1_timer,
+	.timer		= &omap_timer,
 MACHINE_END
 
 EXPORT_SYMBOL(ams_delta_latch1_write);

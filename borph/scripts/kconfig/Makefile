@@ -77,15 +77,14 @@ localyesconfig: $(obj)/streamline_config.pl $(obj)/conf
 # The symlink is used to repair a deficiency in arch/um
 update-po-config: $(obj)/kxgettext $(obj)/gconf.glade.h
 	$(Q)echo "  GEN config"
-	$(Q)xgettext --default-domain=linux                         \
-	    --add-comments --keyword=_ --keyword=N_                 \
-	    --from-code=UTF-8                                       \
-	    --files-from=$(srctree)/scripts/kconfig/POTFILES.in     \
-	    --directory=$(srctree) --directory=$(objtree)           \
+	$(Q)xgettext --default-domain=linux              \
+	    --add-comments --keyword=_ --keyword=N_      \
+	    --from-code=UTF-8                            \
+	    --files-from=scripts/kconfig/POTFILES.in     \
 	    --output $(obj)/config.pot
 	$(Q)sed -i s/CHARSET/UTF-8/ $(obj)/config.pot
-	$(Q)ln -fs Kconfig.x86 arch/um/Kconfig
-	$(Q)(for i in `ls $(srctree)/arch/*/Kconfig`;    \
+	$(Q)ln -fs Kconfig.i386 arch/um/Kconfig.arch
+	$(Q)(for i in `ls arch/*/Kconfig`;               \
 	    do                                           \
 		echo "  GEN $$i";                        \
 		$(obj)/kxgettext $$i                     \
@@ -93,7 +92,7 @@ update-po-config: $(obj)/kxgettext $(obj)/gconf.glade.h
 	    done )
 	$(Q)msguniq --sort-by-file --to-code=UTF-8 $(obj)/config.pot \
 	    --output $(obj)/linux.pot
-	$(Q)rm -f $(srctree)/arch/um/Kconfig
+	$(Q)rm -f arch/um/Kconfig.arch
 	$(Q)rm -f $(obj)/config.pot
 
 PHONY += allnoconfig allyesconfig allmodconfig alldefconfig randconfig
@@ -169,11 +168,8 @@ conf-objs	:= conf.o  zconf.tab.o
 mconf-objs     := mconf.o zconf.tab.o $(lxdialog)
 nconf-objs     := nconf.o zconf.tab.o nconf.gui.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
-qconf-cxxobjs	:= qconf.o
-qconf-objs	:= zconf.tab.o
-gconf-objs	:= gconf.o zconf.tab.o
 
-hostprogs-y := conf
+hostprogs-y := conf qconf gconf kxgettext
 
 ifeq ($(MAKECMDGOALS),nconfig)
 	hostprogs-y += nconf
@@ -181,10 +177,6 @@ endif
 
 ifeq ($(MAKECMDGOALS),menuconfig)
 	hostprogs-y += mconf
-endif
-
-ifeq ($(MAKECMDGOALS),update-po-config)
-	hostprogs-y += kxgettext
 endif
 
 ifeq ($(MAKECMDGOALS),xconfig)
@@ -196,15 +188,16 @@ endif
 
 
 ifeq ($(qconf-target),1)
-	hostprogs-y += qconf
+qconf-cxxobjs	:= qconf.o
+qconf-objs	:= kconfig_load.o zconf.tab.o
 endif
 
 ifeq ($(gconf-target),1)
-	hostprogs-y += gconf
+gconf-objs	:= gconf.o kconfig_load.o zconf.tab.o
 endif
 
-clean-files	:= qconf.moc .tmp_qtcheck .tmp_gtkcheck
-clean-files	+= zconf.tab.c zconf.lex.c zconf.hash.c gconf.glade.h
+clean-files	:= lkc_defs.h qconf.moc .tmp_qtcheck \
+		   .tmp_gtkcheck zconf.tab.c lex.zconf.c zconf.hash.c gconf.glade.h
 clean-files     += mconf qconf gconf nconf
 clean-files     += config.pot linux.pot
 
@@ -220,18 +213,15 @@ always := dochecklxdialog
 HOST_EXTRACFLAGS += $(shell $(CONFIG_SHELL) $(srctree)/$(src)/check.sh $(HOSTCC) $(HOSTCFLAGS))
 
 # generated files seem to need this to find local include files
-HOSTCFLAGS_zconf.lex.o	:= -I$(src)
+HOSTCFLAGS_lex.zconf.o	:= -I$(src)
 HOSTCFLAGS_zconf.tab.o	:= -I$(src)
 
-LEX_PREFIX_zconf	:= zconf
-YACC_PREFIX_zconf	:= zconf
+HOSTLOADLIBES_qconf	= $(KC_QT_LIBS) -ldl
+HOSTCXXFLAGS_qconf.o	= $(KC_QT_CFLAGS) -D LKC_DIRECT_LINK
 
-HOSTLOADLIBES_qconf	= $(KC_QT_LIBS)
-HOSTCXXFLAGS_qconf.o	= $(KC_QT_CFLAGS)
-
-HOSTLOADLIBES_gconf	= `pkg-config --libs gtk+-2.0 gmodule-2.0 libglade-2.0`
+HOSTLOADLIBES_gconf	= `pkg-config --libs gtk+-2.0 gmodule-2.0 libglade-2.0` -ldl
 HOSTCFLAGS_gconf.o	= `pkg-config --cflags gtk+-2.0 gmodule-2.0 libglade-2.0` \
-                          -Wno-missing-prototypes
+                          -D LKC_DIRECT_LINK
 
 HOSTLOADLIBES_mconf   = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ldflags $(HOSTCC))
 
@@ -319,15 +309,46 @@ $(obj)/.tmp_gtkcheck:
 	fi
 endif
 
-$(obj)/zconf.tab.o: $(obj)/zconf.lex.c $(obj)/zconf.hash.c
+$(obj)/zconf.tab.o: $(obj)/lex.zconf.c $(obj)/zconf.hash.c
 
-$(obj)/qconf.o: $(obj)/qconf.moc
+$(obj)/kconfig_load.o: $(obj)/lkc_defs.h
+
+$(obj)/qconf.o: $(obj)/qconf.moc $(obj)/lkc_defs.h
+
+$(obj)/gconf.o: $(obj)/lkc_defs.h
 
 $(obj)/%.moc: $(src)/%.h
 	$(KC_QT_MOC) -i $< -o $@
 
+$(obj)/lkc_defs.h: $(src)/lkc_proto.h
+	sed < $< > $@ 's/P(\([^,]*\),.*/#define \1 (\*\1_p)/'
+
 # Extract gconf menu items for I18N support
 $(obj)/gconf.glade.h: $(obj)/gconf.glade
-	$(Q)intltool-extract --type=gettext/glade --srcdir=$(srctree) \
-	$(obj)/gconf.glade
+	intltool-extract --type=gettext/glade $(obj)/gconf.glade
 
+###
+# The following requires flex/bison/gperf
+# By default we use the _shipped versions, uncomment the following line if
+# you are modifying the flex/bison src.
+# LKC_GENPARSER := 1
+
+ifdef LKC_GENPARSER
+
+$(obj)/zconf.tab.c: $(src)/zconf.y
+$(obj)/lex.zconf.c: $(src)/zconf.l
+$(obj)/zconf.hash.c: $(src)/zconf.gperf
+
+%.tab.c: %.y
+	bison -l -b $* -p $(notdir $*) $<
+	cp $@ $@_shipped
+
+lex.%.c: %.l
+	flex -L -P$(notdir $*) -o$@ $<
+	cp $@ $@_shipped
+
+%.hash.c: %.gperf
+	gperf < $< > $@
+	cp $@ $@_shipped
+
+endif

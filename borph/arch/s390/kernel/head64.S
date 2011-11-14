@@ -11,13 +11,13 @@
  */
 
 #include <linux/init.h>
-#include <linux/linkage.h>
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
 #include <asm/page.h>
 
 __HEAD
-ENTRY(startup_continue)
+	.globl	startup_continue
+startup_continue:
 	larl	%r1,sched_clock_base_cc
 	mvc	0(8,%r1),__LC_LAST_UPDATE_CLOCK
 	larl	%r13,.LPG1		# get base
@@ -46,7 +46,7 @@ ENTRY(startup_continue)
 	.align	16
 .LPG1:
 .Lentry:.quad	0x0000000180000000,_stext
-.Lctl:	.quad	0x04040000		# cr0: AFP registers & secondary space
+.Lctl:	.quad	0x04350002		# cr0: various things
 	.quad	0			# cr1: primary space segment table
 	.quad	.Lduct			# cr2: dispatchable unit control table
 	.quad	0			# cr3: instruction authorization
@@ -76,7 +76,8 @@ ENTRY(startup_continue)
 	.long	0x80000000,0,0,0	# invalid access-list entries
 	.endr
 
-ENTRY(_ehead)
+	.globl	_ehead
+_ehead:
 
 #ifdef CONFIG_SHARED_KERNEL
 	.org	0x100000 - 0x11000	# head.o ends at 0x11000
@@ -85,8 +86,8 @@ ENTRY(_ehead)
 #
 # startup-code, running in absolute addressing mode
 #
-ENTRY(_stext)
-	basr	%r13,0			# get base
+	.globl	_stext
+_stext:	basr	%r13,0			# get base
 .LPG3:
 # check control registers
 	stctg	%c0,%c15,0(%r15)

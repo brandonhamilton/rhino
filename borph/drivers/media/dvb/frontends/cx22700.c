@@ -179,7 +179,7 @@ static int cx22700_set_tps (struct cx22700_state *state, struct dvb_ofdm_paramet
 	cx22700_writereg (state, 0x06, val);
 
 	cx22700_writereg (state, 0x08, 0x04 | 0x02);  /* use user tps parameters */
-	cx22700_writereg (state, 0x08, 0x04);         /* restart acquisition */
+	cx22700_writereg (state, 0x08, 0x04);         /* restart aquisition */
 
 	return 0;
 }

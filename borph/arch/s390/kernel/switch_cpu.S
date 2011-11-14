@@ -5,7 +5,6 @@
  *
  */
 
-#include <linux/linkage.h>
 #include <asm/asm-offsets.h>
 #include <asm/ptrace.h>
 
@@ -17,7 +16,9 @@
 #	     %r6 - destination cpu
 
 	.section .text
-ENTRY(smp_switch_to_cpu)
+	.align 4
+	.globl smp_switch_to_cpu
+smp_switch_to_cpu:
 	stm	%r6,%r15,__SF_GPRS(%r15)
 	lr	%r1,%r15
 	ahi	%r15,-STACK_FRAME_OVERHEAD
@@ -32,7 +33,8 @@ ENTRY(smp_switch_to_cpu)
 	brc	2,2b			/* busy, try again */
 3:	j	3b
 
-ENTRY(smp_restart_cpu)
+	.globl	smp_restart_cpu
+smp_restart_cpu:
 	basr	%r13,0
 0:	la	%r1,.gprregs_addr-0b(%r13)
 	l	%r1,0(%r1)
@@ -44,9 +46,7 @@ ENTRY(smp_restart_cpu)
 	ltr	%r4,%r4			/* New stack ? */
 	jz	1f
 	lr	%r15,%r4
-1:	lr	%r14,%r2		/* r14: Function to call */
-	lr	%r2,%r3			/* r2 : Parameter for function*/
-	basr	%r14,%r14		/* Call function */
+1:	basr	%r14,%r2
 
 .gprregs_addr:
 	.long	.gprregs

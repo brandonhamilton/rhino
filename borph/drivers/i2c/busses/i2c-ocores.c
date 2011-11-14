@@ -9,41 +9,6 @@
  * kind, whether express or implied.
  */
 
-/*
- * Device tree configuration:
- *
- * Required properties:
- * - compatible      : "opencores,i2c-ocores"
- * - reg             : bus address start and address range size of device
- * - interrupts      : interrupt number
- * - regstep         : size of device registers in bytes
- * - clock-frequency : frequency of bus clock in Hz
- * 
- * Example:
- *
- *  i2c0: ocores@a0000000 {
- *              compatible = "opencores,i2c-ocores";
- *              reg = <0xa0000000 0x8>;
- *              interrupts = <10>;
- *
- *              regstep = <1>;
- *              clock-frequency = <20000000>;
- *
- * -- Devices connected on this I2C bus get
- * -- defined here; address- and size-cells
- * -- apply to these child devices
- *
- *              #address-cells = <1>;
- *              #size-cells = <0>;
- *
- *              dummy@60 {
- *                     compatible = "dummy";
- *                     reg = <60>;
- *              };
- *  };
- *
- */
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -245,32 +210,6 @@ static struct i2c_adapter ocores_adapter = {
 	.algo		= &ocores_algorithm,
 };
 
-#ifdef CONFIG_OF
-static int ocores_i2c_of_probe(struct platform_device* pdev,
-				struct ocores_i2c* i2c)
-{
-	const __be32* val;
-
-	val = of_get_property(pdev->dev.of_node, "regstep", NULL);
-	if (!val) {
-		dev_err(&pdev->dev, "Missing required parameter 'regstep'");
-		return -ENODEV;
-	}
-	i2c->regstep = be32_to_cpup(val);
-
-	val = of_get_property(pdev->dev.of_node, "clock-frequency", NULL);
-	if (!val) {
-		dev_err(&pdev->dev,
-			"Missing required parameter 'clock-frequency'");
-		return -ENODEV;
-	}
-	i2c->clock_khz = be32_to_cpup(val) / 1000;
-
-	return 0;
-}
-#else
-#define ocores_i2c_of_probe(pdev,i2c) -ENODEV
-#endif
 
 static int __devinit ocores_i2c_probe(struct platform_device *pdev)
 {
@@ -288,41 +227,37 @@ static int __devinit ocores_i2c_probe(struct platform_device *pdev)
 	if (!res2)
 		return -ENODEV;
 
-	i2c = devm_kzalloc(&pdev->dev, sizeof(*i2c), GFP_KERNEL);
+	pdata = (struct ocores_i2c_platform_data*) pdev->dev.platform_data;
+	if (!pdata)
+		return -ENODEV;
+
+	i2c = kzalloc(sizeof(*i2c), GFP_KERNEL);
 	if (!i2c)
 		return -ENOMEM;
 
-	if (!devm_request_mem_region(&pdev->dev, res->start,
-				     resource_size(res), pdev->name)) {
+	if (!request_mem_region(res->start, resource_size(res),
+				pdev->name)) {
 		dev_err(&pdev->dev, "Memory region busy\n");
-		return -EBUSY;
+		ret = -EBUSY;
+		goto request_mem_failed;
 	}
 
-	i2c->base = devm_ioremap_nocache(&pdev->dev, res->start,
-					 resource_size(res));
+	i2c->base = ioremap(res->start, resource_size(res));
 	if (!i2c->base) {
 		dev_err(&pdev->dev, "Unable to map registers\n");
-		return -EIO;
+		ret = -EIO;
+		goto map_failed;
 	}
 
-	pdata = pdev->dev.platform_data;
-	if (pdata) {
-		i2c->regstep = pdata->regstep;
-		i2c->clock_khz = pdata->clock_khz;
-	} else {
-		ret = ocores_i2c_of_probe(pdev, i2c);
-		if (ret)
-			return ret;
-	}
-
+	i2c->regstep = pdata->regstep;
+	i2c->clock_khz = pdata->clock_khz;
 	ocores_init(i2c);
 
 	init_waitqueue_head(&i2c->wait);
-	ret = devm_request_irq(&pdev->dev, res2->start, ocores_isr, 0,
-			       pdev->name, i2c);
+	ret = request_irq(res2->start, ocores_isr, 0, pdev->name, i2c);
 	if (ret) {
 		dev_err(&pdev->dev, "Cannot claim IRQ\n");
-		return ret;
+		goto request_irq_failed;
 	}
 
 	/* hook up driver to tree */
@@ -330,27 +265,36 @@ static int __devinit ocores_i2c_probe(struct platform_device *pdev)
 	i2c->adap = ocores_adapter;
 	i2c_set_adapdata(&i2c->adap, i2c);
 	i2c->adap.dev.parent = &pdev->dev;
-	i2c->adap.dev.of_node = pdev->dev.of_node;
 
 	/* add i2c adapter to i2c tree */
 	ret = i2c_add_adapter(&i2c->adap);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to add adapter\n");
-		return ret;
+		goto add_adapter_failed;
 	}
 
 	/* add in known devices to the bus */
-	if (pdata) {
-		for (i = 0; i < pdata->num_devices; i++)
-			i2c_new_device(&i2c->adap, pdata->devices + i);
-	}
+	for (i = 0; i < pdata->num_devices; i++)
+		i2c_new_device(&i2c->adap, pdata->devices + i);
 
 	return 0;
+
+add_adapter_failed:
+	free_irq(res2->start, i2c);
+request_irq_failed:
+	iounmap(i2c->base);
+map_failed:
+	release_mem_region(res->start, resource_size(res));
+request_mem_failed:
+	kfree(i2c);
+
+	return ret;
 }
 
 static int __devexit ocores_i2c_remove(struct platform_device* pdev)
 {
 	struct ocores_i2c *i2c = platform_get_drvdata(pdev);
+	struct resource *res;
 
 	/* disable i2c logic */
 	oc_setreg(i2c, OCI2C_CONTROL, oc_getreg(i2c, OCI2C_CONTROL)
@@ -359,6 +303,18 @@ static int __devexit ocores_i2c_remove(struct platform_device* pdev)
 	/* remove adapter & data */
 	i2c_del_adapter(&i2c->adap);
 	platform_set_drvdata(pdev, NULL);
+
+	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (res)
+		free_irq(res->start, i2c);
+
+	iounmap(i2c->base);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (res)
+		release_mem_region(res->start, resource_size(res));
+
+	kfree(i2c);
 
 	return 0;
 }
@@ -388,12 +344,6 @@ static int ocores_i2c_resume(struct platform_device *pdev)
 #define ocores_i2c_resume	NULL
 #endif
 
-static struct of_device_id ocores_i2c_match[] = {
-	{ .compatible = "opencores,i2c-ocores", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, ocores_i2c_match);
-
 /* work with hotplug and coldplug */
 MODULE_ALIAS("platform:ocores-i2c");
 
@@ -405,7 +355,6 @@ static struct platform_driver ocores_i2c_driver = {
 	.driver  = {
 		.owner = THIS_MODULE,
 		.name = "ocores-i2c",
-		.of_match_table = ocores_i2c_match,
 	},
 };
 

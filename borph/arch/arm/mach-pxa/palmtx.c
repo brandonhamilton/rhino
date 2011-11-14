@@ -334,7 +334,7 @@ static struct map_desc palmtx_io_desc[] __initdata = {
 
 static void __init palmtx_map_io(void)
 {
-	pxa27x_map_io();
+	pxa_map_io();
 	iotable_init(palmtx_io_desc, ARRAY_SIZE(palmtx_io_desc));
 }
 
@@ -367,7 +367,6 @@ MACHINE_START(PALMTX, "Palm T|X")
 	.boot_params	= 0xa0000100,
 	.map_io		= palmtx_map_io,
 	.init_irq	= pxa27x_init_irq,
-	.handle_irq	= pxa27x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= palmtx_init
 MACHINE_END

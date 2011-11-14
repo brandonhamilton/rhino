@@ -431,7 +431,7 @@ static int ark3116_get_icount(struct tty_struct *tty,
 	return 0;
 }
 
-static int ark3116_ioctl(struct tty_struct *tty,
+static int ark3116_ioctl(struct tty_struct *tty, struct file *file,
 			 unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -485,7 +485,7 @@ static int ark3116_ioctl(struct tty_struct *tty,
 	return -ENOIOCTLCMD;
 }
 
-static int ark3116_tiocmget(struct tty_struct *tty)
+static int ark3116_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ark3116_private *priv = usb_get_serial_port_data(port);
@@ -511,7 +511,7 @@ static int ark3116_tiocmget(struct tty_struct *tty)
 		(ctrl   & UART_MCR_OUT2 ? TIOCM_OUT2 : 0);
 }
 
-static int ark3116_tiocmset(struct tty_struct *tty,
+static int ark3116_tiocmset(struct tty_struct *tty, struct file *file,
 			unsigned set, unsigned clr)
 {
 	struct usb_serial_port *port = tty->driver_data;

@@ -9,7 +9,7 @@
  * Maintainer: Kumar Gala
  * Modifier: Sandeep Gopalpet <sandeep.kumar@freescale.com>
  *
- * Copyright 2002-2009, 2011 Freescale Semiconductor, Inc.
+ * Copyright 2002-2009 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -46,16 +46,6 @@
 #include <linux/crc32.h>
 #include <linux/workqueue.h>
 #include <linux/ethtool.h>
-
-struct ethtool_flow_spec_container {
-	struct ethtool_rx_flow_spec fs;
-	struct list_head list;
-};
-
-struct ethtool_rx_list {
-	struct list_head list;
-	unsigned int count;
-};
 
 /* The maximum number of packets to be handled in one call of gfar_poll */
 #define GFAR_DEV_WEIGHT 64
@@ -178,7 +168,6 @@ extern const char gfar_driver_version[];
 #define MACCFG2_LENGTHCHECK	0x00000010
 #define MACCFG2_MPEN		0x00000008
 
-#define ECNTRL_FIFM		0x00008000
 #define ECNTRL_INIT_SETTINGS	0x00001000
 #define ECNTRL_TBI_MODE         0x00000020
 #define ECNTRL_REDUCED_MODE	0x00000010
@@ -282,11 +271,10 @@ extern const char gfar_driver_version[];
 #define RCTRL_TUCSEN		0x00000100
 #define RCTRL_PRSDEP_MASK	0x000000c0
 #define RCTRL_PRSDEP_INIT	0x000000c0
-#define RCTRL_PRSFM		0x00000020
 #define RCTRL_PROM		0x00000008
 #define RCTRL_EMEN		0x00000002
 #define RCTRL_REQ_PARSER	(RCTRL_VLEX | RCTRL_IPCSEN | \
-				 RCTRL_TUCSEN | RCTRL_FILREN)
+				 RCTRL_TUCSEN)
 #define RCTRL_CHECKSUMMING	(RCTRL_IPCSEN | RCTRL_TUCSEN | \
 				RCTRL_PRSDEP_INIT)
 #define RCTRL_EXTHASH		(RCTRL_GHTX)
@@ -394,6 +382,23 @@ extern const char gfar_driver_version[];
 #define BD_LFLAG(flags) ((flags) << 16)
 #define BD_LENGTH_MASK		0x0000ffff
 
+#define CLASS_CODE_UNRECOG		0x00
+#define CLASS_CODE_DUMMY1		0x01
+#define CLASS_CODE_ETHERTYPE1		0x02
+#define CLASS_CODE_ETHERTYPE2		0x03
+#define CLASS_CODE_USER_PROG1		0x04
+#define CLASS_CODE_USER_PROG2		0x05
+#define CLASS_CODE_USER_PROG3		0x06
+#define CLASS_CODE_USER_PROG4		0x07
+#define CLASS_CODE_TCP_IPV4		0x08
+#define CLASS_CODE_UDP_IPV4		0x09
+#define CLASS_CODE_AH_ESP_IPV4		0x0a
+#define CLASS_CODE_SCTP_IPV4		0x0b
+#define CLASS_CODE_TCP_IPV6		0x0c
+#define CLASS_CODE_UDP_IPV6		0x0d
+#define CLASS_CODE_AH_ESP_IPV6		0x0e
+#define CLASS_CODE_SCTP_IPV6		0x0f
+
 #define FPR_FILER_MASK	0xFFFFFFFF
 #define MAX_FILER_IDX	0xFF
 
@@ -409,7 +414,6 @@ extern const char gfar_driver_version[];
 #define RQFCR_HASHTBL_2		0x00060000
 #define RQFCR_HASHTBL_3		0x00080000
 #define RQFCR_HASH		0x00010000
-#define RQFCR_QUEUE		0x0000FC00
 #define RQFCR_CLE		0x00000200
 #define RQFCR_RJE		0x00000100
 #define RQFCR_AND		0x00000080
@@ -903,21 +907,12 @@ enum {
 	MQ_MG_MODE
 };
 
-/*
- * Per TX queue stats
- */
-struct tx_q_stats {
-	unsigned long tx_packets;
-	unsigned long tx_bytes;
-};
-
 /**
  *	struct gfar_priv_tx_q - per tx queue structure
  *	@txlock: per queue tx spin lock
  *	@tx_skbuff:skb pointers
  *	@skb_curtx: to be used skb pointer
  *	@skb_dirtytx:the last used skb pointer
- *	@stats: bytes/packets stats
  *	@qindex: index of this queue
  *	@dev: back pointer to the dev structure
  *	@grp: back pointer to the group to which this queue belongs
@@ -939,7 +934,6 @@ struct gfar_priv_tx_q {
 	struct	txbd8 *tx_bd_base;
 	struct	txbd8 *cur_tx;
 	struct	txbd8 *dirty_tx;
-	struct tx_q_stats stats;
 	struct	net_device *dev;
 	struct gfar_priv_grp *grp;
 	u16	skb_curtx;
@@ -1035,11 +1029,10 @@ enum gfar_errata {
 	GFAR_ERRATA_74		= 0x01,
 	GFAR_ERRATA_76		= 0x02,
 	GFAR_ERRATA_A002	= 0x04,
-	GFAR_ERRATA_12		= 0x08, /* a.k.a errata eTSEC49 */
 };
 
 /* Struct stolen almost completely (and shamelessly) from the FCC enet source
- * (Ok, that's not so true anymore, but there is a family resemblance)
+ * (Ok, that's not so true anymore, but there is a family resemblence)
  * The GFAR buffer descriptors track the ring buffers.  The rx_bd_base
  * and tx_bd_base always point to the currently available buffer.
  * The dirty_tx tracks the current buffer that is being sent by the
@@ -1077,9 +1070,8 @@ struct gfar_private {
 
 	struct sk_buff_head rx_recycle;
 
-	/* RX queue filer rule set*/
-	struct ethtool_rx_list rx_list;
-	struct mutex rx_queue_access;
+	struct vlan_group *vlgrp;
+
 
 	/* Hash registers and their width */
 	u32 __iomem *hash_regs[16];
@@ -1097,7 +1089,7 @@ struct gfar_private {
 	struct device_node *phy_node;
 	struct device_node *tbi_node;
 	u32 device_flags;
-	unsigned char
+	unsigned char rx_csum_enable:1,
 		extended_hash:1,
 		bd_stash_en:1,
 		rx_filer_enable:1,
@@ -1121,12 +1113,10 @@ struct gfar_private {
 	/* HW time stamping enabled flag */
 	int hwts_rx_en;
 	int hwts_tx_en;
-
-	/*Filer table*/
-	unsigned int ftp_rqfpr[MAX_FILER_IDX + 1];
-	unsigned int ftp_rqfcr[MAX_FILER_IDX + 1];
 };
 
+extern unsigned int ftp_rqfpr[MAX_FILER_IDX + 1];
+extern unsigned int ftp_rqfcr[MAX_FILER_IDX + 1];
 
 static inline int gfar_has_errata(struct gfar_private *priv,
 				  enum gfar_errata err)
@@ -1156,16 +1146,6 @@ static inline void gfar_write_filer(struct gfar_private *priv,
 	gfar_write(&regs->rqfpr, fpr);
 }
 
-static inline void gfar_read_filer(struct gfar_private *priv,
-		unsigned int far, unsigned int *fcr, unsigned int *fpr)
-{
-	struct gfar __iomem *regs = priv->gfargrp[0].regs;
-
-	gfar_write(&regs->rqfar, far);
-	*fcr = gfar_read(&regs->rqfcr);
-	*fpr = gfar_read(&regs->rqfpr);
-}
-
 extern void lock_rx_qs(struct gfar_private *priv);
 extern void lock_tx_qs(struct gfar_private *priv);
 extern void unlock_rx_qs(struct gfar_private *priv);
@@ -1179,38 +1159,7 @@ extern void gfar_phy_test(struct mii_bus *bus, struct phy_device *phydev,
 extern void gfar_configure_coalescing(struct gfar_private *priv,
 		unsigned long tx_mask, unsigned long rx_mask);
 void gfar_init_sysfs(struct net_device *dev);
-int gfar_set_features(struct net_device *dev, u32 features);
-extern void gfar_check_rx_parser_mode(struct gfar_private *priv);
-extern void gfar_vlan_mode(struct net_device *dev, u32 features);
 
 extern const struct ethtool_ops gfar_ethtool_ops;
-
-#define MAX_FILER_CACHE_IDX (2*(MAX_FILER_IDX))
-
-#define RQFCR_PID_PRI_MASK 0xFFFFFFF8
-#define RQFCR_PID_L4P_MASK 0xFFFFFF00
-#define RQFCR_PID_VID_MASK 0xFFFFF000
-#define RQFCR_PID_PORT_MASK 0xFFFF0000
-#define RQFCR_PID_MAC_MASK 0xFF000000
-
-struct gfar_mask_entry {
-	unsigned int mask; /* The mask value which is valid form start to end */
-	unsigned int start;
-	unsigned int end;
-	unsigned int block; /* Same block values indicate depended entries */
-};
-
-/* Represents a receive filer table entry */
-struct gfar_filer_entry {
-	u32 ctrl;
-	u32 prop;
-};
-
-
-/* The 20 additional entries are a shadow for one extra element */
-struct filer_table {
-	u32 index;
-	struct gfar_filer_entry fe[MAX_FILER_CACHE_IDX + 20];
-};
 
 #endif /* __GIANFAR_H */

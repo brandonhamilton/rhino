@@ -18,7 +18,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
-#include <linux/delay.h>
+#include <asm/delay.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -76,13 +76,18 @@ MODULE_PARM_DESC(debug, "enable debug messages");
 static int _tm6000_start_audio_dma(struct snd_tm6000_card *chip)
 {
 	struct tm6000_core *core = chip->core;
+	int val;
 
 	dprintk(1, "Starting audio DMA\n");
 
 	/* Enables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x40, 0x40);
+	val = tm6000_get_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x0);
+	val |= 0x20;
+	tm6000_set_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val);
 
 	tm6000_set_audio_bitrate(core, 48000);
+
+	tm6000_set_reg(core, TM6010_REQ08_R01_A_INIT, 0x80);
 
 	return 0;
 }
@@ -93,11 +98,15 @@ static int _tm6000_start_audio_dma(struct snd_tm6000_card *chip)
 static int _tm6000_stop_audio_dma(struct snd_tm6000_card *chip)
 {
 	struct tm6000_core *core = chip->core;
-
+	int val;
 	dprintk(1, "Stopping audio DMA\n");
 
-	/* Disables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x00, 0x40);
+	/* Enables audio */
+	val = tm6000_get_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x0);
+	val &= ~0x20;
+	tm6000_set_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val);
+
+	tm6000_set_reg(core, TM6010_REQ08_R01_A_INIT, 0);
 
 	return 0;
 }
@@ -122,7 +131,6 @@ static int dsp_buffer_alloc(struct snd_pcm_substream *substream, int size)
 	if (substream->runtime->dma_area) {
 		if (substream->runtime->dma_bytes > size)
 			return 0;
-
 		dsp_buffer_free(substream);
 	}
 
@@ -152,9 +160,9 @@ static struct snd_pcm_hardware snd_tm6000_digital_hw = {
 		SNDRV_PCM_INFO_MMAP_VALID,
 	.formats = SNDRV_PCM_FMTBIT_S16_LE,
 
-	.rates = SNDRV_PCM_RATE_CONTINUOUS,
-	.rate_min = 48000,
-	.rate_max = 48000,
+	.rates =		SNDRV_PCM_RATE_CONTINUOUS,
+	.rate_min =		48000,
+	.rate_max =		48000,
 	.channels_min = 2,
 	.channels_max = 2,
 	.period_bytes_min = 64,
@@ -254,7 +262,9 @@ static int tm6000_fillbuf(struct tm6000_core *core, char *buf, int size)
 		memcpy(runtime->dma_area + buf_pos * stride, buf,
 			length * stride);
 
-	snd_pcm_stream_lock(substream);
+#ifndef NO_PCM_LOCK
+       snd_pcm_stream_lock(substream);
+#endif
 
 	chip->buf_pos += length;
 	if (chip->buf_pos >= runtime->buffer_size)
@@ -266,7 +276,9 @@ static int tm6000_fillbuf(struct tm6000_core *core, char *buf, int size)
 		period_elapsed = 1;
 	}
 
-	snd_pcm_stream_unlock(substream);
+#ifndef NO_PCM_LOCK
+       snd_pcm_stream_unlock(substream);
+#endif
 
 	if (period_elapsed)
 		snd_pcm_period_elapsed(substream);
@@ -457,7 +469,7 @@ int tm6000_audio_init(struct tm6000_core *dev)
 	if (rc < 0)
 		goto error_chip;
 
-	dprintk(1, "Registered audio driver for %s\n", card->longname);
+	dprintk(1,"Registered audio driver for %s\n", card->longname);
 
 	return 0;
 

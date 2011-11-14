@@ -19,14 +19,16 @@ TRACE_EVENT(kfree_skb,
 
 	TP_STRUCT__entry(
 		__field(	void *,		skbaddr		)
-		__field(	void *,		location	)
 		__field(	unsigned short,	protocol	)
+		__field(	void *,		location	)
 	),
 
 	TP_fast_assign(
 		__entry->skbaddr = skb;
+		if (skb) {
+			__entry->protocol = ntohs(skb->protocol);
+		}
 		__entry->location = location;
-		__entry->protocol = ntohs(skb->protocol);
 	),
 
 	TP_printk("skbaddr=%p protocol=%u location=%p",

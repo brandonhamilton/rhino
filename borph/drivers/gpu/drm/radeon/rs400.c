@@ -203,9 +203,6 @@ void rs400_gart_fini(struct radeon_device *rdev)
 	radeon_gart_table_ram_free(rdev);
 }
 
-#define RS400_PTE_WRITEABLE (1 << 2)
-#define RS400_PTE_READABLE  (1 << 3)
-
 int rs400_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
 {
 	uint32_t entry;
@@ -216,7 +213,7 @@ int rs400_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
 
 	entry = (lower_32_bits(addr) & PAGE_MASK) |
 		((upper_32_bits(addr) & 0xff) << 4) |
-		RS400_PTE_WRITEABLE | RS400_PTE_READABLE;
+		0xc;
 	entry = cpu_to_le32(entry);
 	rdev->gart.table.ram.ptr[i] = entry;
 	return 0;
@@ -229,8 +226,8 @@ int rs400_mc_wait_for_idle(struct radeon_device *rdev)
 
 	for (i = 0; i < rdev->usec_timeout; i++) {
 		/* read MC_STATUS */
-		tmp = RREG32(RADEON_MC_STATUS);
-		if (tmp & RADEON_MC_IDLE) {
+		tmp = RREG32(0x0150);
+		if (tmp & (1 << 2)) {
 			return 0;
 		}
 		DRM_UDELAY(1);
@@ -244,7 +241,7 @@ void rs400_gpu_init(struct radeon_device *rdev)
 	r420_pipes_init(rdev);
 	if (rs400_mc_wait_for_idle(rdev)) {
 		printk(KERN_WARNING "rs400: Failed to wait MC idle while "
-		       "programming pipes. Bad things might happen. %08x\n", RREG32(RADEON_MC_STATUS));
+		       "programming pipes. Bad things might happen. %08x\n", RREG32(0x150));
 	}
 }
 
@@ -303,9 +300,9 @@ static int rs400_debugfs_gart_info(struct seq_file *m, void *data)
 		seq_printf(m, "MCCFG_AGP_BASE_2 0x%08x\n", tmp);
 		tmp = RREG32_MC(RS690_MCCFG_AGP_LOCATION);
 		seq_printf(m, "MCCFG_AGP_LOCATION 0x%08x\n", tmp);
-		tmp = RREG32_MC(RS690_MCCFG_FB_LOCATION);
+		tmp = RREG32_MC(0x100);
 		seq_printf(m, "MCCFG_FB_LOCATION 0x%08x\n", tmp);
-		tmp = RREG32(RS690_HDP_FB_LOCATION);
+		tmp = RREG32(0x134);
 		seq_printf(m, "HDP_FB_LOCATION 0x%08x\n", tmp);
 	} else {
 		tmp = RREG32(RADEON_AGP_BASE);
@@ -412,12 +409,12 @@ static int rs400_startup(struct radeon_device *rdev)
 	/* 1M ring buffer */
 	r = r100_cp_init(rdev, 1024 * 1024);
 	if (r) {
-		dev_err(rdev->dev, "failed initializing CP (%d).\n", r);
+		dev_err(rdev->dev, "failled initializing CP (%d).\n", r);
 		return r;
 	}
 	r = r100_ib_init(rdev);
 	if (r) {
-		dev_err(rdev->dev, "failed initializing IB (%d).\n", r);
+		dev_err(rdev->dev, "failled initializing IB (%d).\n", r);
 		return r;
 	}
 	return 0;

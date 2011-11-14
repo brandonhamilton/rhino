@@ -9,7 +9,6 @@
 #include <linux/input.h>	/* BUS_I2C */
 #include <linux/module.h>
 #include <linux/spi/spi.h>
-#include <linux/pm.h>
 #include <linux/types.h>
 #include "ad714x.h"
 
@@ -17,18 +16,19 @@
 #define AD714x_SPI_READ            BIT(10)
 
 #ifdef CONFIG_PM
-static int ad714x_spi_suspend(struct device *dev)
+static int ad714x_spi_suspend(struct spi_device *spi, pm_message_t message)
 {
-	return ad714x_disable(spi_get_drvdata(to_spi_device(dev)));
+	return ad714x_disable(spi_get_drvdata(spi));
 }
 
-static int ad714x_spi_resume(struct device *dev)
+static int ad714x_spi_resume(struct spi_device *spi)
 {
-	return ad714x_enable(spi_get_drvdata(to_spi_device(dev)));
+	return ad714x_enable(spi_get_drvdata(spi));
 }
+#else
+# define ad714x_spi_suspend NULL
+# define ad714x_spi_resume  NULL
 #endif
-
-static SIMPLE_DEV_PM_OPS(ad714x_spi_pm, ad714x_spi_suspend, ad714x_spi_resume);
 
 static int ad714x_spi_read(struct device *dev, unsigned short reg,
 		unsigned short *data)
@@ -79,10 +79,11 @@ static struct spi_driver ad714x_spi_driver = {
 	.driver = {
 		.name	= "ad714x_captouch",
 		.owner	= THIS_MODULE,
-		.pm	= &ad714x_spi_pm,
 	},
 	.probe		= ad714x_spi_probe,
 	.remove		= __devexit_p(ad714x_spi_remove),
+	.suspend	= ad714x_spi_suspend,
+	.resume		= ad714x_spi_resume,
 };
 
 static __init int ad714x_spi_init(void)

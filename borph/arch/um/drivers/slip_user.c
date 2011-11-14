@@ -102,7 +102,7 @@ static int slip_tramp(char **argv, int fd)
 		       "buffer\n");
 		os_kill_process(pid, 1);
 		err = -ENOMEM;
-		goto out_close;
+		goto out_free;
 	}
 
 	close(fds[1]);
@@ -112,6 +112,7 @@ static int slip_tramp(char **argv, int fd)
 	err = helper_wait(pid);
 	close(fds[0]);
 
+out_free:
 	kfree(output);
 	return err;
 

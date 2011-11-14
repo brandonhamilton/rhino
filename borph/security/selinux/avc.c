@@ -38,7 +38,11 @@
 #define AVC_CACHE_RECLAIM		16
 
 #ifdef CONFIG_SECURITY_SELINUX_AVC_STATS
-#define avc_cache_stats_incr(field)	this_cpu_inc(avc_cache_stats.field)
+#define avc_cache_stats_incr(field)				\
+do {								\
+	per_cpu(avc_cache_stats, get_cpu()).field++;		\
+	put_cpu();						\
+} while (0)
 #else
 #define avc_cache_stats_incr(field)	do {} while (0)
 #endif
@@ -343,10 +347,11 @@ static struct avc_node *avc_lookup(u32 ssid, u32 tsid, u16 tclass)
 	node = avc_search_node(ssid, tsid, tclass);
 
 	if (node)
-		return node;
+		avc_cache_stats_incr(hits);
+	else
+		avc_cache_stats_incr(misses);
 
-	avc_cache_stats_incr(misses);
-	return NULL;
+	return node;
 }
 
 static int avc_latest_notif_update(int seqno, int is_insert)
@@ -466,7 +471,6 @@ static void avc_audit_post_callback(struct audit_buffer *ab, void *a)
  * @avd: access vector decisions
  * @result: result from avc_has_perm_noaudit
  * @a:  auxiliary audit data
- * @flags: VFS walk flags
  *
  * Audit the granting or denial of permissions in accordance
  * with the policy.  This function is typically called by
@@ -477,10 +481,9 @@ static void avc_audit_post_callback(struct audit_buffer *ab, void *a)
  * be performed under a lock, to allow the lock to be released
  * before calling the auditing code.
  */
-int avc_audit(u32 ssid, u32 tsid,
+void avc_audit(u32 ssid, u32 tsid,
 	       u16 tclass, u32 requested,
-	       struct av_decision *avd, int result, struct common_audit_data *a,
-	       unsigned flags)
+	       struct av_decision *avd, int result, struct common_audit_data *a)
 {
 	struct common_audit_data stack_data;
 	u32 denied, audited;
@@ -512,24 +515,11 @@ int avc_audit(u32 ssid, u32 tsid,
 	else
 		audited = requested & avd->auditallow;
 	if (!audited)
-		return 0;
-
+		return;
 	if (!a) {
 		a = &stack_data;
 		COMMON_AUDIT_DATA_INIT(a, NONE);
 	}
-
-	/*
-	 * When in a RCU walk do the audit on the RCU retry.  This is because
-	 * the collection of the dname in an inode audit message is not RCU
-	 * safe.  Note this may drop some audits when the situation changes
-	 * during retry. However this is logically just as if the operation
-	 * happened a little later.
-	 */
-	if ((a->type == LSM_AUDIT_DATA_INODE) &&
-	    (flags & MAY_NOT_BLOCK))
-		return -ECHILD;
-
 	a->selinux_audit_data.tclass = tclass;
 	a->selinux_audit_data.requested = requested;
 	a->selinux_audit_data.ssid = ssid;
@@ -539,7 +529,6 @@ int avc_audit(u32 ssid, u32 tsid,
 	a->lsm_pre_audit = avc_audit_pre_callback;
 	a->lsm_post_audit = avc_audit_post_callback;
 	common_lsm_audit(a);
-	return 0;
 }
 
 /**
@@ -752,9 +741,10 @@ int avc_ss_reset(u32 seqno)
 int avc_has_perm_noaudit(u32 ssid, u32 tsid,
 			 u16 tclass, u32 requested,
 			 unsigned flags,
-			 struct av_decision *avd)
+			 struct av_decision *in_avd)
 {
 	struct avc_node *node;
+	struct av_decision avd_entry, *avd;
 	int rc = 0;
 	u32 denied;
 
@@ -763,13 +753,20 @@ int avc_has_perm_noaudit(u32 ssid, u32 tsid,
 	rcu_read_lock();
 
 	node = avc_lookup(ssid, tsid, tclass);
-	if (unlikely(!node)) {
+	if (!node) {
 		rcu_read_unlock();
+
+		if (in_avd)
+			avd = in_avd;
+		else
+			avd = &avd_entry;
+
 		security_compute_av(ssid, tsid, tclass, avd);
 		rcu_read_lock();
 		node = avc_insert(ssid, tsid, tclass, avd);
 	} else {
-		memcpy(avd, &node->ae.avd, sizeof(*avd));
+		if (in_avd)
+			memcpy(in_avd, &node->ae.avd, sizeof(*in_avd));
 		avd = &node->ae.avd;
 	}
 
@@ -796,7 +793,6 @@ int avc_has_perm_noaudit(u32 ssid, u32 tsid,
  * @tclass: target security class
  * @requested: requested permissions, interpreted based on @tclass
  * @auditdata: auxiliary audit data
- * @flags: VFS walk flags
  *
  * Check the AVC to determine whether the @requested permissions are granted
  * for the SID pair (@ssid, @tsid), interpreting the permissions
@@ -806,19 +802,14 @@ int avc_has_perm_noaudit(u32 ssid, u32 tsid,
  * permissions are granted, -%EACCES if any permissions are denied, or
  * another -errno upon other errors.
  */
-int avc_has_perm_flags(u32 ssid, u32 tsid, u16 tclass,
-		       u32 requested, struct common_audit_data *auditdata,
-		       unsigned flags)
+int avc_has_perm(u32 ssid, u32 tsid, u16 tclass,
+		 u32 requested, struct common_audit_data *auditdata)
 {
 	struct av_decision avd;
-	int rc, rc2;
+	int rc;
 
 	rc = avc_has_perm_noaudit(ssid, tsid, tclass, requested, 0, &avd);
-
-	rc2 = avc_audit(ssid, tsid, tclass, requested, &avd, rc, auditdata,
-			flags);
-	if (rc2)
-		return rc2;
+	avc_audit(ssid, tsid, tclass, requested, &avd, rc, auditdata);
 	return rc;
 }
 

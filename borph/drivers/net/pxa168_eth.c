@@ -462,7 +462,7 @@ static u32 hash_function(unsigned char *mac_addr_orig)
  * pep - ETHERNET .
  * mac_addr - MAC address.
  * skip - if 1, skip this address.Used in case of deleting an entry which is a
- *	  part of chain in the hash table.We can't just delete the entry since
+ *	  part of chain in the hash table.We cant just delete the entry since
  *	  that will break the chain.We need to defragment the tables time to
  *	  time.
  * rd   - 0 Discard packet upon match.
@@ -502,7 +502,7 @@ static int add_del_hash_entry(struct pxa168_eth_private *pep,
 	 * Pick the appropriate table, start scanning for free/reusable
 	 * entries at the index obtained by hashing the specified MAC address
 	 */
-	start = pep->htpr;
+	start = (struct addr_table_entry *)(pep->htpr);
 	entry = start + hash_function(mac_addr);
 	for (i = 0; i < HOP_NUMBER; i++) {
 		if (!(le32_to_cpu(entry->lo) & HASH_ENTRY_VALID)) {
@@ -1267,16 +1267,13 @@ static int pxa168_eth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	pep->tx_skb[tx_index] = skb;
 	desc->byte_cnt = length;
 	desc->buf_ptr = dma_map_single(NULL, skb->data, length, DMA_TO_DEVICE);
-
-	skb_tx_timestamp(skb);
-
 	wmb();
 	desc->cmd_sts = BUF_OWNED_BY_DMA | TX_GEN_CRC | TX_FIRST_DESC |
 			TX_ZERO_PADDING | TX_LAST_DESC | TX_EN_INT;
 	wmb();
 	wrl(pep, SDMA_CMD, SDMA_CMD_TXDH | SDMA_CMD_ERD);
 
-	stats->tx_bytes += length;
+	stats->tx_bytes += skb->len;
 	stats->tx_packets++;
 	dev->trans_start = jiffies;
 	if (pep->tx_ring_size - pep->tx_desc_count <= 1) {
@@ -1453,11 +1450,16 @@ static void pxa168_get_drvinfo(struct net_device *dev,
 	strncpy(info->bus_info, "N/A", 32);
 }
 
+static u32 pxa168_get_link(struct net_device *dev)
+{
+	return !!netif_carrier_ok(dev);
+}
+
 static const struct ethtool_ops pxa168_ethtool_ops = {
 	.get_settings = pxa168_get_settings,
 	.set_settings = pxa168_set_settings,
 	.get_drvinfo = pxa168_get_drvinfo,
-	.get_link = ethtool_op_get_link,
+	.get_link = pxa168_get_link,
 };
 
 static const struct net_device_ops pxa168_eth_netdev_ops = {
@@ -1505,7 +1507,7 @@ static int pxa168_eth_probe(struct platform_device *pdev)
 		err = -ENODEV;
 		goto err_netdev;
 	}
-	pep->base = ioremap(res->start, resource_size(res));
+	pep->base = ioremap(res->start, res->end - res->start + 1);
 	if (pep->base == NULL) {
 		err = -ENOMEM;
 		goto err_netdev;
@@ -1605,7 +1607,7 @@ static int pxa168_eth_remove(struct platform_device *pdev)
 	mdiobus_unregister(pep->smi_bus);
 	mdiobus_free(pep->smi_bus);
 	unregister_netdev(dev);
-	cancel_work_sync(&pep->tx_timeout_task);
+	flush_scheduled_work();
 	free_netdev(dev);
 	platform_set_drvdata(pdev, NULL);
 	return 0;

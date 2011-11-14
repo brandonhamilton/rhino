@@ -47,7 +47,6 @@
 #ifndef SJA1000_DEV_H
 #define SJA1000_DEV_H
 
-#include <linux/irqreturn.h>
 #include <linux/can/dev.h>
 #include <linux/can/platform/sja1000.h>
 

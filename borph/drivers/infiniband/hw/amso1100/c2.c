@@ -36,7 +36,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/inetdevice.h>
-#include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/ethtool.h>
 #include <linux/mii.h>
@@ -48,7 +47,6 @@
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
-#include <linux/prefetch.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>

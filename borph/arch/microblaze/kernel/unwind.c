@@ -183,7 +183,7 @@ static inline void unwind_trap(struct task_struct *task, unsigned long pc,
  * @trace : Where to store stack backtrace (PC values).
  *	    NULL == print backtrace to kernel log
  */
-static void microblaze_unwind_inner(struct task_struct *task,
+void microblaze_unwind_inner(struct task_struct *task,
 			     unsigned long pc, unsigned long fp,
 			     unsigned long leaf_return,
 			     struct stack_trace *trace)

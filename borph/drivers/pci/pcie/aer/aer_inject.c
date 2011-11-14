@@ -27,10 +27,6 @@
 #include <linux/stddef.h>
 #include "aerdrv.h"
 
-/* Override the existing corrected and uncorrected error masks */
-static int aer_mask_override;
-module_param(aer_mask_override, bool, 0);
-
 struct aer_error_inj {
 	u8 bus;
 	u8 dev;
@@ -326,7 +322,7 @@ static int aer_inject(struct aer_error_inj *einj)
 	unsigned long flags;
 	unsigned int devfn = PCI_DEVFN(einj->dev, einj->fn);
 	int pos_cap_err, rp_pos_cap_err;
-	u32 sever, cor_mask, uncor_mask, cor_mask_orig = 0, uncor_mask_orig = 0;
+	u32 sever, cor_mask, uncor_mask;
 	int ret = 0;
 
 	dev = pci_get_domain_bus_and_slot((int)einj->domain, einj->bus, devfn);
@@ -365,18 +361,6 @@ static int aer_inject(struct aer_error_inj *einj)
 		goto out_put;
 	}
 
-	if (aer_mask_override) {
-		cor_mask_orig = cor_mask;
-		cor_mask &= !(einj->cor_status);
-		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
-				       cor_mask);
-
-		uncor_mask_orig = uncor_mask;
-		uncor_mask &= !(einj->uncor_status);
-		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
-				       uncor_mask);
-	}
-
 	spin_lock_irqsave(&inject_lock, flags);
 
 	err = __find_aer_error_by_dev(dev);
@@ -394,16 +378,14 @@ static int aer_inject(struct aer_error_inj *einj)
 	err->header_log2 = einj->header_log2;
 	err->header_log3 = einj->header_log3;
 
-	if (!aer_mask_override && einj->cor_status &&
-	    !(einj->cor_status & ~cor_mask)) {
+	if (einj->cor_status && !(einj->cor_status & ~cor_mask)) {
 		ret = -EINVAL;
 		printk(KERN_WARNING "The correctable error(s) is masked "
 				"by device\n");
 		spin_unlock_irqrestore(&inject_lock, flags);
 		goto out_put;
 	}
-	if (!aer_mask_override && einj->uncor_status &&
-	    !(einj->uncor_status & ~uncor_mask)) {
+	if (einj->uncor_status && !(einj->uncor_status & ~uncor_mask)) {
 		ret = -EINVAL;
 		printk(KERN_WARNING "The uncorrectable error(s) is masked "
 				"by device\n");
@@ -442,13 +424,6 @@ static int aer_inject(struct aer_error_inj *einj)
 		rperr->source_id |= ((einj->bus << 8) | devfn) << 16;
 	}
 	spin_unlock_irqrestore(&inject_lock, flags);
-
-	if (aer_mask_override) {
-		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_COR_MASK,
-				       cor_mask_orig);
-		pci_write_config_dword(dev, pos_cap_err + PCI_ERR_UNCOR_MASK,
-				       uncor_mask_orig);
-	}
 
 	ret = pci_bus_set_aer_ops(dev->bus);
 	if (ret)

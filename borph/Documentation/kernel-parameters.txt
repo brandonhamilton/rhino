@@ -43,11 +43,11 @@ parameter is applicable:
 	AVR32	AVR32 architecture is enabled.
 	AX25	Appropriate AX.25 support is enabled.
 	BLACKFIN Blackfin architecture is enabled.
-	DRM	Direct Rendering Management support is enabled.
-	DYNAMIC_DEBUG Build in debug messages and enable them at runtime
 	EDD	BIOS Enhanced Disk Drive Services (EDD) is enabled
 	EFI	EFI Partitioning (GPT) is enabled
 	EIDE	EIDE/ATAPI support is enabled.
+	DRM	Direct Rendering Management support is enabled.
+	DYNAMIC_DEBUG Build in debug messages and enable them at runtime
 	FB	The frame buffer device is enabled.
 	GCOV	GCOV profiling is enabled.
 	HW	Appropriate hardware is enabled.
@@ -144,11 +144,6 @@ a fixed number of characters. This limit depends on the architecture
 and is between 256 and 4096 characters. It is defined in the file
 ./include/asm/setup.h as COMMAND_LINE_SIZE.
 
-Finally, the [KMG] suffix is commonly described after a number of kernel
-parameter values. These 'K', 'M', and 'G' letters represent the _binary_
-multipliers 'Kilo', 'Mega', and 'Giga', equalling 2^10, 2^20, and 2^30
-bytes respectively. Such letter suffixes can also be entirely omitted.
-
 
 	acpi=		[HW,ACPI,X86]
 			Advanced Configuration and Power Interface
@@ -162,11 +157,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			copy_dsdt -- copy DSDT to memory
 
 			See also Documentation/power/pm.txt, pci=noacpi
-
-	acpi_rsdp=	[ACPI,EFI,KEXEC]
-			Pass the RSDP address to the kernel, mostly used
-			on machines running EFI runtime service to boot the
-			second kernel for kdump.
 
 	acpi_apic_instance=	[ACPI, IOAPIC]
 			Format: <int>
@@ -209,6 +199,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			unusable.  The "log_buf_len" parameter may be useful
 			if you need to capture more output.
 
+	acpi_display_output=	[HW,ACPI]
+			acpi_display_output=vendor
+			acpi_display_output=video
+			See above.
+
 	acpi_irq_balance [HW,ACPI]
 			ACPI will balance active IRQs
 			default in APIC mode
@@ -250,7 +245,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	acpi_sleep=	[HW,ACPI] Sleep options
 			Format: { s3_bios, s3_mode, s3_beep, s4_nohwsig,
-				  old_ordering, nonvs, sci_force_enable }
+				  old_ordering, s4_nonvs, sci_force_enable }
 			See Documentation/power/video.txt for information on
 			s3_bios and s3_mode.
 			s3_beep is for debugging; it makes the PC's speaker beep
@@ -408,10 +403,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	bttv.pll=	See Documentation/video4linux/bttv/Insmod-options
 	bttv.tuner=	and Documentation/video4linux/bttv/CARDLIST
 
-	bulk_remove=off	[PPC]  This parameter disables the use of the pSeries
-			firmware feature for flushing multiple hpte entries
-			at a time.
-
 	c101=		[NET] Moxa C101 synchronous serial card
 
 	cachesize=	[BUGS=X86-32] Override level 2 CPU cache size detection.
@@ -551,27 +542,20 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			/proc/<pid>/coredump_filter.
 			See also Documentation/filesystems/proc.txt.
 
-	cpuidle.off=1	[CPU_IDLE]
-			disable the cpuidle sub-system
-
 	cpcihp_generic=	[HW,PCI] Generic port I/O CompactPCI driver
 			Format:
 			<first_slot>,<last_slot>,<port>,<enum_bit>[,<debug>]
 
-	crashkernel=size[KMG][@offset[KMG]]
-			[KNL] Using kexec, Linux can switch to a 'crash kernel'
-			upon panic. This parameter reserves the physical
-			memory region [offset, offset + size] for that kernel
-			image. If '@offset' is omitted, then a suitable offset
-			is selected automatically. Check
-			Documentation/kdump/kdump.txt for further details.
+	crashkernel=nn[KMG]@ss[KMG]
+			[KNL] Reserve a chunk of physical memory to
+			hold a kernel to switch to with kexec on panic.
 
 	crashkernel=range1:size1[,range2:size2,...][@offset]
 			[KNL] Same as above, but depends on the memory
 			in the running system. The syntax of range is
 			start-[end] where start and end are both
 			a memory unit (amount[KMG]). See also
-			Documentation/kdump/kdump.txt for an example.
+			Documentation/kdump/kdump.txt for a example.
 
 	cs89x0_dma=	[HW,NET]
 			Format: <dma>
@@ -634,10 +618,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	disable=	[IPV6]
 			See Documentation/networking/ipv6.txt.
 
-	disable_ddw     [PPC/PSERIES]
-			Disable Dynamic DMA Window support. Use this if
-			to workaround buggy firmware.
-
 	disable_ipv6=	[IPV6]
 			See Documentation/networking/ipv6.txt.
 
@@ -675,6 +655,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	dscc4.setup=	[NET]
 
+	dynamic_printk	Enables pr_debug()/dev_dbg() calls if
+			CONFIG_DYNAMIC_PRINTK_DEBUG has been enabled.
+			These can also be switched on/off via
+			<debugfs>/dynamic_printk/modules
+
 	earlycon=	[KNL] Output early console device and options.
 		uart[8250],io,<addr>[,options]
 		uart[8250],mmio,<addr>[,options]
@@ -707,7 +692,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	ekgdboc=	[X86,KGDB] Allow early kernel console debugging
 			ekgdboc=kbd
 
-			This is designed to be used in conjunction with
+			This is desgined to be used in conjunction with
 			the boot argument: earlyprintk=vga
 
 	edd=		[EDD]
@@ -880,12 +865,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			       If specified, z/VM IUCV HVC accepts connections
 			       from listed z/VM user IDs only.
 
-	keep_bootcon	[KNL]
-			Do not unregister boot console at start. This is only
-			useful for debugging when something happens in the window
-			between unregistering the boot console and initializing
-			the real console.
-
 	i2c_bus=	[HW] Override the default board specific I2C bus speed
 			     or register an additional I2C bus that is not
 			     registered from board initialization code.
@@ -905,7 +884,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			     controller
 	i8042.nopnp	[HW] Don't use ACPIPnP / PnPBIOS to discover KBD/AUX
 			     controllers
-	i8042.notimeout	[HW] Ignore timeout condition signalled by conroller
 	i8042.reset	[HW] Reset the controller during init and cleanup
 	i8042.unlock	[HW] Unlock (ignore) the keylock
 
@@ -1007,10 +985,7 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			With this option on every unmap_single operation will
 			result in a hardware IOTLB flush operation as opposed
 			to batching them for performance.
-		sp_off [Default Off]
-			By default, super page will be supported if Intel IOMMU
-			has the capability. With this option, super page will
-			not be supported.
+
 	intremap=	[X86-64, Intel-IOMMU]
 			Format: { on (default) | off | nosid }
 			on	enable Interrupt Remapping (default)
@@ -1167,6 +1142,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			for all guests.
 			Default is 1 (enabled) if in 64bit or 32bit-PAE mode
 
+	kvm-intel.bypass_guest_pf=
+			[KVM,Intel] Disables bypassing of guest page faults
+			on Intel chips. Default is 1 (enabled)
+
 	kvm-intel.ept=	[KVM,Intel] Disable extended page tables
 			(virtualized MMU) support on capable Intel chips.
 			Default is 1 (enabled)
@@ -1288,9 +1267,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			6 (KERN_INFO)		informational
 			7 (KERN_DEBUG)		debug-level messages
 
-	log_buf_len=n[KMG]	Sets the size of the printk ring buffer,
-			in bytes.  n must be a power of two.  The default
-			size is set in the kernel config file.
+	log_buf_len=n	Sets the size of the printk ring buffer, in bytes.
+			Format: { n | nk | nM }
+			n must be a power of two.  The default size
+			is set in the kernel config file.
 
 	logo.nologo	[FB] Disables display of the built-in Linux logo.
 			This may be used to provide more screen space for
@@ -1510,10 +1490,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	mtdparts=	[MTD]
 			See drivers/mtd/cmdlinepart.c.
 
-	multitce=off	[PPC]  This parameter disables the use of the pSeries
-			firmware feature for updating multiple TCE entries
-			at a time.
-
 	onenand.bdry=	[HW,MTD] Flex-OneNAND Boundary Configuration
 
 			Format: [die0_boundary][,die0_lock][,die1_boundary][,die1_lock]
@@ -1597,27 +1573,26 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			of returning the full 64-bit number.
 			The default is to return 64-bit inode numbers.
 
-	nfs.nfs4_disable_idmapping=
-			[NFSv4] When set, this option disables the NFSv4
-			idmapper on the client, but only if the mount
-			is using the 'sec=sys' security flavour. This may
-			make migration from legacy NFSv2/v3 systems easier
-			provided that the server has the appropriate support.
-			The default is to always enable NFSv4 idmapping.
-
 	nmi_debug=	[KNL,AVR32,SH] Specify one or more actions to take
 			when a NMI is triggered.
 			Format: [state][,regs][,debounce][,die]
 
 	nmi_watchdog=	[KNL,BUGS=X86] Debugging features for SMP kernels
-			Format: [panic,][nopanic,][num]
-			Valid num: 0
+			Format: [panic,][num]
+			Valid num: 0,1,2
 			0 - turn nmi_watchdog off
+			1 - use the IO-APIC timer for the NMI watchdog
+			2 - use the local APIC for the NMI watchdog using
+			a performance counter. Note: This will use one
+			performance counter and the local APIC's performance
+			vector.
 			When panic is specified, panic when an NMI watchdog
-			timeout occurs (or 'nopanic' to override the opposite
-			default).
+			timeout occurs.
 			This is useful when you use a panic=... timeout and
 			need the box quickly up again.
+			Instead of 1 and 2 it is possible to use the following
+			symbolic names: lapic and ioapic
+			Example: nmi_watchdog=2 or nmi_watchdog=panic,lapic
 
 	netpoll.carrier_timeout=
 			[NET] Specifies amount of time (in seconds) that
@@ -1647,8 +1622,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	noapic		[SMP,APIC] Tells the kernel to not make use of any
 			IOAPICs that may be present in the system.
 
-	noautogroup	Disable scheduler automatic task group creation.
-
 	nobats		[PPC] Do not use BATs for mapping kernel lowmem
 			on "Classic" PPC cores.
 
@@ -1670,10 +1643,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			On X86-32 available only on PAE configured kernels.
 			noexec=on: enable non-executable mappings (default)
 			noexec=off: disable non-executable mappings
-
-	nosmep		[X86]
-			Disable SMEP (Supervisor Mode Execution Protection)
-			even if it is supported by processor.
 
 	noexec32	[X86-64]
 			This affects only 32-bit executables.
@@ -1738,13 +1707,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	no-kvmclock	[X86,KVM] Disable paravirtualized KVM clock driver
 
-	no-kvmapf	[X86,KVM] Disable paravirtualized asynchronous page
-			fault handling.
-
-	no-steal-acc    [X86,KVM] Disable paravirtualized steal time accounting.
-			steal time is computed, but won't influence scheduler
-			behaviour
-
 	nolapic		[X86-32,APIC] Do not enable or use the local APIC.
 
 	nolapic_timer	[X86-32,APIC] Do not use the local APIC timer.
@@ -1787,6 +1749,9 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			and disable the IO APIC.  legacy for "maxcpus=0".
 
 	nosoftlockup	[KNL] Disable the soft-lockup detector.
+
+	noswapaccount	[KNL] Disable accounting of swap in memory resource
+			controller. (See Documentation/cgroups/memory.txt)
 
 	nosync		[HW,M68K] Disables sync negotiation for all devices.
 
@@ -1844,19 +1809,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 				perfmon on Intel CPUs instead of the
 				CPU specific event set.
 
-	oops=panic	Always panic on oopses. Default is to just kill the
-			process, but there is a small probability of
-			deadlocking the machine.
-			This will also cause panics on machine check exceptions.
-			Useful together with panic=30 to trigger a reboot.
-
 	OSS		[HW,OSS]
 			See Documentation/sound/oss/oss-parameters.txt
 
-	panic=		[KNL] Kernel behaviour on panic: delay <timeout>
-			timeout > 0: seconds before rebooting
-			timeout = 0: wait forever
-			timeout < 0: reboot immediately
+	panic=		[KNL] Kernel behaviour on panic
 			Format: <timeout>
 
 	parkbd.port=	[HW] Parallel port number the keyboard adapter is
@@ -2025,8 +1981,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 				the default.
 				off: Turn ECRC off
 				on: Turn ECRC on.
-		realloc		reallocate PCI resources if allocations done by BIOS
-				are erroneous.
 
 	pcie_aspm=	[PCIE] Forcibly enable or disable PCIe Active State Power
 			Management.
@@ -2161,8 +2115,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[HW,MOUSE] Controls Logitech smartscroll autorepeat.
 			0 = disabled, 1 = enabled (default).
 
-	pstore.backend=	Specify the name of the pstore backend to use
-
 	pt.		[PARIDE]
 			See Documentation/blockdev/paride.txt.
 
@@ -2248,7 +2200,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	ro		[KNL] Mount root device read-only on boot
 
 	root=		[KNL] Root filesystem
-			See name_to_dev_t comment in init/do_mounts.c.
 
 	rootdelay=	[KNL] Delay (in seconds) to pause before attempting to
 			mount the root filesystem
@@ -2364,7 +2315,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	softlockup_panic=
 			[KNL] Should the soft-lockup detector generate panics.
-			Format: <integer>
 
 	sonypi.*=	[HW] Sony Programmable I/O Control Device driver
 			See Documentation/sonypi.txt
@@ -2490,15 +2440,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			<deci-seconds>: poll all this frequency
 			0: no polling (default)
 
-	threadirqs	[KNL]
-			Force threading of all interrupt handlers except those
-			marked explicitely IRQF_NO_THREAD.
-
 	topology=	[S390]
 			Format: {off | on}
 			Specify if the kernel should make use of the cpu
-			topology information if the hardware supports this.
-			The scheduler will make use of this information and
+			topology informations if the hardware supports these.
+			The scheduler will make use of these informations and
 			e.g. base its process migration decisions on it.
 			Default is on.
 
@@ -2521,13 +2467,12 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			to facilitate early boot debugging.
 			See also Documentation/trace/events.txt
 
-	tsc=		Disable clocksource stability checks for TSC.
+	tsc=		Disable clocksource-must-verify flag for TSC.
 			Format: <string>
 			[x86] reliable: mark tsc clocksource as reliable, this
-			disables clocksource verification at runtime, as well
-			as the stability checks done at bootup.	Used to enable
-			high-resolution timer mode on older hardware, and in
-			virtualized environment.
+			disables clocksource verification at runtime.
+			Used to enable high-resolution timer mode on older
+			hardware, and in virtualized environment.
 			[x86] noirqtime: Do not use TSC to do irq accounting.
 			Used to run time disable IRQ_TIME_ACCOUNTING on any
 			platforms where RDTSC is slow and this accounting
@@ -2538,11 +2483,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			Format:
 			<port#>,<js1>,<js2>,<js3>,<js4>,<js5>,<js6>,<js7>
 			See also Documentation/input/joystick-parport.txt
-
-	udbg-immortal	[PPC] When debugging early kernel crashes that
-			happen after console_init() and before a proper 
-			console driver takes over, this boot options might
-			help "seeing" what's going on.
 
 	uhash_entries=	[KNL,NET]
 			Set number of hash buckets for UDP/UDP-Lite connections
@@ -2556,12 +2496,8 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			reported either.
 
 	unknown_nmi_panic
-			[X86] Cause panic on unknown NMI.
-
-	usbcore.authorized_default=
-			[USB] Default USB device authorization:
-			(default -1 = authorized except for wireless USB,
-			0 = not authorized, 1 = authorized)
+			[X86]
+			Set unknown_nmi_panic=1 early on boot.
 
 	usbcore.autosuspend=
 			[USB] The autosuspend time delay (in seconds) used
@@ -2610,10 +2546,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 					bytes of sense data);
 				c = FIX_CAPACITY (decrease the reported
 					device capacity by one sector);
-				d = NO_READ_DISC_INFO (don't use
-					READ_DISC_INFO command);
-				e = NO_READ_CAPACITY_16 (don't use
-					READ_CAPACITY_16 command);
 				h = CAPACITY_HEURISTICS (decrease the
 					reported device capacity by one
 					sector if the number is odd);
@@ -2623,8 +2555,6 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 					unlock ejectable media);
 				m = MAX_SECTORS_64 (don't transfer more
 					than 64 sectors = 32 KB at a time);
-				n = INITIAL_READ10 (force a retry of the
-					initial READ(10) command);
 				o = CAPACITY_OK (accept the capacity
 					reported by the device);
 				r = IGNORE_RESIDUE (the device reports

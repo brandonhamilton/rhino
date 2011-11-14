@@ -30,7 +30,6 @@
 #include <linux/uaccess.h>
 #include <linux/random.h>
 #include <linux/hw_breakpoint.h>
-#include <linux/cpuidle.h>
 
 #include <asm/cacheflush.h>
 #include <asm/leds.h>
@@ -197,8 +196,7 @@ void cpu_idle(void)
 				cpu_relax();
 			} else {
 				stop_critical_timings();
-				if (cpuidle_idle_call())
-					pm_idle();
+				pm_idle();
 				start_critical_timings();
 				/*
 				 * This will eventually be removed - pm_idle
@@ -374,8 +372,6 @@ copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	if (clone_flags & CLONE_SETTLS)
 		thread->tp_value = regs->ARM_r3;
 
-	thread_notify(THREAD_NOTIFY_COPY, thread);
-
 	return 0;
 }
 
@@ -487,7 +483,6 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
 	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
 }
 
-#ifdef CONFIG_MMU
 /*
  * The vectors page is always readable from user space for the
  * atomic helpers and the signal restart code.  Let's declare a mapping
@@ -508,4 +503,3 @@ const char *arch_vma_name(struct vm_area_struct *vma)
 {
 	return (vma->vm_start == 0xffff0000) ? "[vectors]" : NULL;
 }
-#endif

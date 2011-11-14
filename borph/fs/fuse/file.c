@@ -86,52 +86,18 @@ struct fuse_file *fuse_file_get(struct fuse_file *ff)
 	return ff;
 }
 
-static void fuse_release_async(struct work_struct *work)
-{
-	struct fuse_req *req;
-	struct fuse_conn *fc;
-	struct path path;
-
-	req = container_of(work, struct fuse_req, misc.release.work);
-	path = req->misc.release.path;
-	fc = get_fuse_conn(path.dentry->d_inode);
-
-	fuse_put_request(fc, req);
-	path_put(&path);
-}
-
 static void fuse_release_end(struct fuse_conn *fc, struct fuse_req *req)
 {
-	if (fc->destroy_req) {
-		/*
-		 * If this is a fuseblk mount, then it's possible that
-		 * releasing the path will result in releasing the
-		 * super block and sending the DESTROY request.  If
-		 * the server is single threaded, this would hang.
-		 * For this reason do the path_put() in a separate
-		 * thread.
-		 */
-		atomic_inc(&req->count);
-		INIT_WORK(&req->misc.release.work, fuse_release_async);
-		schedule_work(&req->misc.release.work);
-	} else {
-		path_put(&req->misc.release.path);
-	}
+	path_put(&req->misc.release.path);
 }
 
-static void fuse_file_put(struct fuse_file *ff, bool sync)
+static void fuse_file_put(struct fuse_file *ff)
 {
 	if (atomic_dec_and_test(&ff->count)) {
 		struct fuse_req *req = ff->reserved_req;
 
-		if (sync) {
-			fuse_request_send(ff->fc, req);
-			path_put(&req->misc.release.path);
-			fuse_put_request(ff->fc, req);
-		} else {
-			req->end = fuse_release_end;
-			fuse_request_send_background(ff->fc, req);
-		}
+		req->end = fuse_release_end;
+		fuse_request_send_background(ff->fc, req);
 		kfree(ff);
 	}
 }
@@ -222,7 +188,7 @@ static void fuse_prepare_release(struct fuse_file *ff, int flags, int opcode)
 		rb_erase(&ff->polled_node, &fc->polled_files);
 	spin_unlock(&fc->lock);
 
-	wake_up_interruptible_all(&ff->poll_wait);
+	wake_up_interruptible_sync(&ff->poll_wait);
 
 	inarg->fh = ff->fh;
 	inarg->flags = flags;
@@ -253,12 +219,8 @@ void fuse_release_common(struct file *file, int opcode)
 	 * Normally this will send the RELEASE request, however if
 	 * some asynchronous READ or WRITE requests are outstanding,
 	 * the sending will be delayed.
-	 *
-	 * Make the release synchronous if this is a fuseblk mount,
-	 * synchronous RELEASE is allowed (and desirable) in this case
-	 * because the server can be trusted not to screw up.
 	 */
-	fuse_file_put(ff, ff->fc->destroy_req != NULL);
+	fuse_file_put(ff);
 }
 
 static int fuse_open(struct inode *inode, struct file *file)
@@ -400,8 +362,7 @@ static void fuse_sync_writes(struct inode *inode)
 	fuse_release_nowrite(inode);
 }
 
-int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
-		      int datasync, int isdir)
+int fuse_fsync_common(struct file *file, int datasync, int isdir)
 {
 	struct inode *inode = file->f_mapping->host;
 	struct fuse_conn *fc = get_fuse_conn(inode);
@@ -413,14 +374,8 @@ int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
 	if (is_bad_inode(inode))
 		return -EIO;
 
-	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (err)
-		return err;
-
 	if ((!isdir && fc->no_fsync) || (isdir && fc->no_fsyncdir))
 		return 0;
-
-	mutex_lock(&inode->i_mutex);
 
 	/*
 	 * Start writeback against all dirty pages of the inode, then
@@ -429,15 +384,13 @@ int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
 	 */
 	err = write_inode_now(inode, 0);
 	if (err)
-		goto out;
+		return err;
 
 	fuse_sync_writes(inode);
 
 	req = fuse_get_req(fc);
-	if (IS_ERR(req)) {
-		err = PTR_ERR(req);
-		goto out;
-	}
+	if (IS_ERR(req))
+		return PTR_ERR(req);
 
 	memset(&inarg, 0, sizeof(inarg));
 	inarg.fh = ff->fh;
@@ -457,15 +410,12 @@ int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
 			fc->no_fsync = 1;
 		err = 0;
 	}
-out:
-	mutex_unlock(&inode->i_mutex);
 	return err;
 }
 
-static int fuse_fsync(struct file *file, loff_t start, loff_t end,
-		      int datasync)
+static int fuse_fsync(struct file *file, int datasync)
 {
-	return fuse_fsync_common(file, start, end, datasync, 0);
+	return fuse_fsync_common(file, datasync, 0);
 }
 
 void fuse_read_fill(struct fuse_req *req, struct file *file, loff_t pos,
@@ -535,7 +485,7 @@ static int fuse_readpage(struct file *file, struct page *page)
 		goto out;
 
 	/*
-	 * Page writeback can extend beyond the lifetime of the
+	 * Page writeback can extend beyond the liftime of the
 	 * page-cache page, so make sure we read a properly synced
 	 * page.
 	 */
@@ -608,7 +558,7 @@ static void fuse_readpages_end(struct fuse_conn *fc, struct fuse_req *req)
 		page_cache_release(page);
 	}
 	if (req->ff)
-		fuse_file_put(req->ff, false);
+		fuse_file_put(req->ff);
 }
 
 static void fuse_send_readpages(struct fuse_req *req, struct file *file)
@@ -1187,7 +1137,7 @@ static ssize_t fuse_direct_write(struct file *file, const char __user *buf,
 static void fuse_writepage_free(struct fuse_conn *fc, struct fuse_req *req)
 {
 	__free_page(req->pages[0]);
-	fuse_file_put(req->ff, false);
+	fuse_file_put(req->ff);
 }
 
 static void fuse_writepage_finish(struct fuse_conn *fc, struct fuse_req *req)
@@ -1507,7 +1457,7 @@ static int fuse_setlk(struct file *file, struct file_lock *fl, int flock)
 	pid_t pid = fl->fl_type != F_UNLCK ? current->tgid : 0;
 	int err;
 
-	if (fl->fl_lmops && fl->fl_lmops->lm_grant) {
+	if (fl->fl_lmops && fl->fl_lmops->fl_grant) {
 		/* NLM needs asynchronous locks, which we don't support yet */
 		return -ENOLCK;
 	}
@@ -1612,32 +1562,15 @@ static loff_t fuse_file_llseek(struct file *file, loff_t offset, int origin)
 	struct inode *inode = file->f_path.dentry->d_inode;
 
 	mutex_lock(&inode->i_mutex);
-	if (origin != SEEK_CUR || origin != SEEK_SET) {
+	switch (origin) {
+	case SEEK_END:
 		retval = fuse_update_attributes(inode, NULL, file, NULL);
 		if (retval)
 			goto exit;
-	}
-
-	switch (origin) {
-	case SEEK_END:
 		offset += i_size_read(inode);
 		break;
 	case SEEK_CUR:
 		offset += file->f_pos;
-		break;
-	case SEEK_DATA:
-		if (offset >= i_size_read(inode)) {
-			retval = -ENXIO;
-			goto exit;
-		}
-		break;
-	case SEEK_HOLE:
-		if (offset >= i_size_read(inode)) {
-			retval = -ENXIO;
-			goto exit;
-		}
-		offset = i_size_read(inode);
-		break;
 	}
 	retval = -EINVAL;
 	if (offset >= 0 && offset <= inode->i_sb->s_maxbytes) {
@@ -1701,9 +1634,9 @@ static int fuse_ioctl_copy_user(struct page **pages, struct iovec *iov,
  * and 64bit.  Fortunately we can determine which structure the server
  * used from the size of the reply.
  */
-static int fuse_copy_ioctl_iovec_old(struct iovec *dst, void *src,
-				     size_t transferred, unsigned count,
-				     bool is_compat)
+static int fuse_copy_ioctl_iovec(struct iovec *dst, void *src,
+				 size_t transferred, unsigned count,
+				 bool is_compat)
 {
 #ifdef CONFIG_COMPAT
 	if (count * sizeof(struct compat_iovec) == transferred) {
@@ -1746,42 +1679,6 @@ static int fuse_verify_ioctl_iov(struct iovec *iov, size_t count)
 	}
 	return 0;
 }
-
-static int fuse_copy_ioctl_iovec(struct fuse_conn *fc, struct iovec *dst,
-				 void *src, size_t transferred, unsigned count,
-				 bool is_compat)
-{
-	unsigned i;
-	struct fuse_ioctl_iovec *fiov = src;
-
-	if (fc->minor < 16) {
-		return fuse_copy_ioctl_iovec_old(dst, src, transferred,
-						 count, is_compat);
-	}
-
-	if (count * sizeof(struct fuse_ioctl_iovec) != transferred)
-		return -EIO;
-
-	for (i = 0; i < count; i++) {
-		/* Did the server supply an inappropriate value? */
-		if (fiov[i].base != (unsigned long) fiov[i].base ||
-		    fiov[i].len != (unsigned long) fiov[i].len)
-			return -EIO;
-
-		dst[i].iov_base = (void __user *) (unsigned long) fiov[i].base;
-		dst[i].iov_len = (size_t) fiov[i].len;
-
-#ifdef CONFIG_COMPAT
-		if (is_compat &&
-		    (ptr_to_compat(dst[i].iov_base) != fiov[i].base ||
-		     (compat_size_t) dst[i].iov_len != fiov[i].len))
-			return -EIO;
-#endif
-	}
-
-	return 0;
-}
-
 
 /*
  * For ioctls, there is no generic way to determine how much memory
@@ -1843,25 +1740,18 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 	struct fuse_ioctl_out outarg;
 	struct fuse_req *req = NULL;
 	struct page **pages = NULL;
-	struct iovec *iov_page = NULL;
+	struct page *iov_page = NULL;
 	struct iovec *in_iov = NULL, *out_iov = NULL;
 	unsigned int in_iovs = 0, out_iovs = 0, num_pages = 0, max_pages;
 	size_t in_size, out_size, transferred;
 	int err;
 
-#if BITS_PER_LONG == 32
-	inarg.flags |= FUSE_IOCTL_32BIT;
-#else
-	if (flags & FUSE_IOCTL_COMPAT)
-		inarg.flags |= FUSE_IOCTL_32BIT;
-#endif
-
 	/* assume all the iovs returned by client always fits in a page */
-	BUILD_BUG_ON(sizeof(struct fuse_ioctl_iovec) * FUSE_IOCTL_MAX_IOV > PAGE_SIZE);
+	BUILD_BUG_ON(sizeof(struct iovec) * FUSE_IOCTL_MAX_IOV > PAGE_SIZE);
 
 	err = -ENOMEM;
 	pages = kzalloc(sizeof(pages[0]) * FUSE_MAX_PAGES_PER_REQ, GFP_KERNEL);
-	iov_page = (struct iovec *) __get_free_page(GFP_KERNEL);
+	iov_page = alloc_page(GFP_KERNEL);
 	if (!pages || !iov_page)
 		goto out;
 
@@ -1870,7 +1760,7 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 	 * RETRY from server is not allowed.
 	 */
 	if (!(flags & FUSE_IOCTL_UNRESTRICTED)) {
-		struct iovec *iov = iov_page;
+		struct iovec *iov = page_address(iov_page);
 
 		iov->iov_base = (void __user *)arg;
 		iov->iov_len = _IOC_SIZE(cmd);
@@ -1951,7 +1841,7 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 
 	/* did it ask for retry? */
 	if (outarg.flags & FUSE_IOCTL_RETRY) {
-		void *vaddr;
+		char *vaddr;
 
 		/* no retry if in restricted mode */
 		err = -EIO;
@@ -1972,14 +1862,14 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 			goto out;
 
 		vaddr = kmap_atomic(pages[0], KM_USER0);
-		err = fuse_copy_ioctl_iovec(fc, iov_page, vaddr,
+		err = fuse_copy_ioctl_iovec(page_address(iov_page), vaddr,
 					    transferred, in_iovs + out_iovs,
 					    (flags & FUSE_IOCTL_COMPAT) != 0);
 		kunmap_atomic(vaddr, KM_USER0);
 		if (err)
 			goto out;
 
-		in_iov = iov_page;
+		in_iov = page_address(iov_page);
 		out_iov = in_iov + in_iovs;
 
 		err = fuse_verify_ioctl_iov(in_iov, in_iovs);
@@ -2001,7 +1891,8 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
  out:
 	if (req)
 		fuse_put_request(fc, req);
-	free_page((unsigned long) iov_page);
+	if (iov_page)
+		__free_page(iov_page);
 	while (num_pages)
 		__free_page(pages[--num_pages]);
 	kfree(pages);

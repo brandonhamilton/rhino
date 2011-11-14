@@ -9,8 +9,6 @@
 /*
  * entry.S contains the system-call and fault low-level handling routines.
  *
- * Some of this is documented in Documentation/x86/entry_64.txt
- *
  * NOTE: This code handles signal-recognition, which happens every time
  * after an interrupt and after each system call.
  *
@@ -20,7 +18,7 @@
  * A note on terminology:
  * - top of stack: Architecture defined interrupt frame from SS to RIP
  * at the top of the kernel process stack.
- * - partial stack frame: partially saved registers up to R11.
+ * - partial stack frame: partially saved registers upto R11.
  * - full stack frame: Like partial stack frame, but all register saved.
  *
  * Some macro usage:
@@ -63,8 +61,6 @@
 #define __AUDIT_ARCH_LE	   0x40000000
 
 	.code64
-	.section .entry.text, "ax"
-
 #ifdef CONFIG_FUNCTION_TRACER
 #ifdef CONFIG_DYNAMIC_FTRACE
 ENTRY(mcount)
@@ -299,26 +295,23 @@ ENDPROC(native_usergs_sysret64)
 	.endm
 
 /* save partial stack frame */
-	.macro SAVE_ARGS_IRQ
+	.pushsection .kprobes.text, "ax"
+ENTRY(save_args)
+	XCPT_FRAME
 	cld
-	/* start from rbp in pt_regs and jump over */
-	movq_cfi rdi, RDI-RBP
-	movq_cfi rsi, RSI-RBP
-	movq_cfi rdx, RDX-RBP
-	movq_cfi rcx, RCX-RBP
-	movq_cfi rax, RAX-RBP
-	movq_cfi  r8,  R8-RBP
-	movq_cfi  r9,  R9-RBP
-	movq_cfi r10, R10-RBP
-	movq_cfi r11, R11-RBP
+	movq_cfi rdi, RDI+16-ARGOFFSET
+	movq_cfi rsi, RSI+16-ARGOFFSET
+	movq_cfi rdx, RDX+16-ARGOFFSET
+	movq_cfi rcx, RCX+16-ARGOFFSET
+	movq_cfi rax, RAX+16-ARGOFFSET
+	movq_cfi  r8,  R8+16-ARGOFFSET
+	movq_cfi  r9,  R9+16-ARGOFFSET
+	movq_cfi r10, R10+16-ARGOFFSET
+	movq_cfi r11, R11+16-ARGOFFSET
 
-	/* Save rbp so that we can unwind from get_irq_regs() */
-	movq_cfi rbp, 0
-
-	/* Save previous stack value */
-	movq %rsp, %rsi
-
-	leaq -RBP(%rsp),%rdi	/* arg1 for handler */
+	leaq -ARGOFFSET+16(%rsp),%rdi	/* arg1 for handler */
+	movq_cfi rbp, 8		/* push %rbp */
+	leaq 8(%rsp), %rbp		/* mov %rsp, %ebp */
 	testl $3, CS(%rdi)
 	je 1f
 	SWAPGS
@@ -330,14 +323,19 @@ ENDPROC(native_usergs_sysret64)
 	 */
 1:	incl PER_CPU_VAR(irq_count)
 	jne 2f
+	popq_cfi %rax			/* move return address... */
 	mov PER_CPU_VAR(irq_stack_ptr),%rsp
 	EMPTY_FRAME 0
-
-2:	/* Store previous stack value */
-	pushq %rsi
-	/* We entered an interrupt context - irqs are off: */
-	TRACE_IRQS_OFF
-	.endm
+	pushq_cfi %rbp			/* backlink for unwinder */
+	pushq_cfi %rax			/* ... to the new stack */
+	/*
+	 * We entered an interrupt context - irqs are off:
+	 */
+2:	TRACE_IRQS_OFF
+	ret
+	CFI_ENDPROC
+END(save_args)
+	.popsection
 
 ENTRY(save_rest)
 	PARTIAL_FRAME 1 REST_SKIP+8
@@ -418,7 +416,7 @@ ENTRY(ret_from_fork)
 END(ret_from_fork)
 
 /*
- * System call entry. Up to 6 arguments in registers are supported.
+ * System call entry. Upto 6 arguments in registers are supported.
  *
  * SYSCALL does not save anything on the stack and does not change the
  * stack pointer.
@@ -469,7 +467,7 @@ ENTRY(system_call_after_swapgs)
 	 * and short:
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
-	SAVE_ARGS 8,0
+	SAVE_ARGS 8,1
 	movq  %rax,ORIG_RAX-ARGOFFSET(%rsp)
 	movq  %rcx,RIP-ARGOFFSET(%rsp)
 	CFI_REL_OFFSET rip,RIP-ARGOFFSET
@@ -504,7 +502,7 @@ sysret_check:
 	TRACE_IRQS_ON
 	movq RIP-ARGOFFSET(%rsp),%rcx
 	CFI_REGISTER	rip,rcx
-	RESTORE_ARGS 1,-ARG_SKIP,0
+	RESTORE_ARGS 0,-ARG_SKIP,1
 	/*CFI_REGISTER	rflags,r11*/
 	movq	PER_CPU_VAR(old_rsp), %rsp
 	USERGS_SYSRET64
@@ -742,7 +740,7 @@ END(stub_rt_sigreturn)
  */
 	.section .init.rodata,"a"
 ENTRY(interrupt)
-	.section .entry.text
+	.text
 	.p2align 5
 	.p2align CONFIG_X86_L1_CACHE_SHIFT
 ENTRY(irq_entries_start)
@@ -761,7 +759,7 @@ vector=FIRST_EXTERNAL_VECTOR
       .endif
       .previous
 	.quad 1b
-      .section .entry.text
+      .text
 vector=vector+1
     .endif
   .endr
@@ -784,10 +782,9 @@ END(interrupt)
 
 /* 0(%rsp): ~(interrupt number) */
 	.macro interrupt func
-	/* reserve pt_regs for scratch regs and rbp */
-	subq $ORIG_RAX-RBP, %rsp
-	CFI_ADJUST_CFA_OFFSET ORIG_RAX-RBP
-	SAVE_ARGS_IRQ
+	subq $ORIG_RAX-ARGOFFSET+8, %rsp
+	CFI_ADJUST_CFA_OFFSET ORIG_RAX-ARGOFFSET+8
+	call save_args
 	PARTIAL_FRAME 0
 	call \func
 	.endm
@@ -810,14 +807,10 @@ ret_from_intr:
 	DISABLE_INTERRUPTS(CLBR_NONE)
 	TRACE_IRQS_OFF
 	decl PER_CPU_VAR(irq_count)
-
-	/* Restore saved previous stack */
-	popq %rsi
-	leaq 16(%rsi), %rsp
-
+	leaveq
+	CFI_RESTORE		rbp
 	CFI_DEF_CFA_REGISTER	rsp
-	CFI_ADJUST_CFA_OFFSET	-16
-
+	CFI_ADJUST_CFA_OFFSET	-8
 exit_intr:
 	GET_THREAD_INFO(%rcx)
 	testl $3,CS-ARGOFFSET(%rsp)
@@ -853,7 +846,7 @@ retint_restore_args:	/* return to kernel space */
 	 */
 	TRACE_IRQS_IRETQ
 restore_args:
-	RESTORE_ARGS 1,8,1
+	RESTORE_ARGS 0,8,0
 
 irq_return:
 	INTERRUPT_RETURN
@@ -972,12 +965,9 @@ apicinterrupt X86_PLATFORM_IPI_VECTOR \
 	x86_platform_ipi smp_x86_platform_ipi
 
 #ifdef CONFIG_SMP
-.irp idx,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15, \
-	16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
-.if NUM_INVALIDATE_TLB_VECTORS > \idx
+.irpc idx, "01234567"
 apicinterrupt (INVALIDATE_TLB_VECTOR_START)+\idx \
 	invalidate_interrupt\idx smp_invalidate_interrupt
-.endif
 .endr
 #endif
 
@@ -985,6 +975,11 @@ apicinterrupt THRESHOLD_APIC_VECTOR \
 	threshold_interrupt smp_threshold_interrupt
 apicinterrupt THERMAL_APIC_VECTOR \
 	thermal_interrupt smp_thermal_interrupt
+
+#ifdef CONFIG_X86_MCE
+apicinterrupt MCE_SELF_VECTOR \
+	mce_self_interrupt smp_mce_self_interrupt
+#endif
 
 #ifdef CONFIG_SMP
 apicinterrupt CALL_FUNCTION_SINGLE_VECTOR \
@@ -1111,8 +1106,6 @@ zeroentry spurious_interrupt_bug do_spurious_interrupt_bug
 zeroentry coprocessor_error do_coprocessor_error
 errorentry alignment_check do_alignment_check
 zeroentry simd_coprocessor_error do_simd_coprocessor_error
-zeroentry emulate_vsyscall do_emulate_vsyscall
-
 
 	/* Reload gs selector with exception handling */
 	/* edi:  new selector */
@@ -1245,7 +1238,7 @@ ENTRY(xen_do_hypervisor_callback)   # do_hypervisor_callback(struct *pt_regs)
 	decl PER_CPU_VAR(irq_count)
 	jmp  error_exit
 	CFI_ENDPROC
-END(xen_do_hypervisor_callback)
+END(do_hypervisor_callback)
 
 /*
  * Hypervisor uses this for application faults while it executes.
@@ -1326,9 +1319,6 @@ errorentry xen_stack_segment do_stack_segment
 #endif
 errorentry general_protection do_general_protection
 errorentry page_fault do_page_fault
-#ifdef CONFIG_KVM_GUEST
-errorentry async_page_fault do_async_page_fault
-#endif
 #ifdef CONFIG_X86_MCE
 paranoidzeroentry machine_check *machine_check_vector(%rip)
 #endif

@@ -39,8 +39,6 @@
 MODULE_DESCRIPTION("v4l2 driver module for saa7130/34 based TV cards");
 MODULE_AUTHOR("Gerd Knorr <kraxel@bytesex.org> [SuSE Labs]");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(SAA7134_VERSION);
-
 
 /* ------------------------------------------------------------------ */
 
@@ -168,14 +166,8 @@ static void request_submodules(struct saa7134_dev *dev)
 	schedule_work(&dev->request_module_wk);
 }
 
-static void flush_request_submodules(struct saa7134_dev *dev)
-{
-	flush_work_sync(&dev->request_module_wk);
-}
-
 #else
 #define request_submodules(dev)
-#define flush_request_submodules(dev)
 #endif /* CONFIG_MODULES */
 
 /* ------------------------------------------------------------------ */
@@ -754,28 +746,19 @@ static int saa7134_hwfini(struct saa7134_dev *dev)
 	return 0;
 }
 
-static void __devinit must_configure_manually(int has_eeprom)
+static void __devinit must_configure_manually(void)
 {
 	unsigned int i,p;
 
-	if (!has_eeprom)
-		printk(KERN_WARNING
-		       "saa7134: <rant>\n"
-		       "saa7134:  Congratulations!  Your TV card vendor saved a few\n"
-		       "saa7134:  cents for a eeprom, thus your pci board has no\n"
-		       "saa7134:  subsystem ID and I can't identify it automatically\n"
-		       "saa7134: </rant>\n"
-		       "saa7134: I feel better now.  Ok, here are the good news:\n"
-		       "saa7134: You can use the card=<nr> insmod option to specify\n"
-		       "saa7134: which board do you have.  The list:\n");
-	else
-		printk(KERN_WARNING
-		       "saa7134: Board is currently unknown. You might try to use the card=<nr>\n"
-		       "saa7134: insmod option to specify which board do you have, but this is\n"
-		       "saa7134: somewhat risky, as might damage your card. It is better to ask\n"
-		       "saa7134: for support at linux-media@vger.kernel.org.\n"
-		       "saa7134: The supported cards are:\n");
-
+	printk(KERN_WARNING
+	       "saa7134: <rant>\n"
+	       "saa7134:  Congratulations!  Your TV card vendor saved a few\n"
+	       "saa7134:  cents for a eeprom, thus your pci board has no\n"
+	       "saa7134:  subsystem ID and I can't identify it automatically\n"
+	       "saa7134: </rant>\n"
+	       "saa7134: I feel better now.  Ok, here are the good news:\n"
+	       "saa7134: You can use the card=<nr> insmod option to specify\n"
+	       "saa7134: which board do you have.  The list:\n");
 	for (i = 0; i < saa7134_bcount; i++) {
 		printk(KERN_WARNING "saa7134:   card=%d -> %-40.40s",
 		       i,saa7134_boards[i].name);
@@ -929,7 +912,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	}
 
 	/* print pci info */
-	dev->pci_rev = pci_dev->revision;
+	pci_read_config_byte(pci_dev, PCI_CLASS_REVISION, &dev->pci_rev);
 	pci_read_config_byte(pci_dev, PCI_LATENCY_TIMER,  &dev->pci_lat);
 	printk(KERN_INFO "%s: found at %s, rev: %d, irq: %d, "
 	       "latency: %d, mmio: 0x%llx\n", dev->name,
@@ -947,10 +930,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (card[dev->nr] >= 0 &&
 	    card[dev->nr] < saa7134_bcount)
 		dev->board = card[dev->nr];
-	if (SAA7134_BOARD_UNKNOWN == dev->board)
-		must_configure_manually(0);
-	else if (SAA7134_BOARD_NOAUTO == dev->board) {
-		must_configure_manually(1);
+	if (SAA7134_BOARD_NOAUTO == dev->board) {
+		must_configure_manually();
 		dev->board = SAA7134_BOARD_UNKNOWN;
 	}
 	dev->autodetected = card[dev->nr] != dev->board;
@@ -1029,6 +1010,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		}
 	}
 
+	request_submodules(dev);
+
 	v4l2_prio_init(&dev->prio);
 
 	mutex_lock(&saa7134_devlist_lock);
@@ -1083,7 +1066,6 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (saa7134_dmasound_init && !dev->dmasound.priv_data)
 		saa7134_dmasound_init(dev);
 
-	request_submodules(dev);
 	return 0;
 
  fail4:
@@ -1108,8 +1090,6 @@ static void __devexit saa7134_finidev(struct pci_dev *pci_dev)
 	struct v4l2_device *v4l2_dev = pci_get_drvdata(pci_dev);
 	struct saa7134_dev *dev = container_of(v4l2_dev, struct saa7134_dev, v4l2_dev);
 	struct saa7134_mpeg_ops *mops;
-
-	flush_request_submodules(dev);
 
 	/* Release DMA sound modules if present */
 	if (saa7134_dmasound_exit && dev->dmasound.priv_data) {
@@ -1334,8 +1314,14 @@ static struct pci_driver saa7134_pci_driver = {
 static int __init saa7134_init(void)
 {
 	INIT_LIST_HEAD(&saa7134_devlist);
-	printk(KERN_INFO "saa7130/34: v4l2 driver version %s loaded\n",
-	       SAA7134_VERSION);
+	printk(KERN_INFO "saa7130/34: v4l2 driver version %d.%d.%d loaded\n",
+	       (SAA7134_VERSION_CODE >> 16) & 0xff,
+	       (SAA7134_VERSION_CODE >>  8) & 0xff,
+	       SAA7134_VERSION_CODE & 0xff);
+#ifdef SNAPSHOT
+	printk(KERN_INFO "saa7130/34: snapshot date %04d-%02d-%02d\n",
+	       SNAPSHOT/10000, (SNAPSHOT/100)%100, SNAPSHOT%100);
+#endif
 	return pci_register_driver(&saa7134_pci_driver);
 }
 

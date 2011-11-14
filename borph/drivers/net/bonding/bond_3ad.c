@@ -246,7 +246,7 @@ static inline void __enable_port(struct port *port)
  */
 static inline int __port_is_enabled(struct port *port)
 {
-	return bond_is_active_slave(port->slave);
+	return port->slave->state == BOND_STATE_ACTIVE;
 }
 
 /**
@@ -262,7 +262,7 @@ static inline u32 __get_agg_selection_mode(struct port *port)
 	if (bond == NULL)
 		return BOND_AD_STABLE;
 
-	return bond->params.ad_select;
+	return BOND_AD_INFO(bond).agg_select_mode;
 }
 
 /**
@@ -281,23 +281,23 @@ static inline int __check_agg_selection_timer(struct port *port)
 }
 
 /**
- * __get_state_machine_lock - lock the port's state machines
+ * __get_rx_machine_lock - lock the port's RX machine
  * @port: the port we're looking at
  *
  */
-static inline void __get_state_machine_lock(struct port *port)
+static inline void __get_rx_machine_lock(struct port *port)
 {
-	spin_lock_bh(&(SLAVE_AD_INFO(port->slave).state_machine_lock));
+	spin_lock_bh(&(SLAVE_AD_INFO(port->slave).rx_machine_lock));
 }
 
 /**
- * __release_state_machine_lock - unlock the port's state machines
+ * __release_rx_machine_lock - unlock the port's RX machine
  * @port: the port we're looking at
  *
  */
-static inline void __release_state_machine_lock(struct port *port)
+static inline void __release_rx_machine_lock(struct port *port)
 {
-	spin_unlock_bh(&(SLAVE_AD_INFO(port->slave).state_machine_lock));
+	spin_unlock_bh(&(SLAVE_AD_INFO(port->slave).rx_machine_lock));
 }
 
 /**
@@ -388,14 +388,14 @@ static u8 __get_duplex(struct port *port)
 }
 
 /**
- * __initialize_port_locks - initialize a port's STATE machine spinlock
+ * __initialize_port_locks - initialize a port's RX machine spinlock
  * @port: the port we're looking at
  *
  */
 static inline void __initialize_port_locks(struct port *port)
 {
 	// make sure it isn't called twice
-	spin_lock_init(&(SLAVE_AD_INFO(port->slave).state_machine_lock));
+	spin_lock_init(&(SLAVE_AD_INFO(port->slave).rx_machine_lock));
 }
 
 //conversions
@@ -716,9 +716,11 @@ static void __set_agg_ports_ready(struct aggregator *aggregator, int val)
 static u32 __get_agg_bandwidth(struct aggregator *aggregator)
 {
 	u32 bandwidth = 0;
+	u32 basic_speed;
 
 	if (aggregator->num_of_ports) {
-		switch (__get_link_speed(aggregator->lag_ports)) {
+		basic_speed = __get_link_speed(aggregator->lag_ports);
+		switch (basic_speed) {
 		case AD_LINK_SPEED_BITMASK_1MBPS:
 			bandwidth = aggregator->num_of_ports;
 			break;
@@ -838,7 +840,7 @@ static int ad_lacpdu_send(struct port *port)
 	lacpdu_header = (struct lacpdu_header *)skb_put(skb, length);
 
 	memcpy(lacpdu_header->hdr.h_dest, lacpdu_mcast_addr, ETH_ALEN);
-	/* Note: source address is set to be the member's PERMANENT address,
+	/* Note: source addres is set to be the member's PERMANENT address,
 	   because we use it to identify loopback lacpdus in receive. */
 	memcpy(lacpdu_header->hdr.h_source, slave->perm_hwaddr, ETH_ALEN);
 	lacpdu_header->hdr.h_proto = PKT_TYPE_LACPDU;
@@ -879,7 +881,7 @@ static int ad_marker_send(struct port *port, struct bond_marker *marker)
 	marker_header = (struct bond_marker_header *)skb_put(skb, length);
 
 	memcpy(marker_header->hdr.h_dest, lacpdu_mcast_addr, ETH_ALEN);
-	/* Note: source address is set to be the member's PERMANENT address,
+	/* Note: source addres is set to be the member's PERMANENT address,
 	   because we use it to identify loopback MARKERs in receive. */
 	memcpy(marker_header->hdr.h_source, slave->perm_hwaddr, ETH_ALEN);
 	marker_header->hdr.h_proto = PKT_TYPE_LACPDU;
@@ -1023,6 +1025,9 @@ static void ad_rx_machine(struct lacpdu *lacpdu, struct port *port)
 {
 	rx_states_t last_state;
 
+	// Lock to prevent 2 instances of this function to run simultaneously(rx interrupt and periodic machine callback)
+	__get_rx_machine_lock(port);
+
 	// keep current State Machine state to compare later if it was changed
 	last_state = port->sm_rx_state;
 
@@ -1128,6 +1133,7 @@ static void ad_rx_machine(struct lacpdu *lacpdu, struct port *port)
 				pr_err("%s: An illegal loopback occurred on adapter (%s).\n"
 				       "Check the configuration to verify that all adapters are connected to 802.3ad compliant switch ports\n",
 				       port->slave->dev->master->name, port->slave->dev->name);
+				__release_rx_machine_lock(port);
 				return;
 			}
 			__update_selected(lacpdu, port);
@@ -1147,6 +1153,7 @@ static void ad_rx_machine(struct lacpdu *lacpdu, struct port *port)
 			break;
 		}
 	}
+	__release_rx_machine_lock(port);
 }
 
 /**
@@ -1480,11 +1487,8 @@ static struct aggregator *ad_agg_selection_test(struct aggregator *best,
 
 static int agg_device_up(const struct aggregator *agg)
 {
-	struct port *port = agg->lag_ports;
-	if (!port)
-		return 0;
-	return (netif_running(port->slave->dev) &&
-		netif_carrier_ok(port->slave->dev));
+	return (netif_running(agg->slave->dev) &&
+		netif_carrier_ok(agg->slave->dev));
 }
 
 /**
@@ -1859,6 +1863,7 @@ static void ad_marker_response_received(struct bond_marker *marker,
 void bond_3ad_initiate_agg_selection(struct bonding *bond, int timeout)
 {
 	BOND_AD_INFO(bond).agg_select_timer = timeout;
+	BOND_AD_INFO(bond).agg_select_mode = bond->params.ad_select;
 }
 
 static u16 aggregator_identifier;
@@ -1867,10 +1872,11 @@ static u16 aggregator_identifier;
  * bond_3ad_initialize - initialize a bond's 802.3ad parameters and structures
  * @bond: bonding struct to work on
  * @tick_resolution: tick duration (millisecond resolution)
+ * @lacp_fast: boolean. whether fast periodic should be used
  *
  * Can be called only after the mac address of the bond is set.
  */
-void bond_3ad_initialize(struct bonding *bond, u16 tick_resolution)
+void bond_3ad_initialize(struct bonding *bond, u16 tick_resolution, int lacp_fast)
 {
 	// check that the bond is not initialized yet
 	if (MAC_ADDRESS_COMPARE(&(BOND_AD_INFO(bond).system.sys_mac_addr),
@@ -1878,6 +1884,7 @@ void bond_3ad_initialize(struct bonding *bond, u16 tick_resolution)
 
 		aggregator_identifier = 0;
 
+		BOND_AD_INFO(bond).lacp_fast = lacp_fast;
 		BOND_AD_INFO(bond).system.sys_priority = 0xFFFF;
 		BOND_AD_INFO(bond).system.sys_mac_addr = *((struct mac_addr *)bond->dev->dev_addr);
 
@@ -1909,13 +1916,13 @@ int bond_3ad_bind_slave(struct slave *slave)
 		return -1;
 	}
 
-	//check that the slave has not been initialized yet.
+	//check that the slave has not been intialized yet.
 	if (SLAVE_AD_INFO(slave).port.slave != slave) {
 
 		// port initialization
 		port = &(SLAVE_AD_INFO(slave).port);
 
-		ad_initialize_port(port, bond->params.lacp_fast);
+		ad_initialize_port(port, BOND_AD_INFO(bond).lacp_fast);
 
 		port->slave = slave;
 		port->actor_port_number = SLAVE_AD_INFO(slave).id;
@@ -2148,12 +2155,6 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 			goto re_arm;
 		}
 
-		/* Lock around state machines to protect data accessed
-		 * by all (e.g., port->sm_vars).  ad_rx_machine may run
-		 * concurrently due to incoming LACPDU.
-		 */
-		__get_state_machine_lock(port);
-
 		ad_rx_machine(NULL, port);
 		ad_periodic_machine(port);
 		ad_port_selection_logic(port);
@@ -2163,8 +2164,6 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 		// turn off the BEGIN bit, since we already handled it
 		if (port->sm_vars & AD_PORT_BEGIN)
 			port->sm_vars &= ~AD_PORT_BEGIN;
-
-		__release_state_machine_lock(port);
 	}
 
 re_arm:
@@ -2201,10 +2200,7 @@ static void bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u
 		case AD_TYPE_LACPDU:
 			pr_debug("Received LACPDU on port %d\n",
 				 port->actor_port_number);
-			/* Protect against concurrent state machines */
-			__get_state_machine_lock(port);
 			ad_rx_machine(lacpdu, port);
-			__release_state_machine_lock(port);
 			break;
 
 		case AD_TYPE_MARKER:
@@ -2342,17 +2338,8 @@ void bond_3ad_handle_link_change(struct slave *slave, char link)
  */
 int bond_3ad_set_carrier(struct bonding *bond)
 {
-	struct aggregator *active;
-
-	active = __get_active_agg(&(SLAVE_AD_INFO(bond->first_slave).aggregator));
-	if (active) {
-		/* are enough slaves available to consider link up? */
-		if (active->num_of_ports < bond->params.min_links) {
-			if (netif_carrier_ok(bond->dev)) {
-				netif_carrier_off(bond->dev);
-				return 1;
-			}
-		} else if (!netif_carrier_ok(bond->dev)) {
+	if (__get_active_agg(&(SLAVE_AD_INFO(bond->first_slave).aggregator))) {
+		if (!netif_carrier_ok(bond->dev)) {
 			netif_carrier_on(bond->dev);
 			return 1;
 		}
@@ -2409,6 +2396,14 @@ int bond_3ad_xmit_xor(struct sk_buff *skb, struct net_device *dev)
 	struct ad_info ad_info;
 	int res = 1;
 
+	/* make sure that the slaves list will
+	 * not change during tx
+	 */
+	read_lock(&bond->lock);
+
+	if (!BOND_IS_OK(bond))
+		goto out;
+
 	if (bond_3ad_get_active_agg_info(bond, &ad_info)) {
 		pr_debug("%s: Error: bond_3ad_get_active_agg_info failed\n",
 			 dev->name);
@@ -2462,51 +2457,36 @@ out:
 		/* no suitable interface, frame not sent */
 		dev_kfree_skb(skb);
 	}
-
+	read_unlock(&bond->lock);
 	return NETDEV_TX_OK;
 }
 
-void bond_3ad_lacpdu_recv(struct sk_buff *skb, struct bonding *bond,
-			  struct slave *slave)
+int bond_3ad_lacpdu_recv(struct sk_buff *skb, struct net_device *dev, struct packet_type* ptype, struct net_device *orig_dev)
 {
-	if (skb->protocol != PKT_TYPE_LACPDU)
-		return;
+	struct bonding *bond = netdev_priv(dev);
+	struct slave *slave = NULL;
+	int ret = NET_RX_DROP;
+
+	if (!(dev->flags & IFF_MASTER))
+		goto out;
 
 	if (!pskb_may_pull(skb, sizeof(struct lacpdu)))
-		return;
+		goto out;
 
 	read_lock(&bond->lock);
+	slave = bond_get_slave_by_dev((struct bonding *)netdev_priv(dev),
+					orig_dev);
+	if (!slave)
+		goto out_unlock;
+
 	bond_3ad_rx_indication((struct lacpdu *) skb->data, slave, skb->len);
+
+	ret = NET_RX_SUCCESS;
+
+out_unlock:
 	read_unlock(&bond->lock);
-}
+out:
+	dev_kfree_skb(skb);
 
-/*
- * When modify lacp_rate parameter via sysfs,
- * update actor_oper_port_state of each port.
- *
- * Hold slave->state_machine_lock,
- * so we can modify port->actor_oper_port_state,
- * no matter bond is up or down.
- */
-void bond_3ad_update_lacp_rate(struct bonding *bond)
-{
-	int i;
-	struct slave *slave;
-	struct port *port = NULL;
-	int lacp_fast;
-
-	read_lock(&bond->lock);
-	lacp_fast = bond->params.lacp_fast;
-
-	bond_for_each_slave(bond, slave, i) {
-		port = &(SLAVE_AD_INFO(slave).port);
-		__get_state_machine_lock(port);
-		if (lacp_fast)
-			port->actor_oper_port_state |= AD_STATE_LACP_TIMEOUT;
-		else
-			port->actor_oper_port_state &= ~AD_STATE_LACP_TIMEOUT;
-		__release_state_machine_lock(port);
-	}
-
-	read_unlock(&bond->lock);
+	return ret;
 }

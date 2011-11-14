@@ -57,7 +57,7 @@ struct poll_table_entry {
 };
 
 /*
- * Structures and helpers for select/poll syscall
+ * Structures and helpers for sys_poll/sys_poll
  */
 struct poll_wqueues {
 	poll_table pt;
@@ -82,7 +82,7 @@ static inline int poll_schedule(struct poll_wqueues *pwq, int state)
 }
 
 /*
- * Scalable version of the fd_set.
+ * Scaleable version of the fd_set.
  */
 
 typedef struct {

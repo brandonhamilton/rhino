@@ -267,12 +267,9 @@ int cfg80211_wext_freq(struct wiphy *wiphy, struct iw_freq *freq)
 	 * -EINVAL for impossible things.
 	 */
 	if (freq->e == 0) {
-		enum ieee80211_band band = IEEE80211_BAND_2GHZ;
 		if (freq->m < 0)
 			return 0;
-		if (freq->m > 14)
-			band = IEEE80211_BAND_5GHZ;
-		return ieee80211_channel_to_frequency(freq->m, band);
+		return ieee80211_channel_to_frequency(freq->m);
 	} else {
 		int i, div = 1000000;
 		for (i = 0; i < freq->e; i++)
@@ -551,8 +548,8 @@ static int __cfg80211_set_encryption(struct cfg80211_registered_device *rdev,
 				__cfg80211_leave_ibss(rdev, wdev->netdev, true);
 				rejoin = true;
 			}
-			err = rdev->ops->set_default_key(&rdev->wiphy, dev,
-							 idx, true, true);
+			err = rdev->ops->set_default_key(&rdev->wiphy,
+							 dev, idx);
 		}
 		if (!err) {
 			wdev->wext.default_key = idx;
@@ -630,8 +627,8 @@ int cfg80211_wext_siwencode(struct net_device *dev,
 		err = 0;
 		wdev_lock(wdev);
 		if (wdev->current_bss)
-			err = rdev->ops->set_default_key(&rdev->wiphy, dev,
-							 idx, true, true);
+			err = rdev->ops->set_default_key(&rdev->wiphy,
+							 dev, idx);
 		if (!err)
 			wdev->wext.default_key = idx;
 		wdev_unlock(wdev);
@@ -805,11 +802,11 @@ int cfg80211_wext_siwfreq(struct net_device *dev,
 			return freq;
 		if (freq == 0)
 			return -EINVAL;
-		mutex_lock(&rdev->devlist_mtx);
 		wdev_lock(wdev);
+		mutex_lock(&rdev->devlist_mtx);
 		err = cfg80211_set_freq(rdev, wdev, freq, NL80211_CHAN_NO_HT);
-		wdev_unlock(wdev);
 		mutex_unlock(&rdev->devlist_mtx);
+		wdev_unlock(wdev);
 		return err;
 	default:
 		return -EOPNOTSUPP;

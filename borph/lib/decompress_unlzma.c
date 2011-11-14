@@ -33,6 +33,7 @@
 #define PREBOOT
 #else
 #include <linux/decompress/unlzma.h>
+#include <linux/slab.h>
 #endif /* STATIC */
 
 #include <linux/decompress/mm.h>
@@ -73,7 +74,6 @@ struct rc {
 	uint32_t code;
 	uint32_t range;
 	uint32_t bound;
-	void (*error)(char *);
 };
 
 
@@ -82,7 +82,7 @@ struct rc {
 #define RC_MODEL_TOTAL_BITS 11
 
 
-static int INIT nofill(void *buffer, unsigned int len)
+static int nofill(void *buffer, unsigned int len)
 {
 	return -1;
 }
@@ -92,7 +92,7 @@ static void INIT rc_read(struct rc *rc)
 {
 	rc->buffer_size = rc->fill((char *)rc->buffer, LZMA_IOBUF_SIZE);
 	if (rc->buffer_size <= 0)
-		rc->error("unexpected EOF");
+		error("unexpected EOF");
 	rc->ptr = rc->buffer;
 	rc->buffer_end = rc->buffer + rc->buffer_size;
 }
@@ -126,6 +126,12 @@ static inline void INIT rc_init_code(struct rc *rc)
 	}
 }
 
+
+/* Called once. TODO: bb_maybe_free() */
+static inline void INIT rc_free(struct rc *rc)
+{
+	free(rc->buffer);
+}
 
 /* Called twice, but one callsite is in inline'd rc_is_bit_0_helper() */
 static void INIT rc_do_normalize(struct rc *rc)
@@ -163,7 +169,7 @@ static inline void INIT rc_update_bit_0(struct rc *rc, uint16_t *p)
 	rc->range = rc->bound;
 	*p += ((1 << RC_MODEL_TOTAL_BITS) - *p) >> RC_MOVE_BITS;
 }
-static inline void INIT rc_update_bit_1(struct rc *rc, uint16_t *p)
+static inline void rc_update_bit_1(struct rc *rc, uint16_t *p)
 {
 	rc->range -= rc->bound;
 	rc->code -= rc->bound;
@@ -313,38 +319,32 @@ static inline uint8_t INIT peek_old_byte(struct writer *wr,
 
 }
 
-static inline int INIT write_byte(struct writer *wr, uint8_t byte)
+static inline void INIT write_byte(struct writer *wr, uint8_t byte)
 {
 	wr->buffer[wr->buffer_pos++] = wr->previous_byte = byte;
 	if (wr->flush && wr->buffer_pos == wr->header->dict_size) {
 		wr->buffer_pos = 0;
 		wr->global_pos += wr->header->dict_size;
-		if (wr->flush((char *)wr->buffer, wr->header->dict_size)
-				!= wr->header->dict_size)
-			return -1;
+		wr->flush((char *)wr->buffer, wr->header->dict_size);
 	}
-	return 0;
 }
 
 
-static inline int INIT copy_byte(struct writer *wr, uint32_t offs)
+static inline void INIT copy_byte(struct writer *wr, uint32_t offs)
 {
-	return write_byte(wr, peek_old_byte(wr, offs));
+	write_byte(wr, peek_old_byte(wr, offs));
 }
 
-static inline int INIT copy_bytes(struct writer *wr,
+static inline void INIT copy_bytes(struct writer *wr,
 					 uint32_t rep0, int len)
 {
 	do {
-		if (copy_byte(wr, rep0))
-			return -1;
+		copy_byte(wr, rep0);
 		len--;
 	} while (len != 0 && wr->buffer_pos < wr->header->dst_size);
-
-	return len;
 }
 
-static inline int INIT process_bit0(struct writer *wr, struct rc *rc,
+static inline void INIT process_bit0(struct writer *wr, struct rc *rc,
 				     struct cstate *cst, uint16_t *p,
 				     int pos_state, uint16_t *prob,
 				     int lc, uint32_t literal_pos_mask) {
@@ -378,17 +378,16 @@ static inline int INIT process_bit0(struct writer *wr, struct rc *rc,
 		uint16_t *prob_lit = prob + mi;
 		rc_get_bit(rc, prob_lit, &mi);
 	}
+	write_byte(wr, mi);
 	if (cst->state < 4)
 		cst->state = 0;
 	else if (cst->state < 10)
 		cst->state -= 3;
 	else
 		cst->state -= 6;
-
-	return write_byte(wr, mi);
 }
 
-static inline int INIT process_bit1(struct writer *wr, struct rc *rc,
+static inline void INIT process_bit1(struct writer *wr, struct rc *rc,
 					    struct cstate *cst, uint16_t *p,
 					    int pos_state, uint16_t *prob) {
   int offset;
@@ -419,7 +418,8 @@ static inline int INIT process_bit1(struct writer *wr, struct rc *rc,
 
 				cst->state = cst->state < LZMA_NUM_LIT_STATES ?
 					9 : 11;
-				return copy_byte(wr, cst->rep0);
+				copy_byte(wr, cst->rep0);
+				return;
 			} else {
 				rc_update_bit_1(rc, prob);
 			}
@@ -521,15 +521,12 @@ static inline int INIT process_bit1(struct writer *wr, struct rc *rc,
 		} else
 			cst->rep0 = pos_slot;
 		if (++(cst->rep0) == 0)
-			return 0;
-		if (cst->rep0 > wr->header->dict_size
-				|| cst->rep0 > get_pos(wr))
-			return -1;
+			return;
 	}
 
 	len += LZMA_MATCH_MIN_LEN;
 
-	return copy_bytes(wr, cst->rep0, len);
+	copy_bytes(wr, cst->rep0, len);
 }
 
 
@@ -539,7 +536,7 @@ STATIC inline int INIT unlzma(unsigned char *buf, int in_len,
 			      int(*flush)(void*, unsigned int),
 			      unsigned char *output,
 			      int *posp,
-			      void(*error)(char *x)
+			      void(*error_fn)(char *x)
 	)
 {
 	struct lzma_header header;
@@ -555,7 +552,7 @@ STATIC inline int INIT unlzma(unsigned char *buf, int in_len,
 	unsigned char *inbuf;
 	int ret = -1;
 
-	rc.error = error;
+	set_error_fn(error_fn);
 
 	if (buf)
 		inbuf = buf;
@@ -583,10 +580,8 @@ STATIC inline int INIT unlzma(unsigned char *buf, int in_len,
 		((unsigned char *)&header)[i] = *rc.ptr++;
 	}
 
-	if (header.pos >= (9 * 5 * 5)) {
+	if (header.pos >= (9 * 5 * 5))
 		error("bad header");
-		goto exit_1;
-	}
 
 	mi = 0;
 	lc = header.pos;
@@ -632,29 +627,21 @@ STATIC inline int INIT unlzma(unsigned char *buf, int in_len,
 		int pos_state =	get_pos(&wr) & pos_state_mask;
 		uint16_t *prob = p + LZMA_IS_MATCH +
 			(cst.state << LZMA_NUM_POS_BITS_MAX) + pos_state;
-		if (rc_is_bit_0(&rc, prob)) {
-			if (process_bit0(&wr, &rc, &cst, p, pos_state, prob,
-					lc, literal_pos_mask)) {
-				error("LZMA data is corrupt");
-				goto exit_3;
-			}
-		} else {
-			if (process_bit1(&wr, &rc, &cst, p, pos_state, prob)) {
-				error("LZMA data is corrupt");
-				goto exit_3;
-			}
+		if (rc_is_bit_0(&rc, prob))
+			process_bit0(&wr, &rc, &cst, p, pos_state, prob,
+				     lc, literal_pos_mask);
+		else {
+			process_bit1(&wr, &rc, &cst, p, pos_state, prob);
 			if (cst.rep0 == 0)
 				break;
 		}
-		if (rc.buffer_size <= 0)
-			goto exit_3;
 	}
 
 	if (posp)
 		*posp = rc.ptr-rc.buffer;
-	if (!wr.flush || wr.flush(wr.buffer, wr.buffer_pos) == wr.buffer_pos)
-		ret = 0;
-exit_3:
+	if (wr.flush)
+		wr.flush(wr.buffer, wr.buffer_pos);
+	ret = 0;
 	large_free(p);
 exit_2:
 	if (!output)
@@ -672,9 +659,9 @@ STATIC int INIT decompress(unsigned char *buf, int in_len,
 			      int(*flush)(void*, unsigned int),
 			      unsigned char *output,
 			      int *posp,
-			      void(*error)(char *x)
+			      void(*error_fn)(char *x)
 	)
 {
-	return unlzma(buf, in_len - 4, fill, flush, output, posp, error);
+	return unlzma(buf, in_len - 4, fill, flush, output, posp, error_fn);
 }
 #endif

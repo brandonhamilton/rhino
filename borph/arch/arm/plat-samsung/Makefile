@@ -17,8 +17,8 @@ obj-y				+= clock.o
 obj-y				+= pwm-clock.o
 obj-y				+= gpio.o
 obj-y				+= gpio-config.o
-obj-y				+= dev-asocdma.o
 
+obj-$(CONFIG_SAMSUNG_GPIOLIB_4BIT)	+= gpiolib.o
 obj-$(CONFIG_SAMSUNG_CLKSRC)	+= clock-clksrc.o
 
 obj-$(CONFIG_SAMSUNG_IRQ_UART)	+= irq-uart.o
@@ -58,8 +58,6 @@ obj-$(CONFIG_SAMSUNG_DEV_ADC)	+= dev-adc.o
 obj-$(CONFIG_SAMSUNG_DEV_IDE)	+= dev-ide.o
 obj-$(CONFIG_SAMSUNG_DEV_TS)	+= dev-ts.o
 obj-$(CONFIG_SAMSUNG_DEV_KEYPAD)	+= dev-keypad.o
-obj-$(CONFIG_SAMSUNG_DEV_PWM)	+= dev-pwm.o
-obj-$(CONFIG_SAMSUNG_DEV_BACKLIGHT)	+= dev-backlight.o
 
 # DMA support
 
@@ -74,10 +72,6 @@ obj-$(CONFIG_PM)		+= pm-gpio.o
 obj-$(CONFIG_SAMSUNG_PM_CHECK)	+= pm-check.o
 
 obj-$(CONFIG_SAMSUNG_WAKEMASK)	+= wakeup-mask.o
-
-# PD support
-
-obj-$(CONFIG_SAMSUNG_PD)	+= pd.o
 
 # PWM support
 

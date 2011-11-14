@@ -623,21 +623,19 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (res == NULL) {
 		dev_err(&pdev->dev, "no IO memory defined\n");
-		ret = -ENOENT;
-		goto failed_put_clk;
+		return -ENOENT;
 	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		dev_err(&pdev->dev, "no IRQ defined\n");
-		ret = -ENOENT;
-		goto failed_put_clk;
+		return -ENOENT;
 	}
 
 	info = framebuffer_alloc(sizeof(struct pxa168fb_info), &pdev->dev);
 	if (info == NULL) {
-		ret = -ENOMEM;
-		goto failed_put_clk;
+		clk_put(clk);
+		return -ENOMEM;
 	}
 
 	/* Initialize private data */
@@ -662,7 +660,7 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	info->fix.ypanstep = 0;
 	info->fix.ywrapstep = 0;
 	info->fix.mmio_start = res->start;
-	info->fix.mmio_len = resource_size(res);
+	info->fix.mmio_len = res->end - res->start + 1;
 	info->fix.accel = FB_ACCEL_NONE;
 	info->fbops = &pxa168fb_ops;
 	info->pseudo_palette = fbi->pseudo_palette;
@@ -673,7 +671,7 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	fbi->reg_base = ioremap_nocache(res->start, resource_size(res));
 	if (fbi->reg_base == NULL) {
 		ret = -ENOMEM;
-		goto failed_free_info;
+		goto failed;
 	}
 
 	/*
@@ -685,7 +683,7 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 						&fbi->fb_start_dma, GFP_KERNEL);
 	if (info->screen_base == NULL) {
 		ret = -ENOMEM;
-		goto failed_free_info;
+		goto failed;
 	}
 
 	info->fix.smem_start = (unsigned long)fbi->fb_start_dma;
@@ -703,12 +701,16 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	 */
 	pxa168fb_init_mode(info, mi);
 
+	ret = pxa168fb_check_var(&info->var, info);
+	if (ret)
+		goto failed_free_fbmem;
+
 	/*
 	 * Fill in sane defaults.
 	 */
 	ret = pxa168fb_check_var(&info->var, info);
 	if (ret)
-		goto failed_free_fbmem;
+		goto failed;
 
 	/*
 	 * enable controller clock
@@ -774,9 +776,8 @@ failed_free_clk:
 failed_free_fbmem:
 	dma_free_coherent(fbi->dev, info->fix.smem_len,
 			info->screen_base, fbi->fb_start_dma);
-failed_free_info:
+failed:
 	kfree(info);
-failed_put_clk:
 	clk_put(clk);
 
 	dev_err(&pdev->dev, "frame buffer device init failed with %d\n", ret);

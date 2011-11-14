@@ -89,7 +89,8 @@ n32_syscall_trace_entry:
 	SAVE_STATIC
 	move	s0, t2
 	move	a0, sp
-	jal	syscall_trace_enter
+	li	a1, 0
+	jal	do_syscall_trace
 
 	move	t0, s0
 	RESTORE_STATIC
@@ -402,7 +403,7 @@ EXPORT(sysn32_call_table)
 	PTR	sys_ioprio_get
 	PTR	compat_sys_utimensat
 	PTR	compat_sys_signalfd		/* 6280 */
-	PTR	sys_ni_syscall			/* was timerfd */
+	PTR	sys_ni_syscall
 	PTR	sys_eventfd
 	PTR	sys_fallocate
 	PTR	sys_timerfd_create
@@ -424,10 +425,4 @@ EXPORT(sysn32_call_table)
 	PTR	sys_fanotify_init		/* 6300 */
 	PTR	sys_fanotify_mark
 	PTR	sys_prlimit64
-	PTR	sys_name_to_handle_at
-	PTR	sys_open_by_handle_at
-	PTR	compat_sys_clock_adjtime	/* 6305 */
-	PTR	sys_syncfs
-	PTR	compat_sys_sendmmsg
-	PTR	sys_setns
 	.size	sysn32_call_table,.-sysn32_call_table

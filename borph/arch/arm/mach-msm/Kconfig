@@ -11,7 +11,6 @@ config ARCH_MSM7X00A
 	select MSM_SMD
 	select MSM_SMD_PKG3
 	select CPU_V6
-	select GPIO_MSM_V1
 	select MSM_PROC_COMM
 	select HAS_MSM_DEBUG_UART_PHYS
 
@@ -23,7 +22,6 @@ config ARCH_MSM7X30
 	select MSM_VIC
 	select CPU_V7
 	select MSM_GPIOMUX
-	select GPIO_MSM_V1
 	select MSM_PROC_COMM
 	select HAS_MSM_DEBUG_UART_PHYS
 
@@ -35,7 +33,6 @@ config ARCH_QSD8X50
 	select MSM_VIC
 	select CPU_V7
 	select MSM_GPIOMUX
-	select GPIO_MSM_V1
 	select MSM_PROC_COMM
 	select HAS_MSM_DEBUG_UART_PHYS
 
@@ -43,29 +40,14 @@ config ARCH_MSM8X60
 	bool "MSM8X60"
 	select MACH_MSM8X60_SURF if (!MACH_MSM8X60_RUMI3 && !MACH_MSM8X60_SIM \
 				  && !MACH_MSM8X60_FFA)
-	select ARCH_MSM_SCORPIONMP
-	select ARM_GIC
-	select CPU_V7
-	select MSM_V2_TLMM
-	select GPIO_MSM_V2
-	select MSM_GPIOMUX
-	select MSM_SCM if SMP
-
-config ARCH_MSM8960
-	bool "MSM8960"
-	select ARCH_MSM_SCORPIONMP
-	select MACH_MSM8960_SIM if (!MACH_MSM8960_RUMI3)
 	select ARM_GIC
 	select CPU_V7
 	select MSM_V2_TLMM
 	select MSM_GPIOMUX
-	select MSM_SCM if SMP
 
 endchoice
 
 config MSM_SOC_REV_A
-	bool
-config  ARCH_MSM_SCORPIONMP
 	bool
 
 config  ARCH_MSM_ARM11
@@ -138,18 +120,6 @@ config MACH_MSM8X60_FFA
 	help
 	  Support for the Qualcomm MSM8x60 FFA eval board.
 
-config MACH_MSM8960_SIM
-	depends on ARCH_MSM8960
-	bool "MSM8960 Simulator"
-	help
-	  Support for the Qualcomm MSM8960 simulator.
-
-config MACH_MSM8960_RUMI3
-	depends on ARCH_MSM8960
-	bool "MSM8960 RUMI3"
-	help
-	  Support for the Qualcomm MSM8960 RUMI3 emulator.
-
 endmenu
 
 config MSM_DEBUG_UART
@@ -191,8 +161,5 @@ config MSM_GPIOMUX
 	bool
 
 config MSM_V2_TLMM
-	bool
-
-config MSM_SCM
 	bool
 endif

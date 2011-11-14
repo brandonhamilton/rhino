@@ -429,8 +429,7 @@ found:
 	return group;
 }
 
-struct inode *ext2_new_inode(struct inode *dir, int mode,
-			     const struct qstr *qstr)
+struct inode *ext2_new_inode(struct inode *dir, int mode)
 {
 	struct super_block *sb;
 	struct buffer_head *bitmap_bh = NULL;
@@ -586,7 +585,7 @@ got:
 	if (err)
 		goto fail_free_drop;
 
-	err = ext2_init_security(inode, dir, qstr);
+	err = ext2_init_security(inode,dir);
 	if (err)
 		goto fail_free_drop;
 

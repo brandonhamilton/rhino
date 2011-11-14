@@ -28,40 +28,39 @@
 #include <plat/gpio-cfg.h>
 #include <mach/regs-gpio.h>
 
-static inline void s5p_irq_eint_mask(struct irq_data *data)
+static inline void s5p_irq_eint_mask(unsigned int irq)
 {
 	u32 mask;
 
-	mask = __raw_readl(S5P_EINT_MASK(EINT_REG_NR(data->irq)));
-	mask |= eint_irq_to_bit(data->irq);
-	__raw_writel(mask, S5P_EINT_MASK(EINT_REG_NR(data->irq)));
+	mask = __raw_readl(S5P_EINT_MASK(EINT_REG_NR(irq)));
+	mask |= eint_irq_to_bit(irq);
+	__raw_writel(mask, S5P_EINT_MASK(EINT_REG_NR(irq)));
 }
 
-static void s5p_irq_eint_unmask(struct irq_data *data)
+static void s5p_irq_eint_unmask(unsigned int irq)
 {
 	u32 mask;
 
-	mask = __raw_readl(S5P_EINT_MASK(EINT_REG_NR(data->irq)));
-	mask &= ~(eint_irq_to_bit(data->irq));
-	__raw_writel(mask, S5P_EINT_MASK(EINT_REG_NR(data->irq)));
+	mask = __raw_readl(S5P_EINT_MASK(EINT_REG_NR(irq)));
+	mask &= ~(eint_irq_to_bit(irq));
+	__raw_writel(mask, S5P_EINT_MASK(EINT_REG_NR(irq)));
 }
 
-static inline void s5p_irq_eint_ack(struct irq_data *data)
+static inline void s5p_irq_eint_ack(unsigned int irq)
 {
-	__raw_writel(eint_irq_to_bit(data->irq),
-		     S5P_EINT_PEND(EINT_REG_NR(data->irq)));
+	__raw_writel(eint_irq_to_bit(irq), S5P_EINT_PEND(EINT_REG_NR(irq)));
 }
 
-static void s5p_irq_eint_maskack(struct irq_data *data)
+static void s5p_irq_eint_maskack(unsigned int irq)
 {
 	/* compiler should in-line these */
-	s5p_irq_eint_mask(data);
-	s5p_irq_eint_ack(data);
+	s5p_irq_eint_mask(irq);
+	s5p_irq_eint_ack(irq);
 }
 
-static int s5p_irq_eint_set_type(struct irq_data *data, unsigned int type)
+static int s5p_irq_eint_set_type(unsigned int irq, unsigned int type)
 {
-	int offs = EINT_OFFSET(data->irq);
+	int offs = EINT_OFFSET(irq);
 	int shift;
 	u32 ctrl, mask;
 	u32 newvalue = 0;
@@ -95,10 +94,10 @@ static int s5p_irq_eint_set_type(struct irq_data *data, unsigned int type)
 	shift = (offs & 0x7) * 4;
 	mask = 0x7 << shift;
 
-	ctrl = __raw_readl(S5P_EINT_CON(EINT_REG_NR(data->irq)));
+	ctrl = __raw_readl(S5P_EINT_CON(EINT_REG_NR(irq)));
 	ctrl &= ~mask;
 	ctrl |= newvalue << shift;
-	__raw_writel(ctrl, S5P_EINT_CON(EINT_REG_NR(data->irq)));
+	__raw_writel(ctrl, S5P_EINT_CON(EINT_REG_NR(irq)));
 
 	if ((0 <= offs) && (offs < 8))
 		s3c_gpio_cfgpin(EINT_GPIO_0(offs & 0x7), EINT_MODE);
@@ -120,13 +119,13 @@ static int s5p_irq_eint_set_type(struct irq_data *data, unsigned int type)
 
 static struct irq_chip s5p_irq_eint = {
 	.name		= "s5p-eint",
-	.irq_mask	= s5p_irq_eint_mask,
-	.irq_unmask	= s5p_irq_eint_unmask,
-	.irq_mask_ack	= s5p_irq_eint_maskack,
-	.irq_ack	= s5p_irq_eint_ack,
-	.irq_set_type	= s5p_irq_eint_set_type,
+	.mask		= s5p_irq_eint_mask,
+	.unmask		= s5p_irq_eint_unmask,
+	.mask_ack	= s5p_irq_eint_maskack,
+	.ack		= s5p_irq_eint_ack,
+	.set_type	= s5p_irq_eint_set_type,
 #ifdef CONFIG_PM
-	.irq_set_wake	= s3c_irqext_wake,
+	.set_wake	= s3c_irqext_wake,
 #endif
 };
 
@@ -160,43 +159,42 @@ static void s5p_irq_demux_eint16_31(unsigned int irq, struct irq_desc *desc)
 	s5p_irq_demux_eint(IRQ_EINT(24));
 }
 
-static inline void s5p_irq_vic_eint_mask(struct irq_data *data)
+static inline void s5p_irq_vic_eint_mask(unsigned int irq)
 {
-	void __iomem *base = irq_data_get_irq_chip_data(data);
+	void __iomem *base = get_irq_chip_data(irq);
 
-	s5p_irq_eint_mask(data);
-	writel(1 << EINT_OFFSET(data->irq), base + VIC_INT_ENABLE_CLEAR);
+	s5p_irq_eint_mask(irq);
+	writel(1 << EINT_OFFSET(irq), base + VIC_INT_ENABLE_CLEAR);
 }
 
-static void s5p_irq_vic_eint_unmask(struct irq_data *data)
+static void s5p_irq_vic_eint_unmask(unsigned int irq)
 {
-	void __iomem *base = irq_data_get_irq_chip_data(data);
+	void __iomem *base = get_irq_chip_data(irq);
 
-	s5p_irq_eint_unmask(data);
-	writel(1 << EINT_OFFSET(data->irq), base + VIC_INT_ENABLE);
+	s5p_irq_eint_unmask(irq);
+	writel(1 << EINT_OFFSET(irq), base + VIC_INT_ENABLE);
 }
 
-static inline void s5p_irq_vic_eint_ack(struct irq_data *data)
+static inline void s5p_irq_vic_eint_ack(unsigned int irq)
 {
-	__raw_writel(eint_irq_to_bit(data->irq),
-		     S5P_EINT_PEND(EINT_REG_NR(data->irq)));
+	__raw_writel(eint_irq_to_bit(irq), S5P_EINT_PEND(EINT_REG_NR(irq)));
 }
 
-static void s5p_irq_vic_eint_maskack(struct irq_data *data)
+static void s5p_irq_vic_eint_maskack(unsigned int irq)
 {
-	s5p_irq_vic_eint_mask(data);
-	s5p_irq_vic_eint_ack(data);
+	s5p_irq_vic_eint_mask(irq);
+	s5p_irq_vic_eint_ack(irq);
 }
 
 static struct irq_chip s5p_irq_vic_eint = {
 	.name		= "s5p_vic_eint",
-	.irq_mask	= s5p_irq_vic_eint_mask,
-	.irq_unmask	= s5p_irq_vic_eint_unmask,
-	.irq_mask_ack	= s5p_irq_vic_eint_maskack,
-	.irq_ack	= s5p_irq_vic_eint_ack,
-	.irq_set_type	= s5p_irq_eint_set_type,
+	.mask		= s5p_irq_vic_eint_mask,
+	.unmask		= s5p_irq_vic_eint_unmask,
+	.mask_ack	= s5p_irq_vic_eint_maskack,
+	.ack		= s5p_irq_vic_eint_ack,
+	.set_type	= s5p_irq_eint_set_type,
 #ifdef CONFIG_PM
-	.irq_set_wake	= s3c_irqext_wake,
+	.set_wake	= s3c_irqext_wake,
 #endif
 };
 
@@ -205,14 +203,15 @@ int __init s5p_init_irq_eint(void)
 	int irq;
 
 	for (irq = IRQ_EINT(0); irq <= IRQ_EINT(15); irq++)
-		irq_set_chip(irq, &s5p_irq_vic_eint);
+		set_irq_chip(irq, &s5p_irq_vic_eint);
 
 	for (irq = IRQ_EINT(16); irq <= IRQ_EINT(31); irq++) {
-		irq_set_chip_and_handler(irq, &s5p_irq_eint, handle_level_irq);
+		set_irq_chip(irq, &s5p_irq_eint);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 
-	irq_set_chained_handler(IRQ_EINT16_31, s5p_irq_demux_eint16_31);
+	set_irq_chained_handler(IRQ_EINT16_31, s5p_irq_demux_eint16_31);
 	return 0;
 }
 

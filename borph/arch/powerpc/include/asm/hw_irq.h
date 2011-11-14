@@ -141,8 +141,6 @@ static inline bool arch_irqs_disabled(void)
 
 #endif /* CONFIG_PPC64 */
 
-#define ARCH_IRQ_INIT_FLAGS	IRQ_NOREQUEST
-
 /*
  * interrupt-retrigger: should we handle this via lost interrupts and IPIs
  * or should we not care like we do now ? --BenH.

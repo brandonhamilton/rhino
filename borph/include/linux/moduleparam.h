@@ -16,17 +16,15 @@
 /* Chosen so that structs with an unsigned long line up. */
 #define MAX_PARAM_PREFIX_LEN (64 - sizeof(unsigned long))
 
+#ifdef MODULE
 #define ___module_cat(a,b) __mod_ ## a ## b
 #define __module_cat(a,b) ___module_cat(a,b)
-#ifdef MODULE
 #define __MODULE_INFO(tag, name, info)					  \
 static const char __module_cat(name,__LINE__)[]				  \
   __used __attribute__((section(".modinfo"), unused, aligned(1)))	  \
   = __stringify(tag) "=" info
 #else  /* !MODULE */
-/* This struct is here for syntactic coherency, it is not used */
-#define __MODULE_INFO(tag, name, info)					  \
-  struct __module_cat(name,__LINE__) {}
+#define __MODULE_INFO(tag, name, info)
 #endif
 #define __MODULE_PARM_TYPE(name, _type)					  \
   __MODULE_INFO(parmtype, name##type, #name ":" _type)
@@ -67,9 +65,9 @@ struct kparam_string {
 struct kparam_array
 {
 	unsigned int max;
-	unsigned int elemsize;
 	unsigned int *num;
 	const struct kernel_param_ops *ops;
+	unsigned int elemsize;
 	void *elem;
 };
 
@@ -371,9 +369,8 @@ extern int param_get_invbool(char *buffer, const struct kernel_param *kp);
  */
 #define module_param_array_named(name, array, type, nump, perm)		\
 	static const struct kparam_array __param_arr_##name		\
-	= { .max = ARRAY_SIZE(array), .num = nump,                      \
-	    .ops = &param_ops_##type,					\
-	    .elemsize = sizeof(array[0]), .elem = array };		\
+	= { ARRAY_SIZE(array), nump, &param_ops_##type,			\
+	    sizeof(array[0]), array };					\
 	__module_param_call(MODULE_PARAM_PREFIX, name,			\
 			    &param_array_ops,				\
 			    .arr = &__param_arr_##name,			\

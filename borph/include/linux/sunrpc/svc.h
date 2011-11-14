@@ -92,15 +92,15 @@ struct svc_serv {
 	struct module *		sv_module;	/* optional module to count when
 						 * adding threads */
 	svc_thread_fn		sv_function;	/* main function for threads */
-#if defined(CONFIG_SUNRPC_BACKCHANNEL)
+#if defined(CONFIG_NFS_V4_1)
 	struct list_head	sv_cb_list;	/* queue for callback requests
 						 * that arrive over the same
 						 * connection */
 	spinlock_t		sv_cb_lock;	/* protects the svc_cb_list */
 	wait_queue_head_t	sv_cb_waitq;	/* sleep here if there are no
 						 * entries in the svc_cb_list */
-	struct svc_xprt		*sv_bc_xprt;	/* callback on fore channel */
-#endif /* CONFIG_SUNRPC_BACKCHANNEL */
+	struct svc_xprt		*bc_xprt;
+#endif /* CONFIG_NFS_V4_1 */
 };
 
 /*
@@ -269,11 +269,9 @@ struct svc_rqst {
 	struct cache_req	rq_chandle;	/* handle passed to caches for 
 						 * request delaying 
 						 */
-	bool			rq_dropme;
 	/* Catering to nfsd */
 	struct auth_domain *	rq_client;	/* RPC peer info */
 	struct auth_domain *	rq_gssclient;	/* "gss/"-style peer info */
-	int			rq_cachetype;
 	struct svc_cacherep *	rq_cacherep;	/* cache info */
 	int			rq_splice_ok;   /* turned off in gss privacy
 						 * to prevent encrypting page

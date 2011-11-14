@@ -34,7 +34,7 @@
 #include <linux/slab.h>
 #include <net/neighbour.h>
 #include <linux/notifier.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/proc_fs.h>
 #include <linux/if_vlan.h>
 #include <net/netevent.h>
@@ -176,17 +176,19 @@ static struct net_device *get_iff_from_mac(struct adapter *adapter,
 	int i;
 
 	for_each_port(adapter, i) {
+		struct vlan_group *grp;
 		struct net_device *dev = adapter->port[i];
+		const struct port_info *p = netdev_priv(dev);
 
 		if (!memcmp(dev->dev_addr, mac, ETH_ALEN)) {
 			if (vlan && vlan != VLAN_VID_MASK) {
-				rcu_read_lock();
-				dev = __vlan_find_dev_deep(dev, vlan);
-				rcu_read_unlock();
-			} else if (netif_is_bond_slave(dev)) {
+				grp = p->vlan_grp;
+				dev = NULL;
+				if (grp)
+					dev = vlan_group_get_device(grp, vlan);
+			} else
 				while (dev->master)
 					dev = dev->master;
-			}
 			return dev;
 		}
 	}
@@ -564,7 +566,7 @@ static void t3_process_tid_release_list(struct work_struct *work)
 	while (td->tid_release_list) {
 		struct t3c_tid_entry *p = td->tid_release_list;
 
-		td->tid_release_list = p->ctx;
+		td->tid_release_list = (struct t3c_tid_entry *)p->ctx;
 		spin_unlock_bh(&td->tid_release_lock);
 
 		skb = alloc_skb(sizeof(struct cpl_tid_release),
@@ -965,10 +967,12 @@ static int nb_callback(struct notifier_block *self, unsigned long event,
 		cxgb_neigh_update((struct neighbour *)ctx);
 		break;
 	}
+	case (NETEVENT_PMTU_UPDATE):
+		break;
 	case (NETEVENT_REDIRECT):{
 		struct netevent_redirect *nr = ctx;
 		cxgb_redirect(nr->old, nr->new);
-		cxgb_neigh_update(dst_get_neighbour(nr->new));
+		cxgb_neigh_update(nr->new->neighbour);
 		break;
 	}
 	default:
@@ -1113,8 +1117,8 @@ static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 	struct l2t_entry *e;
 	struct t3c_tid_entry *te;
 
-	olddev = dst_get_neighbour(old)->dev;
-	newdev = dst_get_neighbour(new)->dev;
+	olddev = old->neighbour->dev;
+	newdev = new->neighbour->dev;
 	if (!is_offloading(olddev))
 		return;
 	if (!is_offloading(newdev)) {
@@ -1131,7 +1135,7 @@ static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
 	}
 
 	/* Add new L2T entry */
-	e = t3_l2t_get(tdev, dst_get_neighbour(new), newdev);
+	e = t3_l2t_get(tdev, new->neighbour, newdev);
 	if (!e) {
 		printk(KERN_ERR "%s: couldn't allocate new l2t entry!\n",
 		       __func__);
@@ -1160,10 +1164,12 @@ static void cxgb_redirect(struct dst_entry *old, struct dst_entry *new)
  */
 void *cxgb_alloc_mem(unsigned long size)
 {
-	void *p = kzalloc(size, GFP_KERNEL);
+	void *p = kmalloc(size, GFP_KERNEL);
 
 	if (!p)
-		p = vzalloc(size);
+		p = vmalloc(size);
+	if (p)
+		memset(p, 0, size);
 	return p;
 }
 

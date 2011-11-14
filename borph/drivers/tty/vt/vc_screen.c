@@ -1,4 +1,6 @@
 /*
+ * linux/drivers/char/vc_screen.c
+ *
  * Provide access to virtual console memory.
  * /dev/vcs0: the screen as it is being viewed right now (possibly scrolled)
  * /dev/vcsN: the screen of /dev/ttyN (1 <= N <= 63)
@@ -26,11 +28,13 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/init.h>
+#include <linux/mutex.h>
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
 #include <linux/kbd_kern.h>
 #include <linux/console.h>
 #include <linux/device.h>
+#include <linux/smp_lock.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
@@ -46,8 +50,6 @@
 #undef org
 #undef addr
 #define HEADER_SIZE	4
-
-#define CON_BUF_SIZE (CONFIG_BASE_SMALL ? 256 : PAGE_SIZE)
 
 struct vcs_poll_data {
 	struct notifier_block notifier;
@@ -129,45 +131,21 @@ vcs_poll_data_get(struct file *file)
 	return poll;
 }
 
-/*
- * Returns VC for inode.
- * Must be called with console_lock.
- */
-static struct vc_data*
-vcs_vc(struct inode *inode, int *viewed)
-{
-	unsigned int currcons = iminor(inode) & 127;
-
-	WARN_CONSOLE_UNLOCKED();
-
-	if (currcons == 0) {
-		currcons = fg_console;
-		if (viewed)
-			*viewed = 1;
-	} else {
-		currcons--;
-		if (viewed)
-			*viewed = 0;
-	}
-	return vc_cons[currcons].d;
-}
-
-/*
- * Returns size for VC carried by inode.
- * Must be called with console_lock.
- */
 static int
 vcs_size(struct inode *inode)
 {
 	int size;
 	int minor = iminor(inode);
+	int currcons = minor & 127;
 	struct vc_data *vc;
 
-	WARN_CONSOLE_UNLOCKED();
-
-	vc = vcs_vc(inode, NULL);
-	if (!vc)
+	if (currcons == 0)
+		currcons = fg_console;
+	else
+		currcons--;
+	if (!vc_cons_allocated(currcons))
 		return -ENXIO;
+	vc = vc_cons[currcons].d;
 
 	size = vc->vc_rows * vc->vc_cols;
 
@@ -180,13 +158,11 @@ static loff_t vcs_lseek(struct file *file, loff_t offset, int orig)
 {
 	int size;
 
-	console_lock();
+	mutex_lock(&con_buf_mtx);
 	size = vcs_size(file->f_path.dentry->d_inode);
-	console_unlock();
-	if (size < 0)
-		return size;
 	switch (orig) {
 		default:
+			mutex_unlock(&con_buf_mtx);
 			return -EINVAL;
 		case 2:
 			offset += size;
@@ -197,9 +173,11 @@ static loff_t vcs_lseek(struct file *file, loff_t offset, int orig)
 			break;
 	}
 	if (offset < 0 || offset > size) {
+		mutex_unlock(&con_buf_mtx);
 		return -EINVAL;
 	}
 	file->f_pos = offset;
+	mutex_unlock(&con_buf_mtx);
 	return file->f_pos;
 }
 
@@ -212,28 +190,33 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	struct vc_data *vc;
 	struct vcs_poll_data *poll;
 	long pos;
-	long attr, read;
-	int col, maxcol, viewed;
+	long viewed, attr, read;
+	int col, maxcol;
 	unsigned short *org = NULL;
 	ssize_t ret;
-	char *con_buf;
 
-	con_buf = (char *) __get_free_page(GFP_KERNEL);
-	if (!con_buf)
-		return -ENOMEM;
+	mutex_lock(&con_buf_mtx);
 
 	pos = *ppos;
 
 	/* Select the proper current console and verify
 	 * sanity of the situation under the console lock.
 	 */
-	console_lock();
+	acquire_console_sem();
 
 	attr = (currcons & 128);
+	currcons = (currcons & 127);
+	if (currcons == 0) {
+		currcons = fg_console;
+		viewed = 1;
+	} else {
+		currcons--;
+		viewed = 0;
+	}
 	ret = -ENXIO;
-	vc = vcs_vc(inode, &viewed);
-	if (!vc)
+	if (!vc_cons_allocated(currcons))
 		goto unlock_out;
+	vc = vc_cons[currcons].d;
 
 	ret = -EINVAL;
 	if (pos < 0)
@@ -254,12 +237,6 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 		 * could sleep.
 		 */
 		size = vcs_size(inode);
-		if (size < 0) {
-			if (read)
-				break;
-			ret = size;
-			goto unlock_out;
-		}
 		if (pos >= size)
 			break;
 		if (count > size - pos)
@@ -359,9 +336,9 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 		 * the pagefault handling code may want to call printk().
 		 */
 
-		console_unlock();
+		release_console_sem();
 		ret = copy_to_user(buf, con_buf_start, orig_count);
-		console_lock();
+		acquire_console_sem();
 
 		if (ret) {
 			read += (orig_count - ret);
@@ -377,8 +354,8 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	if (read)
 		ret = read;
 unlock_out:
-	console_unlock();
-	free_page((unsigned long) con_buf);
+	release_console_sem();
+	mutex_unlock(&con_buf_mtx);
 	return ret;
 }
 
@@ -389,29 +366,35 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 	unsigned int currcons = iminor(inode);
 	struct vc_data *vc;
 	long pos;
-	long attr, size, written;
+	long viewed, attr, size, written;
 	char *con_buf0;
-	int col, maxcol, viewed;
+	int col, maxcol;
 	u16 *org0 = NULL, *org = NULL;
 	size_t ret;
-	char *con_buf;
 
-	con_buf = (char *) __get_free_page(GFP_KERNEL);
-	if (!con_buf)
-		return -ENOMEM;
+	mutex_lock(&con_buf_mtx);
 
 	pos = *ppos;
 
 	/* Select the proper current console and verify
 	 * sanity of the situation under the console lock.
 	 */
-	console_lock();
+	acquire_console_sem();
 
 	attr = (currcons & 128);
+	currcons = (currcons & 127);
+
+	if (currcons == 0) {
+		currcons = fg_console;
+		viewed = 1;
+	} else {
+		currcons--;
+		viewed = 0;
+	}
 	ret = -ENXIO;
-	vc = vcs_vc(inode, &viewed);
-	if (!vc)
+	if (!vc_cons_allocated(currcons))
 		goto unlock_out;
+	vc = vc_cons[currcons].d;
 
 	size = vcs_size(inode);
 	ret = -EINVAL;
@@ -431,9 +414,9 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 		/* Temporarily drop the console lock so that we can read
 		 * in the write data from userspace safely.
 		 */
-		console_unlock();
+		release_console_sem();
 		ret = copy_from_user(con_buf, buf, this_round);
-		console_lock();
+		acquire_console_sem();
 
 		if (ret) {
 			this_round -= ret;
@@ -453,12 +436,6 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 		 * Return data written up to now on failure.
 		 */
 		size = vcs_size(inode);
-		if (size < 0) {
-			if (written)
-				break;
-			ret = size;
-			goto unlock_out;
-		}
 		if (pos >= size)
 			break;
 		if (this_round > size - pos)
@@ -565,8 +542,10 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 		vcs_scr_updated(vc);
 
 unlock_out:
-	console_unlock();
-	free_page((unsigned long) con_buf);
+	release_console_sem();
+
+	mutex_unlock(&con_buf_mtx);
+
 	return ret;
 }
 

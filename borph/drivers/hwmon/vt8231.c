@@ -24,8 +24,6 @@
 /* Supports VIA VT8231 South Bridge embedded sensors
 */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -904,19 +902,21 @@ static int __devinit vt8231_device_add(unsigned short address)
 	pdev = platform_device_alloc("vt8231", address);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR "vt8231: Device allocation failed\n");
 		goto exit;
 	}
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR "vt8231: Device resource addition failed "
+		       "(%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR "vt8231: Device addition failed (%d)\n",
+		       err);
 		goto exit_device_put;
 	}
 

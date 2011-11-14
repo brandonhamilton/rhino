@@ -27,7 +27,7 @@
 #define HOST_INTEREST_ITEM_ADDRESS(target, item)    \
    AR6002_HOST_INTEREST_ITEM_ADDRESS(item)
 
-u32 ar6kRev2Array[][128]   = {
+A_UINT32 ar6kRev2Array[][128]   = {
                                     {0xFFFF, 0xFFFF},      // No Patches
                                };
 

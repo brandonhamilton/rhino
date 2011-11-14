@@ -542,8 +542,8 @@ enum ibmvfc_async_event {
 };
 
 struct ibmvfc_async_desc {
-	const char *desc;
 	enum ibmvfc_async_event ae;
+	const char *desc;
 	int log_level;
 };
 

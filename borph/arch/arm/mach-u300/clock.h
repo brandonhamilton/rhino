@@ -31,7 +31,7 @@ struct clk {
 	bool reset;
 	__u16 clk_val;
 	__s8 usecount;
-	void __iomem * res_reg;
+	__u32 res_reg;
 	__u16 res_mask;
 
 	bool hw_ctrld;

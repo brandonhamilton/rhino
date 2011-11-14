@@ -29,21 +29,24 @@
 #include <plat/usb.h>
 #include <plat/board.h>
 #include <plat/common.h>
+#include <plat/gpmc.h>
 
 static struct omap_board_config_kernel generic_config[] = {
 };
 
-static void __init omap_generic_init_early(void)
+static void __init omap_generic_init_irq(void)
 {
+	omap_board_config = generic_config;
+	omap_board_config_size = ARRAY_SIZE(generic_config);
 	omap2_init_common_infrastructure();
 	omap2_init_common_devices(NULL, NULL);
+	omap_init_irq();
+	gpmc_init();
 }
 
 static void __init omap_generic_init(void)
 {
 	omap_serial_init();
-	omap_board_config = generic_config;
-	omap_board_config_size = ARRAY_SIZE(generic_config);
 }
 
 static void __init omap_generic_map_io(void)
@@ -67,10 +70,9 @@ static void __init omap_generic_map_io(void)
 MACHINE_START(OMAP_GENERIC, "Generic OMAP24xx")
 	/* Maintainer: Paul Mundt <paul.mundt@nokia.com> */
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= omap_generic_map_io,
-	.init_early	= omap_generic_init_early,
-	.init_irq	= omap2_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= omap_generic_init_irq,
 	.init_machine	= omap_generic_init,
-	.timer		= &omap2_timer,
+	.timer		= &omap_timer,
 MACHINE_END

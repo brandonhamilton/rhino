@@ -5,7 +5,6 @@
 #include <linux/idr.h>
 #include <linux/rwsem.h>
 #include <linux/notifier.h>
-#include <linux/nsproxy.h>
 
 /*
  * ipc namespace events
@@ -16,7 +15,6 @@
 
 #define IPCNS_CALLBACK_PRI 0
 
-struct user_namespace;
 
 struct ipc_ids {
 	int in_use;
@@ -44,11 +42,6 @@ struct ipc_namespace {
 	size_t		shm_ctlall;
 	int		shm_ctlmni;
 	int		shm_tot;
-	/*
-	 * Defines whether IPC_RMID is forced for _all_ shm segments regardless
-	 * of shmctl()
-	 */
-	int		shm_rmid_forced;
 
 	struct notifier_block ipcns_nb;
 
@@ -63,8 +56,6 @@ struct ipc_namespace {
 	unsigned int    mq_msg_max;      /* initialized to DFLT_MSGMAX */
 	unsigned int    mq_msgsize_max;  /* initialized to DFLT_MSGSIZEMAX */
 
-	/* user_ns which owns the ipc ns */
-	struct user_namespace *user_ns;
 };
 
 extern struct ipc_namespace init_ipc_ns;
@@ -77,7 +68,6 @@ extern int register_ipcns_notifier(struct ipc_namespace *);
 extern int cond_register_ipcns_notifier(struct ipc_namespace *);
 extern void unregister_ipcns_notifier(struct ipc_namespace *);
 extern int ipcns_notify(unsigned long);
-extern void shm_destroy_orphaned(struct ipc_namespace *ns);
 #else /* CONFIG_SYSVIPC */
 static inline int register_ipcns_notifier(struct ipc_namespace *ns)
 { return 0; }
@@ -85,7 +75,6 @@ static inline int cond_register_ipcns_notifier(struct ipc_namespace *ns)
 { return 0; }
 static inline void unregister_ipcns_notifier(struct ipc_namespace *ns) { }
 static inline int ipcns_notify(unsigned long l) { return 0; }
-static inline void shm_destroy_orphaned(struct ipc_namespace *ns) {}
 #endif /* CONFIG_SYSVIPC */
 
 #ifdef CONFIG_POSIX_MQUEUE
@@ -101,7 +90,7 @@ static inline int mq_init_ns(struct ipc_namespace *ns) { return 0; }
 
 #if defined(CONFIG_IPC_NS)
 extern struct ipc_namespace *copy_ipcs(unsigned long flags,
-				       struct task_struct *tsk);
+				       struct ipc_namespace *ns);
 static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)
 {
 	if (ns)
@@ -112,12 +101,12 @@ static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)
 extern void put_ipc_ns(struct ipc_namespace *ns);
 #else
 static inline struct ipc_namespace *copy_ipcs(unsigned long flags,
-					      struct task_struct *tsk)
+		struct ipc_namespace *ns)
 {
 	if (flags & CLONE_NEWIPC)
 		return ERR_PTR(-EINVAL);
 
-	return tsk->nsproxy->ipc_ns;
+	return ns;
 }
 
 static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)

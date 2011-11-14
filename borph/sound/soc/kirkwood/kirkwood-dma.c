@@ -132,7 +132,7 @@ static int kirkwood_dma_open(struct snd_pcm_substream *substream)
 	priv = snd_soc_dai_get_dma_data(cpu_dai, substream);
 	snd_soc_set_runtime_hwparams(substream, &kirkwood_dma_snd_hw);
 
-	/* Ensure that all constraints linked to dma burst are fulfilled */
+	/* Ensure that all constraints linked to dma burst are fullfilled */
 	err = snd_pcm_hw_constraint_minmax(runtime,
 			SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
 			priv->burst * 2,
@@ -170,7 +170,7 @@ static int kirkwood_dma_open(struct snd_pcm_substream *substream)
 
 		/*
 		 * Enable Error interrupts. We're only ack'ing them but
-		 * it's useful for diagnostics
+		 * it's usefull for diagnostics
 		 */
 		writel((unsigned long)-1, priv->io + KIRKWOOD_ERR_MASK);
 	}
@@ -312,11 +312,9 @@ static int kirkwood_dma_preallocate_dma_buffer(struct snd_pcm *pcm,
 	return 0;
 }
 
-static int kirkwood_dma_new(struct snd_soc_pcm_runtime *rtd)
+static int kirkwood_dma_new(struct snd_card *card,
+		struct snd_soc_dai *dai, struct snd_pcm *pcm)
 {
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_soc_dai *dai = rtd->cpu_dai;
-	struct snd_pcm *pcm = rtd->pcm;
 	int ret;
 
 	if (!card->dev->dma_mask)

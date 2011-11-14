@@ -20,9 +20,11 @@
 #include <linux/vmalloc.h>
 #include <linux/sched.h>
 
+#include <linux/ncp_fs.h>
+
 #include <asm/uaccess.h>
 
-#include "ncp_fs.h"
+#include "ncplib_kernel.h"
 
 /* maximum limit for ncp_objectname_ioctl */
 #define NCP_OBJECT_NAME_MAX_LEN	4096

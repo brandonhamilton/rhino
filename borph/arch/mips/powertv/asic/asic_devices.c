@@ -394,21 +394,23 @@ void __init platform_alloc_bootmem(void)
 
 	/* Loop through looking for resources that want a particular address */
 	for (i = 0; gp_resources[i].flags != 0; i++) {
-		int size = resource_size(&gp_resources[i]);
+		int size = gp_resources[i].end - gp_resources[i].start + 1;
 		if ((gp_resources[i].start != 0) &&
 			((gp_resources[i].flags & IORESOURCE_MEM) != 0)) {
 			reserve_bootmem(dma_to_phys(gp_resources[i].start),
 				size, 0);
-			total += resource_size(&gp_resources[i]);
+			total += gp_resources[i].end -
+				gp_resources[i].start + 1;
 			pr_info("reserve resource %s at %08x (%u bytes)\n",
 				gp_resources[i].name, gp_resources[i].start,
-				resource_size(&gp_resources[i]));
+				gp_resources[i].end -
+					gp_resources[i].start + 1);
 		}
 	}
 
 	/* Loop through assigning addresses for those that are left */
 	for (i = 0; gp_resources[i].flags != 0; i++) {
-		int size = resource_size(&gp_resources[i]);
+		int size = gp_resources[i].end - gp_resources[i].start + 1;
 		if ((gp_resources[i].start == 0) &&
 			((gp_resources[i].flags & IORESOURCE_MEM) != 0)) {
 			void *mem = alloc_bootmem_pages(size);

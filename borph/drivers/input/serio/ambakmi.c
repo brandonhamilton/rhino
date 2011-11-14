@@ -107,8 +107,7 @@ static void amba_kmi_close(struct serio *io)
 	clk_disable(kmi->clk);
 }
 
-static int __devinit amba_kmi_probe(struct amba_device *dev,
-	const struct amba_id *id)
+static int __devinit amba_kmi_probe(struct amba_device *dev, struct amba_id *id)
 {
 	struct amba_kmi_port *kmi;
 	struct serio *io;

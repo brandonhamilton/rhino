@@ -737,7 +737,8 @@ static void cg6_unmap_regs(struct platform_device *op, struct fb_info *info,
 			   info->fix.smem_len);
 }
 
-static int __devinit cg6_probe(struct platform_device *op)
+static int __devinit cg6_probe(struct platform_device *op,
+				const struct of_device_id *match)
 {
 	struct device_node *dp = op->dev.of_node;
 	struct fb_info *info;
@@ -821,7 +822,6 @@ out_dealloc_cmap:
 
 out_unmap_regs:
 	cg6_unmap_regs(op, info, par);
-	framebuffer_release(info);
 
 out_err:
 	return err;
@@ -855,7 +855,7 @@ static const struct of_device_id cg6_match[] = {
 };
 MODULE_DEVICE_TABLE(of, cg6_match);
 
-static struct platform_driver cg6_driver = {
+static struct of_platform_driver cg6_driver = {
 	.driver = {
 		.name = "cg6",
 		.owner = THIS_MODULE,
@@ -870,12 +870,12 @@ static int __init cg6_init(void)
 	if (fb_get_options("cg6fb", NULL))
 		return -ENODEV;
 
-	return platform_driver_register(&cg6_driver);
+	return of_register_platform_driver(&cg6_driver);
 }
 
 static void __exit cg6_exit(void)
 {
-	platform_driver_unregister(&cg6_driver);
+	of_unregister_platform_driver(&cg6_driver);
 }
 
 module_init(cg6_init);

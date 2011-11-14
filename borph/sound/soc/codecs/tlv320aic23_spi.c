@@ -84,7 +84,14 @@ static inline void tlv320aic23_spi_write_reg_cache(struct snd_soc_codec *codec,
 static int tlv320aic23_spi_write(struct snd_soc_codec *codec, unsigned int reg,
 			     unsigned int value)
 {
+	int rc;
+	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
 	u8 data[2];
+
+	if (!aic23) {
+		printk(KERN_WARNING "%s Invalid device 0x%x\n", __func__, (int) aic23);
+		return -1;
+	}
 	/* TLV320AIC23 has 7 bit address and 9 bits of data
 	 * so we need to switch one data bit into reg and rest
 	 * of data into val
@@ -97,16 +104,15 @@ static int tlv320aic23_spi_write(struct snd_soc_codec *codec, unsigned int reg,
 
 	data[0] = (reg << 1) | (value >> 8 & 0x01);
 	data[1] = value & 0xff;
+	rc = codec->hw_write(codec->control_data, data, 2);
+	if (rc) {
+		dev_err(&aic23->spi->dev, "AIC23 reg read error\n");
+		return -EIO;
+	}
 
 	tlv320aic23_spi_write_reg_cache(codec, reg, value);
 
-	if (codec->hw_write(codec->control_data, data, 2) == 2)
-		return 0;
-
-	printk(KERN_ERR "%s cannot write %03x to register R%u\n", __func__,
-	       value, reg);
-
-	return -EIO;;
+	return 0;
 }
 
 static const char *rec_src_text[] = { "Line", "Mic" };
@@ -127,7 +133,7 @@ static const DECLARE_TLV_DB_SCALE(out_gain_tlv, -12100, 100, 0);
 static const DECLARE_TLV_DB_SCALE(input_gain_tlv, -1725, 75, 0);
 static const DECLARE_TLV_DB_SCALE(sidetone_vol_tlv, -1800, 300, 0);
 
-static int snd_soc_tlv320aic23_spi_put_volsw(struct snd_kcontrol *kcontrol,
+static int snd_soc_tlv320aic23_put_volsw(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
@@ -170,7 +176,7 @@ static int snd_soc_tlv320aic23_spi_get_volsw(struct snd_kcontrol *kcontrol,
 		 SNDRV_CTL_ELEM_ACCESS_READWRITE,\
 	.tlv.p = (tlv_array), \
 	.info = snd_soc_info_volsw, .get = snd_soc_tlv320aic23_spi_get_volsw,\
-	.put = snd_soc_tlv320aic23_spi_put_volsw, \
+	.put = snd_soc_tlv320aic23_put_volsw, \
 	.private_value =  SOC_SINGLE_VALUE(reg, shift, max, invert) }
 
 static const struct snd_kcontrol_new tlv320aic23_spi_snd_controls[] = {
@@ -198,7 +204,8 @@ static const struct snd_kcontrol_new tlv320aic23_spi_output_mixer_controls[] = {
 static const struct snd_soc_dapm_widget tlv320aic23_spi_dapm_widgets[] = {
 	SND_SOC_DAPM_DAC("DAC", "Playback", TLV320AIC23_PWR, 3, 1),
 	SND_SOC_DAPM_ADC("ADC", "Capture", TLV320AIC23_PWR, 2, 1),
-	SND_SOC_DAPM_MUX("Capture Source", SND_SOC_NOPM, 0, 0, &tlv320aic23_spi_rec_src_mux_controls),
+	SND_SOC_DAPM_MUX("Capture Source", SND_SOC_NOPM, 0, 0,
+			 &tlv320aic23_spi_rec_src_mux_controls),
 	SND_SOC_DAPM_MIXER("Output Mixer", TLV320AIC23_PWR, 4, 1,
 			   &tlv320aic23_spi_output_mixer_controls[0],
 			   ARRAY_SIZE(tlv320aic23_spi_output_mixer_controls)),
@@ -384,6 +391,16 @@ static int set_sample_rate_control(struct snd_soc_codec *codec, int mclk,
 	return 0;
 }
 
+static int tlv320aic23_spi_add_widgets(struct snd_soc_codec *codec)
+{
+	snd_soc_dapm_new_controls(codec, tlv320aic23_spi_dapm_widgets,
+				  ARRAY_SIZE(tlv320aic23_spi_dapm_widgets));
+
+	/* set up audio path interconnects */
+	snd_soc_dapm_add_routes(codec, intercon, ARRAY_SIZE(intercon));
+
+	return 0;
+}
 static int tlv320aic23_spi_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params,
 				 struct snd_soc_dai *dai)
@@ -411,7 +428,9 @@ static int tlv320aic23_spi_hw_params(struct snd_pcm_substream *substream,
 	if (ret < 0)
 		return ret;
 
-	iface_reg = tlv320aic23_spi_read_reg_cache(codec, TLV320AIC23_DIGT_FMT) & ~(0x03 << 2);
+	iface_reg =
+	    tlv320aic23_spi_read_reg_cache(codec,
+				       TLV320AIC23_DIGT_FMT) & ~(0x03 << 2);
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
 		break;
@@ -522,11 +541,11 @@ static int tlv320aic23_spi_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	return 0;
 }
 
+
 static int tlv320aic23_spi_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 				      int clk_id, unsigned int freq, int dir)
 {
-	struct snd_soc_codec *codec = codec_dai->codec;
-	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
+	struct aic23 *aic23 = snd_soc_dai_get_drvdata(codec_dai);
 	aic23->mclk = freq;
 	return 0;
 }
@@ -539,20 +558,24 @@ static int tlv320aic23_spi_set_bias_level(struct snd_soc_codec *codec,
 	switch (level) {
 	case SND_SOC_BIAS_ON:
 		/* vref/mid, osc on, dac unmute */
+		reg &= ~(TLV320AIC23_DEVICE_PWR_OFF | TLV320AIC23_OSC_OFF | \
+			TLV320AIC23_DAC_OFF);
 		tlv320aic23_spi_write(codec, TLV320AIC23_PWR, reg);
 		break;
 	case SND_SOC_BIAS_PREPARE:
 		break;
 	case SND_SOC_BIAS_STANDBY:
-		/* Activate the digital interface */
-		tlv320aic23_spi_write(codec, TLV320AIC23_ACTIVE, 0x1);
+		/* everything off except vref/vmid, */
+		tlv320aic23_spi_write(codec, TLV320AIC23_PWR, reg | \
+			TLV320AIC23_CLK_OFF);
 		break;
 	case SND_SOC_BIAS_OFF:
-		/* Deactivate the digital interface */
+		/* everything off, dac mute, inactive */
 		tlv320aic23_spi_write(codec, TLV320AIC23_ACTIVE, 0x0);
+		tlv320aic23_spi_write(codec, TLV320AIC23_PWR, 0xffff);
 		break;
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -569,8 +592,8 @@ static struct snd_soc_dai_ops tlv320aic23_spi_dai_ops = {
 	.set_sysclk	= tlv320aic23_spi_set_dai_sysclk,
 };
 
-struct snd_soc_dai_driver tlv320aic23_spi_dai = {
-	.name = "tlv320aic23_spi",
+static struct snd_soc_dai_driver tlv320aic23_spi_dai = {
+	.name = "tlv320aic23_spi-hifi",
 	.playback = {
 		     .stream_name = "Playback",
 		     .channels_min = 2,
@@ -585,9 +608,9 @@ struct snd_soc_dai_driver tlv320aic23_spi_dai = {
 		    .formats = AIC23_FORMATS,},
 	.ops = &tlv320aic23_spi_dai_ops,
 };
-EXPORT_SYMBOL_GPL(tlv320aic23_spi_dai);
 
-static int tlv320aic23_spi_suspend(struct snd_soc_codec *codec, pm_message_t state)
+static int tlv320aic23_spi_suspend(struct snd_soc_codec *codec,
+			       pm_message_t state)
 {
 	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_OFF);
 
@@ -603,7 +626,6 @@ static int tlv320aic23_spi_resume(struct snd_soc_codec *codec)
 		u16 val = tlv320aic23_spi_read_reg_cache(codec, reg);
 		tlv320aic23_spi_write(codec, reg, val);
 	}
-
 	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
 	return 0;
@@ -614,113 +636,111 @@ static int tlv320aic23_spi_resume(struct snd_soc_codec *codec)
  */
 static int tlv320aic23_spi_codec_probe(struct snd_soc_codec *codec)
 {
-	int ret = 0, reg;
 	struct aic23 *aic23 = snd_soc_codec_get_drvdata(codec);
+	int reg;
 
 	printk(KERN_INFO "AIC23 Audio Codec %s\n", AIC23_VERSION);
+	codec->control_data = aic23->spi;
+	codec->hw_write = (hw_write_t)spi_write;
+	codec->hw_read = NULL;
 
 	/* Reset codec */
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_RESET, 0);
+	tlv320aic23_spi_write(codec, TLV320AIC23_RESET, 0);
 
 	/* power on device */
-	tlv320aic23_spi_set_bias_level(&aic23->codec, SND_SOC_BIAS_STANDBY);
+	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_DIGT, TLV320AIC23_DEEMP_44K);
+	tlv320aic23_spi_write(codec, TLV320AIC23_DIGT, TLV320AIC23_DEEMP_44K);
 
 	/* Unmute input */
-	reg = tlv320aic23_spi_read_reg_cache(&aic23->codec, TLV320AIC23_LINVOL);
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_LINVOL,
+	reg = tlv320aic23_spi_read_reg_cache(codec, TLV320AIC23_LINVOL);
+	tlv320aic23_spi_write(codec, TLV320AIC23_LINVOL,
 			  (reg & (~TLV320AIC23_LIM_MUTED)) |
 			  (TLV320AIC23_LRS_ENABLED));
 
-	reg = tlv320aic23_spi_read_reg_cache(&aic23->codec, TLV320AIC23_RINVOL);
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_RINVOL,
+	reg = tlv320aic23_spi_read_reg_cache(codec, TLV320AIC23_RINVOL);
+	tlv320aic23_spi_write(codec, TLV320AIC23_RINVOL,
 			  (reg & (~TLV320AIC23_LIM_MUTED)) |
 			  TLV320AIC23_LRS_ENABLED);
 
-	reg = tlv320aic23_spi_read_reg_cache(&aic23->codec, TLV320AIC23_ANLG);
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_ANLG,
+	reg = tlv320aic23_spi_read_reg_cache(codec, TLV320AIC23_ANLG);
+	tlv320aic23_spi_write(codec, TLV320AIC23_ANLG,
 			 (reg) & (~TLV320AIC23_BYPASS_ON) &
 			 (~TLV320AIC23_MICM_MUTED));
 
 	/* Default output volume */
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_LCHNVOL,
+	tlv320aic23_spi_write(codec, TLV320AIC23_LCHNVOL,
 			  TLV320AIC23_DEFAULT_OUT_VOL &
 			  TLV320AIC23_OUT_VOL_MASK);
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_RCHNVOL,
+	tlv320aic23_spi_write(codec, TLV320AIC23_RCHNVOL,
 			  TLV320AIC23_DEFAULT_OUT_VOL &
 			  TLV320AIC23_OUT_VOL_MASK);
 
-	tlv320aic23_spi_write(&aic23->codec, TLV320AIC23_ACTIVE, 0x1);
+	tlv320aic23_spi_write(codec, TLV320AIC23_ACTIVE, 0x1);
 
 	snd_soc_add_controls(codec, tlv320aic23_spi_snd_controls, ARRAY_SIZE(tlv320aic23_spi_snd_controls));
+	tlv320aic23_spi_add_widgets(codec);
 
-	return ret;
+	return 0;
 }
 
 static int tlv320aic23_spi_codec_remove(struct snd_soc_codec *codec)
 {
 	tlv320aic23_spi_set_bias_level(codec, SND_SOC_BIAS_OFF);
-
 	return 0;
 }
 
-struct snd_soc_codec_driver soc_codec_dev_tlv320aic23_spi = {
-	.reg_cache_size = ARRAY_SIZE(tlv320aic23_spi_reg),
-	.reg_word_size = sizeof(u16),
+static struct snd_soc_codec_driver soc_codec_dev_tlv320aic23_spi = {
+	.reg_cache_size    = ARRAY_SIZE(tlv320aic23_spi_reg),
+	.reg_word_size     = sizeof(u16),
 	.reg_cache_default = tlv320aic23_spi_reg,
-	.probe = tlv320aic23_spi_codec_probe,
-	.remove = tlv320aic23_spi_codec_remove,
-	.suspend = tlv320aic23_spi_suspend,
-	.resume = tlv320aic23_spi_resume,
-	.read = tlv320aic23_spi_read_reg_cache,
-	.write = tlv320aic23_spi_write,
-	.set_bias_level = tlv320aic23_spi_set_bias_level,
-	.dapm_widgets = tlv320aic23_spi_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(tlv320aic23_spi_dapm_widgets),
-	.dapm_routes = intercon,
-	.num_dapm_routes = ARRAY_SIZE(intercon),
+	.probe             = tlv320aic23_spi_codec_probe,
+	.remove            = tlv320aic23_spi_codec_remove,
+	.suspend           = tlv320aic23_spi_suspend,
+	.resume            = tlv320aic23_spi_resume,
+	.read              = tlv320aic23_spi_read_reg_cache,
+	.write             = tlv320aic23_spi_write,
+	.set_bias_level    = tlv320aic23_spi_set_bias_level,
 };
-EXPORT_SYMBOL_GPL(soc_codec_dev_tlv320aic23_spi);
-
-struct aic23* tlv320aic23_spi_aic23 = 0;
 
 /* ---------------------------------------------------------------------
- * SPI portion of driver: probe and release routines
+ * SPI device portion of driver: probe and release routines
  */
 static int tlv320aic23_spi_device_probe(struct spi_device *spi)
 {
 	struct aic23 *aic23;
 	int ret;
 
-	dev_dbg(&spi->dev, "Probing tlv320aic23 spi device\n");
+	printk("probing tlv320aic23 spi device\n");
+
+	dev_dbg(&spi->dev, "probing tlv320aic23 spi device\n");
 
 	/* Allocate driver data */
 	aic23 = kzalloc(sizeof *aic23, GFP_KERNEL);
 	if (!aic23)
 		return -ENOMEM;
-	
+
 	/* Initialize the driver data */
 	aic23->spi = spi;
 	dev_set_drvdata(&spi->dev, aic23);
 
+	/* Register the codec */
 	ret = snd_soc_register_codec(&spi->dev, &soc_codec_dev_tlv320aic23_spi, &tlv320aic23_spi_dai, 1);
-	if (ret < 0)
+	if (ret < 0) {
 		kfree(aic23);
-		return ret;
-
-	printk(KERN_WARNING " ----------------------------------> SOC 5");
-	tlv320aic23_spi_aic23 = aic23;
-
+		printk("SPI device registration error: %d\n", ret);
+	}
+	printk("SPI device initialized\n");
 	dev_dbg(&spi->dev, "SPI device initialized\n");
-	return 0;
+
+	return ret;
 
 }
 
 static int tlv320aic23_spi_device_remove(struct spi_device *spi)
 {
 	snd_soc_unregister_codec(&spi->dev);
-	kfree(tlv320aic23_spi_aic23);
+	kfree(spi_get_drvdata(spi));
 	return 0;
 }
 

@@ -47,13 +47,6 @@
 #define PTRACE_GETREGSET	0x4204
 #define PTRACE_SETREGSET	0x4205
 
-#define PTRACE_SEIZE		0x4206
-#define PTRACE_INTERRUPT	0x4207
-#define PTRACE_LISTEN		0x4208
-
-/* flags in @data for PTRACE_SEIZE */
-#define PTRACE_SEIZE_DEVEL	0x80000000 /* temp flag for development */
-
 /* options set using PTRACE_SETOPTIONS */
 #define PTRACE_O_TRACESYSGOOD	0x00000001
 #define PTRACE_O_TRACEFORK	0x00000002
@@ -72,7 +65,6 @@
 #define PTRACE_EVENT_EXEC	4
 #define PTRACE_EVENT_VFORK_DONE	5
 #define PTRACE_EVENT_EXIT	6
-#define PTRACE_EVENT_STOP	7
 
 #include <asm/ptrace.h>
 
@@ -85,22 +77,16 @@
  * flags.  When the a task is stopped the ptracer owns task->ptrace.
  */
 
-#define PT_SEIZED	0x00010000	/* SEIZE used, enable new behavior */
 #define PT_PTRACED	0x00000001
 #define PT_DTRACE	0x00000002	/* delayed trace (used on m68k, i386) */
 #define PT_TRACESYSGOOD	0x00000004
 #define PT_PTRACE_CAP	0x00000008	/* ptracer can follow suid-exec */
-
-/* PT_TRACE_* event enable flags */
-#define PT_EVENT_FLAG_SHIFT	4
-#define PT_EVENT_FLAG(event)	(1 << (PT_EVENT_FLAG_SHIFT + (event) - 1))
-
-#define PT_TRACE_FORK		PT_EVENT_FLAG(PTRACE_EVENT_FORK)
-#define PT_TRACE_VFORK		PT_EVENT_FLAG(PTRACE_EVENT_VFORK)
-#define PT_TRACE_CLONE		PT_EVENT_FLAG(PTRACE_EVENT_CLONE)
-#define PT_TRACE_EXEC		PT_EVENT_FLAG(PTRACE_EVENT_EXEC)
-#define PT_TRACE_VFORK_DONE	PT_EVENT_FLAG(PTRACE_EVENT_VFORK_DONE)
-#define PT_TRACE_EXIT		PT_EVENT_FLAG(PTRACE_EVENT_EXIT)
+#define PT_TRACE_FORK	0x00000010
+#define PT_TRACE_VFORK	0x00000020
+#define PT_TRACE_CLONE	0x00000040
+#define PT_TRACE_EXEC	0x00000080
+#define PT_TRACE_VFORK_DONE	0x00000100
+#define PT_TRACE_EXIT	0x00000200
 
 #define PT_TRACE_MASK	0x000003f4
 
@@ -116,10 +102,13 @@
 
 extern long arch_ptrace(struct task_struct *child, long request,
 			unsigned long addr, unsigned long data);
+extern int ptrace_traceme(void);
 extern int ptrace_readdata(struct task_struct *tsk, unsigned long src, char __user *dst, int len);
 extern int ptrace_writedata(struct task_struct *tsk, char __user *src, unsigned long dst, int len);
+extern int ptrace_attach(struct task_struct *tsk);
+extern int ptrace_detach(struct task_struct *, unsigned int);
 extern void ptrace_disable(struct task_struct *);
-extern int ptrace_check_attach(struct task_struct *task, bool ignore_state);
+extern int ptrace_check_attach(struct task_struct *task, int kill);
 extern int ptrace_request(struct task_struct *child, long request,
 			  unsigned long addr, unsigned long data);
 extern void ptrace_notify(int exit_code);
@@ -136,7 +125,7 @@ extern bool ptrace_may_access(struct task_struct *task, unsigned int mode);
 
 static inline int ptrace_reparented(struct task_struct *child)
 {
-	return !same_thread_group(child->real_parent, child->parent);
+	return child->real_parent != child->parent;
 }
 
 static inline void ptrace_unlink(struct task_struct *child)
@@ -151,56 +140,36 @@ int generic_ptrace_pokedata(struct task_struct *tsk, unsigned long addr,
 			    unsigned long data);
 
 /**
- * ptrace_parent - return the task that is tracing the given task
- * @task: task to consider
+ * task_ptrace - return %PT_* flags that apply to a task
+ * @task:	pointer to &task_struct in question
  *
- * Returns %NULL if no one is tracing @task, or the &struct task_struct
- * pointer to its tracer.
- *
- * Must called under rcu_read_lock().  The pointer returned might be kept
- * live only by RCU.  During exec, this may be called with task_lock() held
- * on @task, still held from when check_unsafe_exec() was called.
+ * Returns the %PT_* flags that apply to @task.
  */
-static inline struct task_struct *ptrace_parent(struct task_struct *task)
+static inline int task_ptrace(struct task_struct *task)
 {
-	if (unlikely(task->ptrace))
-		return rcu_dereference(task->parent);
-	return NULL;
-}
-
-/**
- * ptrace_event_enabled - test whether a ptrace event is enabled
- * @task: ptracee of interest
- * @event: %PTRACE_EVENT_* to test
- *
- * Test whether @event is enabled for ptracee @task.
- *
- * Returns %true if @event is enabled, %false otherwise.
- */
-static inline bool ptrace_event_enabled(struct task_struct *task, int event)
-{
-	return task->ptrace & PT_EVENT_FLAG(event);
+	return task->ptrace;
 }
 
 /**
  * ptrace_event - possibly stop for a ptrace event notification
- * @event:	%PTRACE_EVENT_* value to report
+ * @mask:	%PT_* bit to check in @current->ptrace
+ * @event:	%PTRACE_EVENT_* value to report if @mask is set
  * @message:	value for %PTRACE_GETEVENTMSG to return
  *
- * Check whether @event is enabled and, if so, report @event and @message
- * to the ptrace parent.
+ * This checks the @mask bit to see if ptrace wants stops for this event.
+ * If so we stop, reporting @event and @message to the ptrace parent.
+ *
+ * Returns nonzero if we did a ptrace notification, zero if not.
  *
  * Called without locks.
  */
-static inline void ptrace_event(int event, unsigned long message)
+static inline int ptrace_event(int mask, int event, unsigned long message)
 {
-	if (unlikely(ptrace_event_enabled(current, event))) {
-		current->ptrace_message = message;
-		ptrace_notify((event << 8) | SIGTRAP);
-	} else if (event == PTRACE_EVENT_EXEC && unlikely(current->ptrace)) {
-		/* legacy EXEC report via SIGTRAP */
-		send_sig(SIGTRAP, current, 0);
-	}
+	if (mask && likely(!(current->ptrace & mask)))
+		return 0;
+	current->ptrace_message = message;
+	ptrace_notify((event << 8) | SIGTRAP);
+	return 1;
 }
 
 /**
@@ -217,23 +186,11 @@ static inline void ptrace_init_task(struct task_struct *child, bool ptrace)
 {
 	INIT_LIST_HEAD(&child->ptrace_entry);
 	INIT_LIST_HEAD(&child->ptraced);
-#ifdef CONFIG_HAVE_HW_BREAKPOINT
-	atomic_set(&child->ptrace_bp_refcnt, 1);
-#endif
-	child->jobctl = 0;
-	child->ptrace = 0;
 	child->parent = child->real_parent;
-
-	if (unlikely(ptrace) && current->ptrace) {
+	child->ptrace = 0;
+	if (unlikely(ptrace) && (current->ptrace & PT_PTRACED)) {
 		child->ptrace = current->ptrace;
 		__ptrace_link(child, current->parent);
-
-		if (child->ptrace & PT_SEIZED)
-			task_set_jobctl_pending(child, JOBCTL_TRAP_STOP);
-		else
-			sigaddset(&child->pending.signal, SIGSTOP);
-
-		set_tsk_thread_flag(child, TIF_SIGPENDING);
 	}
 }
 
@@ -396,13 +353,6 @@ extern int task_current_syscall(struct task_struct *target, long *callno,
 				unsigned long args[6], unsigned int maxargs,
 				unsigned long *sp, unsigned long *pc);
 
-#ifdef CONFIG_HAVE_HW_BREAKPOINT
-extern int ptrace_get_breakpoints(struct task_struct *tsk);
-extern void ptrace_put_breakpoints(struct task_struct *tsk);
-#else
-static inline void ptrace_put_breakpoints(struct task_struct *tsk) { }
-#endif /* CONFIG_HAVE_HW_BREAKPOINT */
-
-#endif /* __KERNEL */
+#endif
 
 #endif

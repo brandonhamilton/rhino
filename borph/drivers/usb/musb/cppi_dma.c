@@ -104,7 +104,7 @@ static void cppi_reset_tx(struct cppi_tx_stateram __iomem *tx, u32 ptr)
 	musb_writel(&tx->tx_complete, 0, ptr);
 }
 
-static void __init cppi_pool_init(struct cppi *cppi, struct cppi_channel *c)
+static void __devinit cppi_pool_init(struct cppi *cppi, struct cppi_channel *c)
 {
 	int	j;
 
@@ -149,7 +149,7 @@ static void cppi_pool_free(struct cppi_channel *c)
 	c->last_processed = NULL;
 }
 
-static int __init cppi_controller_start(struct dma_controller *c)
+static int __devinit cppi_controller_start(struct dma_controller *c)
 {
 	struct cppi	*controller;
 	void __iomem	*tibase;
@@ -236,7 +236,7 @@ static int cppi_controller_stop(struct dma_controller *c)
 	musb_writel(tibase, DAVINCI_RXCPPI_INTCLR_REG,
 			DAVINCI_DMA_ALL_CHANNELS_ENABLE);
 
-	dev_dbg(musb->controller, "Tearing down RX and TX Channels\n");
+	DBG(1, "Tearing down RX and TX Channels\n");
 	for (i = 0; i < ARRAY_SIZE(controller->tx); i++) {
 		/* FIXME restructure of txdma to use bds like rxdma */
 		controller->tx[i].last_processed = NULL;
@@ -301,13 +301,13 @@ cppi_channel_allocate(struct dma_controller *c,
 	 */
 	if (transmit) {
 		if (index >= ARRAY_SIZE(controller->tx)) {
-			dev_dbg(musb->controller, "no %cX%d CPPI channel\n", 'T', index);
+			DBG(1, "no %cX%d CPPI channel\n", 'T', index);
 			return NULL;
 		}
 		cppi_ch = controller->tx + index;
 	} else {
 		if (index >= ARRAY_SIZE(controller->rx)) {
-			dev_dbg(musb->controller, "no %cX%d CPPI channel\n", 'R', index);
+			DBG(1, "no %cX%d CPPI channel\n", 'R', index);
 			return NULL;
 		}
 		cppi_ch = controller->rx + index;
@@ -318,13 +318,13 @@ cppi_channel_allocate(struct dma_controller *c,
 	 * with the other DMA engine too
 	 */
 	if (cppi_ch->hw_ep)
-		dev_dbg(musb->controller, "re-allocating DMA%d %cX channel %p\n",
+		DBG(1, "re-allocating DMA%d %cX channel %p\n",
 				index, transmit ? 'T' : 'R', cppi_ch);
 	cppi_ch->hw_ep = ep;
 	cppi_ch->channel.status = MUSB_DMA_STATUS_FREE;
 	cppi_ch->channel.max_len = 0x7fffffff;
 
-	dev_dbg(musb->controller, "Allocate CPPI%d %cX\n", index, transmit ? 'T' : 'R');
+	DBG(4, "Allocate CPPI%d %cX\n", index, transmit ? 'T' : 'R');
 	return &cppi_ch->channel;
 }
 
@@ -339,7 +339,7 @@ static void cppi_channel_release(struct dma_channel *channel)
 	c = container_of(channel, struct cppi_channel, channel);
 	tibase = c->controller->tibase;
 	if (!c->hw_ep)
-		dev_dbg(musb->controller, "releasing idle DMA channel %p\n", c);
+		DBG(1, "releasing idle DMA channel %p\n", c);
 	else if (!c->transmit)
 		core_rxirq_enable(tibase, c->index + 1);
 
@@ -354,8 +354,9 @@ cppi_dump_rx(int level, struct cppi_channel *c, const char *tag)
 {
 	void __iomem			*base = c->controller->mregs;
 	struct cppi_rx_stateram __iomem	*rx = c->state_ram;
+	struct musb		*musb = c->controller->musb;
 
-	musb_ep_select(base, c->index + 1);
+	musb_ep_select(musb, base, c->index + 1);
 
 	DBG(level, "RX DMA%d%s: %d left, csr %04x, "
 			"%08x H%08x S%08x C%08x, "
@@ -384,8 +385,9 @@ cppi_dump_tx(int level, struct cppi_channel *c, const char *tag)
 {
 	void __iomem			*base = c->controller->mregs;
 	struct cppi_tx_stateram __iomem	*tx = c->state_ram;
+	struct musb		*musb = c->controller->musb;
 
-	musb_ep_select(base, c->index + 1);
+	musb_ep_select(musb, base, c->index + 1);
 
 	DBG(level, "TX DMA%d%s: csr %04x, "
 			"H%08x S%08x C%08x %08x, "
@@ -597,12 +599,12 @@ cppi_next_tx_segment(struct musb *musb, struct cppi_channel *tx)
 		length = min(n_bds * maxpacket, length);
 	}
 
-	dev_dbg(musb->controller, "TX DMA%d, pktSz %d %s bds %d dma 0x%llx len %u\n",
+	DBG(4, "TX DMA%d, pktSz %d %s bds %d dma 0x%x len %u\n",
 			tx->index,
 			maxpacket,
 			rndis ? "rndis" : "transparent",
 			n_bds,
-			(unsigned long long)addr, length);
+			addr, length);
 
 	cppi_rndis_update(tx, 0, musb->ctrl_base, rndis);
 
@@ -654,7 +656,7 @@ cppi_next_tx_segment(struct musb *musb, struct cppi_channel *tx)
 				bd->hw_options |= CPPI_ZERO_SET;
 		}
 
-		dev_dbg(musb->controller, "TXBD %p: nxt %08x buf %08x len %04x opt %08x\n",
+		DBG(5, "TXBD %p: nxt %08x buf %08x len %04x opt %08x\n",
 				bd, bd->hw_next, bd->hw_bufp,
 				bd->hw_off_len, bd->hw_options);
 
@@ -819,8 +821,8 @@ cppi_next_rx_segment(struct musb *musb, struct cppi_channel *rx, int onepacket)
 
 	length = min(n_bds * maxpacket, length);
 
-	dev_dbg(musb->controller, "RX DMA%d seg, maxp %d %s bds %d (cnt %d) "
-			"dma 0x%llx len %u %u/%u\n",
+	DBG(4, "RX DMA%d seg, maxp %d %s bds %d (cnt %d) "
+			"dma 0x%x len %u %u/%u\n",
 			rx->index, maxpacket,
 			onepacket
 				? (is_rndis ? "rndis" : "onepacket")
@@ -829,8 +831,7 @@ cppi_next_rx_segment(struct musb *musb, struct cppi_channel *rx, int onepacket)
 			musb_readl(tibase,
 				DAVINCI_RXCPPI_BUFCNT0_REG + (rx->index * 4))
 					& 0xffff,
-			(unsigned long long)addr, length,
-			rx->channel.actual_len, rx->buf_len);
+			addr, length, rx->channel.actual_len, rx->buf_len);
 
 	/* only queue one segment at a time, since the hardware prevents
 	 * correct queue shutdown after unexpected short packets
@@ -936,7 +937,7 @@ cppi_next_rx_segment(struct musb *musb, struct cppi_channel *rx, int onepacket)
 			DAVINCI_RXCPPI_BUFCNT0_REG + (rx->index * 4))
 			& 0xffff;
 	if (i < (2 + n_bds)) {
-		dev_dbg(musb->controller, "bufcnt%d underrun - %d (for %d)\n",
+		DBG(2, "bufcnt%d underrun - %d (for %d)\n",
 					rx->index, i, n_bds);
 		musb_writel(tibase,
 			DAVINCI_RXCPPI_BUFCNT0_REG + (rx->index * 4),
@@ -985,7 +986,7 @@ static int cppi_channel_program(struct dma_channel *ch,
 		/* WARN_ON(1); */
 		break;
 	case MUSB_DMA_STATUS_UNKNOWN:
-		dev_dbg(musb->controller, "%cX DMA%d not allocated!\n",
+		DBG(1, "%cX DMA%d not allocated!\n",
 				cppi_ch->transmit ? 'T' : 'R',
 				cppi_ch->index);
 		/* FALLTHROUGH */
@@ -1040,9 +1041,9 @@ static bool cppi_rx_scan(struct cppi *cppi, unsigned ch)
 		if (!completed && (bd->hw_options & CPPI_OWN_SET))
 			break;
 
-		dev_dbg(musb->controller, "C/RXBD %llx: nxt %08x buf %08x "
+		DBG(5, "C/RXBD %08x: nxt %08x buf %08x "
 			"off.len %08x opt.len %08x (%d)\n",
-			(unsigned long long)bd->dma, bd->hw_next, bd->hw_bufp,
+			bd->dma, bd->hw_next, bd->hw_bufp,
 			bd->hw_off_len, bd->hw_options,
 			rx->channel.actual_len);
 
@@ -1062,7 +1063,7 @@ static bool cppi_rx_scan(struct cppi *cppi, unsigned ch)
 			 * CPPI ignores those BDs even though OWN is still set.
 			 */
 			completed = true;
-			dev_dbg(musb->controller, "rx short %d/%d (%d)\n",
+			DBG(3, "rx short %d/%d (%d)\n",
 					len, bd->buflen,
 					rx->channel.actual_len);
 		}
@@ -1109,15 +1110,14 @@ static bool cppi_rx_scan(struct cppi *cppi, unsigned ch)
 			 */
 			WARN_ON(rx->head);
 		}
-		musb_ep_select(cppi->mregs, rx->index + 1);
+		musb_ep_select(cppi->musb, cppi->mregs, rx->index + 1);
 		csr = musb_readw(regs, MUSB_RXCSR);
 		if (csr & MUSB_RXCSR_DMAENAB) {
-			dev_dbg(musb->controller, "list%d %p/%p, last %llx%s, csr %04x\n",
+			DBG(4, "list%d %p/%p, last %08x%s, csr %04x\n",
 				rx->index,
 				rx->head, rx->tail,
 				rx->last_processed
-					? (unsigned long long)
-						rx->last_processed->dma
+					? rx->last_processed->dma
 					: 0,
 				completed ? ", completed" : "",
 				csr);
@@ -1169,13 +1169,10 @@ irqreturn_t cppi_interrupt(int irq, void *dev_id)
 	tx = musb_readl(tibase, DAVINCI_TXCPPI_MASKED_REG);
 	rx = musb_readl(tibase, DAVINCI_RXCPPI_MASKED_REG);
 
-	if (!tx && !rx) {
-		if (cppi->irq)
-			spin_unlock_irqrestore(&musb->lock, flags);
+	if (!tx && !rx)
 		return IRQ_NONE;
-	}
 
-	dev_dbg(musb->controller, "CPPI IRQ Tx%x Rx%x\n", tx, rx);
+	DBG(4, "CPPI IRQ Tx%x Rx%x\n", tx, rx);
 
 	/* process TX channels */
 	for (index = 0; tx; tx = tx >> 1, index++) {
@@ -1203,8 +1200,8 @@ irqreturn_t cppi_interrupt(int irq, void *dev_id)
 		 * that needs to be acknowledged.
 		 */
 		if (NULL == bd) {
-			dev_dbg(musb->controller, "null BD\n");
-			musb_writel(&tx_ram->tx_complete, 0, 0);
+			DBG(1, "null BD\n");
+			tx_ram->tx_complete = 0;
 			continue;
 		}
 
@@ -1218,7 +1215,7 @@ irqreturn_t cppi_interrupt(int irq, void *dev_id)
 			if (bd->hw_options & CPPI_OWN_SET)
 				break;
 
-			dev_dbg(musb->controller, "C/TXBD %p n %x b %x off %x opt %x\n",
+			DBG(5, "C/TXBD %p n %x b %x off %x opt %x\n",
 					bd, bd->hw_next, bd->hw_bufp,
 					bd->hw_off_len, bd->hw_options);
 
@@ -1307,8 +1304,8 @@ irqreturn_t cppi_interrupt(int irq, void *dev_id)
 }
 
 /* Instantiate a software object representing a DMA controller. */
-struct dma_controller *__init
-dma_controller_create(struct musb *musb, void __iomem *mregs)
+struct dma_controller *__devinit
+cppi_dma_controller_create(struct musb *musb, void __iomem *mregs)
 {
 	struct cppi		*controller;
 	struct device		*dev = musb->controller;
@@ -1347,7 +1344,7 @@ dma_controller_create(struct musb *musb, void __iomem *mregs)
 	if (irq > 0) {
 		if (request_irq(irq, cppi_interrupt, 0, "cppi-dma", musb)) {
 			dev_err(dev, "request_irq %d failed!\n", irq);
-			dma_controller_destroy(&controller->controller);
+			cppi_dma_controller_destroy(&controller->controller);
 			return NULL;
 		}
 		controller->irq = irq;
@@ -1355,11 +1352,12 @@ dma_controller_create(struct musb *musb, void __iomem *mregs)
 
 	return &controller->controller;
 }
+EXPORT_SYMBOL(cppi_dma_controller_create);
 
 /*
  *  Destroy a previously-instantiated DMA controller.
  */
-void dma_controller_destroy(struct dma_controller *c)
+void cppi_dma_controller_destroy(struct dma_controller *c)
 {
 	struct cppi	*cppi;
 
@@ -1373,6 +1371,7 @@ void dma_controller_destroy(struct dma_controller *c)
 
 	kfree(cppi);
 }
+EXPORT_SYMBOL(cppi_dma_controller_destroy);
 
 /*
  * Context: controller irqlocked, endpoint selected
@@ -1420,7 +1419,7 @@ static int cppi_channel_abort(struct dma_channel *channel)
 	 * and caller should rely on us not changing it.
 	 * peripheral code is safe ... check host too.
 	 */
-	musb_ep_select(mbase, cppi_ch->index + 1);
+	musb_ep_select(controller->musb, mbase, cppi_ch->index + 1);
 
 	if (cppi_ch->transmit) {
 		struct cppi_tx_stateram __iomem *tx_ram;
@@ -1457,7 +1456,7 @@ static int cppi_channel_abort(struct dma_channel *channel)
 		 *    compare mode by writing 1 to the tx_complete register.
 		 */
 		cppi_reset_tx(tx_ram, 1);
-		cppi_ch->head = NULL;
+		cppi_ch->head = 0;
 		musb_writel(&tx_ram->tx_complete, 0, 1);
 		cppi_dump_tx(5, cppi_ch, " (done teardown)");
 
@@ -1553,3 +1552,16 @@ static int cppi_channel_abort(struct dma_channel *channel)
  * Power Management ... probably turn off cppi during suspend, restart;
  * check state ram?  Clocking is presumably shared with usb core.
  */
+MODULE_DESCRIPTION("CPPI dma controller driver for musb");
+MODULE_LICENSE("GPL v2");
+
+static int __init cppi_dma_init(void)
+{
+	return 0;
+}
+module_init(cppi_dma_init);
+
+static void __exit cppi_dma__exit(void)
+{
+}
+module_exit(cppi_dma__exit);

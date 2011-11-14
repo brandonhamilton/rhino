@@ -17,8 +17,6 @@
  * Jan 20, 1998        Ben Greear     Initial Version
  *****************************************************************************/
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -56,7 +54,7 @@ static const char name_conf[]	 = "config";
 
 /*
  *	Structures for interfacing with the /proc filesystem.
- *	VLAN creates its own directory /proc/net/vlan with the following
+ *	VLAN creates its own directory /proc/net/vlan with the folowing
  *	entries:
  *	config		device status/configuration
  *	<device>	entry for each  device
@@ -157,7 +155,7 @@ int __net_init vlan_proc_init(struct net *net)
 	return 0;
 
 err:
-	pr_err("can't create entry in proc filesystem!\n");
+	pr_err("%s: can't create entry in proc filesystem!\n", __func__);
 	vlan_proc_cleanup(net);
 	return -ENOBUFS;
 }
@@ -231,7 +229,7 @@ static void *vlan_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 
 	++*pos;
 
-	dev = v;
+	dev = (struct net_device *)v;
 	if (v == SEQ_START_TOKEN)
 		dev = net_device_entry(&net->dev_base_head);
 
@@ -282,6 +280,7 @@ static int vlandev_seq_show(struct seq_file *seq, void *offset)
 	const struct vlan_dev_info *dev_info = vlan_dev_info(vlandev);
 	struct rtnl_link_stats64 temp;
 	const struct rtnl_link_stats64 *stats;
+	static const char fmt[] = "%30s %12lu\n";
 	static const char fmt64[] = "%30s %12llu\n";
 	int i;
 
@@ -300,6 +299,10 @@ static int vlandev_seq_show(struct seq_file *seq, void *offset)
 	seq_puts(seq, "\n");
 	seq_printf(seq, fmt64, "total frames transmitted", stats->tx_packets);
 	seq_printf(seq, fmt64, "total bytes transmitted", stats->tx_bytes);
+	seq_printf(seq, fmt, "total headroom inc",
+		   dev_info->cnt_inc_headroom_on_tx);
+	seq_printf(seq, fmt, "total encap on xmit",
+		   dev_info->cnt_encap_on_xmit);
 	seq_printf(seq, "Device: %s", dev_info->real_dev->name);
 	/* now show all PRIORITY mappings relating to this VLAN */
 	seq_printf(seq, "\nINGRESS priority mappings: "

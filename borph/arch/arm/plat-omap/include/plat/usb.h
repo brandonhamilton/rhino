@@ -7,12 +7,14 @@
 #include <plat/board.h>
 
 #define OMAP3_HS_USB_PORTS	3
+enum ehci_hcd_omap_mode {
+	EHCI_HCD_OMAP_MODE_UNKNOWN,
+	EHCI_HCD_OMAP_MODE_PHY,
+	EHCI_HCD_OMAP_MODE_TLL,
+};
 
-enum usbhs_omap_port_mode {
-	OMAP_USBHS_PORT_MODE_UNUSED,
-	OMAP_EHCI_PORT_MODE_PHY,
-	OMAP_EHCI_PORT_MODE_TLL,
-	OMAP_EHCI_PORT_MODE_HSIC,
+enum ohci_omap3_port_mode {
+	OMAP_OHCI_PORT_MODE_UNUSED,
 	OMAP_OHCI_PORT_MODE_PHY_6PIN_DATSE0,
 	OMAP_OHCI_PORT_MODE_PHY_6PIN_DPDM,
 	OMAP_OHCI_PORT_MODE_PHY_3PIN_DATSE0,
@@ -22,45 +24,24 @@ enum usbhs_omap_port_mode {
 	OMAP_OHCI_PORT_MODE_TLL_3PIN_DATSE0,
 	OMAP_OHCI_PORT_MODE_TLL_4PIN_DPDM,
 	OMAP_OHCI_PORT_MODE_TLL_2PIN_DATSE0,
-	OMAP_OHCI_PORT_MODE_TLL_2PIN_DPDM
-};
-
-struct usbhs_omap_board_data {
-	enum usbhs_omap_port_mode	port_mode[OMAP3_HS_USB_PORTS];
-
-	/* have to be valid if phy_reset is true and portx is in phy mode */
-	int	reset_gpio_port[OMAP3_HS_USB_PORTS];
-
-	/* Set this to true for ES2.x silicon */
-	unsigned			es2_compatibility:1;
-
-	unsigned			phy_reset:1;
-
-	/*
-	 * Regulators for USB PHYs.
-	 * Each PHY can have a separate regulator.
-	 */
-	struct regulator		*regulator[OMAP3_HS_USB_PORTS];
+	OMAP_OHCI_PORT_MODE_TLL_2PIN_DPDM,
 };
 
 struct ehci_hcd_omap_platform_data {
-	enum usbhs_omap_port_mode	port_mode[OMAP3_HS_USB_PORTS];
-	int				reset_gpio_port[OMAP3_HS_USB_PORTS];
-	struct regulator		*regulator[OMAP3_HS_USB_PORTS];
+	enum ehci_hcd_omap_mode		port_mode[OMAP3_HS_USB_PORTS];
 	unsigned			phy_reset:1;
+
+	/* have to be valid if phy_reset is true and portx is in phy mode */
+	int	reset_gpio_port[OMAP3_HS_USB_PORTS];
 };
 
 struct ohci_hcd_omap_platform_data {
-	enum usbhs_omap_port_mode	port_mode[OMAP3_HS_USB_PORTS];
+	enum ohci_omap3_port_mode	port_mode[OMAP3_HS_USB_PORTS];
+
+	/* Set this to true for ES2.x silicon */
 	unsigned			es2_compatibility:1;
 };
 
-struct usbhs_omap_platform_data {
-	enum usbhs_omap_port_mode		port_mode[OMAP3_HS_USB_PORTS];
-
-	struct ehci_hcd_omap_platform_data	*ehci_data;
-	struct ohci_hcd_omap_platform_data	*ohci_data;
-};
 /*-------------------------------------------------------------------------*/
 
 #define OMAP1_OTG_BASE			0xfffb0400
@@ -88,7 +69,8 @@ struct omap_musb_board_data {
 	u8	mode;
 	u16	power;
 	unsigned extvbus:1;
-	void	(*set_phy_power)(u8 on);
+	u8	instances;
+	void	(*set_phy_power)(u8 id, u8 on);
 	void	(*clear_irq)(void);
 	void	(*set_mode)(u8 mode);
 	void	(*reset)(void);
@@ -98,22 +80,24 @@ enum musb_interface    {MUSB_INTERFACE_ULPI, MUSB_INTERFACE_UTMI};
 
 extern void usb_musb_init(struct omap_musb_board_data *board_data);
 
-extern void usbhs_init(const struct usbhs_omap_board_data *pdata);
+extern void usb_ehci_init(const struct ehci_hcd_omap_platform_data *pdata);
 
-extern int omap_usbhs_enable(struct device *dev);
-extern void omap_usbhs_disable(struct device *dev);
+extern void usb_ohci_init(const struct ohci_hcd_omap_platform_data *pdata);
 
+/* This is needed for OMAP3 errata 1.164: enabled autoidle can prevent sleep */
+extern void usb_musb_disable_autoidle(void);
 extern int omap4430_phy_power(struct device *dev, int ID, int on);
 extern int omap4430_phy_set_clk(struct device *dev, int on);
 extern int omap4430_phy_init(struct device *dev);
 extern int omap4430_phy_exit(struct device *dev);
-extern int omap4430_phy_suspend(struct device *dev, int suspend);
+
+#ifdef CONFIG_PM
+/* This is added to support musb idle off mode */
+extern void omap_musb_restore_context(void);
+extern void omap_musb_save_context(void);
+#endif
 #endif
 
-extern void am35x_musb_reset(void);
-extern void am35x_musb_phy_power(u8 on);
-extern void am35x_musb_clear_irq(void);
-extern void am35x_set_mode(u8 musb_mode);
 
 /*
  * FIXME correct answer depends on hmc_mode,
@@ -292,5 +276,84 @@ static inline u32 omap1_usb2_init(unsigned nwires, unsigned alt_pingroup)
 	return 0;
 }
 #endif
+
+/* DMA registers */
+#define TI81XX_USB_AUTOREQ_REG	0xd0
+#define TI81XX_USB_TEARDOWN_REG	0xd8
+#define USB_AUTOREQ_REG		0x14
+#define USB_TEARDOWN_REG	0x1c
+#define MOP_SOP_INTR_ENABLE	0x64
+/* 0x68-0x6c Reserved */
+#define USB_TX_MODE_REG		0x70	/* Transparent, CDC, [Generic] RNDIS */
+#define USB_RX_MODE_REG		0x74	/* Transparent, CDC, [Generic] RNDIS */
+#define EP_COUNT_MODE_REG	0x78
+#define USB_GENERIC_RNDIS_EP_SIZE_REG(n) (0x80 + (((n) - 1) << 2))
+
+#define QUEUE_THRESHOLD_INTR_ENABLE_REG	0xc0
+#define	QUEUE_63_THRESHOLD_REG	0xc4
+#define QUEUE_63_THRESHOLD_INTR_CLEAR_REG 0xc8
+#define	QUEUE_65_THRESHOLD_REG	0xd4
+#define QUEUE_65_THRESHOLD_INTR_CLEAR_REG 0xd8
+
+/* Mode register bits */
+#define USB_MODE_SHIFT(n)	((((n) - 1) << 1))
+#define USB_MODE_MASK(n)	(3 << USB_MODE_SHIFT(n))
+#define USB_RX_MODE_SHIFT(n)	USB_MODE_SHIFT(n)
+#define USB_TX_MODE_SHIFT(n)	USB_MODE_SHIFT(n)
+#define USB_RX_MODE_MASK(n)	USB_MODE_MASK(n)
+#define USB_TX_MODE_MASK(n)	USB_MODE_MASK(n)
+#define USB_TRANSPARENT_MODE	0
+#define USB_RNDIS_MODE		1
+#define USB_CDC_MODE		2
+#define USB_GENERIC_RNDIS_MODE	3
+
+/* AutoReq register bits */
+#define USB_RX_AUTOREQ_SHIFT(n) (((n) - 1) << 1)
+#define USB_RX_AUTOREQ_MASK(n)	(3 << USB_RX_AUTOREQ_SHIFT(n))
+#define USB_NO_AUTOREQ		0
+#define USB_AUTOREQ_ALL_BUT_EOP 1
+#define USB_AUTOREQ_ALWAYS	3
+
+/* Teardown register bits */
+#define USB_TX_TDOWN_SHIFT(n)	(16 + (n))
+#define USB_TX_TDOWN_MASK(n)	(1 << USB_TX_TDOWN_SHIFT(n))
+#define USB_RX_TDOWN_SHIFT(n)	(n)
+#define USB_RX_TDOWN_MASK(n)	(1 << USB_RX_TDOWN_SHIFT(n))
+
+#define USB_CPPI41_NUM_CH	15
+
+/* TI81XX specific definitions */
+#define TI81XX_USBCTRL0				0x0620
+#define TI81XX_USBSTAT0				0x0624
+#define TI81XX_USBCTRL1				0x0628
+#define TI81XX_USBSTAT1				0x062c
+
+/* TI816X PHY controls bits */
+#define	TI816X_USBPHY0_NORMAL_MODE		(1 << 0)
+#define	TI816X_USBPHY1_NORMAL_MODE		(1 << 1)
+#define	TI816X_USBPHY_REFCLK_OSC		(1 << 8)
+
+/* TI814X PHY controls bits */
+#define TI814X_USBPHY_CM_PWRDN		(1 << 0)
+#define TI814X_USBPHY_OTG_PWRDN		(1 << 1)
+#define TI814X_USBPHY_CHGDET_DIS	(1 << 2)
+#define TI814X_USBPHY_CHGDET_RSTRT	(1 << 3)
+#define TI814X_USBPHY_SRCONDM		(1 << 4)
+#define TI814X_USBPHY_SINKONDP		(1 << 5)
+#define TI814X_USBPHY_CHGISINK_EN	(1 << 6)
+#define TI814X_USBPHY_CHGVSRC_EN	(1 << 7)
+#define TI814X_USBPHY_DMPULLUP		(1 << 8)
+#define TI814X_USBPHY_DPPULLUP		(1 << 9)
+#define TI814X_USBPHY_CDET_EXTCTL	(1 << 10)
+#define TI814X_USBPHY_GPIO_MODE		(1 << 12)
+#define TI814X_USBPHY_DPOPBUFCTL	(1 << 13)
+#define TI814X_USBPHY_DMOPBUFCTL	(1 << 14)
+#define TI814X_USBPHY_DPINPUT		(1 << 15)
+#define TI814X_USBPHY_DMINPUT		(1 << 16)
+#define TI814X_USBPHY_DPGPIO_PD		(1 << 17)
+#define TI814X_USBPHY_DMGPIO_PD		(1 << 18)
+#define TI814X_USBPHY_OTGVDET_EN	(1 << 19)
+#define TI814X_USBPHY_OTGSESSEND_EN	(1 << 20)
+#define TI814X_USBPHY_DATA_POLARITY	(1 << 23)
 
 #endif	/* __ASM_ARCH_OMAP_USB_H */

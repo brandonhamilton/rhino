@@ -1,10 +1,8 @@
 header-y += byteorder/
 header-y += can/
-header-y += caif/
 header-y += dvb/
 header-y += hdlc/
 header-y += isdn/
-header-y += mmc/
 header-y += nfsd/
 header-y += raid/
 header-y += spi/
@@ -22,18 +20,15 @@ header-y += wimax/
 objhdr-y += version.h
 
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/asm/a.out.h \
-		  $(srctree)/include/asm-$(SRCARCH)/a.out.h \
-		  $(INSTALL_HDR_PATH)/include/asm-*/a.out.h),)
+		  $(srctree)/include/asm-$(SRCARCH)/a.out.h),)
 header-y += a.out.h
 endif
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/asm/kvm.h \
-		  $(srctree)/include/asm-$(SRCARCH)/kvm.h \
-		  $(INSTALL_HDR_PATH)/include/asm-*/kvm.h),)
+		  $(srctree)/include/asm-$(SRCARCH)/kvm.h),)
 header-y += kvm.h
 endif
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/asm/kvm_para.h \
-		  $(srctree)/include/asm-$(SRCARCH)/kvm_para.h \
-		  $(INSTALL_HDR_PATH)/include/asm-*/kvm_para.h),)
+		  $(srctree)/include/asm-$(SRCARCH)/kvm_para.h),)
 header-y += kvm_para.h
 endif
 
@@ -135,7 +130,6 @@ header-y += firewire-cdev.h
 header-y += firewire-constants.h
 header-y += flat.h
 header-y += fs.h
-header-y += fsl_hypervisor.h
 header-y += fuse.h
 header-y += futex.h
 header-y += gameport.h
@@ -161,7 +155,6 @@ header-y += icmpv6.h
 header-y += if.h
 header-y += if_addr.h
 header-y += if_addrlabel.h
-header-y += if_alg.h
 header-y += if_arcnet.h
 header-y += if_arp.h
 header-y += if_bonding.h
@@ -304,7 +297,6 @@ header-y += ppp-comp.h
 header-y += ppp_defs.h
 header-y += pps.h
 header-y += prctl.h
-header-y += ptp_clock.h
 header-y += ptrace.h
 header-y += qnx4_fs.h
 header-y += qnxtypes.h
@@ -375,11 +367,11 @@ header-y += unistd.h
 header-y += usbdevice_fs.h
 header-y += utime.h
 header-y += utsname.h
-header-y += uvcvideo.h
 header-y += v4l2-mediabus.h
 header-y += v4l2-subdev.h
 header-y += veth.h
 header-y += vhost.h
+header-y += videodev.h
 header-y += videodev2.h
 header-y += virtio_9p.h
 header-y += virtio_balloon.h

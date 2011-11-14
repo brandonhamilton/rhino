@@ -47,13 +47,12 @@
 #ifdef CONFIG_PPC_I8259
 static void mpc85xx_8259_cascade(unsigned int irq, struct irq_desc *desc)
 {
-	struct irq_chip *chip = irq_desc_get_chip(desc);
 	unsigned int cascade_irq = i8259_irq();
 
 	if (cascade_irq != NO_IRQ) {
 		generic_handle_irq(cascade_irq);
 	}
-	chip->irq_eoi(&desc->irq_data);
+	desc->chip->eoi(irq);
 }
 #endif	/* CONFIG_PPC_I8259 */
 
@@ -83,8 +82,7 @@ void __init mpc85xx_ds_pic_init(void)
 	if (of_flat_dt_is_compatible(root, "fsl,MPC8572DS-CAMP")) {
 		mpic = mpic_alloc(np, r.start,
 			MPIC_PRIMARY |
-			MPIC_BIG_ENDIAN | MPIC_BROKEN_FRR_NIRQS |
-			MPIC_SINGLE_DEST_CPU,
+			MPIC_BIG_ENDIAN | MPIC_BROKEN_FRR_NIRQS,
 			0, 256, " OpenPIC  ");
 	} else {
 		mpic = mpic_alloc(np, r.start,
@@ -123,7 +121,7 @@ void __init mpc85xx_ds_pic_init(void)
 	i8259_init(cascade_node, 0);
 	of_node_put(cascade_node);
 
-	irq_set_chained_handler(cascade_irq, mpc85xx_8259_cascade);
+	set_irq_chained_handler(cascade_irq, mpc85xx_8259_cascade);
 #endif	/* CONFIG_PPC_I8259 */
 }
 

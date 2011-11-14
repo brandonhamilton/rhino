@@ -173,8 +173,7 @@ static void keyspan_pda_wakeup_write(struct work_struct *work)
 		container_of(work, struct keyspan_pda_private, wakeup_work);
 	struct usb_serial_port *port = priv->port;
 	struct tty_struct *tty = tty_port_tty_get(&port->port);
-	if (tty)
-		tty_wakeup(tty);
+	tty_wakeup(tty);
 	tty_kref_put(tty);
 }
 
@@ -207,7 +206,7 @@ static void keyspan_pda_request_unthrottle(struct work_struct *work)
 static void keyspan_pda_rx_interrupt(struct urb *urb)
 {
 	struct usb_serial_port *port = urb->context;
-	struct tty_struct *tty;
+	struct tty_struct *tty = tty_port_tty_get(&port->port);
 	unsigned char *data = urb->transfer_buffer;
 	int retval;
 	int status = urb->status;
@@ -224,7 +223,7 @@ static void keyspan_pda_rx_interrupt(struct urb *urb)
 		/* this urb is terminated, clean up */
 		dbg("%s - urb shutting down with status: %d",
 		    __func__, status);
-		return;
+		goto out;
 	default:
 		dbg("%s - nonzero urb status received: %d",
 		    __func__, status);
@@ -234,14 +233,12 @@ static void keyspan_pda_rx_interrupt(struct urb *urb)
 	/* see if the message is data or a status interrupt */
 	switch (data[0]) {
 	case 0:
-		tty = tty_port_tty_get(&port->port);
-		 /* rest of message is rx data */
-		if (tty && urb->actual_length) {
+		/* rest of message is rx data */
+		if (urb->actual_length) {
 			tty_insert_flip_string(tty, data + 1,
 						urb->actual_length - 1);
 			tty_flip_buffer_push(tty);
 		}
-		tty_kref_put(tty);
 		break;
 	case 1:
 		/* status interrupt */
@@ -268,6 +265,8 @@ exit:
 		dev_err(&port->dev,
 			"%s - usb_submit_urb failed with result %d",
 			__func__, retval);
+out:
+	tty_kref_put(tty);		     
 }
 
 
@@ -458,7 +457,7 @@ static int keyspan_pda_set_modem_info(struct usb_serial *serial,
 	return rc;
 }
 
-static int keyspan_pda_tiocmget(struct tty_struct *tty)
+static int keyspan_pda_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct usb_serial *serial = port->serial;
@@ -479,7 +478,7 @@ static int keyspan_pda_tiocmget(struct tty_struct *tty)
 	return value;
 }
 
-static int keyspan_pda_tiocmset(struct tty_struct *tty,
+static int keyspan_pda_tiocmset(struct tty_struct *tty, struct file *file,
 				unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -680,6 +679,22 @@ static void keyspan_pda_dtr_rts(struct usb_serial_port *port, int on)
 	}
 }
 
+static int keyspan_pda_carrier_raised(struct usb_serial_port *port)
+{
+	struct usb_serial *serial = port->serial;
+	unsigned char modembits;
+
+	/* If we can read the modem status and the DCD is low then
+	   carrier is not raised yet */
+	if (keyspan_pda_get_modem_info(serial, &modembits) >= 0) {
+		if (!(modembits & (1>>6)))
+			return 0;
+	}
+	/* Carrier raised, or we failed (eg disconnected) so
+	   progress accordingly */
+	return 1;
+}
+
 
 static int keyspan_pda_open(struct tty_struct *tty,
 					struct usb_serial_port *port)
@@ -866,6 +881,7 @@ static struct usb_serial_driver keyspan_pda_device = {
 	.id_table =		id_table_std,
 	.num_ports =		1,
 	.dtr_rts =		keyspan_pda_dtr_rts,
+	.carrier_raised	=	keyspan_pda_carrier_raised,
 	.open =			keyspan_pda_open,
 	.close =		keyspan_pda_close,
 	.write =		keyspan_pda_write,

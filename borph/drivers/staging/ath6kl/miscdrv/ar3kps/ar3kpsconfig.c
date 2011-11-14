@@ -41,41 +41,41 @@
  */
 typedef struct {
 
-    struct ps_cmd_packet *HciCmdList;
-    u32 num_packets;
-    struct ar3k_config_info *dev;
+    PSCmdPacket *HciCmdList;
+    A_UINT32  num_packets;
+    AR3K_CONFIG_INFO *dev;
 }HciCommandListParam;
 
-int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
-                                           u8 *pHCICommand,
+A_STATUS SendHCICommandWaitCommandComplete(AR3K_CONFIG_INFO *pConfig,
+                                           A_UINT8          *pHCICommand,
                                            int              CmdLength,
-                                           u8 **ppEventBuffer,
-                                           u8 **ppBufferToFree);
+                                           A_UINT8          **ppEventBuffer,
+                                           A_UINT8          **ppBufferToFree);
 
-u32 Rom_Version;
-u32 Build_Version;
-extern bool BDADDR;
+A_UINT32  Rom_Version;
+A_UINT32  Build_Version;
+extern A_BOOL BDADDR;
 
-int getDeviceType(struct ar3k_config_info *pConfig, u32 *code);
-int ReadVersionInfo(struct ar3k_config_info *pConfig);
+A_STATUS getDeviceType(AR3K_CONFIG_INFO *pConfig, A_UINT32 * code);
+A_STATUS ReadVersionInfo(AR3K_CONFIG_INFO *pConfig);
 #ifndef HCI_TRANSPORT_SDIO
 
 DECLARE_WAIT_QUEUE_HEAD(PsCompleteEvent);
 DECLARE_WAIT_QUEUE_HEAD(HciEvent);
-u8 *HciEventpacket;
+A_UCHAR *HciEventpacket;
 rwlock_t syncLock;
 wait_queue_t Eventwait;
 
-int PSHciWritepacket(struct hci_dev*,u8* Data, u32 len);
+int PSHciWritepacket(struct hci_dev*,A_UCHAR* Data, A_UINT32 len);
 extern char *bdaddr;
 #endif /* HCI_TRANSPORT_SDIO */
 
-int write_bdaddr(struct ar3k_config_info *pConfig,u8 *bdaddr,int type);
+A_STATUS write_bdaddr(AR3K_CONFIG_INFO *pConfig,A_UCHAR *bdaddr,int type);
 
 int PSSendOps(void *arg);
 
 #ifdef BT_PS_DEBUG
-void Hci_log(u8 * log_string,u8 *data,u32 len)
+void Hci_log(A_UCHAR * log_string,A_UCHAR *data,A_UINT32 len)
 {
     int i;
     AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("%s : ",log_string));
@@ -91,9 +91,9 @@ void Hci_log(u8 * log_string,u8 *data,u32 len)
 
 
 
-int AthPSInitialize(struct ar3k_config_info *hdev)
+A_STATUS AthPSInitialize(AR3K_CONFIG_INFO *hdev)
 {
-    int status = 0;
+    A_STATUS status = A_OK;
     if(hdev == NULL) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Invalid Device handle received\n"));
         return A_ERROR;
@@ -118,7 +118,7 @@ int AthPSInitialize(struct ar3k_config_info *hdev)
         remove_wait_queue(&PsCompleteEvent,&wait);
         return A_ERROR;
     }
-    wait_event_interruptible(PsCompleteEvent,(PSTagMode == false));
+    wait_event_interruptible(PsCompleteEvent,(PSTagMode == FALSE));
     set_current_state(TASK_RUNNING);
     remove_wait_queue(&PsCompleteEvent,&wait);
 
@@ -133,21 +133,21 @@ int PSSendOps(void *arg)
 {
     int i;
     int status = 0;
-    struct ps_cmd_packet *HciCmdList; /* List storing the commands */
+    PSCmdPacket *HciCmdList; /* List storing the commands */
     const struct firmware* firmware;
-    u32 numCmds;
-    u8 *event;
-    u8 *bufferToFree;
+    A_UINT32 numCmds;
+    A_UINT8 *event;
+    A_UINT8 *bufferToFree;
     struct hci_dev *device;
-    u8 *buffer;
-    u32 len;
-    u32 DevType;
-    u8 *PsFileName;
-    u8 *patchFileName;
-    u8 *path = NULL;
-    u8 *config_path = NULL;
-    u8 config_bdaddr[MAX_BDADDR_FORMAT_LENGTH];
-    struct ar3k_config_info *hdev = (struct ar3k_config_info*)arg;
+    A_UCHAR *buffer;
+    A_UINT32 len;
+    A_UINT32 DevType;
+    A_UCHAR *PsFileName;
+    A_UCHAR *patchFileName;
+    A_UCHAR *path = NULL;
+    A_UCHAR *config_path = NULL;
+    A_UCHAR config_bdaddr[MAX_BDADDR_FORMAT_LENGTH];
+    AR3K_CONFIG_INFO *hdev = (AR3K_CONFIG_INFO*)arg;
     struct device *firmwareDev = NULL;
     status = 0;
     HciCmdList = NULL;
@@ -157,17 +157,17 @@ int PSSendOps(void *arg)
 #else 
     device = hdev;
     firmwareDev = &device->dev;
-    AthEnableSyncCommandOp(true);
+    AthEnableSyncCommandOp(TRUE);    
 #endif /* HCI_TRANSPORT_SDIO */
     /* First verify if the controller is an FPGA or ASIC, so depending on the device type the PS file to be written will be different.
      */
 
-    path =(u8 *)A_MALLOC(MAX_FW_PATH_LEN);
+    path =(A_UCHAR *)A_MALLOC(MAX_FW_PATH_LEN);
     if(path == NULL) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("Malloc failed to allocate %d bytes for path\n", MAX_FW_PATH_LEN));
         goto complete;
     }
-    config_path = (u8 *) A_MALLOC(MAX_FW_PATH_LEN);
+    config_path = (A_UCHAR *) A_MALLOC(MAX_FW_PATH_LEN);
     if(config_path == NULL) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("Malloc failed to allocate %d bytes for config_path\n", MAX_FW_PATH_LEN));
         goto complete;
@@ -214,7 +214,7 @@ int PSSendOps(void *arg)
         status = 1;
         goto complete;
     }
-    buffer = (u8 *)A_MALLOC(firmware->size);
+    buffer = (A_UCHAR *)A_MALLOC(firmware->size);
     if(buffer != NULL) {
     /* Copy the read file to a local Dynamic buffer */
         memcpy(buffer,firmware->data,firmware->size);
@@ -222,7 +222,7 @@ int PSSendOps(void *arg)
         A_RELEASE_FIRMWARE(firmware);
         /* Parse the PS buffer to a global variable */
         status = AthDoParsePS(buffer,len);
-        kfree(buffer);
+        A_FREE(buffer);
     } else {
         A_RELEASE_FIRMWARE(firmware);
     }
@@ -248,7 +248,7 @@ int PSSendOps(void *arg)
         if(NULL == firmware || firmware->size == 0) {
             status = 0;
         } else {
-            buffer = (u8 *)A_MALLOC(firmware->size);
+            buffer = (A_UCHAR *)A_MALLOC(firmware->size);
             if(buffer != NULL) {
                 /* Copy the read file to a local Dynamic buffer */
                 memcpy(buffer,firmware->data,firmware->size);
@@ -256,7 +256,7 @@ int PSSendOps(void *arg)
                 A_RELEASE_FIRMWARE(firmware);
                 /* parse and store the Patch file contents to a global variables */
                 status = AthDoParsePatch(buffer,len);
-                kfree(buffer);
+                A_FREE(buffer);
             } else {
                 A_RELEASE_FIRMWARE(firmware);
             }
@@ -280,10 +280,10 @@ int PSSendOps(void *arg)
     HciCmdList[0].Hcipacket,
     HciCmdList[0].packetLen,
     &event,
-    &bufferToFree) == 0) {
-        if(ReadPSEvent(event) == 0) { /* Exit if the status is success */
+    &bufferToFree) == A_OK) {
+        if(ReadPSEvent(event) == A_OK) { /* Exit if the status is success */
             if(bufferToFree != NULL) {
-                kfree(bufferToFree);
+                A_FREE(bufferToFree);
                 }
 	
 #ifndef HCI_TRANSPORT_SDIO
@@ -295,7 +295,7 @@ int PSSendOps(void *arg)
                goto complete;
         }
         if(bufferToFree != NULL) {
-               kfree(bufferToFree);
+               A_FREE(bufferToFree);
         }
     } else {
         status = 0;
@@ -309,16 +309,16 @@ int PSSendOps(void *arg)
         HciCmdList[i].Hcipacket,
         HciCmdList[i].packetLen,
         &event,
-        &bufferToFree) == 0) {
-            if(ReadPSEvent(event) != 0) { /* Exit if the status is success */
+        &bufferToFree) == A_OK) {
+            if(ReadPSEvent(event) != A_OK) { /* Exit if the status is success */
                 if(bufferToFree != NULL) {
-                    kfree(bufferToFree);
+                    A_FREE(bufferToFree);
                     }
                    status = 1;
                     goto complete;
             }
             if(bufferToFree != NULL) {
-                   kfree(bufferToFree);
+                   A_FREE(bufferToFree);
             }
         } else {
             status = 0;
@@ -326,7 +326,7 @@ int PSSendOps(void *arg)
         }
     }
 #ifdef HCI_TRANSPORT_SDIO
-	if(BDADDR == false)
+	if(BDADDR == FALSE)
 		if(hdev->bdaddr[0] !=0x00 ||
 		   hdev->bdaddr[1] !=0x00 ||
 		   hdev->bdaddr[2] !=0x00 ||
@@ -360,26 +360,26 @@ int PSSendOps(void *arg)
         	status = 1;
         	goto complete;
     	}
-	len = min_t(size_t, firmware->size, MAX_BDADDR_FORMAT_LENGTH - 1);
-	memcpy(config_bdaddr, firmware->data, len);
+        len = (firmware->size > MAX_BDADDR_FORMAT_LENGTH)? MAX_BDADDR_FORMAT_LENGTH: firmware->size;
+	memcpy(config_bdaddr, firmware->data,len);
 	config_bdaddr[len] = '\0';
 	write_bdaddr(hdev,config_bdaddr,BDADDR_TYPE_STRING);
        	A_RELEASE_FIRMWARE(firmware);
 	}
 complete:
 #ifndef HCI_TRANSPORT_SDIO
-    AthEnableSyncCommandOp(false);
-    PSTagMode = false;
+    AthEnableSyncCommandOp(FALSE);    
+    PSTagMode = FALSE;
     wake_up_interruptible(&PsCompleteEvent);
 #endif /* HCI_TRANSPORT_SDIO */
     if(NULL != HciCmdList) {
         AthFreeCommandList(&HciCmdList,numCmds);
     }
     if(path) {
-        kfree(path);
+        A_FREE(path);
     }
     if(config_path) {
-        kfree(config_path);
+        A_FREE(config_path);
     }
     return status;
 }
@@ -389,23 +389,23 @@ complete:
  *  with a HCI Command Complete event.
  *  For HCI SDIO transport, this will be internally defined. 
  */
-int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
-                                           u8 *pHCICommand,
+A_STATUS SendHCICommandWaitCommandComplete(AR3K_CONFIG_INFO *pConfig,
+                                           A_UINT8          *pHCICommand,
                                            int              CmdLength,
-                                           u8 **ppEventBuffer,
-                                           u8 **ppBufferToFree)
+                                           A_UINT8          **ppEventBuffer,
+                                           A_UINT8          **ppBufferToFree)
 {
     if(CmdLength == 0) {
         return A_ERROR;
     }
     Hci_log("COM Write -->",pHCICommand,CmdLength);
-    PSAcked = false;
+    PSAcked = FALSE;
     if(PSHciWritepacket(pConfig,pHCICommand,CmdLength) == 0) {
         /* If the controller is not available, return Error */
         return A_ERROR;
     }
     //add_timer(&psCmdTimer);
-    wait_event_interruptible(HciEvent,(PSAcked == true));
+    wait_event_interruptible(HciEvent,(PSAcked == TRUE));
     if(NULL != HciEventpacket) {
         *ppEventBuffer = HciEventpacket;
         *ppBufferToFree = HciEventpacket;
@@ -415,25 +415,25 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
         return A_ERROR;
     }
 
-    return 0;
+    return A_OK;
 }
 #endif /* HCI_TRANSPORT_SDIO */
 
-int ReadPSEvent(u8* Data){
+A_STATUS ReadPSEvent(A_UCHAR* Data){
     AR_DEBUG_PRINTF(ATH_DEBUG_ERR,(" PS Event %x %x %x\n",Data[4],Data[5],Data[3]));
                                 
     if(Data[4] == 0xFC && Data[5] == 0x00)
     {
          switch(Data[3]){
              case 0x0B:
-                     return 0;
+                     return A_OK;
                  break;
                  case 0x0C:
                     /* Change Baudrate */
-                        return 0;
+                        return A_OK;    
                  break;  
                  case 0x04:
-                     return 0;
+                     return A_OK;
                  break;  
 		case 0x1E:
 			Rom_Version = Data[9];
@@ -445,7 +445,7 @@ int ReadPSEvent(u8* Data){
 			Build_Version = ((Build_Version << 8) |Data[12]);
 			Build_Version = ((Build_Version << 8) |Data[11]);
 			Build_Version = ((Build_Version << 8) |Data[10]);
-			return 0;
+			return A_OK;
 		break;
 
         
@@ -481,14 +481,14 @@ int str2ba(unsigned char *str_bdaddr,unsigned char *bdaddr)
 	return 0; 
 }
 
-int write_bdaddr(struct ar3k_config_info *pConfig,u8 *bdaddr,int type)
+A_STATUS write_bdaddr(AR3K_CONFIG_INFO *pConfig,A_UCHAR *bdaddr,int type)
 {
-	u8 bdaddr_cmd[] = { 0x0B, 0xFC, 0x0A, 0x01, 0x01, 
+	A_UCHAR bdaddr_cmd[] = { 0x0B, 0xFC, 0x0A, 0x01, 0x01, 
 							0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-    u8 *event;
-    u8 *bufferToFree = NULL;
-    int result = A_ERROR;
+    A_UINT8 *event;
+    A_UINT8 *bufferToFree = NULL;
+    A_STATUS result = A_ERROR;
 	int inc,outc;
 
 	if (type == BDADDR_TYPE_STRING)
@@ -499,51 +499,51 @@ int write_bdaddr(struct ar3k_config_info *pConfig,u8 *bdaddr,int type)
 			bdaddr_cmd[outc] = bdaddr[inc];
 	}
 
-    if(0 == SendHCICommandWaitCommandComplete(pConfig,bdaddr_cmd,
+    if(A_OK == SendHCICommandWaitCommandComplete(pConfig,bdaddr_cmd,
 												sizeof(bdaddr_cmd),
 												&event,&bufferToFree)) {
 
         if(event[4] == 0xFC && event[5] == 0x00){
                if(event[3] == 0x0B){
-                result = 0;
+                result = A_OK;
             }
         }
 
     }
     if(bufferToFree != NULL) {
-        kfree(bufferToFree);
+        A_FREE(bufferToFree);
    }
     return result;
 
 }
-int ReadVersionInfo(struct ar3k_config_info *pConfig)
+A_STATUS ReadVersionInfo(AR3K_CONFIG_INFO *pConfig)
 {
-    u8 hciCommand[] =  {0x1E,0xfc,0x00};
-    u8 *event;
-    u8 *bufferToFree = NULL;
-    int result = A_ERROR;
-    if(0 == SendHCICommandWaitCommandComplete(pConfig,hciCommand,sizeof(hciCommand),&event,&bufferToFree)) {
+    A_UINT8   hciCommand[] =  {0x1E,0xfc,0x00};
+    A_UINT8 *event;
+    A_UINT8 *bufferToFree = NULL;
+    A_STATUS result = A_ERROR;
+    if(A_OK == SendHCICommandWaitCommandComplete(pConfig,hciCommand,sizeof(hciCommand),&event,&bufferToFree)) {
 	result = ReadPSEvent(event);
 
     }
     if(bufferToFree != NULL) {
-        kfree(bufferToFree);
+        A_FREE(bufferToFree);
    }
     return result;
 }
-int getDeviceType(struct ar3k_config_info *pConfig, u32 *code)
+A_STATUS getDeviceType(AR3K_CONFIG_INFO *pConfig, A_UINT32 * code)
 {
-    u8 hciCommand[] =  {0x05,0xfc,0x05,0x00,0x00,0x00,0x00,0x04};
-    u8 *event;
-    u8 *bufferToFree = NULL;
-    u32 reg;
-    int result = A_ERROR;
+    A_UINT8   hciCommand[] =  {0x05,0xfc,0x05,0x00,0x00,0x00,0x00,0x04};
+    A_UINT8 *event;
+    A_UINT8 *bufferToFree = NULL;
+    A_UINT32 reg;
+    A_STATUS result = A_ERROR;
     *code = 0;
-    hciCommand[3] = (u8)(FPGA_REGISTER & 0xFF);
-    hciCommand[4] = (u8)((FPGA_REGISTER >> 8) & 0xFF);
-    hciCommand[5] = (u8)((FPGA_REGISTER >> 16) & 0xFF);
-    hciCommand[6] = (u8)((FPGA_REGISTER >> 24) & 0xFF);
-    if(0 == SendHCICommandWaitCommandComplete(pConfig,hciCommand,sizeof(hciCommand),&event,&bufferToFree)) {
+    hciCommand[3] = (A_UINT8)(FPGA_REGISTER & 0xFF);
+    hciCommand[4] = (A_UINT8)((FPGA_REGISTER >> 8) & 0xFF);
+    hciCommand[5] = (A_UINT8)((FPGA_REGISTER >> 16) & 0xFF);
+    hciCommand[6] = (A_UINT8)((FPGA_REGISTER >> 24) & 0xFF); 
+    if(A_OK == SendHCICommandWaitCommandComplete(pConfig,hciCommand,sizeof(hciCommand),&event,&bufferToFree)) {
 
         if(event[4] == 0xFC && event[5] == 0x00){
                switch(event[3]){
@@ -553,7 +553,7 @@ int getDeviceType(struct ar3k_config_info *pConfig, u32 *code)
                 reg = ((reg << 8) |event[7]);
                 reg = ((reg << 8) |event[6]);
                 *code = reg;
-                result = 0;
+                result = A_OK;
 
                 break;
                 case 0x06:
@@ -564,7 +564,7 @@ int getDeviceType(struct ar3k_config_info *pConfig, u32 *code)
 
     }
     if(bufferToFree != NULL) {
-        kfree(bufferToFree);
+        A_FREE(bufferToFree);
    }
     return result;
 }

@@ -287,7 +287,7 @@ static void p54spi_power_on(struct p54s_priv *priv)
 	enable_irq(gpio_to_irq(p54spi_gpio_irq));
 
 	/*
-	 * need to wait a while before device can be accessed, the length
+	 * need to wait a while before device can be accessed, the lenght
 	 * is just a guess
 	 */
 	msleep(10);
@@ -649,7 +649,8 @@ static int __devinit p54spi_probe(struct spi_device *spi)
 		goto err_free_common;
 	}
 
-	irq_set_irq_type(gpio_to_irq(p54spi_gpio_irq), IRQ_TYPE_EDGE_RISING);
+	set_irq_type(gpio_to_irq(p54spi_gpio_irq),
+		     IRQ_TYPE_EDGE_RISING);
 
 	disable_irq(gpio_to_irq(p54spi_gpio_irq));
 

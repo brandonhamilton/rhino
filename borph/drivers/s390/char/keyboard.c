@@ -455,11 +455,12 @@ do_kdgkb_ioctl(struct kbd_data *kbd, struct kbsentry __user *u_kbs,
 	return 0;
 }
 
-int kbd_ioctl(struct kbd_data *kbd, unsigned int cmd, unsigned long arg)
+int
+kbd_ioctl(struct kbd_data *kbd, struct file *file,
+	  unsigned int cmd, unsigned long arg)
 {
 	void __user *argp;
-	unsigned int ct;
-	int perm;
+	int ct, perm;
 
 	argp = (void __user *)arg;
 

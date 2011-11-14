@@ -1,8 +1,6 @@
 #ifndef __LINUX_BRIDGE_EBT_AMONG_H
 #define __LINUX_BRIDGE_EBT_AMONG_H
 
-#include <linux/types.h>
-
 #define EBT_AMONG_DST 0x01
 #define EBT_AMONG_SRC 0x02
 
@@ -32,7 +30,7 @@
  */
 
 struct ebt_mac_wormhash_tuple {
-	__u32 cmp[2];
+	uint32_t cmp[2];
 	__be32 ip;
 };
 

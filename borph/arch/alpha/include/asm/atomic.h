@@ -176,15 +176,15 @@ static __inline__ long atomic64_sub_return(long i, atomic64_t * v)
 #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
 
 /**
- * __atomic_add_unless - add unless the number is a given value
+ * atomic_add_unless - add unless the number is a given value
  * @v: pointer of type atomic_t
  * @a: the amount to add to v...
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
-static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -196,9 +196,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != (u);
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 /**
  * atomic64_add_unless - add unless the number is a given value
@@ -207,7 +208,7 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
 static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 {
@@ -255,4 +256,5 @@ static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 #define smp_mb__before_atomic_inc()	smp_mb()
 #define smp_mb__after_atomic_inc()	smp_mb()
 
+#include <asm-generic/atomic-long.h>
 #endif /* _ALPHA_ATOMIC_H */

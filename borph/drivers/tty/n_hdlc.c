@@ -97,6 +97,7 @@
 #include <linux/slab.h>
 #include <linux/tty.h>
 #include <linux/errno.h>
+#include <linux/smp_lock.h>
 #include <linux/string.h>	/* used in new tty drivers */
 #include <linux/signal.h>	/* used in new tty drivers */
 #include <linux/if.h>
@@ -580,9 +581,8 @@ static ssize_t n_hdlc_tty_read(struct tty_struct *tty, struct file *file,
 			   __u8 __user *buf, size_t nr)
 {
 	struct n_hdlc *n_hdlc = tty2n_hdlc(tty);
-	int ret = 0;
+	int ret;
 	struct n_hdlc_buf *rbuf;
-	DECLARE_WAITQUEUE(wait, current);
 
 	if (debuglevel >= DEBUG_LEVEL_INFO)	
 		printk("%s(%d)n_hdlc_tty_read() called\n",__FILE__,__LINE__);
@@ -598,55 +598,57 @@ static ssize_t n_hdlc_tty_read(struct tty_struct *tty, struct file *file,
 		return -EFAULT;
 	}
 
-	add_wait_queue(&tty->read_wait, &wait);
+	tty_lock();
 
 	for (;;) {
 		if (test_bit(TTY_OTHER_CLOSED, &tty->flags)) {
-			ret = -EIO;
-			break;
+			tty_unlock();
+			return -EIO;
 		}
-		if (tty_hung_up_p(file))
-			break;
 
-		set_current_state(TASK_INTERRUPTIBLE);
+		n_hdlc = tty2n_hdlc (tty);
+		if (!n_hdlc || n_hdlc->magic != HDLC_MAGIC ||
+			 tty != n_hdlc->tty) {
+			tty_unlock();
+			return 0;
+		}
 
 		rbuf = n_hdlc_buf_get(&n_hdlc->rx_buf_list);
-		if (rbuf) {
-			if (rbuf->count > nr) {
-				/* too large for caller's buffer */
-				ret = -EOVERFLOW;
-			} else {
-				if (copy_to_user(buf, rbuf->buf, rbuf->count))
-					ret = -EFAULT;
-				else
-					ret = rbuf->count;
-			}
-
-			if (n_hdlc->rx_free_buf_list.count >
-			    DEFAULT_RX_BUF_COUNT)
-				kfree(rbuf);
-			else
-				n_hdlc_buf_put(&n_hdlc->rx_free_buf_list, rbuf);
+		if (rbuf)
 			break;
-		}
 			
 		/* no data */
 		if (file->f_flags & O_NONBLOCK) {
-			ret = -EAGAIN;
-			break;
+			tty_unlock();
+			return -EAGAIN;
 		}
-
-		schedule();
-
+			
+		interruptible_sleep_on (&tty->read_wait);
 		if (signal_pending(current)) {
-			ret = -EINTR;
-			break;
+			tty_unlock();
+			return -EINTR;
 		}
 	}
-
-	remove_wait_queue(&tty->read_wait, &wait);
-	__set_current_state(TASK_RUNNING);
-
+		
+	if (rbuf->count > nr)
+		/* frame too large for caller's buffer (discard frame) */
+		ret = -EOVERFLOW;
+	else {
+		/* Copy the data to the caller's buffer */
+		if (copy_to_user(buf, rbuf->buf, rbuf->count))
+			ret = -EFAULT;
+		else
+			ret = rbuf->count;
+	}
+	
+	/* return HDLC buffer to free list unless the free list */
+	/* count has exceeded the default value, in which case the */
+	/* buffer is freed back to the OS to conserve memory */
+	if (n_hdlc->rx_free_buf_list.count > DEFAULT_RX_BUF_COUNT)
+		kfree(rbuf);
+	else	
+		n_hdlc_buf_put(&n_hdlc->rx_free_buf_list,rbuf);
+	tty_unlock();
 	return ret;
 	
 }	/* end of n_hdlc_tty_read() */
@@ -689,15 +691,14 @@ static ssize_t n_hdlc_tty_write(struct tty_struct *tty, struct file *file,
 		count = maxframe;
 	}
 	
+	tty_lock();
+
 	add_wait_queue(&tty->write_wait, &wait);
-
-	for (;;) {
-		set_current_state(TASK_INTERRUPTIBLE);
+	set_current_state(TASK_INTERRUPTIBLE);
 	
-		tbuf = n_hdlc_buf_get(&n_hdlc->tx_free_buf_list);
-		if (tbuf)
-			break;
-
+	/* Allocate transmit buffer */
+	/* sleep until transmit buffer available */		
+	while (!(tbuf = n_hdlc_buf_get(&n_hdlc->tx_free_buf_list))) {
 		if (file->f_flags & O_NONBLOCK) {
 			error = -EAGAIN;
 			break;
@@ -718,7 +719,7 @@ static ssize_t n_hdlc_tty_write(struct tty_struct *tty, struct file *file,
 		}
 	}
 
-	__set_current_state(TASK_RUNNING);
+	set_current_state(TASK_RUNNING);
 	remove_wait_queue(&tty->write_wait, &wait);
 
 	if (!error) {		
@@ -730,7 +731,7 @@ static ssize_t n_hdlc_tty_write(struct tty_struct *tty, struct file *file,
 		n_hdlc_buf_put(&n_hdlc->tx_buf_list,tbuf);
 		n_hdlc_send_frames(n_hdlc,tty);
 	}
-
+	tty_unlock();
 	return error;
 	
 }	/* end of n_hdlc_tty_write() */

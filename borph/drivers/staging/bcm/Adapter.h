@@ -7,6 +7,53 @@
 #define MAX_FRAGMENTEDIP_CLASSIFICATION_ENTRIES 256
 #include "Debug.h"
 
+typedef struct _LIST_ENTRY{
+	struct _LIST_ENTRY 	*next;
+	struct _LIST_ENTRY 	*prev;
+} LIST_ENTRY, *PLIST_ENTRY;
+
+typedef struct _BCM_LIST_ENTRY {
+
+    LIST_ENTRY  		Link;
+
+} BCM_LIST_ENTRY, *PBCM_LIST_ENTRY;
+
+typedef enum _RCB_STATUS
+{
+	DRIVER_PROCESSED=1,
+	APPLICATION_PROCESSED
+} RCB_STATUS, *PRCB_STATUS;
+
+#define fFILLED 1
+#define fEMPTY 0
+
+struct _BCM_CB
+{
+	// The network packet that this RCB is receiving
+	PVOID      			pv_packet;
+	// Describes the length of the packet .
+	UINT                ui_packet_length;
+	// Pointer to the first buffer in the packet (only one buffer for Rx)
+	PUCHAR				buffer;
+	atomic_t	        status;
+	UINT	            filled;
+} __attribute__((packed));
+typedef struct _BCM_CB BCM_CB,*PBCM_CB;
+
+typedef BCM_CB BCM_RCB, *PBCM_RCB;
+typedef BCM_CB BCM_TCB, *PBCM_TCB;
+
+/* This is to be stored in the "pvOsDepData" of ADAPTER */
+typedef struct LINUX_DEP_DATA
+{
+	struct net_device		*virtualdev;	/* Our Interface (veth0) */
+	struct net_device		*actualdev;	/* True Interface (eth0) */
+	struct net_device_stats netstats;	/* Net statistics */
+	struct fasync_struct	*async_queue;	/* For asynchronus notification */
+
+} LINUX_DEP_DATA, *PLINUX_DEP_DATA;
+
+
 struct _LEADER
 {
 	USHORT 	Vcid;
@@ -382,28 +429,26 @@ Driver adapter data structure
 struct _MINI_ADAPTER
 {
 	struct _MINI_ADAPTER *next;
-	struct net_device	*dev;
-	u32			msg_enable;
-
+	PVOID			    pvOsDepData;
 	CHAR                *caDsxReqResp;
-	atomic_t		ApplicationRunning;
+	atomic_t			ApplicationRunning;
 	volatile INT		CtrlQueueLen;
-	atomic_t            	AppCtrlQueueLen;
-	BOOLEAN             	AppCtrlQueueOverFlow;
-	atomic_t		CurrentApplicationCount;
-	atomic_t 		RegisteredApplicationCount;
-	BOOLEAN		  	LinkUpStatus;
-	BOOLEAN		    	TimerActive;
-	u32			StatisticsPointer;
+	atomic_t            AppCtrlQueueLen;
+	BOOLEAN             AppCtrlQueueOverFlow;
+	atomic_t			CurrentApplicationCount;
+	atomic_t 			RegisteredApplicationCount;
+	BOOLEAN			    TimerActive;
+	ULONG				StatisticsPointer;
 	struct sk_buff		*RxControlHead;
 	struct sk_buff		*RxControlTail;
-
+//	spinlock_t			RxControlQueuelock;
 	struct semaphore	RxAppControlQueuelock;
 	struct semaphore	fw_download_sema;
 
 	PPER_TARANG_DATA    pTarangs;
 	spinlock_t			control_queue_lock;
 	wait_queue_head_t	process_read_wait_queue;
+	ULONG		    	bcm_jiffies;	/* Store Jiffies value */
 
 	// the pointer to the first packet we have queued in send
 	// deserialized miniport support variables
@@ -412,16 +457,25 @@ struct _MINI_ADAPTER
 
 	// this to keep track of the Tx and Rx MailBox Registers.
 	atomic_t		    CurrNumFreeTxDesc;
-	// to keep track the no of byte received
+	// to keep track the no of byte recieved
+	atomic_t			RxRollOverCount;
 	USHORT				PrevNumRecvDescs;
 	USHORT				CurrNumRecvDescs;
+	atomic_t			GoodRxByteCount;
+	atomic_t			GoodRxPktCount;
+	atomic_t			BadRxByteCount;
+	atomic_t			RxPacketDroppedCount;
+	atomic_t			GoodTxByteCount;
+	atomic_t			TxTotalPacketCount;
+	atomic_t			TxDroppedPacketCount;
+	ULONG			   	LinkUpStatus;
+	BOOLEAN			    TransferMode;
 	UINT				u32TotalDSD;
 	PacketInfo		    PackInfo[NO_OF_QUEUES];
 	S_CLASSIFIER_RULE	astClassifierTable[MAX_CLASSIFIERS];
-	BOOLEAN			    TransferMode;
 
 	/*************** qos ******************/
-	BOOLEAN			    bETHCSEnabled;
+	UINT				bETHCSEnabled;
 
 	ULONG			    BEBucketSize;
 	ULONG			    rtPSBucketSize;
@@ -429,6 +483,7 @@ struct _MINI_ADAPTER
 	BOOLEAN			    AutoLinkUp;
 	BOOLEAN			    AutoSyncup;
 
+	struct net_device	*dev;
 	int				major;
 	int				minor;
 	wait_queue_head_t 	tx_packet_wait_queue;
@@ -436,6 +491,8 @@ struct _MINI_ADAPTER
 	atomic_t			process_waiting;
 	BOOLEAN 			fw_download_done;
 
+	unsigned int		ctrlpkt_present;
+	BOOLEAN 			packets_given_to_all;
 	char 				*txctlpacket[MAX_CNTRL_PKTS];
 	atomic_t			cntrlpktCnt ;
 	atomic_t			index_app_read_cntrlpkt;
@@ -445,30 +502,34 @@ struct _MINI_ADAPTER
 	struct semaphore 	rdmwrmsync;
 
 	STTARGETDSXBUFFER	astTargetDsxBuffer[MAX_TARGET_DSX_BUFFERS];
-	ULONG			ulFreeTargetBufferCnt;
+	ULONG				ulFreeTargetBufferCnt;
 	ULONG              	ulCurrentTargetBuffer;
 	ULONG              	ulTotalTargetBuffersAvailable;
-
+	unsigned int		timeout;
+	int 				irq;
 	unsigned long 		chip_id;
-
+	unsigned int		bFlashBoot;
+	unsigned int 		if_up;
+//	spinlock_t			sleeper_lock;
+	atomic_t			rdm_wrm_access;
+	atomic_t			tx_rx_access;
 	wait_queue_head_t 	lowpower_mode_wait_queue;
-
-	BOOLEAN			bFlashBoot;
-	BOOLEAN			bBinDownloaded;
-	BOOLEAN			bCfgDownloaded;
-	BOOLEAN			bSyncUpRequestSent;
-	USHORT			usBestEffortQueueIndex;
-
+	atomic_t			bAbortedByHost;
+	BOOLEAN				bBinDownloaded;
+	BOOLEAN				bCfgDownloaded;
+	USHORT				usBestEffortQueueIndex;
+	BOOLEAN				bSyncUpRequestSent;
+//	struct semaphore 	data_packet_queue_lock;
 	wait_queue_head_t 	ioctl_fw_dnld_wait_queue;
 	BOOLEAN				waiting_to_fw_download_done;
 	pid_t				fw_download_process_pid;
 	PSTARGETPARAMS		pstargetparams;
 	BOOLEAN				device_removed;
 	BOOLEAN				DeviceAccess;
-	BOOLEAN				bIsAutoCorrectEnabled;
+	INT					DDRSetting;
 	BOOLEAN				bDDRInitDone;
-	INT				DDRSetting;
 	ULONG				ulPowerSaveMode;
+	BOOLEAN				bIsAutoCorrectEnabled;
 	spinlock_t			txtransmitlock;
 	B_UINT8				txtransmit_running;
 	/* Thread for control packet handling */
@@ -506,13 +567,13 @@ struct _MINI_ADAPTER
 	unsigned int	usIdleModePattern;
 	//BOOLEAN			bTriedToWakeUpFromShutdown;
 	BOOLEAN			bLinkDownRequested;
-
+	unsigned int	check_for_hang;
 	int 			downloadDDR;
 	PHS_DEVICE_EXTENSION stBCMPhsContext;
 	S_HDR_SUPRESSION_CONTEXTINFO	stPhsTxContextInfo;
 	uint8_t			ucaPHSPktRestoreBuf[2048];
 	uint8_t			bPHSEnabled;
-	BOOLEAN			AutoFirmDld;
+	int 			AutoFirmDld;
 	BOOLEAN         bMipsConfig;
 	BOOLEAN         bDPLLConfig;
 	UINT32			aTxPktSizeHist[MIBS_MAX_HIST_ENTRIES];
@@ -527,7 +588,7 @@ struct _MINI_ADAPTER
 	BOOLEAN			bStatusWrite;
 	UINT			uiNVMDSDSize;
 	UINT			uiVendorExtnFlag;
-	 //it will always represent chosen DSD at any point of time.
+	 //it will always represent choosed DSD at any point of time.
 	 // Generally it is Active DSD but in case of NVM RD/WR it might be different.
 	UINT			ulFlashCalStart;
 	ULONG                   ulFlashControlSectionStart;
@@ -538,18 +599,19 @@ struct _MINI_ADAPTER
 
 
 	struct semaphore	NVMRdmWrmLock;
-
+	BOOLEAN			bNetworkInterfaceRegistered;
+	BOOLEAN			bNetdeviceNotifierRegistered;
 	struct device *pstCreatedClassDevice;
-
+	BOOLEAN			bUsbClassDriverRegistered;
 //	BOOLEAN				InterfaceUpStatus;
 	PFLASH2X_CS_INFO psFlash2xCSInfo;
 	PFLASH_CS_INFO psFlashCSInfo ;
 	PFLASH2X_VENDORSPECIFIC_INFO psFlash2xVendorInfo;
 	UINT uiFlashBaseAdd; //Flash start address
-	UINT uiActiveISOOffset; //Active ISO offset chosen before f/w download
+	UINT uiActiveISOOffset; //Active ISO offset choosen before f/w download
 	FLASH2X_SECTION_VAL eActiveISO; //Active ISO section val
-	FLASH2X_SECTION_VAL eActiveDSD;	//Active DSD val chosen before f/w download
-	UINT uiActiveDSDOffsetAtFwDld;  //For accessing Active DSD chosen before f/w download
+	FLASH2X_SECTION_VAL eActiveDSD;	//Active DSD val choosen before f/w download
+	UINT uiActiveDSDOffsetAtFwDld;  //For accessing Active DSD choosen before f/w download
 	UINT uiFlashLayoutMajorVersion ;
 	UINT uiFlashLayoutMinorVersion;
 	BOOLEAN bAllDSDWriteAllow ;
@@ -568,13 +630,17 @@ struct _MINI_ADAPTER
 	struct semaphore	LowPowerModeSync;
 	ULONG	liDrainCalculated;
 	UINT gpioBitMap;
-
     S_BCM_DEBUG_STATE stDebugState;
 
 };
 typedef struct _MINI_ADAPTER MINI_ADAPTER, *PMINI_ADAPTER;
 
-#define GET_BCM_ADAPTER(net_dev)	netdev_priv(net_dev)
+
+typedef struct _DEVICE_EXTENSION
+{
+	PMINI_ADAPTER pAdapt;
+}DEVICE_EXTENSION,*PDEVICE_EXTENSION;
+
 
 struct _ETH_HEADER_STRUC {
     UCHAR       au8DestinationAddress[6];
@@ -601,8 +667,8 @@ typedef LINK_REQUEST CONTROL_MESSAGE;
 
 typedef struct _DDR_SETTING
 {
-	UINT ulRegAddress;
-	UINT ulRegValue;
+	ULONG ulRegAddress;
+	ULONG ulRegValue;
 }DDR_SETTING, *PDDR_SETTING;
 typedef DDR_SETTING DDR_SET_NODE, *PDDR_SET_NODE;
 INT

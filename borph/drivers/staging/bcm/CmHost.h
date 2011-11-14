@@ -150,6 +150,8 @@ typedef struct stLocalSFChangeIndicationAlt{
 
 ULONG StoreCmControlResponseMessage(PMINI_ADAPTER Adapter,PVOID pvBuffer,UINT *puBufferLength);
 
+ULONG GetNextTargetBufferLocation(PMINI_ADAPTER Adapter,B_UINT16 tid);
+
 INT AllocAdapterDsxBuffer(PMINI_ADAPTER Adapter);
 
 INT FreeAdapterDsxBuffer(PMINI_ADAPTER Adapter);
@@ -157,6 +159,7 @@ ULONG SetUpTargetDsxBuffers(PMINI_ADAPTER Adapter);
 
 BOOLEAN CmControlResponseMessage(PMINI_ADAPTER Adapter,PVOID pvBuffer);
 
+VOID deleteSFBySfid(PMINI_ADAPTER Adapter, UINT uiSearchRuleIndex);
 
 #pragma pack (pop)
 

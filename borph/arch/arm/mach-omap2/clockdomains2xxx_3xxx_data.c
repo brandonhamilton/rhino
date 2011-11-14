@@ -174,7 +174,7 @@ static struct clkdm_dep core_24xx_wkdeps[] = {
 
 /* 2430-specific possible wakeup dependencies */
 
-#ifdef CONFIG_SOC_OMAP2430
+#ifdef CONFIG_ARCH_OMAP2430
 
 /* 2430 PM_WKDEP_MDM: CORE, MPU, WKUP */
 static struct clkdm_dep mdm_2430_wkdeps[] = {
@@ -197,7 +197,7 @@ static struct clkdm_dep mdm_2430_wkdeps[] = {
 	{ NULL },
 };
 
-#endif /* CONFIG_SOC_OMAP2430 */
+#endif /* CONFIG_ARCH_OMAP2430 */
 
 
 /* OMAP3-specific possible dependencies */
@@ -453,7 +453,7 @@ static struct clockdomain cm_clkdm = {
  * 2420-only clockdomains
  */
 
-#if defined(CONFIG_SOC_OMAP2420)
+#if defined(CONFIG_ARCH_OMAP2420)
 
 static struct clockdomain mpu_2420_clkdm = {
 	.name		= "mpu_clkdm",
@@ -517,14 +517,14 @@ static struct clockdomain dss_2420_clkdm = {
 	.omap_chip	= OMAP_CHIP_INIT(CHIP_IS_OMAP2420),
 };
 
-#endif   /* CONFIG_SOC_OMAP2420 */
+#endif   /* CONFIG_ARCH_OMAP2420 */
 
 
 /*
  * 2430-only clockdomains
  */
 
-#if defined(CONFIG_SOC_OMAP2430)
+#if defined(CONFIG_ARCH_OMAP2430)
 
 static struct clockdomain mpu_2430_clkdm = {
 	.name		= "mpu_clkdm",
@@ -603,7 +603,7 @@ static struct clockdomain dss_2430_clkdm = {
 	.omap_chip	= OMAP_CHIP_INIT(CHIP_IS_OMAP2430),
 };
 
-#endif    /* CONFIG_SOC_OMAP2430 */
+#endif    /* CONFIG_ARCH_OMAP2430 */
 
 
 /*
@@ -809,12 +809,14 @@ static struct clkdm_autodep clkdm_autodeps[] = {
 	}
 };
 
+#include "clockdomains81xx.h"
+
 static struct clockdomain *clockdomains_omap2[] __initdata = {
 	&wkup_clkdm,
 	&cm_clkdm,
 	&prm_clkdm,
 
-#ifdef CONFIG_SOC_OMAP2420
+#ifdef CONFIG_ARCH_OMAP2420
 	&mpu_2420_clkdm,
 	&iva1_2420_clkdm,
 	&dsp_2420_clkdm,
@@ -824,7 +826,7 @@ static struct clockdomain *clockdomains_omap2[] __initdata = {
 	&dss_2420_clkdm,
 #endif
 
-#ifdef CONFIG_SOC_OMAP2430
+#ifdef CONFIG_ARCH_OMAP2430
 	&mpu_2430_clkdm,
 	&mdm_clkdm,
 	&dsp_2430_clkdm,
@@ -854,15 +856,36 @@ static struct clockdomain *clockdomains_omap2[] __initdata = {
 	&dpll4_clkdm,
 	&dpll5_clkdm,
 #endif
+
+#ifdef CONFIG_ARCH_TI81XX
+	&alwon_mpu_816x_clkdm,
+	&alwon_l3_slow_81xx_clkdm,
+	&alwon_ethernet_81xx_clkdm,
+	&mmu_81xx_clkdm,
+	&mmu_cfg_81xx_clkdm,
+	&gem_814x_clkdm,
+	&ivahd_814x_clkdm,
+	&isp_814x_clkdm,
+	&sgx_814x_clkdm,
+	&hdvpss_814x_clkdm,
+	&alwon2_l3_med_814x_clkdm,
+	&alwon2_pcie_814x_clkdm,
+	&alwon2_usb_814x_clkdm,
+	&active_gem_816x_clkdm,
+	&ivahd0_816x_clkdm,
+	&ivahd1_816x_clkdm,
+	&ivahd2_816x_clkdm,
+	&sgx_816x_clkdm,
+	&default_l3_med_816x_clkdm,
+	&default_ducati_816x_clkdm,
+	&default_pcie_816x_clkdm,
+	&default_usb_816x_clkdm,
+#endif
+
 	NULL,
 };
 
-void __init omap2xxx_clockdomains_init(void)
+void __init omap2_clockdomains_init(void)
 {
-	clkdm_init(clockdomains_omap2, clkdm_autodeps, &omap2_clkdm_operations);
-}
-
-void __init omap3xxx_clockdomains_init(void)
-{
-	clkdm_init(clockdomains_omap2, clkdm_autodeps, &omap3_clkdm_operations);
+	clkdm_init(clockdomains_omap2, clkdm_autodeps);
 }

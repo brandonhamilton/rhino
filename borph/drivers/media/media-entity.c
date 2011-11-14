@@ -4,7 +4,7 @@
  * Copyright (C) 2010 Nokia Corporation
  *
  * Contacts: Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *	     Sakari Ailus <sakari.ailus@iki.fi>
+ *	     Sakari Ailus <sakari.ailus@maxwell.research.nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -28,7 +28,7 @@
 /**
  * media_entity_init - Initialize a media entity
  *
- * @num_pads: Total number of sink and source pads.
+ * @num_pads: Total number of input and output pads.
  * @extra_links: Initial estimate of the number of extra links.
  * @pads: Array of 'num_pads' pads.
  *
@@ -173,7 +173,7 @@ media_entity_graph_walk_next(struct media_entity_graph *graph)
 		struct media_entity *next;
 
 		/* The link is not enabled so we do not follow. */
-		if (!(link->flags & MEDIA_LNK_FL_ENABLED)) {
+		if (!(link->flags & MEDIA_LINK_FLAG_ENABLED)) {
 			link_top(graph)++;
 			continue;
 		}
@@ -378,6 +378,7 @@ EXPORT_SYMBOL_GPL(media_entity_create_link);
 
 static int __media_entity_setup_link_notify(struct media_link *link, u32 flags)
 {
+	const u32 mask = MEDIA_LINK_FLAG_ENABLED;
 	int ret;
 
 	/* Notify both entities. */
@@ -394,7 +395,7 @@ static int __media_entity_setup_link_notify(struct media_link *link, u32 flags)
 		return ret;
 	}
 
-	link->flags = flags;
+	link->flags = (link->flags & ~mask) | (flags & mask);
 	link->reverse->flags = link->flags;
 
 	return 0;
@@ -416,7 +417,6 @@ static int __media_entity_setup_link_notify(struct media_link *link, u32 flags)
  */
 int __media_entity_setup_link(struct media_link *link, u32 flags)
 {
-	const u32 mask = MEDIA_LNK_FL_ENABLED;
 	struct media_device *mdev;
 	struct media_entity *source, *sink;
 	int ret = -EBUSY;
@@ -424,11 +424,7 @@ int __media_entity_setup_link(struct media_link *link, u32 flags)
 	if (link == NULL)
 		return -EINVAL;
 
-	/* The non-modifiable link flags must not be modified. */
-	if ((link->flags & ~mask) != (flags & ~mask))
-		return -EINVAL;
-
-	if (link->flags & MEDIA_LNK_FL_IMMUTABLE)
+	if (link->flags & MEDIA_LINK_FLAG_IMMUTABLE)
 		return link->flags == flags ? 0 : -EINVAL;
 
 	if (link->flags == flags)
@@ -437,15 +433,15 @@ int __media_entity_setup_link(struct media_link *link, u32 flags)
 	source = link->source->entity;
 	sink = link->sink->entity;
 
-	if (!(link->flags & MEDIA_LNK_FL_DYNAMIC) &&
+	if (!(link->flags & MEDIA_LINK_FLAG_DYNAMIC) &&
 	    (source->stream_count || sink->stream_count))
 		return -EBUSY;
 
 	mdev = source->parent;
 
-	if ((flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify) {
+	if ((flags & MEDIA_LINK_FLAG_ENABLED) && mdev->link_notify) {
 		ret = mdev->link_notify(link->source, link->sink,
-					MEDIA_LNK_FL_ENABLED);
+					MEDIA_LINK_FLAG_ENABLED);
 		if (ret < 0)
 			return ret;
 	}
@@ -454,13 +450,13 @@ int __media_entity_setup_link(struct media_link *link, u32 flags)
 	if (ret < 0)
 		goto err;
 
-	if (!(flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify)
+	if (!(flags & MEDIA_LINK_FLAG_ENABLED) && mdev->link_notify)
 		mdev->link_notify(link->source, link->sink, 0);
 
 	return 0;
 
 err:
-	if ((flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify)
+	if ((flags & MEDIA_LINK_FLAG_ENABLED) && mdev->link_notify)
 		mdev->link_notify(link->source, link->sink, 0);
 
 	return ret;
@@ -524,7 +520,7 @@ struct media_pad *media_entity_remote_source(struct media_pad *pad)
 	for (i = 0; i < pad->entity->num_links; i++) {
 		struct media_link *link = &pad->entity->links[i];
 
-		if (!(link->flags & MEDIA_LNK_FL_ENABLED))
+		if (!(link->flags & MEDIA_LINK_FLAG_ENABLED))
 			continue;
 
 		if (link->source == pad)

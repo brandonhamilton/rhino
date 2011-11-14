@@ -185,6 +185,14 @@ static struct sa1111_dev_info sa1111_devices[] = {
 	},
 };
 
+void __init sa1111_adjust_zones(unsigned long *size, unsigned long *holes)
+{
+	unsigned int sz = SZ_1M >> PAGE_SHIFT;
+
+	size[1] = size[0] - sz;
+	size[0] = sz;
+}
+
 /*
  * SA1111 interrupt support.  Since clearing an IRQ while there are
  * active IRQs causes the interrupt output to pulse, the upper levels
@@ -194,7 +202,7 @@ static void
 sa1111_irq_handler(unsigned int irq, struct irq_desc *desc)
 {
 	unsigned int stat0, stat1, i;
-	struct sa1111 *sachip = irq_get_handler_data(irq);
+	struct sa1111 *sachip = get_irq_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
 
 	stat0 = sa1111_readl(mapbase + SA1111_INTSTATCLR0);
@@ -202,7 +210,7 @@ sa1111_irq_handler(unsigned int irq, struct irq_desc *desc)
 
 	sa1111_writel(stat0, mapbase + SA1111_INTSTATCLR0);
 
-	desc->irq_data.chip->irq_ack(&desc->irq_data);
+	desc->chip->ack(irq);
 
 	sa1111_writel(stat1, mapbase + SA1111_INTSTATCLR1);
 
@@ -220,35 +228,35 @@ sa1111_irq_handler(unsigned int irq, struct irq_desc *desc)
 			generic_handle_irq(i + sachip->irq_base);
 
 	/* For level-based interrupts */
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 #define SA1111_IRQMASK_LO(x)	(1 << (x - sachip->irq_base))
 #define SA1111_IRQMASK_HI(x)	(1 << (x - sachip->irq_base - 32))
 
-static void sa1111_ack_irq(struct irq_data *d)
+static void sa1111_ack_irq(unsigned int irq)
 {
 }
 
-static void sa1111_mask_lowirq(struct irq_data *d)
+static void sa1111_mask_lowirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
 	unsigned long ie0;
 
 	ie0 = sa1111_readl(mapbase + SA1111_INTEN0);
-	ie0 &= ~SA1111_IRQMASK_LO(d->irq);
+	ie0 &= ~SA1111_IRQMASK_LO(irq);
 	writel(ie0, mapbase + SA1111_INTEN0);
 }
 
-static void sa1111_unmask_lowirq(struct irq_data *d)
+static void sa1111_unmask_lowirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
 	unsigned long ie0;
 
 	ie0 = sa1111_readl(mapbase + SA1111_INTEN0);
-	ie0 |= SA1111_IRQMASK_LO(d->irq);
+	ie0 |= SA1111_IRQMASK_LO(irq);
 	sa1111_writel(ie0, mapbase + SA1111_INTEN0);
 }
 
@@ -259,11 +267,11 @@ static void sa1111_unmask_lowirq(struct irq_data *d)
  * be triggered.  In fact, its very difficult, if not impossible to get
  * INTSET to re-trigger the interrupt.
  */
-static int sa1111_retrigger_lowirq(struct irq_data *d)
+static int sa1111_retrigger_lowirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_LO(d->irq);
+	unsigned int mask = SA1111_IRQMASK_LO(irq);
 	unsigned long ip0;
 	int i;
 
@@ -271,21 +279,21 @@ static int sa1111_retrigger_lowirq(struct irq_data *d)
 	for (i = 0; i < 8; i++) {
 		sa1111_writel(ip0 ^ mask, mapbase + SA1111_INTPOL0);
 		sa1111_writel(ip0, mapbase + SA1111_INTPOL0);
-		if (sa1111_readl(mapbase + SA1111_INTSTATCLR0) & mask)
+		if (sa1111_readl(mapbase + SA1111_INTSTATCLR1) & mask)
 			break;
 	}
 
 	if (i == 8)
 		printk(KERN_ERR "Danger Will Robinson: failed to "
-			"re-trigger IRQ%d\n", d->irq);
+			"re-trigger IRQ%d\n", irq);
 	return i == 8 ? -1 : 0;
 }
 
-static int sa1111_type_lowirq(struct irq_data *d, unsigned int flags)
+static int sa1111_type_lowirq(unsigned int irq, unsigned int flags)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_LO(d->irq);
+	unsigned int mask = SA1111_IRQMASK_LO(irq);
 	unsigned long ip0;
 
 	if (flags == IRQ_TYPE_PROBE)
@@ -305,11 +313,11 @@ static int sa1111_type_lowirq(struct irq_data *d, unsigned int flags)
 	return 0;
 }
 
-static int sa1111_wake_lowirq(struct irq_data *d, unsigned int on)
+static int sa1111_wake_lowirq(unsigned int irq, unsigned int on)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_LO(d->irq);
+	unsigned int mask = SA1111_IRQMASK_LO(irq);
 	unsigned long we0;
 
 	we0 = sa1111_readl(mapbase + SA1111_WAKEEN0);
@@ -324,33 +332,33 @@ static int sa1111_wake_lowirq(struct irq_data *d, unsigned int on)
 
 static struct irq_chip sa1111_low_chip = {
 	.name		= "SA1111-l",
-	.irq_ack	= sa1111_ack_irq,
-	.irq_mask	= sa1111_mask_lowirq,
-	.irq_unmask	= sa1111_unmask_lowirq,
-	.irq_retrigger	= sa1111_retrigger_lowirq,
-	.irq_set_type	= sa1111_type_lowirq,
-	.irq_set_wake	= sa1111_wake_lowirq,
+	.ack		= sa1111_ack_irq,
+	.mask		= sa1111_mask_lowirq,
+	.unmask		= sa1111_unmask_lowirq,
+	.retrigger	= sa1111_retrigger_lowirq,
+	.set_type	= sa1111_type_lowirq,
+	.set_wake	= sa1111_wake_lowirq,
 };
 
-static void sa1111_mask_highirq(struct irq_data *d)
+static void sa1111_mask_highirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
 	unsigned long ie1;
 
 	ie1 = sa1111_readl(mapbase + SA1111_INTEN1);
-	ie1 &= ~SA1111_IRQMASK_HI(d->irq);
+	ie1 &= ~SA1111_IRQMASK_HI(irq);
 	sa1111_writel(ie1, mapbase + SA1111_INTEN1);
 }
 
-static void sa1111_unmask_highirq(struct irq_data *d)
+static void sa1111_unmask_highirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
 	unsigned long ie1;
 
 	ie1 = sa1111_readl(mapbase + SA1111_INTEN1);
-	ie1 |= SA1111_IRQMASK_HI(d->irq);
+	ie1 |= SA1111_IRQMASK_HI(irq);
 	sa1111_writel(ie1, mapbase + SA1111_INTEN1);
 }
 
@@ -361,11 +369,11 @@ static void sa1111_unmask_highirq(struct irq_data *d)
  * be triggered.  In fact, its very difficult, if not impossible to get
  * INTSET to re-trigger the interrupt.
  */
-static int sa1111_retrigger_highirq(struct irq_data *d)
+static int sa1111_retrigger_highirq(unsigned int irq)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_HI(d->irq);
+	unsigned int mask = SA1111_IRQMASK_HI(irq);
 	unsigned long ip1;
 	int i;
 
@@ -379,15 +387,15 @@ static int sa1111_retrigger_highirq(struct irq_data *d)
 
 	if (i == 8)
 		printk(KERN_ERR "Danger Will Robinson: failed to "
-			"re-trigger IRQ%d\n", d->irq);
+			"re-trigger IRQ%d\n", irq);
 	return i == 8 ? -1 : 0;
 }
 
-static int sa1111_type_highirq(struct irq_data *d, unsigned int flags)
+static int sa1111_type_highirq(unsigned int irq, unsigned int flags)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_HI(d->irq);
+	unsigned int mask = SA1111_IRQMASK_HI(irq);
 	unsigned long ip1;
 
 	if (flags == IRQ_TYPE_PROBE)
@@ -407,11 +415,11 @@ static int sa1111_type_highirq(struct irq_data *d, unsigned int flags)
 	return 0;
 }
 
-static int sa1111_wake_highirq(struct irq_data *d, unsigned int on)
+static int sa1111_wake_highirq(unsigned int irq, unsigned int on)
 {
-	struct sa1111 *sachip = irq_data_get_irq_chip_data(d);
+	struct sa1111 *sachip = get_irq_chip_data(irq);
 	void __iomem *mapbase = sachip->base + SA1111_INTC;
-	unsigned int mask = SA1111_IRQMASK_HI(d->irq);
+	unsigned int mask = SA1111_IRQMASK_HI(irq);
 	unsigned long we1;
 
 	we1 = sa1111_readl(mapbase + SA1111_WAKEEN1);
@@ -426,12 +434,12 @@ static int sa1111_wake_highirq(struct irq_data *d, unsigned int on)
 
 static struct irq_chip sa1111_high_chip = {
 	.name		= "SA1111-h",
-	.irq_ack	= sa1111_ack_irq,
-	.irq_mask	= sa1111_mask_highirq,
-	.irq_unmask	= sa1111_unmask_highirq,
-	.irq_retrigger	= sa1111_retrigger_highirq,
-	.irq_set_type	= sa1111_type_highirq,
-	.irq_set_wake	= sa1111_wake_highirq,
+	.ack		= sa1111_ack_irq,
+	.mask		= sa1111_mask_highirq,
+	.unmask		= sa1111_unmask_highirq,
+	.retrigger	= sa1111_retrigger_highirq,
+	.set_type	= sa1111_type_highirq,
+	.set_wake	= sa1111_wake_highirq,
 };
 
 static void sa1111_setup_irq(struct sa1111 *sachip)
@@ -464,25 +472,25 @@ static void sa1111_setup_irq(struct sa1111 *sachip)
 	sa1111_writel(~0, irqbase + SA1111_INTSTATCLR1);
 
 	for (irq = IRQ_GPAIN0; irq <= SSPROR; irq++) {
-		irq_set_chip_and_handler(irq, &sa1111_low_chip,
-					 handle_edge_irq);
-		irq_set_chip_data(irq, sachip);
+		set_irq_chip(irq, &sa1111_low_chip);
+		set_irq_chip_data(irq, sachip);
+		set_irq_handler(irq, handle_edge_irq);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 
 	for (irq = AUDXMTDMADONEA; irq <= IRQ_S1_BVD1_STSCHG; irq++) {
-		irq_set_chip_and_handler(irq, &sa1111_high_chip,
-					 handle_edge_irq);
-		irq_set_chip_data(irq, sachip);
+		set_irq_chip(irq, &sa1111_high_chip);
+		set_irq_chip_data(irq, sachip);
+		set_irq_handler(irq, handle_edge_irq);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 
 	/*
 	 * Register SA1111 interrupt
 	 */
-	irq_set_irq_type(sachip->irq, IRQ_TYPE_EDGE_RISING);
-	irq_set_handler_data(sachip->irq, sachip);
-	irq_set_chained_handler(sachip->irq, sa1111_irq_handler);
+	set_irq_type(sachip->irq, IRQ_TYPE_EDGE_RISING);
+	set_irq_data(sachip->irq, sachip);
+	set_irq_chained_handler(sachip->irq, sa1111_irq_handler);
 }
 
 /*
@@ -579,36 +587,7 @@ sa1111_configure_smc(struct sa1111 *sachip, int sdram, unsigned int drac,
 
 	sachip->dev->coherent_dma_mask &= sa1111_dma_mask[drac >> 2];
 }
-#endif
 
-#ifdef CONFIG_DMABOUNCE
-/*
- * According to the "Intel StrongARM SA-1111 Microprocessor Companion
- * Chip Specification Update" (June 2000), erratum #7, there is a
- * significant bug in the SA1111 SDRAM shared memory controller.  If
- * an access to a region of memory above 1MB relative to the bank base,
- * it is important that address bit 10 _NOT_ be asserted. Depending
- * on the configuration of the RAM, bit 10 may correspond to one
- * of several different (processor-relative) address bits.
- *
- * This routine only identifies whether or not a given DMA address
- * is susceptible to the bug.
- *
- * This should only get called for sa1111_device types due to the
- * way we configure our device dma_masks.
- */
-static int sa1111_needs_bounce(struct device *dev, dma_addr_t addr, size_t size)
-{
-	/*
-	 * Section 4.6 of the "Intel StrongARM SA-1111 Development Module
-	 * User's Guide" mentions that jumpers R51 and R52 control the
-	 * target of SA-1111 DMA (either SDRAM bank 0 on Assabet, or
-	 * SDRAM bank 1 on Neponset). The default configuration selects
-	 * Assabet, so any address in bank 1 is necessarily invalid.
-	 */
-	return (machine_is_assabet() || machine_is_pfs168()) &&
-		(addr >= 0xc8000000 || (addr + size) >= 0xc8000000);
-}
 #endif
 
 static void sa1111_dev_release(struct device *_dev)
@@ -673,8 +652,7 @@ sa1111_init_one_child(struct sa1111 *sachip, struct resource *parent,
 		dev->dev.dma_mask = &dev->dma_mask;
 
 		if (dev->dma_mask != 0xffffffffUL) {
-			ret = dmabounce_register_dev(&dev->dev, 1024, 4096,
-					sa1111_needs_bounce);
+			ret = dmabounce_register_dev(&dev->dev, 1024, 4096);
 			if (ret) {
 				dev_err(&dev->dev, "SA1111: Failed to register"
 					" with dmabounce\n");
@@ -837,8 +815,8 @@ static void __sa1111_remove(struct sa1111 *sachip)
 	clk_disable(sachip->clk);
 
 	if (sachip->irq != NO_IRQ) {
-		irq_set_chained_handler(sachip->irq, NULL);
-		irq_set_handler_data(sachip->irq, NULL);
+		set_irq_chained_handler(sachip->irq, NULL);
+		set_irq_data(sachip->irq, NULL);
 
 		release_mem_region(sachip->phys + SA1111_INTC, 512);
 	}
@@ -846,6 +824,34 @@ static void __sa1111_remove(struct sa1111 *sachip)
 	iounmap(sachip->base);
 	clk_put(sachip->clk);
 	kfree(sachip);
+}
+
+/*
+ * According to the "Intel StrongARM SA-1111 Microprocessor Companion
+ * Chip Specification Update" (June 2000), erratum #7, there is a
+ * significant bug in the SA1111 SDRAM shared memory controller.  If
+ * an access to a region of memory above 1MB relative to the bank base,
+ * it is important that address bit 10 _NOT_ be asserted. Depending
+ * on the configuration of the RAM, bit 10 may correspond to one
+ * of several different (processor-relative) address bits.
+ *
+ * This routine only identifies whether or not a given DMA address
+ * is susceptible to the bug.
+ *
+ * This should only get called for sa1111_device types due to the
+ * way we configure our device dma_masks.
+ */
+int dma_needs_bounce(struct device *dev, dma_addr_t addr, size_t size)
+{
+	/*
+	 * Section 4.6 of the "Intel StrongARM SA-1111 Development Module
+	 * User's Guide" mentions that jumpers R51 and R52 control the
+	 * target of SA-1111 DMA (either SDRAM bank 0 on Assabet, or
+	 * SDRAM bank 1 on Neponset). The default configuration selects
+	 * Assabet, so any address in bank 1 is necessarily invalid.
+	 */
+	return ((machine_is_assabet() || machine_is_pfs168()) &&
+		(addr >= 0xc8000000 || (addr + size) >= 0xc8000000));
 }
 
 struct sa1111_save_data {

@@ -29,6 +29,7 @@
 #include <linux/bitmap.h>
 #include <linux/usb.h>
 #include <linux/i2c.h>
+#include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
@@ -44,7 +45,7 @@
 #include "cx231xx.h"
 #include "cx231xx-vbi.h"
 
-#define CX231XX_VERSION "0.0.2"
+#define CX231XX_VERSION_CODE            KERNEL_VERSION(0, 0, 1)
 
 #define DRIVER_AUTHOR   "Srinivasa Deevi <srinivasa.deevi@conexant.com>"
 #define DRIVER_DESC     "Conexant cx231xx based USB video device driver"
@@ -69,7 +70,6 @@ do {\
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-MODULE_VERSION(CX231XX_VERSION);
 
 static unsigned int card[]     = {[0 ... (CX231XX_MAXBOARDS - 1)] = UNSET };
 static unsigned int video_nr[] = {[0 ... (CX231XX_MAXBOARDS - 1)] = UNSET };
@@ -309,7 +309,7 @@ static inline void get_next_buf(struct cx231xx_dmaqueue *dma_q,
 	/* Get the next buffer */
 	*buf = list_entry(dma_q->active.next, struct cx231xx_buffer, vb.queue);
 
-	/* Cleans up buffer - Useful for testing for frame/URB loss */
+	/* Cleans up buffer - Usefull for testing for frame/URB loss */
 	outp = videobuf_to_vmalloc(&(*buf)->vb);
 	memset(outp, 0, (*buf)->vb.size);
 
@@ -1179,8 +1179,7 @@ static int vidioc_enum_input(struct file *file, void *priv,
 {
 	struct cx231xx_fh *fh = priv;
 	struct cx231xx *dev = fh->dev;
-	u32 gen_stat;
-	unsigned int ret, n;
+	unsigned int n;
 
 	n = i->index;
 	if (n >= MAX_CX231XX_INPUT)
@@ -1198,18 +1197,6 @@ static int vidioc_enum_input(struct file *file, void *priv,
 		i->type = V4L2_INPUT_TYPE_TUNER;
 
 	i->std = dev->vdev->tvnorms;
-
-	/* If they are asking about the active input, read signal status */
-	if (n == dev->video_input) {
-		ret = cx231xx_read_i2c_data(dev, VID_BLK_I2C_ADDRESS,
-					    GEN_STAT, 2, &gen_stat, 4);
-		if (ret > 0) {
-			if ((gen_stat & FLD_VPRES) == 0x00)
-				i->status |= V4L2_IN_ST_NO_SIGNAL;
-			if ((gen_stat & FLD_HLOCK) == 0x00)
-				i->status |= V4L2_IN_ST_NO_H_LOCK;
-		}
-	}
 
 	return 0;
 }
@@ -1882,6 +1869,8 @@ static int vidioc_querycap(struct file *file, void *priv,
 	strlcpy(cap->card, cx231xx_boards[dev->model].name, sizeof(cap->card));
 	usb_make_path(dev->udev, cap->bus_info, sizeof(cap->bus_info));
 
+	cap->version = CX231XX_VERSION_CODE;
+
 	cap->capabilities = V4L2_CAP_VBI_CAPTURE |
 #if 0
 		V4L2_CAP_SLICED_VBI_CAPTURE |
@@ -2055,6 +2044,15 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *b)
 	return videobuf_dqbuf(&fh->vb_vidq, b, file->f_flags & O_NONBLOCK);
 }
 
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+static int vidiocgmbuf(struct file *file, void *priv, struct video_mbuf *mbuf)
+{
+	struct cx231xx_fh *fh = priv;
+
+	return videobuf_cgmbuf(&fh->vb_vidq, mbuf, 8);
+}
+#endif
+
 /* ----------------------------------------------------------- */
 /* RADIO ESPECIFIC IOCTLS                                      */
 /* ----------------------------------------------------------- */
@@ -2068,6 +2066,7 @@ static int radio_querycap(struct file *file, void *priv,
 	strlcpy(cap->card, cx231xx_boards[dev->model].name, sizeof(cap->card));
 	usb_make_path(dev->udev, cap->bus_info, sizeof(cap->bus_info));
 
+	cap->version = CX231XX_VERSION_CODE;
 	cap->capabilities = V4L2_CAP_TUNER;
 	return 0;
 }
@@ -2200,7 +2199,8 @@ static int cx231xx_v4l2_open(struct file *filp)
 		dev->height = norm_maxh(dev);
 
 		/* Power up in Analog TV mode */
-		if (dev->board.external_av)
+		if (dev->model == CX231XX_BOARD_CNXT_VIDEO_GRABBER ||
+		    dev->model == CX231XX_BOARD_HAUPPAUGE_USBLIVE2)
 			cx231xx_set_power_mode(dev,
 				 POLARIS_AVMODE_ENXTERNAL_AV);
 		else
@@ -2240,7 +2240,9 @@ static int cx231xx_v4l2_open(struct file *filp)
 	if (fh->type == V4L2_BUF_TYPE_VBI_CAPTURE) {
 		/* Set the required alternate setting  VBI interface works in
 		   Bulk mode only */
-		cx231xx_set_alt_setting(dev, INDEX_VANC, 0);
+		if (dev->model != CX231XX_BOARD_CNXT_VIDEO_GRABBER &&
+		    dev->model != CX231XX_BOARD_HAUPPAUGE_USBLIVE2)
+			cx231xx_set_alt_setting(dev, INDEX_VANC, 0);
 
 		videobuf_queue_vmalloc_init(&fh->vb_vidq, &cx231xx_vbi_qops,
 					    NULL, &dev->vbi_mode.slock,
@@ -2282,7 +2284,7 @@ void cx231xx_release_analog_resources(struct cx231xx *dev)
 		cx231xx_info("V4L2 device %s deregistered\n",
 			     video_device_node_name(dev->vdev));
 
-		if (dev->board.has_417)
+		if (dev->model == CX231XX_BOARD_CNXT_VIDEO_GRABBER)
 			cx231xx_417_unregister(dev);
 
 		if (video_is_registered(dev->vdev))
@@ -2309,13 +2311,10 @@ static int cx231xx_v4l2_close(struct file *filp)
 	if (res_check(fh))
 		res_free(fh);
 
-	/*
-	 * To workaround error number=-71 on EP0 for VideoGrabber,
-	 *	 need exclude following.
-	 * FIXME: It is probably safe to remove most of these, as we're
-	 * now avoiding the alternate setting for INDEX_VANC
-	 */
-	if (!dev->board.no_alt_vanc)
+	/*To workaround error number=-71 on EP0 for VideoGrabber,
+		 need exclude following.*/
+	if (dev->model != CX231XX_BOARD_CNXT_VIDEO_GRABBER &&
+	    dev->model != CX231XX_BOARD_HAUPPAUGE_USBLIVE2)
 		if (fh->type == V4L2_BUF_TYPE_VBI_CAPTURE) {
 			videobuf_stop(&fh->vb_vidq);
 			videobuf_mmap_free(&fh->vb_vidq);
@@ -2508,6 +2507,9 @@ static const struct v4l2_ioctl_ops video_ioctl_ops = {
 	.vidioc_g_register             = vidioc_g_register,
 	.vidioc_s_register             = vidioc_s_register,
 #endif
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+	.vidiocgmbuf                   = vidiocgmbuf,
+#endif
 };
 
 static struct video_device cx231xx_vbi_template;
@@ -2580,8 +2582,11 @@ int cx231xx_register_analog_devices(struct cx231xx *dev)
 {
 	int ret;
 
-	cx231xx_info("%s: v4l2 driver version %s\n",
-		     dev->name, CX231XX_VERSION);
+	cx231xx_info("%s: v4l2 driver version %d.%d.%d\n",
+		     dev->name,
+		     (CX231XX_VERSION_CODE >> 16) & 0xff,
+		     (CX231XX_VERSION_CODE >> 8) & 0xff,
+		     CX231XX_VERSION_CODE & 0xff);
 
 	/* set default norm */
 	/*dev->norm = cx231xx_video_template.current_norm; */

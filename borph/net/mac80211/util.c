@@ -368,9 +368,8 @@ void ieee80211_add_pending_skb(struct ieee80211_local *local,
 	spin_unlock_irqrestore(&local->queue_stop_reason_lock, flags);
 }
 
-int ieee80211_add_pending_skbs_fn(struct ieee80211_local *local,
-				  struct sk_buff_head *skbs,
-				  void (*fn)(void *data), void *data)
+int ieee80211_add_pending_skbs(struct ieee80211_local *local,
+			       struct sk_buff_head *skbs)
 {
 	struct ieee80211_hw *hw = &local->hw;
 	struct sk_buff *skb;
@@ -395,21 +394,12 @@ int ieee80211_add_pending_skbs_fn(struct ieee80211_local *local,
 		__skb_queue_tail(&local->pending[queue], skb);
 	}
 
-	if (fn)
-		fn(data);
-
 	for (i = 0; i < hw->queues; i++)
 		__ieee80211_wake_queue(hw, i,
 			IEEE80211_QUEUE_STOP_REASON_SKB_ADD);
 	spin_unlock_irqrestore(&local->queue_stop_reason_lock, flags);
 
 	return ret;
-}
-
-int ieee80211_add_pending_skbs(struct ieee80211_local *local,
-			       struct sk_buff_head *skbs)
-{
-	return ieee80211_add_pending_skbs_fn(local, skbs, NULL, NULL);
 }
 
 void ieee80211_stop_queues_by_reason(struct ieee80211_hw *hw,
@@ -799,7 +789,6 @@ void ieee80211_set_wmm_default(struct ieee80211_sub_if_data *sdata)
 
 		qparam.uapsd = false;
 
-		local->tx_conf[queue] = qparam;
 		drv_conf_tx(local, queue, &qparam);
 	}
 
@@ -987,6 +976,12 @@ int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
 		u16 cap = sband->ht_cap.cap;
 		__le16 tmp;
 
+		if (ieee80211_disable_40mhz_24ghz &&
+		    sband->band == IEEE80211_BAND_2GHZ) {
+			cap &= ~IEEE80211_HT_CAP_SUP_WIDTH_20_40;
+			cap &= ~IEEE80211_HT_CAP_SGI_40;
+		}
+
 		*pos++ = WLAN_EID_HT_CAPABILITY;
 		*pos++ = sizeof(struct ieee80211_ht_cap);
 		memset(pos, 0, sizeof(struct ieee80211_ht_cap));
@@ -1016,11 +1011,9 @@ int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
 	return pos - buffer;
 }
 
-struct sk_buff *ieee80211_build_probe_req(struct ieee80211_sub_if_data *sdata,
-					  u8 *dst, u32 ratemask,
-					  const u8 *ssid, size_t ssid_len,
-					  const u8 *ie, size_t ie_len,
-					  bool directed)
+void ieee80211_send_probe_req(struct ieee80211_sub_if_data *sdata, u8 *dst,
+			      const u8 *ssid, size_t ssid_len,
+			      const u8 *ie, size_t ie_len)
 {
 	struct ieee80211_local *local = sdata->local;
 	struct sk_buff *skb;
@@ -1034,23 +1027,17 @@ struct sk_buff *ieee80211_build_probe_req(struct ieee80211_sub_if_data *sdata,
 	if (!buf) {
 		printk(KERN_DEBUG "%s: failed to allocate temporary IE "
 		       "buffer\n", sdata->name);
-		return NULL;
+		return;
 	}
 
-	/*
-	 * Do not send DS Channel parameter for directed probe requests
-	 * in order to maximize the chance that we get a response.  Some
-	 * badly-behaved APs don't respond when this parameter is included.
-	 */
-	if (directed)
-		chan = 0;
-	else
-		chan = ieee80211_frequency_to_channel(
-			local->hw.conf.channel->center_freq);
+	chan = ieee80211_frequency_to_channel(
+		local->hw.conf.channel->center_freq);
 
 	buf_len = ieee80211_build_preq_ies(local, buf, ie, ie_len,
 					   local->hw.conf.channel->band,
-					   ratemask, chan);
+					   sdata->rc_rateidx_mask
+					   [local->hw.conf.channel->band],
+					   chan);
 
 	skb = ieee80211_probereq_get(&local->hw, &sdata->vif,
 				     ssid, ssid_len,
@@ -1063,22 +1050,8 @@ struct sk_buff *ieee80211_build_probe_req(struct ieee80211_sub_if_data *sdata,
 	}
 
 	IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_INTFL_DONT_ENCRYPT;
+	ieee80211_tx_skb(sdata, skb);
 	kfree(buf);
-
-	return skb;
-}
-
-void ieee80211_send_probe_req(struct ieee80211_sub_if_data *sdata, u8 *dst,
-			      const u8 *ssid, size_t ssid_len,
-			      const u8 *ie, size_t ie_len,
-			      u32 ratemask, bool directed)
-{
-	struct sk_buff *skb;
-
-	skb = ieee80211_build_probe_req(sdata, dst, ratemask, ssid, ssid_len,
-					ie, ie_len, directed);
-	if (skb)
-		ieee80211_tx_skb(sdata, skb);
 }
 
 u32 ieee80211_sta_get_rates(struct ieee80211_local *local,
@@ -1120,7 +1093,6 @@ u32 ieee80211_sta_get_rates(struct ieee80211_local *local,
 void ieee80211_stop_device(struct ieee80211_local *local)
 {
 	ieee80211_led_radio(local, false);
-	ieee80211_mod_tpt_led_trig(local, 0, IEEE80211_TPT_LEDTRIG_FL_RADIO);
 
 	cancel_work_sync(&local->reconfig_filter);
 
@@ -1133,59 +1105,29 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 	struct ieee80211_hw *hw = &local->hw;
 	struct ieee80211_sub_if_data *sdata;
 	struct sta_info *sta;
-	int res, i;
+	int res;
 
-#ifdef CONFIG_PM
 	if (local->suspended)
 		local->resuming = true;
 
-	if (local->wowlan) {
-		local->wowlan = false;
-		res = drv_resume(local);
-		if (res < 0) {
-			local->resuming = false;
+	/* restart hardware */
+	if (local->open_count) {
+		/*
+		 * Upon resume hardware can sometimes be goofy due to
+		 * various platform / driver / bus issues, so restarting
+		 * the device may at times not work immediately. Propagate
+		 * the error.
+		 */
+		res = drv_start(local);
+		if (res) {
+			WARN(local->suspended, "Hardware became unavailable "
+			     "upon resume. This could be a software issue "
+			     "prior to suspend or a hardware issue.\n");
 			return res;
 		}
-		if (res == 0)
-			goto wake_up;
-		WARN_ON(res > 1);
-		/*
-		 * res is 1, which means the driver requested
-		 * to go through a regular reset on wakeup.
-		 */
+
+		ieee80211_led_radio(local, true);
 	}
-#endif
-
-	/* setup fragmentation threshold */
-	drv_set_frag_threshold(local, hw->wiphy->frag_threshold);
-
-	/* setup RTS threshold */
-	drv_set_rts_threshold(local, hw->wiphy->rts_threshold);
-
-	/* reset coverage class */
-	drv_set_coverage_class(local, hw->wiphy->coverage_class);
-
-	/* everything else happens only if HW was up & running */
-	if (!local->open_count)
-		goto wake_up;
-
-	/*
-	 * Upon resume hardware can sometimes be goofy due to
-	 * various platform / driver / bus issues, so restarting
-	 * the device may at times not work immediately. Propagate
-	 * the error.
-	 */
-	res = drv_start(local);
-	if (res) {
-		WARN(local->suspended, "Hardware became unavailable "
-		     "upon resume. This could be a software issue "
-		     "prior to suspend or a hardware issue.\n");
-		return res;
-	}
-
-	ieee80211_led_radio(local, true);
-	ieee80211_mod_tpt_led_trig(local,
-				   IEEE80211_TPT_LEDTRIG_FL_RADIO, 0);
 
 	/* add interfaces */
 	list_for_each_entry(sdata, &local->interfaces, list) {
@@ -1210,9 +1152,8 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 	}
 	mutex_unlock(&local->sta_mtx);
 
-	/* reconfigure tx conf */
-	for (i = 0; i < hw->queues; i++)
-		drv_conf_tx(local, i, &local->tx_conf[i]);
+	/* setup RTS threshold */
+	drv_set_rts_threshold(local, hw->wiphy->rts_threshold);
 
 	/* reconfigure hardware */
 	ieee80211_hw_config(local, ~0);
@@ -1240,9 +1181,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		switch (sdata->vif.type) {
 		case NL80211_IFTYPE_STATION:
 			changed |= BSS_CHANGED_ASSOC;
-			mutex_lock(&sdata->u.mgd.mtx);
 			ieee80211_bss_info_change_notify(sdata, changed);
-			mutex_unlock(&sdata->u.mgd.mtx);
 			break;
 		case NL80211_IFTYPE_ADHOC:
 			changed |= BSS_CHANGED_IBSS;
@@ -1294,7 +1233,6 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		if (ieee80211_sdata_running(sdata))
 			ieee80211_enable_keys(sdata);
 
- wake_up:
 	ieee80211_wake_queues_by_reason(hw,
 			IEEE80211_QUEUE_STOP_REASON_SUSPEND);
 
@@ -1327,7 +1265,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		}
 	}
 
-	mod_timer(&local->sta_cleanup, jiffies + 1);
+	add_timer(&local->sta_cleanup);
 
 	mutex_lock(&local->sta_mtx);
 	list_for_each_entry(sta, &local->sta_list, list)
@@ -1338,33 +1276,6 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 #endif
 	return 0;
 }
-
-void ieee80211_resume_disconnect(struct ieee80211_vif *vif)
-{
-	struct ieee80211_sub_if_data *sdata;
-	struct ieee80211_local *local;
-	struct ieee80211_key *key;
-
-	if (WARN_ON(!vif))
-		return;
-
-	sdata = vif_to_sdata(vif);
-	local = sdata->local;
-
-	if (WARN_ON(!local->resuming))
-		return;
-
-	if (WARN_ON(vif->type != NL80211_IFTYPE_STATION))
-		return;
-
-	sdata->flags |= IEEE80211_SDATA_DISCONNECT_RESUME;
-
-	mutex_lock(&local->key_mtx);
-	list_for_each_entry(key, &sdata->key_list, list)
-		key->flags |= KEY_FLAG_TAINTED;
-	mutex_unlock(&local->key_mtx);
-}
-EXPORT_SYMBOL_GPL(ieee80211_resume_disconnect);
 
 static int check_mgd_smps(struct ieee80211_if_managed *ifmgd,
 			  enum ieee80211_smps_mode *smps_mode)
@@ -1482,43 +1393,3 @@ size_t ieee80211_ie_split_vendor(const u8 *ies, size_t ielen, size_t offset)
 
 	return pos;
 }
-
-static void _ieee80211_enable_rssi_reports(struct ieee80211_sub_if_data *sdata,
-					    int rssi_min_thold,
-					    int rssi_max_thold)
-{
-	trace_api_enable_rssi_reports(sdata, rssi_min_thold, rssi_max_thold);
-
-	if (WARN_ON(sdata->vif.type != NL80211_IFTYPE_STATION))
-		return;
-
-	/*
-	 * Scale up threshold values before storing it, as the RSSI averaging
-	 * algorithm uses a scaled up value as well. Change this scaling
-	 * factor if the RSSI averaging algorithm changes.
-	 */
-	sdata->u.mgd.rssi_min_thold = rssi_min_thold*16;
-	sdata->u.mgd.rssi_max_thold = rssi_max_thold*16;
-}
-
-void ieee80211_enable_rssi_reports(struct ieee80211_vif *vif,
-				    int rssi_min_thold,
-				    int rssi_max_thold)
-{
-	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
-
-	WARN_ON(rssi_min_thold == rssi_max_thold ||
-		rssi_min_thold > rssi_max_thold);
-
-	_ieee80211_enable_rssi_reports(sdata, rssi_min_thold,
-				       rssi_max_thold);
-}
-EXPORT_SYMBOL(ieee80211_enable_rssi_reports);
-
-void ieee80211_disable_rssi_reports(struct ieee80211_vif *vif)
-{
-	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
-
-	_ieee80211_enable_rssi_reports(sdata, 0, 0);
-}
-EXPORT_SYMBOL(ieee80211_disable_rssi_reports);

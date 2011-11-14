@@ -551,10 +551,10 @@ static int __init tx4939ide_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	if (!devm_request_mem_region(&pdev->dev, res->start,
-				     resource_size(res), "tx4938ide"))
+				     res->end - res->start + 1, "tx4938ide"))
 		return -EBUSY;
 	mapbase = (unsigned long)devm_ioremap(&pdev->dev, res->start,
-					      resource_size(res));
+					      res->end - res->start + 1);
 	if (!mapbase)
 		return -EBUSY;
 	memset(&hw, 0, sizeof(hw));

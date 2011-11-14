@@ -23,7 +23,7 @@
 /*
  * Physical DRAM offset.
  */
-#define PLAT_PHYS_OFFSET	UL(0xc0000000)
+#define PHYS_OFFSET	UL(0xc0000000)
 
 #if !defined(CONFIG_ARCH_CDB89712) && !defined (CONFIG_ARCH_AUTCPU12)
 

@@ -38,7 +38,7 @@
 #include <linux/completion.h>
 #include <linux/compiler.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_mad.h>

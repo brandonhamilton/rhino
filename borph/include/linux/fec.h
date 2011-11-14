@@ -3,8 +3,6 @@
  * Copyright (c) 2009 Orex Computed Radiography
  *   Baruch Siach <baruch@tkos.co.il>
  *
- * Copyright (C) 2010 Freescale Semiconductor, Inc.
- *
  * Header file for the FEC platform data
  *
  * This program is free software; you can redistribute it and/or modify
@@ -18,7 +16,6 @@
 
 struct fec_platform_data {
 	phy_interface_t phy;
-	unsigned char mac[ETH_ALEN];
 };
 
 #endif

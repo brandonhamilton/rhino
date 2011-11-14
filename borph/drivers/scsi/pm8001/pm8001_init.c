@@ -51,8 +51,6 @@ static int pm8001_id;
 
 LIST_HEAD(hba_list);
 
-struct workqueue_struct *pm8001_wq;
-
 /**
  * The main structure which LLDD must register for scsi core.
  */
@@ -136,6 +134,7 @@ static void __devinit pm8001_phy_init(struct pm8001_hba_info *pm8001_ha,
 static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 {
 	int i;
+	struct pm8001_wq *wq;
 
 	if (!pm8001_ha)
 		return;
@@ -151,7 +150,8 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 	PM8001_CHIP_DISP->chip_iounmap(pm8001_ha);
 	if (pm8001_ha->shost)
 		scsi_host_put(pm8001_ha->shost);
-	flush_workqueue(pm8001_wq);
+	list_for_each_entry(wq, &pm8001_ha->wq_list, entry)
+		cancel_delayed_work(&wq->work_q);
 	kfree(pm8001_ha->tags);
 	kfree(pm8001_ha);
 }
@@ -160,7 +160,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 static void pm8001_tasklet(unsigned long opaque)
 {
 	struct pm8001_hba_info *pm8001_ha;
-	pm8001_ha = (struct pm8001_hba_info *)opaque;
+	pm8001_ha = (struct pm8001_hba_info *)opaque;;
 	if (unlikely(!pm8001_ha))
 		BUG_ON(1);
 	PM8001_CHIP_DISP->isr(pm8001_ha);
@@ -381,6 +381,7 @@ pm8001_pci_alloc(struct pci_dev *pdev, u32 chip_id, struct Scsi_Host *shost)
 	pm8001_ha->sas = sha;
 	pm8001_ha->shost = shost;
 	pm8001_ha->id = pm8001_id++;
+	INIT_LIST_HEAD(&pm8001_ha->wq_list);
 	pm8001_ha->logging_level = 0x01;
 	sprintf(pm8001_ha->name, "%s%d", DRV_NAME, pm8001_ha->id);
 #ifdef PM8001_USE_TASKLET
@@ -602,7 +603,7 @@ static u32 pm8001_request_irq(struct pm8001_hba_info *pm8001_ha)
 #endif
 
 intx:
-	/* initialize the INT-X interrupt */
+	/* intialize the INT-X interrupt */
 	rc = request_irq(pdev->irq, irq_handler, IRQF_SHARED, DRV_NAME,
 		SHOST_TO_SAS_HA(pm8001_ha->shost));
 	return rc;
@@ -757,7 +758,7 @@ static int pm8001_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	int i , pos;
 	u32 device_state;
 	pm8001_ha = sha->lldd_ha;
-	flush_workqueue(pm8001_wq);
+	flush_scheduled_work();
 	scsi_block_requests(pm8001_ha->shost);
 	pos = pci_find_capability(pdev, PCI_CAP_ID_PM);
 	if (pos == 0) {
@@ -869,26 +870,17 @@ static struct pci_driver pm8001_pci_driver = {
  */
 static int __init pm8001_init(void)
 {
-	int rc = -ENOMEM;
-
-	pm8001_wq = alloc_workqueue("pm8001", 0, 0);
-	if (!pm8001_wq)
-		goto err;
-
+	int rc;
 	pm8001_id = 0;
 	pm8001_stt = sas_domain_attach_transport(&pm8001_transport_ops);
 	if (!pm8001_stt)
-		goto err_wq;
+		return -ENOMEM;
 	rc = pci_register_driver(&pm8001_pci_driver);
 	if (rc)
-		goto err_tp;
+		goto err_out;
 	return 0;
-
-err_tp:
+err_out:
 	sas_release_transport(pm8001_stt);
-err_wq:
-	destroy_workqueue(pm8001_wq);
-err:
 	return rc;
 }
 
@@ -896,7 +888,6 @@ static void __exit pm8001_exit(void)
 {
 	pci_unregister_driver(&pm8001_pci_driver);
 	sas_release_transport(pm8001_stt);
-	destroy_workqueue(pm8001_wq);
 }
 
 module_init(pm8001_init);

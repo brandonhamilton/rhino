@@ -21,14 +21,14 @@
 #include <linux/posix_acl_xattr.h>
 #include "xattr.h"
 #include "acl.h"
-#include "v9fs.h"
 #include "v9fs_vfs.h"
+#include "v9fs.h"
 
 static struct posix_acl *__v9fs_get_acl(struct p9_fid *fid, char *name)
 {
 	ssize_t size;
 	void *value = NULL;
-	struct posix_acl *acl = NULL;
+	struct posix_acl *acl = NULL;;
 
 	size = v9fs_fid_xattr_get(fid, name, NULL, 0);
 	if (size > 0) {
@@ -59,8 +59,7 @@ int v9fs_get_acl(struct inode *inode, struct p9_fid *fid)
 	struct v9fs_session_info *v9ses;
 
 	v9ses = v9fs_inode2v9ses(inode);
-	if (((v9ses->flags & V9FS_ACCESS_MASK) != V9FS_ACCESS_CLIENT) ||
-			((v9ses->flags & V9FS_ACL_MASK) != V9FS_POSIX_ACL)) {
+	if ((v9ses->flags & V9FS_ACCESS_MASK) != V9FS_ACCESS_CLIENT) {
 		set_cached_acl(inode, ACL_TYPE_DEFAULT, NULL);
 		set_cached_acl(inode, ACL_TYPE_ACCESS, NULL);
 		return 0;
@@ -72,14 +71,10 @@ int v9fs_get_acl(struct inode *inode, struct p9_fid *fid)
 	if (!IS_ERR(dacl) && !IS_ERR(pacl)) {
 		set_cached_acl(inode, ACL_TYPE_DEFAULT, dacl);
 		set_cached_acl(inode, ACL_TYPE_ACCESS, pacl);
+		posix_acl_release(dacl);
+		posix_acl_release(pacl);
 	} else
 		retval = -EIO;
-
-	if (!IS_ERR(dacl))
-		posix_acl_release(dacl);
-
-	if (!IS_ERR(pacl))
-		posix_acl_release(pacl);
 
 	return retval;
 }
@@ -96,21 +91,29 @@ static struct posix_acl *v9fs_get_cached_acl(struct inode *inode, int type)
 	return acl;
 }
 
-struct posix_acl *v9fs_iop_get_acl(struct inode *inode, int type)
+int v9fs_check_acl(struct inode *inode, int mask)
 {
+	struct posix_acl *acl;
 	struct v9fs_session_info *v9ses;
 
 	v9ses = v9fs_inode2v9ses(inode);
-	if (((v9ses->flags & V9FS_ACCESS_MASK) != V9FS_ACCESS_CLIENT) ||
-			((v9ses->flags & V9FS_ACL_MASK) != V9FS_POSIX_ACL)) {
+	if ((v9ses->flags & V9FS_ACCESS_MASK) != V9FS_ACCESS_CLIENT) {
 		/*
-		 * On access = client  and acl = on mode get the acl
+		 * On access = client mode get the acl
 		 * values from the server
 		 */
-		return NULL;
+		return 0;
 	}
-	return v9fs_get_cached_acl(inode, type);
+	acl = v9fs_get_cached_acl(inode, ACL_TYPE_ACCESS);
 
+	if (IS_ERR(acl))
+		return PTR_ERR(acl);
+	if (acl) {
+		int error = posix_acl_permission(inode, acl, mask);
+		posix_acl_release(acl);
+		return error;
+	}
+	return -EAGAIN;
 }
 
 static int v9fs_set_acl(struct dentry *dentry, int type, struct posix_acl *acl)
@@ -122,10 +125,6 @@ static int v9fs_set_acl(struct dentry *dentry, int type, struct posix_acl *acl)
 	struct inode *inode = dentry->d_inode;
 
 	set_cached_acl(inode, type, acl);
-
-	if (!acl)
-		return 0;
-
 	/* Set a setxattr request to server */
 	size = posix_acl_xattr_size(acl->a_count);
 	buffer = kmalloc(size, GFP_KERNEL);
@@ -153,40 +152,42 @@ err_free_out:
 int v9fs_acl_chmod(struct dentry *dentry)
 {
 	int retval = 0;
-	struct posix_acl *acl;
+	struct posix_acl *acl, *clone;
 	struct inode *inode = dentry->d_inode;
 
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
 	acl = v9fs_get_cached_acl(inode, ACL_TYPE_ACCESS);
 	if (acl) {
-		retval = posix_acl_chmod(&acl, GFP_KERNEL, inode->i_mode);
-		if (retval)
-			return retval;
-		retval = v9fs_set_acl(dentry, ACL_TYPE_ACCESS, acl);
+		clone = posix_acl_clone(acl, GFP_KERNEL);
 		posix_acl_release(acl);
+		if (!clone)
+			return -ENOMEM;
+		retval = posix_acl_chmod_masq(clone, inode->i_mode);
+		if (!retval)
+			retval = v9fs_set_acl(dentry, ACL_TYPE_ACCESS, clone);
+		posix_acl_release(clone);
 	}
 	return retval;
 }
 
 int v9fs_set_create_acl(struct dentry *dentry,
-			struct posix_acl **dpacl, struct posix_acl **pacl)
+			struct posix_acl *dpacl, struct posix_acl *pacl)
 {
-	if (dentry) {
-		v9fs_set_acl(dentry, ACL_TYPE_DEFAULT, *dpacl);
-		v9fs_set_acl(dentry, ACL_TYPE_ACCESS, *pacl);
-	}
-	posix_acl_release(*dpacl);
-	posix_acl_release(*pacl);
-	*dpacl = *pacl = NULL;
+	if (dpacl)
+		v9fs_set_acl(dentry, ACL_TYPE_DEFAULT, dpacl);
+	if (pacl)
+		v9fs_set_acl(dentry, ACL_TYPE_ACCESS, pacl);
+	posix_acl_release(dpacl);
+	posix_acl_release(pacl);
 	return 0;
 }
 
-int v9fs_acl_mode(struct inode *dir, umode_t *modep,
+int v9fs_acl_mode(struct inode *dir, mode_t *modep,
 		  struct posix_acl **dpacl, struct posix_acl **pacl)
 {
 	int retval = 0;
-	umode_t mode = *modep;
+	mode_t mode = *modep;
 	struct posix_acl *acl = NULL;
 
 	if (!S_ISLNK(mode)) {
@@ -197,18 +198,29 @@ int v9fs_acl_mode(struct inode *dir, umode_t *modep,
 			mode &= ~current_umask();
 	}
 	if (acl) {
+		struct posix_acl *clone;
+
 		if (S_ISDIR(mode))
-			*dpacl = posix_acl_dup(acl);
-		retval = posix_acl_create(&acl, GFP_NOFS, &mode);
-		if (retval < 0)
-			return retval;
+			*dpacl = acl;
+		clone = posix_acl_clone(acl, GFP_NOFS);
+		retval = -ENOMEM;
+		if (!clone)
+			goto cleanup;
+
+		retval = posix_acl_create_masq(clone, &mode);
+		if (retval < 0) {
+			posix_acl_release(clone);
+			goto cleanup;
+		}
 		if (retval > 0)
-			*pacl = acl;
-		else
-			posix_acl_release(acl);
+			*pacl = clone;
 	}
 	*modep  = mode;
 	return 0;
+cleanup:
+	posix_acl_release(acl);
+	return retval;
+
 }
 
 static int v9fs_remote_get_acl(struct dentry *dentry, const char *name,
@@ -239,7 +251,7 @@ static int v9fs_xattr_get_acl(struct dentry *dentry, const char *name,
 	if (strcmp(name, "") != 0)
 		return -EINVAL;
 
-	v9ses = v9fs_dentry2v9ses(dentry);
+	v9ses = v9fs_inode2v9ses(dentry->d_inode);
 	/*
 	 * We allow set/get/list of acl when access=client is not specified
 	 */
@@ -289,7 +301,7 @@ static int v9fs_xattr_set_acl(struct dentry *dentry, const char *name,
 	if (strcmp(name, "") != 0)
 		return -EINVAL;
 
-	v9ses = v9fs_dentry2v9ses(dentry);
+	v9ses = v9fs_inode2v9ses(dentry->d_inode);
 	/*
 	 * set the attribute on the remote. Without even looking at the
 	 * xattr value. We leave it to the server to validate
@@ -300,7 +312,7 @@ static int v9fs_xattr_set_acl(struct dentry *dentry, const char *name,
 
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
-	if (!inode_owner_or_capable(inode))
+	if (!is_owner_or_cap(inode))
 		return -EPERM;
 	if (value) {
 		/* update the cached acl value */
@@ -319,7 +331,7 @@ static int v9fs_xattr_set_acl(struct dentry *dentry, const char *name,
 	case ACL_TYPE_ACCESS:
 		name = POSIX_ACL_XATTR_ACCESS;
 		if (acl) {
-			umode_t mode = inode->i_mode;
+			mode_t mode = inode->i_mode;
 			retval = posix_acl_equiv_mode(acl, &mode);
 			if (retval < 0)
 				goto err_out;
@@ -350,7 +362,7 @@ static int v9fs_xattr_set_acl(struct dentry *dentry, const char *name,
 	case ACL_TYPE_DEFAULT:
 		name = POSIX_ACL_XATTR_DEFAULT;
 		if (!S_ISDIR(inode->i_mode)) {
-			retval = acl ? -EINVAL : 0;
+			retval = -EINVAL;
 			goto err_out;
 		}
 		break;

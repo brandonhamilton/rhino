@@ -82,7 +82,6 @@ enum dcb_connector_type {
 	DCB_CONNECTOR_DVI_I = 0x30,
 	DCB_CONNECTOR_DVI_D = 0x31,
 	DCB_CONNECTOR_LVDS = 0x40,
-	DCB_CONNECTOR_LVDS_SPWG = 0x41,
 	DCB_CONNECTOR_DP = 0x46,
 	DCB_CONNECTOR_eDP = 0x47,
 	DCB_CONNECTOR_HDMI_0 = 0x60,
@@ -252,7 +251,7 @@ struct nvbios {
 	uint8_t digital_min_front_porch;
 	bool fp_no_ddc;
 
-	spinlock_t lock;
+	struct mutex lock;
 
 	uint8_t data[NV_PROM_SIZE];
 	unsigned int length;

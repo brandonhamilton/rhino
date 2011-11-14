@@ -28,7 +28,6 @@
 #include <linux/phy.h>
 #include <linux/workqueue.h>
 #include <linux/of_mdio.h>
-#include <linux/of_net.h>
 #include <linux/of_platform.h>
 
 #include <asm/uaccess.h>
@@ -2030,6 +2029,11 @@ static void ucc_geth_set_multi(struct net_device *dev)
 			out_be32(&p_82xx_addr_filt->gaddr_l, 0x0);
 
 			netdev_for_each_mc_addr(ha, dev) {
+				/* Only support group multicast for now.
+				 */
+				if (!(ha->addr[0] & 1))
+					continue;
+
 				/* Ask CPM to run CRC and set bit in
 				 * filter mask.
 				 */
@@ -3160,8 +3164,6 @@ static int ucc_geth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	ugeth->txBd[txQ] = bd;
 
-	skb_tx_timestamp(skb);
-
 	if (ugeth->p_scheduler) {
 		ugeth->cpucount[txQ]++;
 		/* Indicate to QE that there are more Tx bds ready for
@@ -3737,7 +3739,7 @@ static const struct net_device_ops ucc_geth_netdev_ops = {
 #endif
 };
 
-static int ucc_geth_probe(struct platform_device* ofdev)
+static int ucc_geth_probe(struct platform_device* ofdev, const struct of_device_id *match)
 {
 	struct device *device = &ofdev->dev;
 	struct device_node *np = ofdev->dev.of_node;
@@ -3983,7 +3985,7 @@ static struct of_device_id ucc_geth_match[] = {
 
 MODULE_DEVICE_TABLE(of, ucc_geth_match);
 
-static struct platform_driver ucc_geth_driver = {
+static struct of_platform_driver ucc_geth_driver = {
 	.driver = {
 		.name = DRV_NAME,
 		.owner = THIS_MODULE,
@@ -4005,14 +4007,14 @@ static int __init ucc_geth_init(void)
 		memcpy(&(ugeth_info[i]), &ugeth_primary_info,
 		       sizeof(ugeth_primary_info));
 
-	ret = platform_driver_register(&ucc_geth_driver);
+	ret = of_register_platform_driver(&ucc_geth_driver);
 
 	return ret;
 }
 
 static void __exit ucc_geth_exit(void)
 {
-	platform_driver_unregister(&ucc_geth_driver);
+	of_unregister_platform_driver(&ucc_geth_driver);
 }
 
 module_init(ucc_geth_init);

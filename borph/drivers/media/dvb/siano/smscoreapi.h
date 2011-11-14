@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef __SMS_CORE_API_H__
 #define __SMS_CORE_API_H__
 
+#include <linux/version.h>
 #include <linux/device.h>
 #include <linux/list.h>
 #include <linux/mm.h>

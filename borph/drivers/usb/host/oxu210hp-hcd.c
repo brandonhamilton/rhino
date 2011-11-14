@@ -451,9 +451,9 @@ static void ehci_hub_descriptor(struct oxu_hcd *oxu,
 	temp = 1 + (ports / 8);
 	desc->bDescLength = 7 + 2 * temp;
 
-	/* ports removable, and usb 1.0 legacy PortPwrCtrlMask */
-	memset(&desc->u.hs.DeviceRemovable[0], 0, temp);
-	memset(&desc->u.hs.DeviceRemovable[temp], 0xff, temp);
+	/* two bitmaps:  ports removable, and usb 1.0 legacy PortPwrCtrlMask */
+	memset(&desc->bitmap[0], 0, temp);
+	memset(&desc->bitmap[temp], 0xff, temp);
 
 	temp = 0x0008;			/* per-port overcurrent reporting */
 	if (HCS_PPC(oxu->hcs_params))
@@ -1884,7 +1884,6 @@ static int enable_periodic(struct oxu_hcd *oxu)
 	status = handshake(oxu, &oxu->regs->status, STS_PSS, 0, 9 * 125);
 	if (status != 0) {
 		oxu_to_hcd(oxu)->state = HC_STATE_HALT;
-		usb_hc_died(oxu_to_hcd(oxu));
 		return status;
 	}
 
@@ -1910,7 +1909,6 @@ static int disable_periodic(struct oxu_hcd *oxu)
 	status = handshake(oxu, &oxu->regs->status, STS_PSS, STS_PSS, 9 * 125);
 	if (status != 0) {
 		oxu_to_hcd(oxu)->state = HC_STATE_HALT;
-		usb_hc_died(oxu_to_hcd(oxu));
 		return status;
 	}
 
@@ -2451,9 +2449,8 @@ static irqreturn_t oxu210_hcd_irq(struct usb_hcd *hcd)
 		goto dead;
 	}
 
-	/* Shared IRQ? */
 	status &= INTR_MASK;
-	if (!status || unlikely(hcd->state == HC_STATE_HALT)) {
+	if (!status) {			/* irq sharing? */
 		spin_unlock(&oxu->lock);
 		return IRQ_NONE;
 	}
@@ -2519,7 +2516,6 @@ static irqreturn_t oxu210_hcd_irq(struct usb_hcd *hcd)
 dead:
 			ehci_reset(oxu);
 			writel(0, &oxu->regs->configured_flag);
-			usb_hc_died(hcd);
 			/* generic layer kills/unlinks all urbs, then
 			 * uses oxu_stop to clean up the rest
 			 */
@@ -2883,7 +2879,7 @@ static int oxu_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 	/* Ok, we have more job to do! :) */
 
 	for (i = 0; i < num - 1; i++) {
-		/* Get free micro URB poll till a free urb is received */
+		/* Get free micro URB poll till a free urb is recieved */
 
 		do {
 			murb = (struct urb *) oxu_murb_alloc(oxu);
@@ -2915,7 +2911,7 @@ static int oxu_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 
 	/* Last urb requires special handling  */
 
-	/* Get free micro URB poll till a free urb is received */
+	/* Get free micro URB poll till a free urb is recieved */
 	do {
 		murb = (struct urb *) oxu_murb_alloc(oxu);
 		if (!murb)
@@ -3098,7 +3094,7 @@ static int oxu_hub_status_data(struct usb_hcd *hcd, char *buf)
 
 	/* Some boards (mostly VIA?) report bogus overcurrent indications,
 	 * causing massive log spam unless we completely ignore them.  It
-	 * may be relevant that VIA VT8235 controllers, where PORT_POWER is
+	 * may be relevant that VIA VT8235 controlers, where PORT_POWER is
 	 * always set, seem to clear PORT_OCC and PORT_CSC when writing to
 	 * PORT_POWER; that's surprising, but maybe within-spec.
 	 */
@@ -3828,7 +3824,7 @@ static int oxu_drv_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	memstart = res->start;
-	memlen = resource_size(res);
+	memlen = res->end - res->start + 1;
 	dev_dbg(&pdev->dev, "MEM resource %lx-%lx\n", memstart, memlen);
 	if (!request_mem_region(memstart, memlen,
 				oxu_hc_driver.description)) {
@@ -3836,7 +3832,7 @@ static int oxu_drv_probe(struct platform_device *pdev)
 		return -EBUSY;
 	}
 
-	ret = irq_set_irq_type(irq, IRQF_TRIGGER_FALLING);
+	ret = set_irq_type(irq, IRQF_TRIGGER_FALLING);
 	if (ret) {
 		dev_err(&pdev->dev, "error setting irq type\n");
 		ret = -EFAULT;

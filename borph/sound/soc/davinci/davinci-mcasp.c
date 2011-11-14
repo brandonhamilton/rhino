@@ -104,10 +104,17 @@
 #define DAVINCI_MCASP_RXBUF_REG		0x280
 
 /* McASP FIFO Registers */
+#ifndef CONFIG_ARCH_TI81XX
 #define DAVINCI_MCASP_WFIFOCTL		(0x1010)
 #define DAVINCI_MCASP_WFIFOSTS		(0x1014)
 #define DAVINCI_MCASP_RFIFOCTL		(0x1018)
 #define DAVINCI_MCASP_RFIFOSTS		(0x101C)
+#else
+#define DAVINCI_MCASP_WFIFOCTL		(0x1000)
+#define DAVINCI_MCASP_WFIFOSTS		(0x1004)
+#define DAVINCI_MCASP_RFIFOCTL		(0x1008)
+#define DAVINCI_MCASP_RFIFOSTS		(0x100C)
+#endif
 
 /*
  * DAVINCI_MCASP_PWREMUMGT_REG - Power Down and Emulation Management
@@ -434,21 +441,17 @@ static int davinci_mcasp_set_dai_fmt(struct snd_soc_dai *cpu_dai,
 		mcasp_set_bits(base + DAVINCI_MCASP_ACLKRCTL_REG, ACLKRE);
 		mcasp_set_bits(base + DAVINCI_MCASP_RXFMCTL_REG, AFSRE);
 
-		mcasp_set_bits(base + DAVINCI_MCASP_PDIR_REG,
-				ACLKX | AHCLKX | AFSX);
+		mcasp_set_bits(base + DAVINCI_MCASP_PDIR_REG, (0x7 << 26));
 		break;
 	case SND_SOC_DAIFMT_CBM_CFS:
 		/* codec is clock master and frame slave */
-		mcasp_clr_bits(base + DAVINCI_MCASP_ACLKXCTL_REG, ACLKXE);
+		mcasp_set_bits(base + DAVINCI_MCASP_ACLKXCTL_REG, ACLKXE);
 		mcasp_set_bits(base + DAVINCI_MCASP_TXFMCTL_REG, AFSXE);
 
-		mcasp_clr_bits(base + DAVINCI_MCASP_ACLKRCTL_REG, ACLKRE);
+		mcasp_set_bits(base + DAVINCI_MCASP_ACLKRCTL_REG, ACLKRE);
 		mcasp_set_bits(base + DAVINCI_MCASP_RXFMCTL_REG, AFSRE);
 
-		mcasp_clr_bits(base + DAVINCI_MCASP_PDIR_REG,
-				ACLKX | ACLKR);
-		mcasp_set_bits(base + DAVINCI_MCASP_PDIR_REG,
-				AFSX | AFSR);
+		mcasp_set_bits(base + DAVINCI_MCASP_PDIR_REG, (0x2d << 26));
 		break;
 	case SND_SOC_DAIFMT_CBM_CFM:
 		/* codec is clock and frame master */
@@ -458,8 +461,7 @@ static int davinci_mcasp_set_dai_fmt(struct snd_soc_dai *cpu_dai,
 		mcasp_clr_bits(base + DAVINCI_MCASP_ACLKRCTL_REG, ACLKRE);
 		mcasp_clr_bits(base + DAVINCI_MCASP_RXFMCTL_REG, AFSRE);
 
-		mcasp_clr_bits(base + DAVINCI_MCASP_PDIR_REG,
-				ACLKX | AHCLKX | AFSX | ACLKR | AHCLKR | AFSR);
+		mcasp_clr_bits(base + DAVINCI_MCASP_PDIR_REG, (0x3f << 26));
 		break;
 
 	default:
@@ -649,7 +651,7 @@ static void davinci_hw_param(struct davinci_audio_dev *dev, int stream)
 		mcasp_set_reg(dev->base + DAVINCI_MCASP_TXTDM_REG, mask);
 		mcasp_set_bits(dev->base + DAVINCI_MCASP_TXFMT_REG, TXORD);
 
-		if ((dev->tdm_slots >= 2) && (dev->tdm_slots <= 32))
+		if ((dev->tdm_slots >= 2) || (dev->tdm_slots <= 32))
 			mcasp_mod_bits(dev->base + DAVINCI_MCASP_TXFMCTL_REG,
 					FSXMOD(dev->tdm_slots), FSXMOD(0x1FF));
 		else
@@ -665,7 +667,7 @@ static void davinci_hw_param(struct davinci_audio_dev *dev, int stream)
 				AHCLKRE);
 		mcasp_set_reg(dev->base + DAVINCI_MCASP_RXTDM_REG, mask);
 
-		if ((dev->tdm_slots >= 2) && (dev->tdm_slots <= 32))
+		if ((dev->tdm_slots >= 2) || (dev->tdm_slots <= 32))
 			mcasp_mod_bits(dev->base + DAVINCI_MCASP_RXFMCTL_REG,
 					FSRMOD(dev->tdm_slots), FSRMOD(0x1FF));
 		else
@@ -909,9 +911,11 @@ static int davinci_mcasp_probe(struct platform_device *pdev)
 	dma_data = &dev->dma_params[SNDRV_PCM_STREAM_PLAYBACK];
 	dma_data->asp_chan_q = pdata->asp_chan_q;
 	dma_data->ram_chan_q = pdata->ram_chan_q;
-	dma_data->sram_size = pdata->sram_size_playback;
-	dma_data->dma_addr = (dma_addr_t) (pdata->tx_dma_offset +
-							mem->start);
+	if (cpu_is_ti81xx()) {
+		dma_data->dma_addr = (dma_addr_t) (pdata->tx_dma_offset);
+	} else {
+		dma_data->dma_addr = (dma_addr_t) (pdata->tx_dma_offset + mem->start);
+	}
 
 	/* first TX, then RX */
 	res = platform_get_resource(pdev, IORESOURCE_DMA, 0);
@@ -926,9 +930,11 @@ static int davinci_mcasp_probe(struct platform_device *pdev)
 	dma_data = &dev->dma_params[SNDRV_PCM_STREAM_CAPTURE];
 	dma_data->asp_chan_q = pdata->asp_chan_q;
 	dma_data->ram_chan_q = pdata->ram_chan_q;
-	dma_data->sram_size = pdata->sram_size_capture;
-	dma_data->dma_addr = (dma_addr_t)(pdata->rx_dma_offset +
-							mem->start);
+	if (cpu_is_ti81xx()) {
+		dma_data->dma_addr = (dma_addr_t) (pdata->rx_dma_offset);
+	} else {
+		dma_data->dma_addr = (dma_addr_t) (pdata->rx_dma_offset + mem->start);
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_DMA, 1);
 	if (!res) {

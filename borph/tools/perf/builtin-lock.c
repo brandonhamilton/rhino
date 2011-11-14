@@ -202,19 +202,8 @@ static struct thread_stat *thread_stat_findnew_first(u32 tid)
 SINGLE_KEY(nr_acquired)
 SINGLE_KEY(nr_contended)
 SINGLE_KEY(wait_time_total)
+SINGLE_KEY(wait_time_min)
 SINGLE_KEY(wait_time_max)
-
-static int lock_stat_key_wait_time_min(struct lock_stat *one,
-					struct lock_stat *two)
-{
-	u64 s1 = one->wait_time_min;
-	u64 s2 = two->wait_time_min;
-	if (s1 == ULLONG_MAX)
-		s1 = 0;
-	if (s2 == ULLONG_MAX)
-		s2 = 0;
-	return s1 > s2;
-}
 
 struct lock_key {
 	/*
@@ -793,9 +782,9 @@ static void print_result(void)
 		pr_info("%10u ", st->nr_acquired);
 		pr_info("%10u ", st->nr_contended);
 
-		pr_info("%15" PRIu64 " ", st->wait_time_total);
-		pr_info("%15" PRIu64 " ", st->wait_time_max);
-		pr_info("%15" PRIu64 " ", st->wait_time_min == ULLONG_MAX ?
+		pr_info("%15llu ", st->wait_time_total);
+		pr_info("%15llu ", st->wait_time_max);
+		pr_info("%15llu ", st->wait_time_min == ULLONG_MAX ?
 		       0 : st->wait_time_min);
 		pr_info("\n");
 	}
@@ -845,33 +834,35 @@ static void dump_info(void)
 		die("Unknown type of information\n");
 }
 
-static int process_sample_event(union perf_event *event,
-				struct perf_sample *sample,
-				struct perf_evsel *evsel __used,
-				struct perf_session *s)
+static int process_sample_event(event_t *self, struct perf_session *s)
 {
-	struct thread *thread = perf_session__findnew(s, sample->tid);
+	struct sample_data data;
+	struct thread *thread;
 
+	bzero(&data, sizeof(data));
+	event__parse_sample(self, s->sample_type, &data);
+
+	thread = perf_session__findnew(s, data.tid);
 	if (thread == NULL) {
 		pr_debug("problem processing %d event, skipping it.\n",
-			event->header.type);
+			self->header.type);
 		return -1;
 	}
 
-	process_raw_event(sample->raw_data, sample->cpu, sample->time, thread);
+	process_raw_event(data.raw_data, data.cpu, data.time, thread);
 
 	return 0;
 }
 
 static struct perf_event_ops eops = {
 	.sample			= process_sample_event,
-	.comm			= perf_event__process_comm,
+	.comm			= event__process_comm,
 	.ordered_samples	= true,
 };
 
 static int read_events(void)
 {
-	session = perf_session__new(input_name, O_RDONLY, 0, false, &eops);
+	session = perf_session__new(input_name, O_RDONLY, 0, false);
 	if (!session)
 		die("Initializing perf session failed\n");
 
@@ -906,7 +897,7 @@ static const char * const report_usage[] = {
 
 static const struct option report_options[] = {
 	OPT_STRING('k', "key", &sort_key, "acquired",
-		    "key for sorting (acquired / contended / wait_total / wait_max / wait_min)"),
+		    "key for sorting"),
 	/* TODO: type */
 	OPT_END()
 };
@@ -956,9 +947,6 @@ static int __cmd_record(int argc, const char **argv)
 	rec_argc = ARRAY_SIZE(record_args) + argc - 1;
 	rec_argv = calloc(rec_argc + 1, sizeof(char *));
 
-	if (rec_argv == NULL)
-		return -ENOMEM;
-
 	for (i = 0; i < ARRAY_SIZE(record_args); i++)
 		rec_argv[i] = strdup(record_args[i]);
 
@@ -994,9 +982,9 @@ int cmd_lock(int argc, const char **argv, const char *prefix __used)
 				usage_with_options(report_usage, report_options);
 		}
 		__cmd_report();
-	} else if (!strcmp(argv[0], "script")) {
-		/* Aliased to 'perf script' */
-		return cmd_script(argc, argv, prefix);
+	} else if (!strcmp(argv[0], "trace")) {
+		/* Aliased to 'perf trace' */
+		return cmd_trace(argc, argv, prefix);
 	} else if (!strcmp(argv[0], "info")) {
 		if (argc) {
 			argc = parse_options(argc, argv,

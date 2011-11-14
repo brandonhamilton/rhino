@@ -25,7 +25,7 @@
 
 #include <linux/module.h>
 #include <linux/dmi.h>
-#include <linux/input/mt.h>
+#include <linux/input.h>
 #include <linux/serio.h>
 #include <linux/libps2.h>
 #include <linux/slab.h>
@@ -207,37 +207,27 @@ static int synaptics_identify(struct psmouse *psmouse)
 static int synaptics_resolution(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
-	unsigned char resp[3];
+	unsigned char res[3];
+	unsigned char max[3];
 
 	if (SYN_ID_MAJOR(priv->identity) < 4)
 		return 0;
 
-	if (synaptics_send_cmd(psmouse, SYN_QUE_RESOLUTION, resp) == 0) {
-		if (resp[0] != 0 && (resp[1] & 0x80) && resp[2] != 0) {
-			priv->x_res = resp[0]; /* x resolution in units/mm */
-			priv->y_res = resp[2]; /* y resolution in units/mm */
+	if (synaptics_send_cmd(psmouse, SYN_QUE_RESOLUTION, res) == 0) {
+		if (res[0] != 0 && (res[1] & 0x80) && res[2] != 0) {
+			priv->x_res = res[0]; /* x resolution in units/mm */
+			priv->y_res = res[2]; /* y resolution in units/mm */
 		}
 	}
 
 	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 5 &&
 	    SYN_CAP_MAX_DIMENSIONS(priv->ext_cap_0c)) {
-		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_MAX_COORDS, resp)) {
-			printk(KERN_ERR "Synaptics claims to have max coordinates"
-			       " query, but I'm not able to read it.\n");
+		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_DIMENSIONS, max)) {
+			printk(KERN_ERR "Synaptics claims to have dimensions query,"
+			       " but I'm not able to read it.\n");
 		} else {
-			priv->x_max = (resp[0] << 5) | ((resp[1] & 0x0f) << 1);
-			priv->y_max = (resp[2] << 5) | ((resp[1] & 0xf0) >> 3);
-		}
-	}
-
-	if (SYN_EXT_CAP_REQUESTS(priv->capabilities) >= 7 &&
-	    SYN_CAP_MIN_DIMENSIONS(priv->ext_cap_0c)) {
-		if (synaptics_send_cmd(psmouse, SYN_QUE_EXT_MIN_COORDS, resp)) {
-			printk(KERN_ERR "Synaptics claims to have min coordinates"
-			       " query, but I'm not able to read it.\n");
-		} else {
-			priv->x_min = (resp[0] << 5) | ((resp[1] & 0x0f) << 1);
-			priv->y_min = (resp[2] << 5) | ((resp[1] & 0xf0) >> 3);
+			priv->x_max = (max[0] << 5) | ((max[1] & 0x0f) << 1);
+			priv->y_max = (max[2] << 5) | ((max[1] & 0xf0) >> 3);
 		}
 	}
 
@@ -287,25 +277,6 @@ static void synaptics_set_rate(struct psmouse *psmouse, unsigned int rate)
 	}
 
 	synaptics_mode_cmd(psmouse, priv->mode);
-}
-
-static int synaptics_set_advanced_gesture_mode(struct psmouse *psmouse)
-{
-	static unsigned char param = 0xc8;
-	struct synaptics_data *priv = psmouse->private;
-
-	if (!SYN_CAP_ADV_GESTURE(priv->ext_cap_0c))
-		return 0;
-
-	if (psmouse_sliced_command(psmouse, SYN_QUE_MODEL))
-		return -1;
-	if (ps2_command(&psmouse->ps2dev, &param, PSMOUSE_CMD_SETRATE))
-		return -1;
-
-	/* Advanced gesture mode also sends multi finger data */
-	priv->capabilities |= BIT(1);
-
-	return 0;
 }
 
 /*****************************************************************************
@@ -409,13 +380,19 @@ static void synaptics_pt_create(struct psmouse *psmouse)
  *	Functions to interpret the absolute mode packets
  ****************************************************************************/
 
-static int synaptics_parse_hw_state(const unsigned char buf[],
-				    struct synaptics_data *priv,
-				    struct synaptics_hw_state *hw)
+static void synaptics_parse_hw_state(unsigned char buf[], struct synaptics_data *priv, struct synaptics_hw_state *hw)
 {
 	memset(hw, 0, sizeof(struct synaptics_hw_state));
 
 	if (SYN_MODEL_NEWABS(priv->model_id)) {
+		hw->x = (((buf[3] & 0x10) << 8) |
+			 ((buf[1] & 0x0f) << 8) |
+			 buf[4]);
+		hw->y = (((buf[3] & 0x20) << 7) |
+			 ((buf[1] & 0xf0) << 4) |
+			 buf[5]);
+
+		hw->z = buf[2];
 		hw->w = (((buf[0] & 0x30) >> 2) |
 			 ((buf[0] & 0x04) >> 1) |
 			 ((buf[3] & 0x04) >> 2));
@@ -441,22 +418,6 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 			hw->up   = ((buf[0] ^ buf[3]) & 0x01) ? 1 : 0;
 			hw->down = ((buf[0] ^ buf[3]) & 0x02) ? 1 : 0;
 		}
-
-		if (SYN_CAP_ADV_GESTURE(priv->ext_cap_0c) && hw->w == 2) {
-			/* Gesture packet: (x, y, z) at half resolution */
-			priv->mt.x = (((buf[4] & 0x0f) << 8) | buf[1]) << 1;
-			priv->mt.y = (((buf[4] & 0xf0) << 4) | buf[2]) << 1;
-			priv->mt.z = ((buf[3] & 0x30) | (buf[5] & 0x0f)) << 1;
-			return 1;
-		}
-
-		hw->x = (((buf[3] & 0x10) << 8) |
-			 ((buf[1] & 0x0f) << 8) |
-			 buf[4]);
-		hw->y = (((buf[3] & 0x20) << 7) |
-			 ((buf[1] & 0xf0) << 4) |
-			 buf[5]);
-		hw->z = buf[2];
 
 		if (SYN_CAP_MULTI_BUTTON_NO(priv->ext_cap) &&
 		    ((buf[0] ^ buf[3]) & 0x02)) {
@@ -491,39 +452,6 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 		hw->left  = (buf[0] & 0x01) ? 1 : 0;
 		hw->right = (buf[0] & 0x02) ? 1 : 0;
 	}
-
-	return 0;
-}
-
-static void synaptics_report_semi_mt_slot(struct input_dev *dev, int slot,
-					  bool active, int x, int y)
-{
-	input_mt_slot(dev, slot);
-	input_mt_report_slot_state(dev, MT_TOOL_FINGER, active);
-	if (active) {
-		input_report_abs(dev, ABS_MT_POSITION_X, x);
-		input_report_abs(dev, ABS_MT_POSITION_Y,
-				 YMAX_NOMINAL + YMIN_NOMINAL - y);
-	}
-}
-
-static void synaptics_report_semi_mt_data(struct input_dev *dev,
-					  const struct synaptics_hw_state *a,
-					  const struct synaptics_hw_state *b,
-					  int num_fingers)
-{
-	if (num_fingers >= 2) {
-		synaptics_report_semi_mt_slot(dev, 0, true, min(a->x, b->x),
-					      min(a->y, b->y));
-		synaptics_report_semi_mt_slot(dev, 1, true, max(a->x, b->x),
-					      max(a->y, b->y));
-	} else if (num_fingers == 1) {
-		synaptics_report_semi_mt_slot(dev, 0, true, a->x, a->y);
-		synaptics_report_semi_mt_slot(dev, 1, false, 0, 0);
-	} else {
-		synaptics_report_semi_mt_slot(dev, 0, false, 0, 0);
-		synaptics_report_semi_mt_slot(dev, 1, false, 0, 0);
-	}
 }
 
 /*
@@ -538,8 +466,7 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 	int finger_width;
 	int i;
 
-	if (synaptics_parse_hw_state(psmouse->packet, priv, &hw))
-		return;
+	synaptics_parse_hw_state(psmouse->packet, priv, &hw);
 
 	if (hw.scroll) {
 		priv->scroll += hw.scroll;
@@ -561,7 +488,7 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 		return;
 	}
 
-	if (hw.z > 0 && hw.x > 1) {
+	if (hw.z > 0) {
 		num_fingers = 1;
 		finger_width = 5;
 		if (SYN_CAP_EXTENDED(priv->capabilities)) {
@@ -585,9 +512,6 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 		finger_width = 0;
 	}
 
-	if (SYN_CAP_ADV_GESTURE(priv->ext_cap_0c))
-		synaptics_report_semi_mt_data(dev, &hw, &priv->mt, num_fingers);
-
 	/* Post events
 	 * BTN_TOUCH has to be first as mousedev relies on it when doing
 	 * absolute -> relative conversion
@@ -595,7 +519,7 @@ static void synaptics_process_packet(struct psmouse *psmouse)
 	if (hw.z > 30) input_report_key(dev, BTN_TOUCH, 1);
 	if (hw.z < 25) input_report_key(dev, BTN_TOUCH, 0);
 
-	if (num_fingers > 0) {
+	if (hw.z > 0) {
 		input_report_abs(dev, ABS_X, hw.x);
 		input_report_abs(dev, ABS_Y, YMAX_NOMINAL + YMIN_NOMINAL - hw.y);
 	}
@@ -697,37 +621,13 @@ static psmouse_ret_t synaptics_process_byte(struct psmouse *psmouse)
 static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 {
 	int i;
-	int fuzz = SYN_CAP_REDUCED_FILTERING(priv->ext_cap_0c) ?
-			SYN_REDUCED_FILTER_FUZZ : 0;
-
-	__set_bit(INPUT_PROP_POINTER, dev->propbit);
 
 	__set_bit(EV_ABS, dev->evbit);
 	input_set_abs_params(dev, ABS_X,
-			     priv->x_min ?: XMIN_NOMINAL,
-			     priv->x_max ?: XMAX_NOMINAL,
-			     fuzz, 0);
+			     XMIN_NOMINAL, priv->x_max ?: XMAX_NOMINAL, 0, 0);
 	input_set_abs_params(dev, ABS_Y,
-			     priv->y_min ?: YMIN_NOMINAL,
-			     priv->y_max ?: YMAX_NOMINAL,
-			     fuzz, 0);
+			     YMIN_NOMINAL, priv->y_max ?: YMAX_NOMINAL, 0, 0);
 	input_set_abs_params(dev, ABS_PRESSURE, 0, 255, 0, 0);
-
-	if (SYN_CAP_ADV_GESTURE(priv->ext_cap_0c)) {
-		__set_bit(INPUT_PROP_SEMI_MT, dev->propbit);
-		input_mt_init_slots(dev, 2);
-		input_set_abs_params(dev, ABS_MT_POSITION_X,
-				     priv->x_min ?: XMIN_NOMINAL,
-				     priv->x_max ?: XMAX_NOMINAL,
-				     fuzz, 0);
-		input_set_abs_params(dev, ABS_MT_POSITION_Y,
-				     priv->y_min ?: YMIN_NOMINAL,
-				     priv->y_max ?: YMAX_NOMINAL,
-				     fuzz, 0);
-
-		input_abs_set_res(dev, ABS_MT_POSITION_X, priv->x_res);
-		input_abs_set_res(dev, ABS_MT_POSITION_Y, priv->y_res);
-	}
 
 	if (SYN_CAP_PALMDETECT(priv->capabilities))
 		input_set_abs_params(dev, ABS_TOOL_WIDTH, 0, 15, 0, 0);
@@ -763,7 +663,6 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	input_abs_set_res(dev, ABS_Y, priv->y_res);
 
 	if (SYN_CAP_CLICKPAD(priv->ext_cap_0c)) {
-		__set_bit(INPUT_PROP_BUTTONPAD, dev->propbit);
 		/* Clickpads report only left button */
 		__clear_bit(BTN_RIGHT, dev->keybit);
 		__clear_bit(BTN_MIDDLE, dev->keybit);
@@ -781,46 +680,25 @@ static int synaptics_reconnect(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
 	struct synaptics_data old_priv = *priv;
-	int retry = 0;
-	int error;
 
-	do {
-		psmouse_reset(psmouse);
-		error = synaptics_detect(psmouse, 0);
-	} while (error && ++retry < 3);
+	psmouse_reset(psmouse);
 
-	if (error)
+	if (synaptics_detect(psmouse, 0))
 		return -1;
-
-	if (retry > 1)
-		printk(KERN_DEBUG "Synaptics reconnected after %d tries\n",
-			retry);
 
 	if (synaptics_query_hardware(psmouse)) {
 		printk(KERN_ERR "Unable to query Synaptics hardware.\n");
 		return -1;
 	}
 
-	if (synaptics_set_absolute_mode(psmouse)) {
-		printk(KERN_ERR "Unable to initialize Synaptics hardware.\n");
-		return -1;
-	}
-
-	if (synaptics_set_advanced_gesture_mode(psmouse)) {
-		printk(KERN_ERR "Advanced gesture mode reconnect failed.\n");
-		return -1;
-	}
-
 	if (old_priv.identity != priv->identity ||
 	    old_priv.model_id != priv->model_id ||
 	    old_priv.capabilities != priv->capabilities ||
-	    old_priv.ext_cap != priv->ext_cap) {
-		printk(KERN_ERR "Synaptics hardware appears to be different: "
-			"id(%ld-%ld), model(%ld-%ld), caps(%lx-%lx), ext(%lx-%lx).\n",
-			old_priv.identity, priv->identity,
-			old_priv.model_id, priv->model_id,
-			old_priv.capabilities, priv->capabilities,
-			old_priv.ext_cap, priv->ext_cap);
+	    old_priv.ext_cap != priv->ext_cap)
+		return -1;
+
+	if (synaptics_set_absolute_mode(psmouse)) {
+		printk(KERN_ERR "Unable to initialize Synaptics hardware.\n");
 		return -1;
 	}
 
@@ -862,48 +740,18 @@ static const struct dmi_system_id __initconst toshiba_dmi_table[] = {
 		},
 
 	},
-#endif
 	{ }
-};
-
-static bool broken_olpc_ec;
-
-static const struct dmi_system_id __initconst olpc_dmi_table[] = {
-#if defined(CONFIG_DMI) && defined(CONFIG_OLPC)
-	{
-		/* OLPC XO-1 or XO-1.5 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "OLPC"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "XO"),
-		},
-	},
 #endif
-	{ }
 };
 
 void __init synaptics_module_init(void)
 {
 	impaired_toshiba_kbc = dmi_check_system(toshiba_dmi_table);
-	broken_olpc_ec = dmi_check_system(olpc_dmi_table);
 }
 
 int synaptics_init(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv;
-
-	/*
-	 * The OLPC XO has issues with Synaptics' absolute mode; similarly to
-	 * the HGPK, it quickly degrades and the hardware becomes jumpy and
-	 * overly sensitive.  Not only that, but the constant packet spew
-	 * (even at a lowered 40pps rate) overloads the EC such that key
-	 * presses on the keyboard are missed.  Given all of that, don't
-	 * even attempt to use Synaptics mode.  Relative mode seems to work
-	 * just fine.
-	 */
-	if (broken_olpc_ec) {
-		printk(KERN_INFO "synaptics: OLPC XO detected, not enabling Synaptics protocol.\n");
-		return -ENODEV;
-	}
 
 	psmouse->private = priv = kzalloc(sizeof(struct synaptics_data), GFP_KERNEL);
 	if (!priv)
@@ -918,11 +766,6 @@ int synaptics_init(struct psmouse *psmouse)
 
 	if (synaptics_set_absolute_mode(psmouse)) {
 		printk(KERN_ERR "Unable to initialize Synaptics hardware.\n");
-		goto init_fail;
-	}
-
-	if (synaptics_set_advanced_gesture_mode(psmouse)) {
-		printk(KERN_ERR "Advanced gesture mode init failed.\n");
 		goto init_fail;
 	}
 
@@ -959,8 +802,8 @@ int synaptics_init(struct psmouse *psmouse)
 
 	/*
 	 * Toshiba's KBC seems to have trouble handling data from
-	 * Synaptics at full rate.  Switch to a lower rate (roughly
-	 * the same rate as a standard PS/2 mouse).
+	 * Synaptics as full rate, switch to lower rate which is roughly
+	 * thye same as rate of standard PS/2 mouse.
 	 */
 	if (psmouse->rate >= 80 && impaired_toshiba_kbc) {
 		printk(KERN_INFO "synaptics: Toshiba %s detected, limiting rate to 40pps.\n",
@@ -997,3 +840,4 @@ bool synaptics_supported(void)
 }
 
 #endif /* CONFIG_MOUSE_PS2_SYNAPTICS */
+

@@ -219,17 +219,24 @@ spufs_mem_write(struct file *file, const char __user *buffer,
 	loff_t pos = *ppos;
 	int ret;
 
+	if (pos < 0)
+		return -EINVAL;
 	if (pos > LS_SIZE)
 		return -EFBIG;
+	if (size > LS_SIZE - pos)
+		size = LS_SIZE - pos;
 
 	ret = spu_acquire(ctx);
 	if (ret)
 		return ret;
 
 	local_store = ctx->ops->get_ls(ctx);
-	size = simple_write_to_buffer(local_store, LS_SIZE, ppos, buffer, size);
+	ret = copy_from_user(local_store + pos, buffer, size);
 	spu_release(ctx);
 
+	if (ret)
+		return -EFAULT;
+	*ppos = pos + size;
 	return size;
 }
 
@@ -567,15 +574,18 @@ spufs_regs_write(struct file *file, const char __user *buffer,
 	if (*pos >= sizeof(lscsa->gprs))
 		return -EFBIG;
 
+	size = min_t(ssize_t, sizeof(lscsa->gprs) - *pos, size);
+	*pos += size;
+
 	ret = spu_acquire_saved(ctx);
 	if (ret)
 		return ret;
 
-	size = simple_write_to_buffer(lscsa->gprs, sizeof(lscsa->gprs), pos,
-					buffer, size);
+	ret = copy_from_user((char *)lscsa->gprs + *pos - size,
+			     buffer, size) ? -EFAULT : size;
 
 	spu_release_saved(ctx);
-	return size;
+	return ret;
 }
 
 static const struct file_operations spufs_regs_fops = {
@@ -620,15 +630,18 @@ spufs_fpcr_write(struct file *file, const char __user * buffer,
 	if (*pos >= sizeof(lscsa->fpcr))
 		return -EFBIG;
 
+	size = min_t(ssize_t, sizeof(lscsa->fpcr) - *pos, size);
+
 	ret = spu_acquire_saved(ctx);
 	if (ret)
 		return ret;
 
-	size = simple_write_to_buffer(&lscsa->fpcr, sizeof(lscsa->fpcr), pos,
-					buffer, size);
+	*pos += size;
+	ret = copy_from_user((char *)&lscsa->fpcr + *pos - size,
+			     buffer, size) ? -EFAULT : size;
 
 	spu_release_saved(ctx);
-	return size;
+	return ret;
 }
 
 static const struct file_operations spufs_fpcr_fops = {
@@ -1850,16 +1863,9 @@ out:
 	return ret;
 }
 
-static int spufs_mfc_fsync(struct file *file, loff_t start, loff_t end, int datasync)
+static int spufs_mfc_fsync(struct file *file, int datasync)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
-	int err = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (!err) {
-		mutex_lock(&inode->i_mutex);
-		err = spufs_mfc_flush(file, NULL);
-		mutex_unlock(&inode->i_mutex);
-	}
-	return err;
+	return spufs_mfc_flush(file, NULL);
 }
 
 static int spufs_mfc_fasync(int fd, struct file *file, int on)

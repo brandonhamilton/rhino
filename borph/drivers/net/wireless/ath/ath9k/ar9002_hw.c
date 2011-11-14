@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2011 Atheros Communications Inc.
+ * Copyright (c) 2008-2010 Atheros Communications Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -22,9 +22,27 @@
 
 int modparam_force_new_ani;
 module_param_named(force_new_ani, modparam_force_new_ani, int, 0444);
-MODULE_PARM_DESC(force_new_ani, "Force new ANI for AR5008, AR9001, AR9002");
+MODULE_PARM_DESC(nohwcrypt, "Force new ANI for AR5008, AR9001, AR9002");
 
 /* General hardware code for the A5008/AR9001/AR9002 hadware families */
+
+static bool ar9002_hw_macversion_supported(u32 macversion)
+{
+	switch (macversion) {
+	case AR_SREV_VERSION_5416_PCI:
+	case AR_SREV_VERSION_5416_PCIE:
+	case AR_SREV_VERSION_9160:
+	case AR_SREV_VERSION_9100:
+	case AR_SREV_VERSION_9280:
+	case AR_SREV_VERSION_9285:
+	case AR_SREV_VERSION_9287:
+	case AR_SREV_VERSION_9271:
+		return true;
+	default:
+		break;
+	}
+	return false;
+}
 
 static void ar9002_hw_init_mode_regs(struct ath_hw *ah)
 {
@@ -309,7 +327,11 @@ static void ar9002_hw_configpcipowersave(struct ath_hw *ah,
 	u8 i;
 	u32 val;
 
-	if (ah->is_pciexpress != true || ah->aspm_enabled != true)
+	if (ah->is_pciexpress != true)
+		return;
+
+	/* Do not touch SerDes registers */
+	if (ah->config.pcie_powersave_enable == 2)
 		return;
 
 	/* Nothing to do on restore for 11N */
@@ -422,8 +444,9 @@ static void ar9002_hw_configpcipowersave(struct ath_hw *ah,
 		}
 
 		/* WAR for ASPM system hang */
-		if (AR_SREV_9285(ah) || AR_SREV_9287(ah))
+		if (AR_SREV_9280(ah) || AR_SREV_9285(ah) || AR_SREV_9287(ah)) {
 			val |= (AR_WA_BIT6 | AR_WA_BIT7);
+		}
 
 		if (AR_SREV_9285E_20(ah))
 			val |= AR_WA_BIT23;
@@ -471,9 +494,9 @@ int ar9002_hw_rf_claim(struct ath_hw *ah)
 	case AR_RAD2122_SREV_MAJOR:
 		break;
 	default:
-		ath_err(ath9k_hw_common(ah),
-			"Radio Chip Rev 0x%02X not supported\n",
-			val & AR_RADIO_SREV_MAJOR);
+		ath_print(ath9k_hw_common(ah), ATH_DBG_FATAL,
+			  "Radio Chip Rev 0x%02X not supported\n",
+			  val & AR_RADIO_SREV_MAJOR);
 		return -EOPNOTSUPP;
 	}
 
@@ -495,6 +518,45 @@ void ar9002_hw_enable_async_fifo(struct ath_hw *ah)
 	}
 }
 
+/*
+ * If Async FIFO is enabled, the following counters change as MAC now runs
+ * at 117 Mhz instead of 88/44MHz when async FIFO is disabled.
+ *
+ * The values below tested for ht40 2 chain.
+ * Overwrite the delay/timeouts initialized in process ini.
+ */
+void ar9002_hw_update_async_fifo(struct ath_hw *ah)
+{
+	if (AR_SREV_9287_13_OR_LATER(ah)) {
+		REG_WRITE(ah, AR_D_GBL_IFS_SIFS,
+			  AR_D_GBL_IFS_SIFS_ASYNC_FIFO_DUR);
+		REG_WRITE(ah, AR_D_GBL_IFS_SLOT,
+			  AR_D_GBL_IFS_SLOT_ASYNC_FIFO_DUR);
+		REG_WRITE(ah, AR_D_GBL_IFS_EIFS,
+			  AR_D_GBL_IFS_EIFS_ASYNC_FIFO_DUR);
+
+		REG_WRITE(ah, AR_TIME_OUT, AR_TIME_OUT_ACK_CTS_ASYNC_FIFO_DUR);
+		REG_WRITE(ah, AR_USEC, AR_USEC_ASYNC_FIFO_DUR);
+
+		REG_SET_BIT(ah, AR_MAC_PCU_LOGIC_ANALYZER,
+			    AR_MAC_PCU_LOGIC_ANALYZER_DISBUG20768);
+		REG_RMW_FIELD(ah, AR_AHB_MODE, AR_AHB_CUSTOM_BURST_EN,
+			      AR_AHB_CUSTOM_BURST_ASYNC_FIFO_VAL);
+	}
+}
+
+/*
+ * We don't enable WEP aggregation on mac80211 but we keep this
+ * around for HAL unification purposes.
+ */
+void ar9002_hw_enable_wep_aggregation(struct ath_hw *ah)
+{
+	if (AR_SREV_9287_13_OR_LATER(ah)) {
+		REG_SET_BIT(ah, AR_PCU_MISC_MODE2,
+			    AR_PCU_MISC_MODE2_ENABLE_AGGWEP);
+	}
+}
+
 /* Sets up the AR5008/AR9001/AR9002 hardware familiy callbacks */
 void ar9002_hw_attach_ops(struct ath_hw *ah)
 {
@@ -503,6 +565,7 @@ void ar9002_hw_attach_ops(struct ath_hw *ah)
 
 	priv_ops->init_mode_regs = ar9002_hw_init_mode_regs;
 	priv_ops->init_mode_gain_regs = ar9002_hw_init_mode_gain_regs;
+	priv_ops->macversion_supported = ar9002_hw_macversion_supported;
 
 	ops->config_pci_powersave = ar9002_hw_configpcipowersave;
 

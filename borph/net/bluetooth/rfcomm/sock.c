@@ -45,7 +45,7 @@
 #include <net/sock.h>
 
 #include <asm/system.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -140,12 +140,10 @@ static struct sock *__rfcomm_get_sock_by_addr(u8 channel, bdaddr_t *src)
 /* Find socket with channel and source bdaddr.
  * Returns closest match.
  */
-static struct sock *rfcomm_get_sock_by_channel(int state, u8 channel, bdaddr_t *src)
+static struct sock *__rfcomm_get_sock_by_channel(int state, u8 channel, bdaddr_t *src)
 {
 	struct sock *sk = NULL, *sk1 = NULL;
 	struct hlist_node *node;
-
-	read_lock(&rfcomm_sk_list.lock);
 
 	sk_for_each(sk, node, &rfcomm_sk_list.head) {
 		if (state && sk->sk_state != state)
@@ -161,10 +159,19 @@ static struct sock *rfcomm_get_sock_by_channel(int state, u8 channel, bdaddr_t *
 				sk1 = sk;
 		}
 	}
-
-	read_unlock(&rfcomm_sk_list.lock);
-
 	return node ? sk : sk1;
+}
+
+/* Find socket with given address (channel, src).
+ * Returns locked socket */
+static inline struct sock *rfcomm_get_sock_by_channel(int state, u8 channel, bdaddr_t *src)
+{
+	struct sock *s;
+	read_lock(&rfcomm_sk_list.lock);
+	s = __rfcomm_get_sock_by_channel(state, channel, src);
+	if (s) bh_lock_sock(s);
+	read_unlock(&rfcomm_sk_list.lock);
+	return s;
 }
 
 static void rfcomm_sock_destruct(struct sock *sk)
@@ -679,8 +686,7 @@ static int rfcomm_sock_setsockopt(struct socket *sock, int level, int optname, c
 {
 	struct sock *sk = sock->sk;
 	struct bt_security sec;
-	int err = 0;
-	size_t len;
+	int len, err = 0;
 	u32 opt;
 
 	BT_DBG("sk %p", sk);
@@ -742,8 +748,8 @@ static int rfcomm_sock_setsockopt(struct socket *sock, int level, int optname, c
 static int rfcomm_sock_getsockopt_old(struct socket *sock, int optname, char __user *optval, int __user *optlen)
 {
 	struct sock *sk = sock->sk;
+	struct sock *l2cap_sk;
 	struct rfcomm_conninfo cinfo;
-	struct l2cap_conn *conn = l2cap_pi(sk)->chan->conn;
 	int len, err = 0;
 	u32 opt;
 
@@ -786,9 +792,10 @@ static int rfcomm_sock_getsockopt_old(struct socket *sock, int optname, char __u
 			break;
 		}
 
-		memset(&cinfo, 0, sizeof(cinfo));
-		cinfo.hci_handle = conn->hcon->handle;
-		memcpy(cinfo.dev_class, conn->hcon->dev_class, 3);
+		l2cap_sk = rfcomm_pi(sk)->dlc->session->sock->sk;
+
+		cinfo.hci_handle = l2cap_pi(l2cap_sk)->conn->hcon->handle;
+		memcpy(cinfo.dev_class, l2cap_pi(l2cap_sk)->conn->hcon->dev_class, 3);
 
 		len = min_t(unsigned int, len, sizeof(cinfo));
 		if (copy_to_user(optval, (char *) &cinfo, len))
@@ -888,8 +895,7 @@ static int rfcomm_sock_shutdown(struct socket *sock, int how)
 
 	BT_DBG("sock %p, sk %p", sock, sk);
 
-	if (!sk)
-		return 0;
+	if (!sk) return 0;
 
 	lock_sock(sk);
 	if (!sk->sk_shutdown) {
@@ -938,8 +944,6 @@ int rfcomm_connect_ind(struct rfcomm_session *s, u8 channel, struct rfcomm_dlc *
 	parent = rfcomm_get_sock_by_channel(BT_LISTEN, channel, &src);
 	if (!parent)
 		return 0;
-
-	bh_lock_sock(parent);
 
 	/* Check for backlog size */
 	if (sk_acceptq_is_full(parent)) {

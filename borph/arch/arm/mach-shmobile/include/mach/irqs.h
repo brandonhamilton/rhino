@@ -1,10 +1,7 @@
 #ifndef __ASM_MACH_IRQS_H
 #define __ASM_MACH_IRQS_H
 
-#define NR_IRQS         1024
-
-/* GIC */
-#define gic_spi(nr)		((nr) + 32)
+#define NR_IRQS         512
 
 /* INTCA */
 #define evt2irq(evt)		(((evt) >> 5) - 16)

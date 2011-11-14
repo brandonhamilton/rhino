@@ -438,7 +438,7 @@ static int smscore_init_ir(struct smscore_device_t *coredev)
 	int rc;
 	void *buffer;
 
-	coredev->ir.dev = NULL;
+	coredev->ir.input_dev = NULL;
 	ir_io = sms_get_board(smscore_get_board_id(coredev))->board_cfg.ir;
 	if (ir_io) {/* only if IR port exist we use IR sub-module */
 		sms_info("IR loading");
@@ -1147,7 +1147,7 @@ static int smscore_validate_client(struct smscore_device_t *coredev,
 
 	if (!client) {
 		sms_err("bad parameter.");
-		return -EINVAL;
+		return -EFAULT;
 	}
 	registered_client = smscore_find_client(coredev, data_type, id);
 	if (registered_client == client)

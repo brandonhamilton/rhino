@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 #include <linux/videodev2.h>
 
 #include <media/sh_vou.h>
@@ -392,6 +393,7 @@ static int sh_vou_querycap(struct file *file, void  *priv,
 	dev_dbg(vou_file->vbq.dev, "%s()\n", __func__);
 
 	strlcpy(cap->card, "SuperH VOU", sizeof(cap->card));
+	cap->version = KERNEL_VERSION(0, 1, 0);
 	cap->capabilities = V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_STREAMING;
 	return 0;
 }
@@ -1407,7 +1409,7 @@ static int __devinit sh_vou_probe(struct platform_device *pdev)
 		goto ereset;
 
 	subdev = v4l2_i2c_new_subdev_board(&vou_dev->v4l2_dev, i2c_adap,
-			vou_pdata->board_info, NULL);
+			vou_pdata->board_info, NULL, 0);
 	if (!subdev) {
 		ret = -ENOMEM;
 		goto ei2cnd;
@@ -1488,5 +1490,4 @@ module_exit(sh_vou_exit);
 MODULE_DESCRIPTION("SuperH VOU driver");
 MODULE_AUTHOR("Guennadi Liakhovetski <g.liakhovetski@gmx.de>");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("0.1.0");
 MODULE_ALIAS("platform:sh-vou");

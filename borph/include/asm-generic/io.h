@@ -94,10 +94,6 @@ static inline void __raw_writeq(u64 b, volatile void __iomem *addr)
 #define writeq(b,addr) __raw_writeq(__cpu_to_le64(b),addr)
 #endif
 
-#ifndef PCI_IOBASE
-#define PCI_IOBASE ((void __iomem *) 0)
-#endif
-
 /*****************************************************************************/
 /*
  * traditional input/output functions
@@ -105,32 +101,32 @@ static inline void __raw_writeq(u64 b, volatile void __iomem *addr)
 
 static inline u8 inb(unsigned long addr)
 {
-	return readb(addr + PCI_IOBASE);
+	return readb((volatile void __iomem *) addr);
 }
 
 static inline u16 inw(unsigned long addr)
 {
-	return readw(addr + PCI_IOBASE);
+	return readw((volatile void __iomem *) addr);
 }
 
 static inline u32 inl(unsigned long addr)
 {
-	return readl(addr + PCI_IOBASE);
+	return readl((volatile void __iomem *) addr);
 }
 
 static inline void outb(u8 b, unsigned long addr)
 {
-	writeb(b, addr + PCI_IOBASE);
+	writeb(b, (volatile void __iomem *) addr);
 }
 
 static inline void outw(u16 b, unsigned long addr)
 {
-	writew(b, addr + PCI_IOBASE);
+	writew(b, (volatile void __iomem *) addr);
 }
 
 static inline void outl(u32 b, unsigned long addr)
 {
-	writel(b, addr + PCI_IOBASE);
+	writel(b, (volatile void __iomem *) addr);
 }
 
 #define inb_p(addr)	inb(addr)
@@ -215,36 +211,6 @@ static inline void outsl(unsigned long addr, const void *buffer, int count)
 }
 #endif
 
-static inline void readsl(const void __iomem *addr, void *buf, int len)
-{
-	insl(addr - PCI_IOBASE, buf, len);
-}
-
-static inline void readsw(const void __iomem *addr, void *buf, int len)
-{
-	insw(addr - PCI_IOBASE, buf, len);
-}
-
-static inline void readsb(const void __iomem *addr, void *buf, int len)
-{
-	insb(addr - PCI_IOBASE, buf, len);
-}
-
-static inline void writesl(const void __iomem *addr, const void *buf, int len)
-{
-	outsl(addr - PCI_IOBASE, buf, len);
-}
-
-static inline void writesw(const void __iomem *addr, const void *buf, int len)
-{
-	outsw(addr - PCI_IOBASE, buf, len);
-}
-
-static inline void writesb(const void __iomem *addr, const void *buf, int len)
-{
-	outsb(addr - PCI_IOBASE, buf, len);
-}
-
 #ifndef CONFIG_GENERIC_IOMAP
 #define ioread8(addr)		readb(addr)
 #define ioread16(addr)		readw(addr)
@@ -273,9 +239,8 @@ static inline void writesb(const void __iomem *addr, const void *buf, int len)
 	outsl((unsigned long) (p), (src), (count))
 #endif /* CONFIG_GENERIC_IOMAP */
 
-#ifndef IO_SPACE_LIMIT
-#define IO_SPACE_LIMIT 0xffff
-#endif
+
+#define IO_SPACE_LIMIT 0xffffffff
 
 #ifdef __KERNEL__
 
@@ -307,11 +272,7 @@ static inline void *phys_to_virt(unsigned long address)
 
 /*
  * Change "struct page" to physical address.
- *
- * This implementation is for the no-MMU case only... if you have an MMU
- * you'll need to provide your own definitions.
  */
-#ifndef CONFIG_MMU
 static inline void __iomem *ioremap(phys_addr_t offset, unsigned long size)
 {
 	return (void __iomem*) (unsigned long)offset;
@@ -330,9 +291,7 @@ static inline void __iomem *ioremap(phys_addr_t offset, unsigned long size)
 static inline void iounmap(void *addr)
 {
 }
-#endif /* CONFIG_MMU */
 
-#ifdef CONFIG_HAS_IOPORT
 #ifndef CONFIG_GENERIC_IOMAP
 static inline void __iomem *ioport_map(unsigned long port, unsigned int nr)
 {
@@ -346,10 +305,9 @@ static inline void ioport_unmap(void __iomem *p)
 extern void __iomem *ioport_map(unsigned long port, unsigned int nr);
 extern void ioport_unmap(void __iomem *p);
 #endif /* CONFIG_GENERIC_IOMAP */
-#endif /* CONFIG_HAS_IOPORT */
 
 #define xlate_dev_kmem_ptr(p)	p
-#define xlate_dev_mem_ptr(p)	__va(p)
+#define xlate_dev_mem_ptr(p)	((void *) (p))
 
 #ifndef virt_to_bus
 static inline unsigned long virt_to_bus(volatile void *address)

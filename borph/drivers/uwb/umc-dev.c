@@ -54,8 +54,11 @@ int umc_device_register(struct umc_dev *umc)
 
 	err = request_resource(umc->resource.parent, &umc->resource);
 	if (err < 0) {
-		dev_err(&umc->dev, "can't allocate resource range %pR: %d\n",
-			&umc->resource, err);
+		dev_err(&umc->dev, "can't allocate resource range "
+			"%016Lx to %016Lx: %d\n",
+			(unsigned long long)umc->resource.start,
+			(unsigned long long)umc->resource.end,
+			err);
 		goto error_request_resource;
 	}
 
@@ -78,7 +81,7 @@ EXPORT_SYMBOL_GPL(umc_device_register);
  * First we unregister the device, make sure the driver can do it's
  * resource release thing and then we try to release any left over
  * resources. We take a ref to the device, to make sure it doesn't
- * disappear under our feet.
+ * dissapear under our feet.
  */
 void umc_device_unregister(struct umc_dev *umc)
 {

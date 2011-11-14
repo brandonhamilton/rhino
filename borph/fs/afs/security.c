@@ -292,9 +292,6 @@ int afs_permission(struct inode *inode, int mask)
 	struct key *key;
 	int ret;
 
-	if (mask & MAY_NOT_BLOCK)
-		return -ECHILD;
-
 	_enter("{{%x:%u},%lx},%x,",
 	       vnode->fid.vid, vnode->fid.vnode, vnode->flags, mask);
 
@@ -350,7 +347,7 @@ int afs_permission(struct inode *inode, int mask)
 	}
 
 	key_put(key);
-	ret = generic_permission(inode, mask);
+	ret = generic_permission(inode, mask, NULL);
 	_leave(" = %d", ret);
 	return ret;
 

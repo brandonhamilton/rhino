@@ -8,7 +8,7 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- *   Author:
+ *   Auther:
  *        Wang Qiang(rurality.linux@gmail.com)  2009/12/16
  */
 

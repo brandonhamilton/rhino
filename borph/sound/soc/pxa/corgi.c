@@ -23,6 +23,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
 #include <mach/corgi.h>
@@ -47,53 +48,51 @@ static int corgi_spk_func;
 
 static void corgi_ext_control(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
-
 	/* set up jack connection */
 	switch (corgi_jack_func) {
 	case CORGI_HP:
 		/* set = unmute headphone */
 		gpio_set_value(CORGI_GPIO_MUTE_L, 1);
 		gpio_set_value(CORGI_GPIO_MUTE_R, 1);
-		snd_soc_dapm_disable_pin(dapm, "Mic Jack");
-		snd_soc_dapm_disable_pin(dapm, "Line Jack");
-		snd_soc_dapm_enable_pin(dapm, "Headphone Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headset Jack");
+		snd_soc_dapm_disable_pin(codec, "Mic Jack");
+		snd_soc_dapm_disable_pin(codec, "Line Jack");
+		snd_soc_dapm_enable_pin(codec, "Headphone Jack");
+		snd_soc_dapm_disable_pin(codec, "Headset Jack");
 		break;
 	case CORGI_MIC:
 		/* reset = mute headphone */
 		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
 		gpio_set_value(CORGI_GPIO_MUTE_R, 0);
-		snd_soc_dapm_enable_pin(dapm, "Mic Jack");
-		snd_soc_dapm_disable_pin(dapm, "Line Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headphone Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headset Jack");
+		snd_soc_dapm_enable_pin(codec, "Mic Jack");
+		snd_soc_dapm_disable_pin(codec, "Line Jack");
+		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
+		snd_soc_dapm_disable_pin(codec, "Headset Jack");
 		break;
 	case CORGI_LINE:
 		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
 		gpio_set_value(CORGI_GPIO_MUTE_R, 0);
-		snd_soc_dapm_disable_pin(dapm, "Mic Jack");
-		snd_soc_dapm_enable_pin(dapm, "Line Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headphone Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headset Jack");
+		snd_soc_dapm_disable_pin(codec, "Mic Jack");
+		snd_soc_dapm_enable_pin(codec, "Line Jack");
+		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
+		snd_soc_dapm_disable_pin(codec, "Headset Jack");
 		break;
 	case CORGI_HEADSET:
 		gpio_set_value(CORGI_GPIO_MUTE_L, 0);
 		gpio_set_value(CORGI_GPIO_MUTE_R, 1);
-		snd_soc_dapm_enable_pin(dapm, "Mic Jack");
-		snd_soc_dapm_disable_pin(dapm, "Line Jack");
-		snd_soc_dapm_disable_pin(dapm, "Headphone Jack");
-		snd_soc_dapm_enable_pin(dapm, "Headset Jack");
+		snd_soc_dapm_enable_pin(codec, "Mic Jack");
+		snd_soc_dapm_disable_pin(codec, "Line Jack");
+		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
+		snd_soc_dapm_enable_pin(codec, "Headset Jack");
 		break;
 	}
 
 	if (corgi_spk_func == CORGI_SPK_ON)
-		snd_soc_dapm_enable_pin(dapm, "Ext Spk");
+		snd_soc_dapm_enable_pin(codec, "Ext Spk");
 	else
-		snd_soc_dapm_disable_pin(dapm, "Ext Spk");
+		snd_soc_dapm_disable_pin(codec, "Ext Spk");
 
 	/* signal a DAPM event */
-	snd_soc_dapm_sync(dapm);
+	snd_soc_dapm_sync(codec);
 }
 
 static int corgi_startup(struct snd_pcm_substream *substream)
@@ -280,11 +279,10 @@ static const struct snd_kcontrol_new wm8731_corgi_controls[] = {
 static int corgi_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int err;
 
-	snd_soc_dapm_nc_pin(dapm, "LLINEIN");
-	snd_soc_dapm_nc_pin(dapm, "RLINEIN");
+	snd_soc_dapm_nc_pin(codec, "LLINEIN");
+	snd_soc_dapm_nc_pin(codec, "RLINEIN");
 
 	/* Add corgi specific controls */
 	err = snd_soc_add_controls(codec, wm8731_corgi_controls,
@@ -293,13 +291,13 @@ static int corgi_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 		return err;
 
 	/* Add corgi specific widgets */
-	snd_soc_dapm_new_controls(dapm, wm8731_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, wm8731_dapm_widgets,
 				  ARRAY_SIZE(wm8731_dapm_widgets));
 
 	/* Set up corgi specific audio path audio_map */
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
-	snd_soc_dapm_sync(dapm);
+	snd_soc_dapm_sync(codec);
 	return 0;
 }
 
@@ -307,10 +305,10 @@ static int corgi_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 static struct snd_soc_dai_link corgi_dai = {
 	.name = "WM8731",
 	.stream_name = "WM8731",
-	.cpu_dai_name = "pxa2xx-i2s",
+	.cpu_dai_name = "pxa-is2-dai",
 	.codec_dai_name = "wm8731-hifi",
 	.platform_name = "pxa-pcm-audio",
-	.codec_name = "wm8731.0-001b",
+	.codec_name = "wm8731-codec-0.001a",
 	.init = corgi_wm8731_init,
 	.ops = &corgi_ops,
 };

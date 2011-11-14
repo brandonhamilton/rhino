@@ -35,7 +35,7 @@
 #define NFSEXP_NOHIDE		0x0200
 #define NFSEXP_NOSUBTREECHECK	0x0400
 #define	NFSEXP_NOAUTHNLM	0x0800		/* Don't authenticate NLM requests - just trust */
-#define NFSEXP_MSNFS		0x1000	/* do silly things that MS clients expect; no longer supported */
+#define NFSEXP_MSNFS		0x1000	/* do silly things that MS clients expect */
 #define NFSEXP_FSID		0x2000
 #define	NFSEXP_CROSSMOUNT	0x4000
 #define	NFSEXP_NOACL		0x8000	/* reserved for possible ACL related use */
@@ -80,7 +80,7 @@ struct nfsd4_fs_locations {
 
 /*
  * We keep an array of pseudoflavors with the export, in order from most
- * to least preferred.  For the foreseeable future, we don't expect more
+ * to least preferred.  For the forseeable future, we don't expect more
  * than the eight pseudoflavors null, unix, krb5, krb5i, krb5p, skpm3,
  * spkm3i, and spkm3p (and using all 8 at once should be rare).
  */
@@ -133,6 +133,8 @@ __be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp);
 int			nfsd_export_init(void);
 void			nfsd_export_shutdown(void);
 void			nfsd_export_flush(void);
+void			exp_readlock(void);
+void			exp_readunlock(void);
 struct svc_export *	rqst_exp_get_by_name(struct svc_rqst *,
 					     struct path *);
 struct svc_export *	rqst_exp_parent(struct svc_rqst *,

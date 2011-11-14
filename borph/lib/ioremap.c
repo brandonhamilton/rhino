@@ -9,7 +9,6 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/io.h>
-#include <linux/module.h>
 #include <asm/cacheflush.h>
 #include <asm/pgtable.h>
 
@@ -91,4 +90,3 @@ int ioremap_page_range(unsigned long addr,
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(ioremap_page_range);

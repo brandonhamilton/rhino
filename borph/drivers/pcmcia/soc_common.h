@@ -10,7 +10,6 @@
 #define _ASM_ARCH_PCMCIA
 
 /* include the world */
-#include <linux/clk.h>
 #include <linux/cpufreq.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cistpl.h>
@@ -30,7 +29,6 @@ struct soc_pcmcia_socket {
 	 * Info from low level handler
 	 */
 	unsigned int		nr;
-	struct clk		*clk;
 
 	/*
 	 * Core PCMCIA state
@@ -58,7 +56,6 @@ struct soc_pcmcia_socket {
 
 struct skt_dev_info {
 	int nskt;
-	struct clk *clk;
 	struct soc_pcmcia_socket skt[0];
 };
 

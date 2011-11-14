@@ -41,7 +41,6 @@
 #include <net/ipv6.h>
 #include <net/tcp.h>
 #include <linux/dma-mapping.h>
-#include <linux/prefetch.h>
 
 #include "t4vf_common.h"
 #include "t4vf_defs.h"
@@ -225,8 +224,8 @@ static inline bool is_buf_mapped(const struct rx_sw_desc *sdesc)
 /**
  *	need_skb_unmap - does the platform need unmapping of sk_buffs?
  *
- *	Returns true if the platform needs sk_buff unmapping.  The compiler
- *	optimizes away unnecessary code if this returns true.
+ *	Returns true if the platfrom needs sk_buff unmapping.  The compiler
+ *	optimizes away unecessary code if this returns true.
  */
 static inline int need_skb_unmap(void)
 {
@@ -268,7 +267,7 @@ static inline unsigned int fl_cap(const struct sge_fl *fl)
  *
  *	Tests specified Free List to see whether the number of buffers
  *	available to the hardware has falled below our "starvation"
- *	threshold.
+ *	threshhold.
  */
 static inline bool fl_starving(const struct sge_fl *fl)
 {
@@ -1150,7 +1149,7 @@ int t4vf_eth_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(credits < ETHTXQ_STOP_THRES)) {
 		/*
 		 * After we're done injecting the Work Request for this
-		 * packet, we'll be below our "stop threshold" so stop the TX
+		 * packet, we'll be below our "stop threshhold" so stop the TX
 		 * Queue now and schedule a request for an SGE Egress Queue
 		 * Update message.  The queue will get started later on when
 		 * the firmware processes this Work Request and sends us an
@@ -1491,10 +1490,20 @@ static void do_gro(struct sge_eth_rxq *rxq, const struct pkt_gl *gl,
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	skb_record_rx_queue(skb, rxq->rspq.idx);
 
-	if (pkt->vlan_ex)
-		__vlan_hwaccel_put_tag(skb, be16_to_cpu(pkt->vlan));
+	if (unlikely(pkt->vlan_ex)) {
+		struct port_info *pi = netdev_priv(rxq->rspq.netdev);
+		struct vlan_group *grp = pi->vlan_grp;
+
+		rxq->stats.vlan_ex++;
+		if (likely(grp)) {
+			ret = vlan_gro_frags(&rxq->rspq.napi, grp,
+					     be16_to_cpu(pkt->vlan));
+			goto stats;
+		}
+	}
 	ret = napi_gro_frags(&rxq->rspq.napi);
 
+stats:
 	if (ret == GRO_HELD)
 		rxq->stats.lro_pkts++;
 	else if (ret == GRO_MERGED || ret == GRO_MERGED_FREE)
@@ -1515,6 +1524,7 @@ int t4vf_ethrx_handler(struct sge_rspq *rspq, const __be64 *rsp,
 		       const struct pkt_gl *gl)
 {
 	struct sk_buff *skb;
+	struct port_info *pi;
 	const struct cpl_rx_pkt *pkt = (void *)&rsp[1];
 	bool csum_ok = pkt->csum_calc && !pkt->err_vec;
 	struct sge_eth_rxq *rxq = container_of(rspq, struct sge_eth_rxq, rspq);
@@ -1542,10 +1552,11 @@ int t4vf_ethrx_handler(struct sge_rspq *rspq, const __be64 *rsp,
 	__skb_pull(skb, PKTSHIFT);
 	skb->protocol = eth_type_trans(skb, rspq->netdev);
 	skb_record_rx_queue(skb, rspq->idx);
+	pi = netdev_priv(skb->dev);
 	rxq->stats.pkts++;
 
-	if (csum_ok && (rspq->netdev->features & NETIF_F_RXCSUM) &&
-	    !pkt->err_vec && (be32_to_cpu(pkt->l2info) & (RXF_UDP|RXF_TCP))) {
+	if (csum_ok && (pi->rx_offload & RX_CSO) && !pkt->err_vec &&
+	    (be32_to_cpu(pkt->l2info) & (RXF_UDP|RXF_TCP))) {
 		if (!pkt->ip_frag)
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else {
@@ -1557,12 +1568,17 @@ int t4vf_ethrx_handler(struct sge_rspq *rspq, const __be64 *rsp,
 	} else
 		skb_checksum_none_assert(skb);
 
-	if (pkt->vlan_ex) {
-		rxq->stats.vlan_ex++;
-		__vlan_hwaccel_put_tag(skb, be16_to_cpu(pkt->vlan));
-	}
+	if (unlikely(pkt->vlan_ex)) {
+		struct vlan_group *grp = pi->vlan_grp;
 
-	netif_receive_skb(skb);
+		rxq->stats.vlan_ex++;
+		if (likely(grp))
+			vlan_hwaccel_receive_skb(skb, grp,
+						 be16_to_cpu(pkt->vlan));
+		else
+			dev_kfree_skb_any(skb);
+	} else
+		netif_receive_skb(skb);
 
 	return 0;
 }
@@ -2127,7 +2143,7 @@ int t4vf_sge_alloc_rxq(struct adapter *adapter, struct sge_rspq *rspq,
 
 		/*
 		 * Calculate the size of the hardware free list ring plus
-		 * Status Page (which the SGE will place after the end of the
+		 * status page (which the SGE will place at the end of the
 		 * free list ring) in Egress Queue Units.
 		 */
 		flsz = (fl->size / FL_PER_EQ_UNIT +
@@ -2224,8 +2240,8 @@ int t4vf_sge_alloc_eth_txq(struct adapter *adapter, struct sge_eth_txq *txq,
 	struct port_info *pi = netdev_priv(dev);
 
 	/*
-	 * Calculate the size of the hardware TX Queue (including the Status
-	 * Page on the end of the TX Queue) in units of TX Descriptors.
+	 * Calculate the size of the hardware TX Queue (including the
+	 * status age on the end) in units of TX Descriptors.
 	 */
 	nentries = txq->q.size + STAT_LEN / sizeof(struct tx_desc);
 

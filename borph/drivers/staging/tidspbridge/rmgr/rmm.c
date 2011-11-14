@@ -38,16 +38,15 @@
  */
 
 #include <linux/types.h>
-#include <linux/list.h>
-
-/*  ----------------------------------- Host OS */
-#include <dspbridge/host_os.h>
 
 /*  ----------------------------------- DSP/BIOS Bridge */
 #include <dspbridge/dbdefs.h>
 
 /*  ----------------------------------- Trace & Debug */
 #include <dspbridge/dbc.h>
+
+/*  ----------------------------------- OS Adaptation Layer */
+#include <dspbridge/list.h>
 
 /*  ----------------------------------- This */
 #include <dspbridge/rmm.h>
@@ -80,7 +79,7 @@ struct rmm_target_obj {
 	struct rmm_segment *seg_tab;
 	struct rmm_header **free_list;
 	u32 num_segs;
-	struct list_head ovly_list;	/* List of overlay memory in use */
+	struct lst_list *ovly_list;	/* List of overlay memory in use */
 };
 
 static u32 refs;		/* module reference count */
@@ -96,7 +95,8 @@ static bool free_block(struct rmm_target_obj *target, u32 segid, u32 addr,
 int rmm_alloc(struct rmm_target_obj *target, u32 segid, u32 size,
 		     u32 align, u32 *dsp_address, bool reserve)
 {
-	struct rmm_ovly_sect *sect, *prev_sect = NULL;
+	struct rmm_ovly_sect *sect;
+	struct rmm_ovly_sect *prev_sect = NULL;
 	struct rmm_ovly_sect *new_sect;
 	u32 addr;
 	int status = 0;
@@ -120,9 +120,10 @@ int rmm_alloc(struct rmm_target_obj *target, u32 segid, u32 size,
 	/* An overlay section - See if block is already in use. If not,
 	 * insert into the list in ascending address size. */
 	addr = *dsp_address;
+	sect = (struct rmm_ovly_sect *)lst_first(target->ovly_list);
 	/*  Find place to insert new list element. List is sorted from
 	 *  smallest to largest address. */
-	list_for_each_entry(sect, &target->ovly_list, list_elem) {
+	while (sect != NULL) {
 		if (addr <= sect->addr) {
 			/* Check for overlap with sect */
 			if ((addr + size > sect->addr) || (prev_sect &&
@@ -134,6 +135,9 @@ int rmm_alloc(struct rmm_target_obj *target, u32 segid, u32 size,
 			break;
 		}
 		prev_sect = sect;
+		sect = (struct rmm_ovly_sect *)lst_next(target->ovly_list,
+							(struct list_head *)
+							sect);
 	}
 	if (!status) {
 		/* No overlap - allocate list element for new section. */
@@ -141,17 +145,20 @@ int rmm_alloc(struct rmm_target_obj *target, u32 segid, u32 size,
 		if (new_sect == NULL) {
 			status = -ENOMEM;
 		} else {
+			lst_init_elem((struct list_head *)new_sect);
 			new_sect->addr = addr;
 			new_sect->size = size;
 			new_sect->page = segid;
-			if (list_is_last(&sect->list_elem, &target->ovly_list))
+			if (sect == NULL) {
 				/* Put new section at the end of the list */
-				list_add_tail(&new_sect->list_elem,
-						&target->ovly_list);
-			else
+				lst_put_tail(target->ovly_list,
+					     (struct list_head *)new_sect);
+			} else {
 				/* Put new section just before sect */
-				list_add_tail(&new_sect->list_elem,
-						&sect->list_elem);
+				lst_insert_before(target->ovly_list,
+						  (struct list_head *)new_sect,
+						  (struct list_head *)sect);
+			}
 		}
 	}
 func_end:
@@ -223,8 +230,14 @@ int rmm_create(struct rmm_target_obj **target_obj,
 	}
 func_cont:
 	/* Initialize overlay memory list */
-	if (!status)
-		INIT_LIST_HEAD(&target->ovly_list);
+	if (!status) {
+		target->ovly_list = kzalloc(sizeof(struct lst_list),
+							GFP_KERNEL);
+		if (target->ovly_list == NULL)
+			status = -ENOMEM;
+		else
+			INIT_LIST_HEAD(&target->ovly_list->head);
+	}
 
 	if (!status) {
 		*target_obj = target;
@@ -246,7 +259,7 @@ func_cont:
  */
 void rmm_delete(struct rmm_target_obj *target)
 {
-	struct rmm_ovly_sect *sect, *tmp;
+	struct rmm_ovly_sect *ovly_section;
 	struct rmm_header *hptr;
 	struct rmm_header *next;
 	u32 i;
@@ -255,9 +268,13 @@ void rmm_delete(struct rmm_target_obj *target)
 
 	kfree(target->seg_tab);
 
-	list_for_each_entry_safe(sect, tmp, &target->ovly_list, list_elem) {
-		list_del(&sect->list_elem);
-		kfree(sect);
+	if (target->ovly_list) {
+		while ((ovly_section = (struct rmm_ovly_sect *)lst_get_head
+			(target->ovly_list))) {
+			kfree(ovly_section);
+		}
+		DBC_ASSERT(LST_IS_EMPTY(target->ovly_list));
+		kfree(target->ovly_list);
 	}
 
 	if (target->free_list != NULL) {
@@ -294,8 +311,8 @@ void rmm_exit(void)
 bool rmm_free(struct rmm_target_obj *target, u32 segid, u32 dsp_addr, u32 size,
 	      bool reserved)
 {
-	struct rmm_ovly_sect *sect, *tmp;
-	bool ret = false;
+	struct rmm_ovly_sect *sect;
+	bool ret = true;
 
 	DBC_REQUIRE(target);
 
@@ -316,16 +333,24 @@ bool rmm_free(struct rmm_target_obj *target, u32 segid, u32 dsp_addr, u32 size,
 
 	} else {
 		/* Unreserve memory */
-		list_for_each_entry_safe(sect, tmp, &target->ovly_list,
-				list_elem) {
+		sect = (struct rmm_ovly_sect *)lst_first(target->ovly_list);
+		while (sect != NULL) {
 			if (dsp_addr == sect->addr) {
 				DBC_ASSERT(size == sect->size);
 				/* Remove from list */
-				list_del(&sect->list_elem);
+				lst_remove_elem(target->ovly_list,
+						(struct list_head *)sect);
 				kfree(sect);
-				return true;
+				break;
 			}
+			sect =
+			    (struct rmm_ovly_sect *)lst_next(target->ovly_list,
+							     (struct list_head
+							      *)sect);
 		}
+		if (sect == NULL)
+			ret = false;
+
 	}
 	return ret;
 }
@@ -369,19 +394,19 @@ bool rmm_stat(struct rmm_target_obj *target, enum dsp_memtype segid,
 		}
 
 		/* ul_size */
-		mem_stat_buf->size = target->seg_tab[segid].length;
+		mem_stat_buf->ul_size = target->seg_tab[segid].length;
 
-		/* num_free_blocks */
-		mem_stat_buf->num_free_blocks = free_blocks;
+		/* ul_num_free_blocks */
+		mem_stat_buf->ul_num_free_blocks = free_blocks;
 
-		/* total_free_size */
-		mem_stat_buf->total_free_size = total_free_size;
+		/* ul_total_free_size */
+		mem_stat_buf->ul_total_free_size = total_free_size;
 
-		/* len_max_free_block */
-		mem_stat_buf->len_max_free_block = max_free_size;
+		/* ul_len_max_free_block */
+		mem_stat_buf->ul_len_max_free_block = max_free_size;
 
-		/* num_alloc_blocks */
-		mem_stat_buf->num_alloc_blocks =
+		/* ul_num_alloc_blocks */
+		mem_stat_buf->ul_num_alloc_blocks =
 		    target->seg_tab[segid].number;
 
 		ret = true;

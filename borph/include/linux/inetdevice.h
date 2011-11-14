@@ -41,12 +41,10 @@ enum
 	__IPV4_DEVCONF_MAX
 };
 
-#define IPV4_DEVCONF_MAX (__IPV4_DEVCONF_MAX - 1)
-
 struct ipv4_devconf {
 	void	*sysctl;
-	int	data[IPV4_DEVCONF_MAX];
-	DECLARE_BITMAP(state, IPV4_DEVCONF_MAX);
+	int	data[__IPV4_DEVCONF_MAX - 1];
+	DECLARE_BITMAP(state, __IPV4_DEVCONF_MAX - 1);
 };
 
 struct in_device {
@@ -54,8 +52,9 @@ struct in_device {
 	atomic_t		refcnt;
 	int			dead;
 	struct in_ifaddr	*ifa_list;	/* IP ifaddr chain		*/
-	struct ip_mc_list __rcu	*mc_list;	/* IP multicast filter chain    */
-	int			mc_count;	/* Number of installed mcasts	*/
+	rwlock_t		mc_list_lock;
+	struct ip_mc_list	*mc_list;	/* IP multicast filter chain    */
+	int			mc_count;	          /* Number of installed mcasts	*/
 	spinlock_t		mc_tomb_lock;
 	struct ip_mc_list	*mc_tomb;
 	unsigned long		mr_v1_seen;
@@ -92,7 +91,7 @@ static inline void ipv4_devconf_set(struct in_device *in_dev, int index,
 
 static inline void ipv4_devconf_setall(struct in_device *in_dev)
 {
-	bitmap_fill(in_dev->cnf.state, IPV4_DEVCONF_MAX);
+	bitmap_fill(in_dev->cnf.state, __IPV4_DEVCONF_MAX - 1);
 }
 
 #define IN_DEV_CONF_GET(in_dev, attr) \
@@ -144,7 +143,6 @@ static inline void ipv4_devconf_setall(struct in_device *in_dev)
 #define IN_DEV_ARP_NOTIFY(in_dev)	IN_DEV_MAXCONF((in_dev), ARP_NOTIFY)
 
 struct in_ifaddr {
-	struct hlist_node	hash;
 	struct in_ifaddr	*ifa_next;
 	struct in_device	*ifa_dev;
 	struct rcu_head		rcu_head;
@@ -223,7 +221,7 @@ static inline struct in_device *in_dev_get(const struct net_device *dev)
 
 static inline struct in_device *__in_dev_get_rtnl(const struct net_device *dev)
 {
-	return rtnl_dereference(dev->ip_ptr);
+	return rcu_dereference_check(dev->ip_ptr, lockdep_rtnl_is_held());
 }
 
 extern void in_dev_finish_destroy(struct in_device *idev);

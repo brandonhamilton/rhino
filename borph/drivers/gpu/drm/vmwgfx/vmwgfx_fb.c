@@ -480,6 +480,9 @@ int vmw_fb_init(struct vmw_private *vmw_priv)
 	info->fix.smem_start = 0;
 	info->fix.smem_len = fb_size;
 
+	info->fix.mmio_start = 0;
+	info->fix.mmio_len = 0;
+
 	info->pseudo_palette = par->pseudo_palette;
 	info->screen_base = par->vmalloc;
 	info->screen_size = fb_size;
@@ -656,7 +659,7 @@ int vmw_fb_off(struct vmw_private *vmw_priv)
 	par->dirty.active = false;
 	spin_unlock_irqrestore(&par->dirty.lock, flags);
 
-	flush_delayed_work_sync(&info->deferred_work);
+	flush_scheduled_work();
 
 	par->bo_ptr = NULL;
 	ttm_bo_kunmap(&par->map);

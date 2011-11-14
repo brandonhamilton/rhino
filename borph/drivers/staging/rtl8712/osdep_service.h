@@ -5,7 +5,9 @@
 #define _FAIL		0
 
 #include "basic_types.h"
+#include <linux/version.h>
 #include <linux/spinlock.h>
+
 #include <linux/semaphore.h>
 #include <linux/sem.h>
 #include <linux/netdevice.h>
@@ -20,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/kref.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <linux/usb.h>
 #include <linux/usb/ch9.h>
@@ -27,7 +30,7 @@
 #include <linux/circ_buf.h>
 #include <linux/uaccess.h>
 #include <asm/byteorder.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/wireless.h>
 #include <linux/rtnetlink.h>
 #include "ethernet.h"
@@ -142,8 +145,7 @@ static inline u32 is_list_empty(struct list_head *phead)
 		return false;
 }
 
-static inline void list_insert_tail(struct list_head *plist,
-				    struct list_head *phead)
+static inline void list_insert_tail(struct list_head *plist, struct list_head *phead)
 {
 	list_add_tail(plist, phead);
 }
@@ -193,7 +195,10 @@ static inline void sleep_schedulable(int ms)
 
 static inline u8 *_malloc(u32 sz)
 {
-	return	kmalloc(sz, GFP_ATOMIC);
+	u8 *pbuf;
+
+	pbuf =	kmalloc(sz, GFP_ATOMIC);
+	return pbuf;
 }
 
 static inline unsigned char _cancel_timer_ex(struct timer_list *ptimer)
@@ -215,23 +220,37 @@ static inline void flush_signals_thread(void)
 
 static inline u32 _RND8(u32 sz)
 {
-	return ((sz >> 3) + ((sz & 7) ? 1 : 0)) << 3;
+	u32	val;
+
+	val = ((sz >> 3) + ((sz & 7) ? 1 : 0)) << 3;
+	return val;
 }
 
 static inline u32 _RND128(u32 sz)
 {
-	return ((sz >> 7) + ((sz & 127) ? 1 : 0)) << 7;
+	u32	val;
+
+	val = ((sz >> 7) + ((sz & 127) ? 1 : 0)) << 7;
+	return val;
 }
 
 static inline u32 _RND256(u32 sz)
 {
-	return ((sz >> 8) + ((sz & 255) ? 1 : 0)) << 8;
+	u32	val;
+
+	val = ((sz >> 8) + ((sz & 255) ? 1 : 0)) << 8;
+	return val;
 }
 
 static inline u32 _RND512(u32 sz)
 {
-	return ((sz >> 9) + ((sz & 511) ? 1 : 0)) << 9;
+	u32	val;
+
+	val = ((sz >> 9) + ((sz & 511) ? 1 : 0)) << 9;
+	return val;
 }
+
+#define STRUCT_PACKED __attribute__ ((packed))
 
 #endif
 

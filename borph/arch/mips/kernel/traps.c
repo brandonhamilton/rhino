@@ -374,8 +374,7 @@ void __noreturn die(const char *str, struct pt_regs *regs)
 	unsigned long dvpret = dvpe();
 #endif /* CONFIG_MIPS_MT_SMTC */
 
-	if (notify_die(DIE_OOPS, str, regs, 0, regs_to_trapnr(regs), SIGSEGV) == NOTIFY_STOP)
-		sig = 0;
+	notify_die(DIE_OOPS, str, regs, 0, regs_to_trapnr(regs), SIGSEGV);
 
 	console_verbose();
 	spin_lock_irq(&die_lock);
@@ -383,6 +382,9 @@ void __noreturn die(const char *str, struct pt_regs *regs)
 #ifdef CONFIG_MIPS_MT_SMTC
 	mips_mt_regdump(dvpret);
 #endif /* CONFIG_MIPS_MT_SMTC */
+
+	if (notify_die(DIE_OOPS, str, regs, 0, regs_to_trapnr(regs), SIGSEGV) == NOTIFY_STOP)
+		sig = 0;
 
 	printk("%s[#%d]:\n", str, ++die_counter);
 	show_registers(regs);
@@ -578,12 +580,12 @@ static int simulate_llsc(struct pt_regs *regs, unsigned int opcode)
 {
 	if ((opcode & OPCODE) == LL) {
 		perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS,
-				1, regs, 0);
+				1, 0, regs, 0);
 		return simulate_ll(regs, opcode);
 	}
 	if ((opcode & OPCODE) == SC) {
 		perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS,
-				1, regs, 0);
+				1, 0, regs, 0);
 		return simulate_sc(regs, opcode);
 	}
 
@@ -602,7 +604,7 @@ static int simulate_rdhwr(struct pt_regs *regs, unsigned int opcode)
 		int rd = (opcode & RD) >> 11;
 		int rt = (opcode & RT) >> 16;
 		perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS,
-				1, regs, 0);
+				1, 0, regs, 0);
 		switch (rd) {
 		case 0:		/* CPU number */
 			regs->regs[rt] = smp_processor_id();
@@ -640,7 +642,7 @@ static int simulate_sync(struct pt_regs *regs, unsigned int opcode)
 {
 	if ((opcode & OPCODE) == SPEC0 && (opcode & FUNC) == SYNC) {
 		perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS,
-				1, regs, 0);
+				1, 0, regs, 0);
 		return 0;
 	}
 
@@ -1590,6 +1592,7 @@ void __cpuinit per_cpu_trap_init(void)
 #endif /* CONFIG_MIPS_MT_SMTC */
 
 	cpu_data[cpu].asid_cache = ASID_FIRST_VERSION;
+	TLBMISS_HANDLER_SETUP();
 
 	atomic_inc(&init_mm.mm_count);
 	current->active_mm = &init_mm;
@@ -1611,7 +1614,6 @@ void __cpuinit per_cpu_trap_init(void)
 		write_c0_wired(0);
 	}
 #endif /* CONFIG_MIPS_MT_SMTC */
-	TLBMISS_HANDLER_SETUP();
 }
 
 /* Install CPU exception handler */

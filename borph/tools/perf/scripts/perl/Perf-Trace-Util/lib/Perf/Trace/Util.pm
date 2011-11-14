@@ -65,7 +65,7 @@ sub clear_term
 __END__
 =head1 NAME
 
-Perf::Trace::Util - Perl extension for perf script
+Perf::Trace::Util - Perl extension for perf trace
 
 =head1 SYNOPSIS
 
@@ -73,7 +73,7 @@ Perf::Trace::Util - Perl extension for perf script
 
 =head1 SEE ALSO
 
-Perf (script) documentation
+Perf (trace) documentation
 
 =head1 AUTHOR
 

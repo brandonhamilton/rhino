@@ -52,9 +52,6 @@
 #define OMAP343X_CONTROL_PADCONFS_WKUP	0xa00
 #define OMAP343X_CONTROL_GENERAL_WKUP	0xa60
 
-/* TI816X spefic control submodules */
-#define TI816X_CONTROL_DEVCONF		0x600
-
 /* Control register offsets - read/write with omap_ctrl_{read,write}{bwl}() */
 
 #define OMAP2_CONTROL_SYSCONFIG		(OMAP2_CONTROL_INTERFACE + 0x10)
@@ -198,6 +195,8 @@
 
 /* AM35XX only CONTROL_GENERAL register offsets */
 #define AM35XX_CONTROL_MSUSPENDMUX_6    (OMAP2_CONTROL_GENERAL + 0x0038)
+#define AM35XX_CONTROL_FUSE_EMAC_LSB	(OMAP2_CONTROL_GENERAL + 0x0110)
+#define AM35XX_CONTROL_FUSE_EMAC_MSB	(OMAP2_CONTROL_GENERAL + 0x0114)
 #define AM35XX_CONTROL_DEVCONF2         (OMAP2_CONTROL_GENERAL + 0x0310)
 #define AM35XX_CONTROL_DEVCONF3         (OMAP2_CONTROL_GENERAL + 0x0314)
 #define AM35XX_CONTROL_CBA_PRIORITY     (OMAP2_CONTROL_GENERAL + 0x0320)
@@ -236,7 +235,7 @@
 #define OMAP343X_CONTROL_WKUP_DEBOBS3 (OMAP343X_CONTROL_GENERAL_WKUP + 0x014)
 #define OMAP343X_CONTROL_WKUP_DEBOBS4 (OMAP343X_CONTROL_GENERAL_WKUP + 0x018)
 
-/* 36xx-only RTA - Retention till Access control registers and bits */
+/* 36xx-only RTA - Retention till Accesss control registers and bits */
 #define OMAP36XX_CONTROL_MEM_RTA_CTRL	0x40C
 #define OMAP36XX_RTA_DISABLE		0x0
 
@@ -244,13 +243,28 @@
 #define OMAP3_PADCONF_SAD2D_MSTANDBY   0x250
 #define OMAP3_PADCONF_SAD2D_IDLEACK    0x254
 
-/* TI816X CONTROL_DEVCONF register offsets */
-#define TI816X_CONTROL_DEVICE_ID	(TI816X_CONTROL_DEVCONF + 0x000)
-
 /*
  * REVISIT: This list of registers is not comprehensive - there are more
  * that should be added.
  */
+
+/* TI81XX spefic control submodules */
+#define TI81XX_CONTROL_OCPCONF		0x000
+#define TI81XX_CONTROL_DEVBOOT		0x040
+#define TI81XX_CONTROL_DEVCONF		0x600
+
+/* TI81XX CONTROL_DEVBOOT register offsets */
+#define TI81XX_CONTROL_STATUS		(TI81XX_CONTROL_DEVBOOT + 0x000)
+#define TI81XX_CONTROL_BOOTSTAT		(TI81XX_CONTROL_DEVBOOT + 0x004)
+
+/* TI81XX CONTROL_DEVCONF register offsets */
+#define TI81XX_CONTROL_DEVICE_ID	(TI81XX_CONTROL_DEVCONF + 0x000)
+#define TI81XX_CONTROL_MAC_ID0_LO	(TI81XX_CONTROL_DEVCONF + 0x030)
+#define TI81XX_CONTROL_MAC_ID0_HI	(TI81XX_CONTROL_DEVCONF + 0x034)
+#define TI81XX_CONTROL_MAC_ID1_LO	(TI81XX_CONTROL_DEVCONF + 0x038)
+#define TI81XX_CONTROL_MAC_ID1_HI	(TI81XX_CONTROL_DEVCONF + 0x03c)
+#define TI816X_CONTROL_PCIE_CFG		(TI81XX_CONTROL_DEVCONF + 0x040)
+/* TODO: Add other ti81xx registers... */
 
 /*
  * Control module register bit defines - these should eventually go into
@@ -338,6 +352,13 @@
 #define AM35XX_HECC_SW_RST		BIT(3)
 #define AM35XX_VPFE_PCLK_SW_RST		BIT(4)
 
+/* TI81XX CONTROL_PCIE_CFG bits */
+#define TI81XX_PCIE_DEVTYPE_SHIFT	0
+#define TI81XX_PCIE_DEVTYPE_MASK	(0x3 << 0)
+#define TI81XX_PCIE_DEVTYPE_RC		(0x2 << 0)
+#define TI816X_PCIE_CFGPLL_SHIFT	16
+#define TI816X_PCIE_PLLMUX_25X		(0x01C9 << TI816X_PCIE_CFGPLL_SHIFT)
+
 /*
  * CONTROL OMAP STATUS register to identify OMAP3 features
  */
@@ -371,6 +392,12 @@
 #define		FEAT_NEON		0
 #define		FEAT_NEON_NONE		1
 
+/* Product ID register */
+#define OMAP3_PRODID			0x020C
+
+/* Mask to extract SKU ID from Product ID */
+#define OMAP3_SKUID_MASK		0x0f
+#define		OMAP3_SKUID_720MHZ	0x08
 
 #ifndef __ASSEMBLY__
 #ifdef CONFIG_ARCH_OMAP2PLUS
@@ -386,9 +413,10 @@ extern void omap4_ctrl_pad_writel(u32 val, u16 offset);
 
 extern void omap3_save_scratchpad_contents(void);
 extern void omap3_clear_scratchpad_contents(void);
-extern void omap3_restore(void);
-extern void omap3_restore_es3(void);
-extern void omap3_restore_3630(void);
+extern u32 *get_restore_pointer(void);
+extern u32 *omap3517_get_restore_pointer(void);
+extern u32 *get_es3_restore_pointer(void);
+extern u32 *get_omap3630_restore_pointer(void);
 extern u32 omap3_arm_context[128];
 extern void omap3_control_save_context(void);
 extern void omap3_control_restore_context(void);

@@ -139,23 +139,13 @@ static int __init hest_parse_ghes(struct acpi_hest_header *hest_hdr, void *data)
 {
 	struct platform_device *ghes_dev;
 	struct ghes_arr *ghes_arr = data;
-	int rc, i;
+	int rc;
 
 	if (hest_hdr->type != ACPI_HEST_TYPE_GENERIC_ERROR)
 		return 0;
 
 	if (!((struct acpi_hest_generic *)hest_hdr)->enabled)
 		return 0;
-	for (i = 0; i < ghes_arr->count; i++) {
-		struct acpi_hest_header *hdr;
-		ghes_dev = ghes_arr->ghes_devs[i];
-		hdr = *(struct acpi_hest_header **)ghes_dev->dev.platform_data;
-		if (hdr->source_id == hest_hdr->source_id) {
-			pr_warning(FW_WARN HEST_PFX "Duplicated hardware error source ID: %d.\n",
-				   hdr->source_id);
-			return -EIO;
-		}
-	}
 	ghes_dev = platform_device_alloc("GHES", hest_hdr->source_id);
 	if (!ghes_dev)
 		return -ENOMEM;
@@ -205,24 +195,24 @@ static int __init setup_hest_disable(char *str)
 
 __setup("hest_disable", setup_hest_disable);
 
-void __init acpi_hest_init(void)
+static int __init hest_init(void)
 {
 	acpi_status status;
 	int rc = -ENODEV;
 	unsigned int ghes_count = 0;
 
-	if (hest_disable) {
-		pr_info(HEST_PFX "Table parsing disabled.\n");
-		return;
-	}
-
 	if (acpi_disabled)
 		goto err;
+
+	if (hest_disable) {
+		pr_info(HEST_PFX "HEST tabling parsing is disabled.\n");
+		goto err;
+	}
 
 	status = acpi_get_table(ACPI_SIG_HEST, 0,
 				(struct acpi_table_header **)&hest_tab);
 	if (status == AE_NOT_FOUND) {
-		pr_info(HEST_PFX "Table not found.\n");
+		pr_info(HEST_PFX "Table is not found!\n");
 		goto err;
 	} else if (ACPI_FAILURE(status)) {
 		const char *msg = acpi_format_exception(status);
@@ -231,17 +221,20 @@ void __init acpi_hest_init(void)
 		goto err;
 	}
 
-	if (!ghes_disable) {
-		rc = apei_hest_parse(hest_parse_ghes_count, &ghes_count);
-		if (rc)
-			goto err;
-		rc = hest_ghes_dev_register(ghes_count);
-		if (rc)
-			goto err;
-	}
+	rc = apei_hest_parse(hest_parse_ghes_count, &ghes_count);
+	if (rc)
+		goto err;
 
-	pr_info(HEST_PFX "Table parsing has been initialized.\n");
-	return;
+	rc = hest_ghes_dev_register(ghes_count);
+	if (rc)
+		goto err;
+
+	pr_info(HEST_PFX "HEST table parsing is initialized.\n");
+
+	return 0;
 err:
 	hest_disable = 1;
+	return rc;
 }
+
+subsys_initcall(hest_init);

@@ -486,16 +486,16 @@ static void wmi_dump_wdg(const struct guid_block *g)
 	pr_info("\tnotify_id: %02X\n", g->notify_id);
 	pr_info("\treserved: %02X\n", g->reserved);
 	pr_info("\tinstance_count: %d\n", g->instance_count);
-	pr_info("\tflags: %#x", g->flags);
+	pr_info("\tflags: %#x ", g->flags);
 	if (g->flags) {
 		if (g->flags & ACPI_WMI_EXPENSIVE)
-			pr_cont(" ACPI_WMI_EXPENSIVE");
+			pr_cont("ACPI_WMI_EXPENSIVE ");
 		if (g->flags & ACPI_WMI_METHOD)
-			pr_cont(" ACPI_WMI_METHOD");
+			pr_cont("ACPI_WMI_METHOD ");
 		if (g->flags & ACPI_WMI_STRING)
-			pr_cont(" ACPI_WMI_STRING");
+			pr_cont("ACPI_WMI_STRING ");
 		if (g->flags & ACPI_WMI_EVENT)
-			pr_cont(" ACPI_WMI_EVENT");
+			pr_cont("ACPI_WMI_EVENT ");
 	}
 	pr_cont("\n");
 
@@ -549,34 +549,21 @@ acpi_status wmi_install_notify_handler(const char *guid,
 wmi_notify_handler handler, void *data)
 {
 	struct wmi_block *block;
-	acpi_status status = AE_NOT_EXIST;
-	char tmp[16], guid_input[16];
-	struct list_head *p;
+	acpi_status status;
 
 	if (!guid || !handler)
 		return AE_BAD_PARAMETER;
 
-	wmi_parse_guid(guid, tmp);
-	wmi_swap_bytes(tmp, guid_input);
+	if (!find_guid(guid, &block))
+		return AE_NOT_EXIST;
 
-	list_for_each(p, &wmi_block_list) {
-		acpi_status wmi_status;
-		block = list_entry(p, struct wmi_block, list);
+	if (block->handler && block->handler != wmi_notify_debug)
+		return AE_ALREADY_ACQUIRED;
 
-		if (memcmp(block->gblock.guid, guid_input, 16) == 0) {
-			if (block->handler &&
-			    block->handler != wmi_notify_debug)
-				return AE_ALREADY_ACQUIRED;
+	block->handler = handler;
+	block->handler_data = data;
 
-			block->handler = handler;
-			block->handler_data = data;
-
-			wmi_status = wmi_method_enable(block, 1);
-			if ((wmi_status != AE_OK) ||
-			    ((wmi_status == AE_OK) && (status == AE_NOT_EXIST)))
-				status = wmi_status;
-		}
-	}
+	status = wmi_method_enable(block, 1);
 
 	return status;
 }
@@ -590,40 +577,24 @@ EXPORT_SYMBOL_GPL(wmi_install_notify_handler);
 acpi_status wmi_remove_notify_handler(const char *guid)
 {
 	struct wmi_block *block;
-	acpi_status status = AE_NOT_EXIST;
-	char tmp[16], guid_input[16];
-	struct list_head *p;
+	acpi_status status = AE_OK;
 
 	if (!guid)
 		return AE_BAD_PARAMETER;
 
-	wmi_parse_guid(guid, tmp);
-	wmi_swap_bytes(tmp, guid_input);
+	if (!find_guid(guid, &block))
+		return AE_NOT_EXIST;
 
-	list_for_each(p, &wmi_block_list) {
-		acpi_status wmi_status;
-		block = list_entry(p, struct wmi_block, list);
+	if (!block->handler || block->handler == wmi_notify_debug)
+		return AE_NULL_ENTRY;
 
-		if (memcmp(block->gblock.guid, guid_input, 16) == 0) {
-			if (!block->handler ||
-			    block->handler == wmi_notify_debug)
-				return AE_NULL_ENTRY;
-
-			if (debug_event) {
-				block->handler = wmi_notify_debug;
-				status = AE_OK;
-			} else {
-				wmi_status = wmi_method_enable(block, 0);
-				block->handler = NULL;
-				block->handler_data = NULL;
-				if ((wmi_status != AE_OK) ||
-				    ((wmi_status == AE_OK) &&
-				     (status == AE_NOT_EXIST)))
-					status = wmi_status;
-			}
-		}
+	if (debug_event) {
+		block->handler = wmi_notify_debug;
+	} else {
+		status = wmi_method_enable(block, 0);
+		block->handler = NULL;
+		block->handler_data = NULL;
 	}
-
 	return status;
 }
 EXPORT_SYMBOL_GPL(wmi_remove_notify_handler);
@@ -734,10 +705,21 @@ static struct class wmi_class = {
 	.dev_attrs = wmi_dev_attrs,
 };
 
-static int wmi_create_device(const struct guid_block *gblock,
-			     struct wmi_block *wblock, acpi_handle handle)
+static struct wmi_block *wmi_create_device(const struct guid_block *gblock,
+					   acpi_handle handle)
 {
+	struct wmi_block *wblock;
+	int error;
 	char guid_string[37];
+
+	wblock = kzalloc(sizeof(struct wmi_block), GFP_KERNEL);
+	if (!wblock) {
+		error = -ENOMEM;
+		goto err_out;
+	}
+
+	wblock->handle = handle;
+	wblock->gblock = *gblock;
 
 	wblock->dev.class = &wmi_class;
 
@@ -746,7 +728,17 @@ static int wmi_create_device(const struct guid_block *gblock,
 
 	dev_set_drvdata(&wblock->dev, wblock);
 
-	return device_register(&wblock->dev);
+	error = device_register(&wblock->dev);
+	if (error)
+		goto err_free;
+
+	list_add_tail(&wblock->list, &wmi_block_list);
+	return wblock;
+
+err_free:
+	kfree(wblock);
+err_out:
+	return ERR_PTR(error);
 }
 
 static void wmi_free_devices(void)
@@ -755,8 +747,7 @@ static void wmi_free_devices(void)
 
 	/* Delete devices for all the GUIDs */
 	list_for_each_entry_safe(wblock, next, &wmi_block_list, list)
-		if (wblock->dev.class)
-			device_unregister(&wblock->dev);
+		device_unregister(&wblock->dev);
 }
 
 static bool guid_already_parsed(const char *guid_string)
@@ -779,6 +770,7 @@ static acpi_status parse_wdg(acpi_handle handle)
 	union acpi_object *obj;
 	const struct guid_block *gblock;
 	struct wmi_block *wblock;
+	char guid_string[37];
 	acpi_status status;
 	int retval;
 	u32 i, total;
@@ -800,31 +792,28 @@ static acpi_status parse_wdg(acpi_handle handle)
 	total = obj->buffer.length / sizeof(struct guid_block);
 
 	for (i = 0; i < total; i++) {
-		if (debug_dump_wdg)
-			wmi_dump_wdg(&gblock[i]);
-
-		wblock = kzalloc(sizeof(struct wmi_block), GFP_KERNEL);
-		if (!wblock)
-			return AE_NO_MEMORY;
-
-		wblock->handle = handle;
-		wblock->gblock = gblock[i];
-
 		/*
 		  Some WMI devices, like those for nVidia hooks, have a
 		  duplicate GUID. It's not clear what we should do in this
-		  case yet, so for now, we'll just ignore the duplicate
-		  for device creation.
+		  case yet, so for now, we'll just ignore the duplicate.
+		  Anyone who wants to add support for that device can come
+		  up with a better workaround for the mess then.
 		*/
-		if (!guid_already_parsed(gblock[i].guid)) {
-			retval = wmi_create_device(&gblock[i], wblock, handle);
-			if (retval) {
-				wmi_free_devices();
-				goto out_free_pointer;
-			}
+		if (guid_already_parsed(gblock[i].guid) == true) {
+			wmi_gtoa(gblock[i].guid, guid_string);
+			pr_info("Skipping duplicate GUID %s\n", guid_string);
+			continue;
 		}
 
-		list_add_tail(&wblock->list, &wmi_block_list);
+		if (debug_dump_wdg)
+			wmi_dump_wdg(&gblock[i]);
+
+		wblock = wmi_create_device(&gblock[i], handle);
+		if (IS_ERR(wblock)) {
+			retval = PTR_ERR(wblock);
+			wmi_free_devices();
+			break;
+		}
 
 		if (debug_event) {
 			wblock->handler = wmi_notify_debug;

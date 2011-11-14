@@ -16,30 +16,22 @@ struct page **ceph_get_direct_page_vector(const char __user *data,
 					  int num_pages, bool write_page)
 {
 	struct page **pages;
-	int got = 0;
-	int rc = 0;
+	int rc;
 
 	pages = kmalloc(sizeof(*pages) * num_pages, GFP_NOFS);
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
 	down_read(&current->mm->mmap_sem);
-	while (got < num_pages) {
-		rc = get_user_pages(current, current->mm,
-		    (unsigned long)data + ((unsigned long)got * PAGE_SIZE),
-		    num_pages - got, write_page, 0, pages + got, NULL);
-		if (rc < 0)
-			break;
-		BUG_ON(rc == 0);
-		got += rc;
-	}
+	rc = get_user_pages(current, current->mm, (unsigned long)data,
+			    num_pages, write_page, 0, pages, NULL);
 	up_read(&current->mm->mmap_sem);
-	if (rc < 0)
+	if (rc < num_pages)
 		goto fail;
 	return pages;
 
 fail:
-	ceph_put_page_vector(pages, got, false);
+	ceph_put_page_vector(pages, rc > 0 ? rc : 0, false);
 	return ERR_PTR(rc);
 }
 EXPORT_SYMBOL(ceph_get_direct_page_vector);

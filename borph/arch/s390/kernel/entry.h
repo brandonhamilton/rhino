@@ -5,13 +5,14 @@
 #include <linux/signal.h>
 #include <asm/ptrace.h>
 
-void do_protection_exception(struct pt_regs *, long, unsigned long);
-void do_dat_exception(struct pt_regs *, long, unsigned long);
-void do_asce_exception(struct pt_regs *, long, unsigned long);
+typedef void pgm_check_handler_t(struct pt_regs *, long, unsigned long);
+extern pgm_check_handler_t *pgm_check_table[128];
+pgm_check_handler_t do_protection_exception;
+pgm_check_handler_t do_dat_exception;
 
 extern int sysctl_userprocess_debug;
 
-void do_per_trap(struct pt_regs *regs);
+void do_single_step(struct pt_regs *regs);
 void syscall_trace(struct pt_regs *regs, int entryexit);
 void kernel_stack_overflow(struct pt_regs * regs);
 void do_signal(struct pt_regs *regs);

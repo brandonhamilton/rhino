@@ -187,9 +187,7 @@ struct xfs_busy_extent {
 	xfs_agnumber_t	agno;
 	xfs_agblock_t	bno;
 	xfs_extlen_t	length;
-	unsigned int	flags;
-#define XFS_ALLOC_BUSY_DISCARDED	0x01	/* undergoing a discard op. */
-#define XFS_ALLOC_BUSY_SKIP_DISCARD	0x02	/* do not discard */
+	xlog_tid_t	tid;		/* transaction that created this */
 };
 
 /*
@@ -229,7 +227,7 @@ typedef struct xfs_perag {
 
 	atomic_t        pagf_fstrms;    /* # of filestreams active in this AG */
 
-	spinlock_t	pag_ici_lock;	/* incore inode cache lock */
+	rwlock_t	pag_ici_lock;	/* incore inode lock */
 	struct radix_tree_root pag_ici_root;	/* incore inode cache root */
 	int		pag_ici_reclaimable;	/* reclaimable inodes */
 	struct mutex	pag_ici_reclaim_lock;	/* serialisation point */

@@ -301,38 +301,6 @@ static int mthca_cmd_post(struct mthca_dev *dev,
 	return err;
 }
 
-
-static int mthca_status_to_errno(u8 status)
-{
-	static const int trans_table[] = {
-		[MTHCA_CMD_STAT_INTERNAL_ERR]   = -EIO,
-		[MTHCA_CMD_STAT_BAD_OP]         = -EPERM,
-		[MTHCA_CMD_STAT_BAD_PARAM]      = -EINVAL,
-		[MTHCA_CMD_STAT_BAD_SYS_STATE]  = -ENXIO,
-		[MTHCA_CMD_STAT_BAD_RESOURCE]   = -EBADF,
-		[MTHCA_CMD_STAT_RESOURCE_BUSY]  = -EBUSY,
-		[MTHCA_CMD_STAT_DDR_MEM_ERR]    = -ENOMEM,
-		[MTHCA_CMD_STAT_EXCEED_LIM]     = -ENOMEM,
-		[MTHCA_CMD_STAT_BAD_RES_STATE]  = -EBADF,
-		[MTHCA_CMD_STAT_BAD_INDEX]      = -EBADF,
-		[MTHCA_CMD_STAT_BAD_NVMEM]      = -EFAULT,
-		[MTHCA_CMD_STAT_BAD_QPEE_STATE] = -EINVAL,
-		[MTHCA_CMD_STAT_BAD_SEG_PARAM]  = -EFAULT,
-		[MTHCA_CMD_STAT_REG_BOUND]      = -EBUSY,
-		[MTHCA_CMD_STAT_LAM_NOT_PRE]    = -EAGAIN,
-		[MTHCA_CMD_STAT_BAD_PKT]        = -EBADMSG,
-		[MTHCA_CMD_STAT_BAD_SIZE]       = -ENOMEM,
-	};
-
-	if (status >= ARRAY_SIZE(trans_table) ||
-			(status != MTHCA_CMD_STAT_OK
-			 && trans_table[status] == 0))
-		return -EINVAL;
-
-	return trans_table[status];
-}
-
-
 static int mthca_cmd_poll(struct mthca_dev *dev,
 			  u64 in_param,
 			  u64 *out_param,
@@ -340,11 +308,11 @@ static int mthca_cmd_poll(struct mthca_dev *dev,
 			  u32 in_modifier,
 			  u8 op_modifier,
 			  u16 op,
-			  unsigned long timeout)
+			  unsigned long timeout,
+			  u8 *status)
 {
 	int err = 0;
 	unsigned long end;
-	u8 status;
 
 	down(&dev->cmd.poll_sem);
 
@@ -373,12 +341,7 @@ static int mthca_cmd_poll(struct mthca_dev *dev,
 			(u64) be32_to_cpu((__force __be32)
 					  __raw_readl(dev->hcr + HCR_OUT_PARAM_OFFSET + 4));
 
-	status = be32_to_cpu((__force __be32) __raw_readl(dev->hcr + HCR_STATUS_OFFSET)) >> 24;
-	if (status) {
-		mthca_dbg(dev, "Command %02x completed with status %02x\n",
-			  op, status);
-		err = mthca_status_to_errno(status);
-	}
+	*status = be32_to_cpu((__force __be32) __raw_readl(dev->hcr + HCR_STATUS_OFFSET)) >> 24;
 
 out:
 	up(&dev->cmd.poll_sem);
@@ -411,7 +374,8 @@ static int mthca_cmd_wait(struct mthca_dev *dev,
 			  u32 in_modifier,
 			  u8 op_modifier,
 			  u16 op,
-			  unsigned long timeout)
+			  unsigned long timeout,
+			  u8 *status)
 {
 	int err = 0;
 	struct mthca_cmd_context *context;
@@ -443,11 +407,10 @@ static int mthca_cmd_wait(struct mthca_dev *dev,
 	if (err)
 		goto out;
 
-	if (context->status) {
+	*status = context->status;
+	if (*status)
 		mthca_dbg(dev, "Command %02x completed with status %02x\n",
-			  op, context->status);
-		err = mthca_status_to_errno(context->status);
-	}
+			  op, *status);
 
 	if (out_is_imm)
 		*out_param = context->out_param;
@@ -469,16 +432,17 @@ static int mthca_cmd_box(struct mthca_dev *dev,
 			 u32 in_modifier,
 			 u8 op_modifier,
 			 u16 op,
-			 unsigned long timeout)
+			 unsigned long timeout,
+			 u8 *status)
 {
 	if (dev->cmd.flags & MTHCA_CMD_USE_EVENTS)
 		return mthca_cmd_wait(dev, in_param, &out_param, 0,
 				      in_modifier, op_modifier, op,
-				      timeout);
+				      timeout, status);
 	else
 		return mthca_cmd_poll(dev, in_param, &out_param, 0,
 				      in_modifier, op_modifier, op,
-				      timeout);
+				      timeout, status);
 }
 
 /* Invoke a command with no output parameter */
@@ -487,10 +451,11 @@ static int mthca_cmd(struct mthca_dev *dev,
 		     u32 in_modifier,
 		     u8 op_modifier,
 		     u16 op,
-		     unsigned long timeout)
+		     unsigned long timeout,
+		     u8 *status)
 {
 	return mthca_cmd_box(dev, in_param, 0, in_modifier,
-			     op_modifier, op, timeout);
+			     op_modifier, op, timeout, status);
 }
 
 /*
@@ -504,16 +469,17 @@ static int mthca_cmd_imm(struct mthca_dev *dev,
 			 u32 in_modifier,
 			 u8 op_modifier,
 			 u16 op,
-			 unsigned long timeout)
+			 unsigned long timeout,
+			 u8 *status)
 {
 	if (dev->cmd.flags & MTHCA_CMD_USE_EVENTS)
 		return mthca_cmd_wait(dev, in_param, out_param, 1,
 				      in_modifier, op_modifier, op,
-				      timeout);
+				      timeout, status);
 	else
 		return mthca_cmd_poll(dev, in_param, out_param, 1,
 				      in_modifier, op_modifier, op,
-				      timeout);
+				      timeout, status);
 }
 
 int mthca_cmd_init(struct mthca_dev *dev)
@@ -630,14 +596,14 @@ void mthca_free_mailbox(struct mthca_dev *dev, struct mthca_mailbox *mailbox)
 	kfree(mailbox);
 }
 
-int mthca_SYS_EN(struct mthca_dev *dev)
+int mthca_SYS_EN(struct mthca_dev *dev, u8 *status)
 {
 	u64 out;
 	int ret;
 
-	ret = mthca_cmd_imm(dev, 0, &out, 0, 0, CMD_SYS_EN, CMD_TIME_CLASS_D);
+	ret = mthca_cmd_imm(dev, 0, &out, 0, 0, CMD_SYS_EN, CMD_TIME_CLASS_D, status);
 
-	if (ret == -ENOMEM)
+	if (*status == MTHCA_CMD_STAT_DDR_MEM_ERR)
 		mthca_warn(dev, "SYS_EN DDR error: syn=%x, sock=%d, "
 			   "sladdr=%d, SPD source=%s\n",
 			   (int) (out >> 6) & 0xf, (int) (out >> 4) & 3,
@@ -646,13 +612,13 @@ int mthca_SYS_EN(struct mthca_dev *dev)
 	return ret;
 }
 
-int mthca_SYS_DIS(struct mthca_dev *dev)
+int mthca_SYS_DIS(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_SYS_DIS, CMD_TIME_CLASS_C);
+	return mthca_cmd(dev, 0, 0, 0, CMD_SYS_DIS, CMD_TIME_CLASS_C, status);
 }
 
 static int mthca_map_cmd(struct mthca_dev *dev, u16 op, struct mthca_icm *icm,
-			 u64 virt)
+			 u64 virt, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	struct mthca_icm_iter iter;
@@ -700,8 +666,8 @@ static int mthca_map_cmd(struct mthca_dev *dev, u16 op, struct mthca_icm *icm,
 
 			if (++nent == MTHCA_MAILBOX_SIZE / 16) {
 				err = mthca_cmd(dev, mailbox->dma, nent, 0, op,
-						CMD_TIME_CLASS_B);
-				if (err)
+						CMD_TIME_CLASS_B, status);
+				if (err || *status)
 					goto out;
 				nent = 0;
 			}
@@ -710,7 +676,7 @@ static int mthca_map_cmd(struct mthca_dev *dev, u16 op, struct mthca_icm *icm,
 
 	if (nent)
 		err = mthca_cmd(dev, mailbox->dma, nent, 0, op,
-				CMD_TIME_CLASS_B);
+				CMD_TIME_CLASS_B, status);
 
 	switch (op) {
 	case CMD_MAP_FA:
@@ -730,24 +696,24 @@ out:
 	return err;
 }
 
-int mthca_MAP_FA(struct mthca_dev *dev, struct mthca_icm *icm)
+int mthca_MAP_FA(struct mthca_dev *dev, struct mthca_icm *icm, u8 *status)
 {
-	return mthca_map_cmd(dev, CMD_MAP_FA, icm, -1);
+	return mthca_map_cmd(dev, CMD_MAP_FA, icm, -1, status);
 }
 
-int mthca_UNMAP_FA(struct mthca_dev *dev)
+int mthca_UNMAP_FA(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_UNMAP_FA, CMD_TIME_CLASS_B);
+	return mthca_cmd(dev, 0, 0, 0, CMD_UNMAP_FA, CMD_TIME_CLASS_B, status);
 }
 
-int mthca_RUN_FW(struct mthca_dev *dev)
+int mthca_RUN_FW(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_RUN_FW, CMD_TIME_CLASS_A);
+	return mthca_cmd(dev, 0, 0, 0, CMD_RUN_FW, CMD_TIME_CLASS_A, status);
 }
 
 static void mthca_setup_cmd_doorbells(struct mthca_dev *dev, u64 base)
 {
-	phys_addr_t addr;
+	unsigned long addr;
 	u16 max_off = 0;
 	int i;
 
@@ -771,7 +737,7 @@ static void mthca_setup_cmd_doorbells(struct mthca_dev *dev, u64 base)
 	mthca_dbg(dev, "Mapped doorbell page for posting FW commands\n");
 }
 
-int mthca_QUERY_FW(struct mthca_dev *dev)
+int mthca_QUERY_FW(struct mthca_dev *dev, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u32 *outbox;
@@ -805,7 +771,7 @@ int mthca_QUERY_FW(struct mthca_dev *dev)
 	outbox = mailbox->buf;
 
 	err = mthca_cmd_box(dev, 0, mailbox->dma, 0, 0, CMD_QUERY_FW,
-			    CMD_TIME_CLASS_A);
+			    CMD_TIME_CLASS_A, status);
 
 	if (err)
 		goto out;
@@ -877,7 +843,7 @@ out:
 	return err;
 }
 
-int mthca_ENABLE_LAM(struct mthca_dev *dev)
+int mthca_ENABLE_LAM(struct mthca_dev *dev, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u8 info;
@@ -898,9 +864,12 @@ int mthca_ENABLE_LAM(struct mthca_dev *dev)
 	outbox = mailbox->buf;
 
 	err = mthca_cmd_box(dev, 0, mailbox->dma, 0, 0, CMD_ENABLE_LAM,
-			    CMD_TIME_CLASS_C);
+			    CMD_TIME_CLASS_C, status);
 
 	if (err)
+		goto out;
+
+	if (*status == MTHCA_CMD_STAT_LAM_NOT_PRE)
 		goto out;
 
 	MTHCA_GET(dev->ddr_start, outbox, ENABLE_LAM_START_OFFSET);
@@ -927,12 +896,12 @@ out:
 	return err;
 }
 
-int mthca_DISABLE_LAM(struct mthca_dev *dev)
+int mthca_DISABLE_LAM(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_SYS_DIS, CMD_TIME_CLASS_C);
+	return mthca_cmd(dev, 0, 0, 0, CMD_SYS_DIS, CMD_TIME_CLASS_C, status);
 }
 
-int mthca_QUERY_DDR(struct mthca_dev *dev)
+int mthca_QUERY_DDR(struct mthca_dev *dev, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u8 info;
@@ -953,7 +922,7 @@ int mthca_QUERY_DDR(struct mthca_dev *dev)
 	outbox = mailbox->buf;
 
 	err = mthca_cmd_box(dev, 0, mailbox->dma, 0, 0, CMD_QUERY_DDR,
-			    CMD_TIME_CLASS_A);
+			    CMD_TIME_CLASS_A, status);
 
 	if (err)
 		goto out;
@@ -983,7 +952,7 @@ out:
 }
 
 int mthca_QUERY_DEV_LIM(struct mthca_dev *dev,
-			struct mthca_dev_lim *dev_lim)
+			struct mthca_dev_lim *dev_lim, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u32 *outbox;
@@ -1059,7 +1028,7 @@ int mthca_QUERY_DEV_LIM(struct mthca_dev *dev,
 	outbox = mailbox->buf;
 
 	err = mthca_cmd_box(dev, 0, mailbox->dma, 0, 0, CMD_QUERY_DEV_LIM,
-			    CMD_TIME_CLASS_A);
+			    CMD_TIME_CLASS_A, status);
 
 	if (err)
 		goto out;
@@ -1263,7 +1232,7 @@ static void get_board_id(void *vsd, char *board_id)
 }
 
 int mthca_QUERY_ADAPTER(struct mthca_dev *dev,
-			struct mthca_adapter *adapter)
+			struct mthca_adapter *adapter, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u32 *outbox;
@@ -1282,7 +1251,7 @@ int mthca_QUERY_ADAPTER(struct mthca_dev *dev,
 	outbox = mailbox->buf;
 
 	err = mthca_cmd_box(dev, 0, mailbox->dma, 0, 0, CMD_QUERY_ADAPTER,
-			    CMD_TIME_CLASS_A);
+			    CMD_TIME_CLASS_A, status);
 
 	if (err)
 		goto out;
@@ -1306,7 +1275,8 @@ out:
 }
 
 int mthca_INIT_HCA(struct mthca_dev *dev,
-		   struct mthca_init_hca_param *param)
+		   struct mthca_init_hca_param *param,
+		   u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	__be32 *inbox;
@@ -1423,8 +1393,7 @@ int mthca_INIT_HCA(struct mthca_dev *dev,
 		MTHCA_PUT(inbox, param->uarc_base,   INIT_HCA_UAR_CTX_BASE_OFFSET);
 	}
 
-	err = mthca_cmd(dev, mailbox->dma, 0, 0,
-			CMD_INIT_HCA, CMD_TIME_CLASS_D);
+	err = mthca_cmd(dev, mailbox->dma, 0, 0, CMD_INIT_HCA, CMD_TIME_CLASS_D, status);
 
 	mthca_free_mailbox(dev, mailbox);
 	return err;
@@ -1432,7 +1401,7 @@ int mthca_INIT_HCA(struct mthca_dev *dev,
 
 int mthca_INIT_IB(struct mthca_dev *dev,
 		  struct mthca_init_ib_param *param,
-		  int port)
+		  int port, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u32 *inbox;
@@ -1476,24 +1445,24 @@ int mthca_INIT_IB(struct mthca_dev *dev,
 	MTHCA_PUT(inbox, param->si_guid,   INIT_IB_SI_GUID_OFFSET);
 
 	err = mthca_cmd(dev, mailbox->dma, port, 0, CMD_INIT_IB,
-			CMD_TIME_CLASS_A);
+			CMD_TIME_CLASS_A, status);
 
 	mthca_free_mailbox(dev, mailbox);
 	return err;
 }
 
-int mthca_CLOSE_IB(struct mthca_dev *dev, int port)
+int mthca_CLOSE_IB(struct mthca_dev *dev, int port, u8 *status)
 {
-	return mthca_cmd(dev, 0, port, 0, CMD_CLOSE_IB, CMD_TIME_CLASS_A);
+	return mthca_cmd(dev, 0, port, 0, CMD_CLOSE_IB, CMD_TIME_CLASS_A, status);
 }
 
-int mthca_CLOSE_HCA(struct mthca_dev *dev, int panic)
+int mthca_CLOSE_HCA(struct mthca_dev *dev, int panic, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, panic, CMD_CLOSE_HCA, CMD_TIME_CLASS_C);
+	return mthca_cmd(dev, 0, 0, panic, CMD_CLOSE_HCA, CMD_TIME_CLASS_C, status);
 }
 
 int mthca_SET_IB(struct mthca_dev *dev, struct mthca_set_ib_param *param,
-		 int port)
+		 int port, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	u32 *inbox;
@@ -1522,18 +1491,18 @@ int mthca_SET_IB(struct mthca_dev *dev, struct mthca_set_ib_param *param,
 	MTHCA_PUT(inbox, param->si_guid,  SET_IB_SI_GUID_OFFSET);
 
 	err = mthca_cmd(dev, mailbox->dma, port, 0, CMD_SET_IB,
-			CMD_TIME_CLASS_B);
+			CMD_TIME_CLASS_B, status);
 
 	mthca_free_mailbox(dev, mailbox);
 	return err;
 }
 
-int mthca_MAP_ICM(struct mthca_dev *dev, struct mthca_icm *icm, u64 virt)
+int mthca_MAP_ICM(struct mthca_dev *dev, struct mthca_icm *icm, u64 virt, u8 *status)
 {
-	return mthca_map_cmd(dev, CMD_MAP_ICM, icm, virt);
+	return mthca_map_cmd(dev, CMD_MAP_ICM, icm, virt, status);
 }
 
-int mthca_MAP_ICM_page(struct mthca_dev *dev, u64 dma_addr, u64 virt)
+int mthca_MAP_ICM_page(struct mthca_dev *dev, u64 dma_addr, u64 virt, u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	__be64 *inbox;
@@ -1548,7 +1517,7 @@ int mthca_MAP_ICM_page(struct mthca_dev *dev, u64 dma_addr, u64 virt)
 	inbox[1] = cpu_to_be64(dma_addr);
 
 	err = mthca_cmd(dev, mailbox->dma, 1, 0, CMD_MAP_ICM,
-			CMD_TIME_CLASS_B);
+			CMD_TIME_CLASS_B, status);
 
 	mthca_free_mailbox(dev, mailbox);
 
@@ -1559,31 +1528,31 @@ int mthca_MAP_ICM_page(struct mthca_dev *dev, u64 dma_addr, u64 virt)
 	return err;
 }
 
-int mthca_UNMAP_ICM(struct mthca_dev *dev, u64 virt, u32 page_count)
+int mthca_UNMAP_ICM(struct mthca_dev *dev, u64 virt, u32 page_count, u8 *status)
 {
 	mthca_dbg(dev, "Unmapping %d pages at %llx from ICM.\n",
 		  page_count, (unsigned long long) virt);
 
-	return mthca_cmd(dev, virt, page_count, 0,
-			CMD_UNMAP_ICM, CMD_TIME_CLASS_B);
+	return mthca_cmd(dev, virt, page_count, 0, CMD_UNMAP_ICM, CMD_TIME_CLASS_B, status);
 }
 
-int mthca_MAP_ICM_AUX(struct mthca_dev *dev, struct mthca_icm *icm)
+int mthca_MAP_ICM_AUX(struct mthca_dev *dev, struct mthca_icm *icm, u8 *status)
 {
-	return mthca_map_cmd(dev, CMD_MAP_ICM_AUX, icm, -1);
+	return mthca_map_cmd(dev, CMD_MAP_ICM_AUX, icm, -1, status);
 }
 
-int mthca_UNMAP_ICM_AUX(struct mthca_dev *dev)
+int mthca_UNMAP_ICM_AUX(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_UNMAP_ICM_AUX, CMD_TIME_CLASS_B);
+	return mthca_cmd(dev, 0, 0, 0, CMD_UNMAP_ICM_AUX, CMD_TIME_CLASS_B, status);
 }
 
-int mthca_SET_ICM_SIZE(struct mthca_dev *dev, u64 icm_size, u64 *aux_pages)
+int mthca_SET_ICM_SIZE(struct mthca_dev *dev, u64 icm_size, u64 *aux_pages,
+		       u8 *status)
 {
-	int ret = mthca_cmd_imm(dev, icm_size, aux_pages, 0,
-			0, CMD_SET_ICM_SIZE, CMD_TIME_CLASS_A);
+	int ret = mthca_cmd_imm(dev, icm_size, aux_pages, 0, 0, CMD_SET_ICM_SIZE,
+				CMD_TIME_CLASS_A, status);
 
-	if (ret)
+	if (ret || status)
 		return ret;
 
 	/*
@@ -1597,73 +1566,74 @@ int mthca_SET_ICM_SIZE(struct mthca_dev *dev, u64 icm_size, u64 *aux_pages)
 }
 
 int mthca_SW2HW_MPT(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    int mpt_index)
+		    int mpt_index, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, mpt_index, 0, CMD_SW2HW_MPT,
-			 CMD_TIME_CLASS_B);
+			 CMD_TIME_CLASS_B, status);
 }
 
 int mthca_HW2SW_MPT(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    int mpt_index)
+		    int mpt_index, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox ? mailbox->dma : 0, mpt_index,
 			     !mailbox, CMD_HW2SW_MPT,
-			     CMD_TIME_CLASS_B);
+			     CMD_TIME_CLASS_B, status);
 }
 
 int mthca_WRITE_MTT(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    int num_mtt)
+		    int num_mtt, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, num_mtt, 0, CMD_WRITE_MTT,
-			 CMD_TIME_CLASS_B);
+			 CMD_TIME_CLASS_B, status);
 }
 
-int mthca_SYNC_TPT(struct mthca_dev *dev)
+int mthca_SYNC_TPT(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0, 0, CMD_SYNC_TPT, CMD_TIME_CLASS_B);
+	return mthca_cmd(dev, 0, 0, 0, CMD_SYNC_TPT, CMD_TIME_CLASS_B, status);
 }
 
 int mthca_MAP_EQ(struct mthca_dev *dev, u64 event_mask, int unmap,
-		 int eq_num)
+		 int eq_num, u8 *status)
 {
 	mthca_dbg(dev, "%s mask %016llx for eqn %d\n",
 		  unmap ? "Clearing" : "Setting",
 		  (unsigned long long) event_mask, eq_num);
 	return mthca_cmd(dev, event_mask, (unmap << 31) | eq_num,
-			 0, CMD_MAP_EQ, CMD_TIME_CLASS_B);
+			 0, CMD_MAP_EQ, CMD_TIME_CLASS_B, status);
 }
 
 int mthca_SW2HW_EQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		   int eq_num)
+		   int eq_num, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, eq_num, 0, CMD_SW2HW_EQ,
-			 CMD_TIME_CLASS_A);
+			 CMD_TIME_CLASS_A, status);
 }
 
 int mthca_HW2SW_EQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		   int eq_num)
+		   int eq_num, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, eq_num, 0,
 			     CMD_HW2SW_EQ,
-			     CMD_TIME_CLASS_A);
+			     CMD_TIME_CLASS_A, status);
 }
 
 int mthca_SW2HW_CQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		   int cq_num)
+		   int cq_num, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, cq_num, 0, CMD_SW2HW_CQ,
-			CMD_TIME_CLASS_A);
+			CMD_TIME_CLASS_A, status);
 }
 
 int mthca_HW2SW_CQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		   int cq_num)
+		   int cq_num, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, cq_num, 0,
 			     CMD_HW2SW_CQ,
-			     CMD_TIME_CLASS_A);
+			     CMD_TIME_CLASS_A, status);
 }
 
-int mthca_RESIZE_CQ(struct mthca_dev *dev, int cq_num, u32 lkey, u8 log_size)
+int mthca_RESIZE_CQ(struct mthca_dev *dev, int cq_num, u32 lkey, u8 log_size,
+		    u8 *status)
 {
 	struct mthca_mailbox *mailbox;
 	__be32 *inbox;
@@ -1687,43 +1657,44 @@ int mthca_RESIZE_CQ(struct mthca_dev *dev, int cq_num, u32 lkey, u8 log_size)
 	MTHCA_PUT(inbox, lkey,     RESIZE_CQ_LKEY_OFFSET);
 
 	err = mthca_cmd(dev, mailbox->dma, cq_num, 1, CMD_RESIZE_CQ,
-			CMD_TIME_CLASS_B);
+			CMD_TIME_CLASS_B, status);
 
 	mthca_free_mailbox(dev, mailbox);
 	return err;
 }
 
 int mthca_SW2HW_SRQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    int srq_num)
+		    int srq_num, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, srq_num, 0, CMD_SW2HW_SRQ,
-			CMD_TIME_CLASS_A);
+			CMD_TIME_CLASS_A, status);
 }
 
 int mthca_HW2SW_SRQ(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    int srq_num)
+		    int srq_num, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, srq_num, 0,
 			     CMD_HW2SW_SRQ,
-			     CMD_TIME_CLASS_A);
+			     CMD_TIME_CLASS_A, status);
 }
 
 int mthca_QUERY_SRQ(struct mthca_dev *dev, u32 num,
-		    struct mthca_mailbox *mailbox)
+		    struct mthca_mailbox *mailbox, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, num, 0,
-			     CMD_QUERY_SRQ, CMD_TIME_CLASS_A);
+			     CMD_QUERY_SRQ, CMD_TIME_CLASS_A, status);
 }
 
-int mthca_ARM_SRQ(struct mthca_dev *dev, int srq_num, int limit)
+int mthca_ARM_SRQ(struct mthca_dev *dev, int srq_num, int limit, u8 *status)
 {
 	return mthca_cmd(dev, limit, srq_num, 0, CMD_ARM_SRQ,
-			 CMD_TIME_CLASS_B);
+			 CMD_TIME_CLASS_B, status);
 }
 
 int mthca_MODIFY_QP(struct mthca_dev *dev, enum ib_qp_state cur,
 		    enum ib_qp_state next, u32 num, int is_ee,
-		    struct mthca_mailbox *mailbox, u32 optmask)
+		    struct mthca_mailbox *mailbox, u32 optmask,
+		    u8 *status)
 {
 	static const u16 op[IB_QPS_ERR + 1][IB_QPS_ERR + 1] = {
 		[IB_QPS_RESET] = {
@@ -1784,7 +1755,7 @@ int mthca_MODIFY_QP(struct mthca_dev *dev, enum ib_qp_state cur,
 
 		err = mthca_cmd_box(dev, 0, mailbox ? mailbox->dma : 0,
 				    (!!is_ee << 24) | num, op_mod,
-				    op[cur][next], CMD_TIME_CLASS_C);
+				    op[cur][next], CMD_TIME_CLASS_C, status);
 
 		if (0 && mailbox) {
 			int i;
@@ -1818,20 +1789,21 @@ int mthca_MODIFY_QP(struct mthca_dev *dev, enum ib_qp_state cur,
 		}
 
 		err = mthca_cmd(dev, mailbox->dma, optmask | (!!is_ee << 24) | num,
-				op_mod, op[cur][next], CMD_TIME_CLASS_C);
+				op_mod, op[cur][next], CMD_TIME_CLASS_C, status);
 	}
 
 	return err;
 }
 
 int mthca_QUERY_QP(struct mthca_dev *dev, u32 num, int is_ee,
-		   struct mthca_mailbox *mailbox)
+		   struct mthca_mailbox *mailbox, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, (!!is_ee << 24) | num, 0,
-			     CMD_QUERY_QPEE, CMD_TIME_CLASS_A);
+			     CMD_QUERY_QPEE, CMD_TIME_CLASS_A, status);
 }
 
-int mthca_CONF_SPECIAL_QP(struct mthca_dev *dev, int type, u32 qpn)
+int mthca_CONF_SPECIAL_QP(struct mthca_dev *dev, int type, u32 qpn,
+			  u8 *status)
 {
 	u8 op_mod;
 
@@ -1853,12 +1825,12 @@ int mthca_CONF_SPECIAL_QP(struct mthca_dev *dev, int type, u32 qpn)
 	}
 
 	return mthca_cmd(dev, 0, qpn, op_mod, CMD_CONF_SPECIAL_QP,
-			 CMD_TIME_CLASS_B);
+			 CMD_TIME_CLASS_B, status);
 }
 
 int mthca_MAD_IFC(struct mthca_dev *dev, int ignore_mkey, int ignore_bkey,
 		  int port, struct ib_wc *in_wc, struct ib_grh *in_grh,
-		  void *in_mad, void *response_mad)
+		  void *in_mad, void *response_mad, u8 *status)
 {
 	struct mthca_mailbox *inmailbox, *outmailbox;
 	void *inbox;
@@ -1925,9 +1897,9 @@ int mthca_MAD_IFC(struct mthca_dev *dev, int ignore_mkey, int ignore_bkey,
 
 	err = mthca_cmd_box(dev, inmailbox->dma, outmailbox->dma,
 			    in_modifier, op_modifier,
-			    CMD_MAD_IFC, CMD_TIME_CLASS_C);
+			    CMD_MAD_IFC, CMD_TIME_CLASS_C, status);
 
-	if (!err)
+	if (!err && !*status)
 		memcpy(response_mad, outmailbox->buf, 256);
 
 	mthca_free_mailbox(dev, inmailbox);
@@ -1936,33 +1908,33 @@ int mthca_MAD_IFC(struct mthca_dev *dev, int ignore_mkey, int ignore_bkey,
 }
 
 int mthca_READ_MGM(struct mthca_dev *dev, int index,
-		   struct mthca_mailbox *mailbox)
+		   struct mthca_mailbox *mailbox, u8 *status)
 {
 	return mthca_cmd_box(dev, 0, mailbox->dma, index, 0,
-			     CMD_READ_MGM, CMD_TIME_CLASS_A);
+			     CMD_READ_MGM, CMD_TIME_CLASS_A, status);
 }
 
 int mthca_WRITE_MGM(struct mthca_dev *dev, int index,
-		    struct mthca_mailbox *mailbox)
+		    struct mthca_mailbox *mailbox, u8 *status)
 {
 	return mthca_cmd(dev, mailbox->dma, index, 0, CMD_WRITE_MGM,
-			 CMD_TIME_CLASS_A);
+			 CMD_TIME_CLASS_A, status);
 }
 
 int mthca_MGID_HASH(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
-		    u16 *hash)
+		    u16 *hash, u8 *status)
 {
 	u64 imm;
 	int err;
 
 	err = mthca_cmd_imm(dev, mailbox->dma, &imm, 0, 0, CMD_MGID_HASH,
-			    CMD_TIME_CLASS_A);
+			    CMD_TIME_CLASS_A, status);
 
 	*hash = imm;
 	return err;
 }
 
-int mthca_NOP(struct mthca_dev *dev)
+int mthca_NOP(struct mthca_dev *dev, u8 *status)
 {
-	return mthca_cmd(dev, 0, 0x1f, 0, CMD_NOP, msecs_to_jiffies(100));
+	return mthca_cmd(dev, 0, 0x1f, 0, CMD_NOP, msecs_to_jiffies(100), status);
 }

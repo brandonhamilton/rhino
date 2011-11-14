@@ -20,7 +20,6 @@
 
 #ifndef __ASSEMBLY__
 #include <linux/compiler.h>
-#include <linux/cache.h>
 #include <asm/ptrace.h>
 #include <asm/types.h>
 
@@ -123,6 +122,7 @@ extern struct task_struct *last_task_used_spe;
 		TASK_UNMAPPED_BASE_USER32 : TASK_UNMAPPED_BASE_USER64 )
 #endif
 
+#ifdef __KERNEL__
 #ifdef __powerpc64__
 
 #define STACK_TOP_USER64 TASK_SIZE_USER64
@@ -139,6 +139,7 @@ extern struct task_struct *last_task_used_spe;
 #define STACK_TOP_MAX	STACK_TOP
 
 #endif /* __powerpc64__ */
+#endif /* __KERNEL__ */
 
 typedef struct {
 	unsigned long seg;
@@ -157,10 +158,6 @@ struct thread_struct {
 #endif
 	struct pt_regs	*regs;		/* Pointer to saved register state */
 	mm_segment_t	fs;		/* for get_fs() validation */
-#ifdef CONFIG_BOOKE
-	/* BookE base exception scratch space; align on cacheline */
-	unsigned long	normsave[8] ____cacheline_aligned;
-#endif
 #ifdef CONFIG_PPC32
 	void		*pgdir;		/* root of page-table tree */
 #endif
@@ -243,10 +240,6 @@ struct thread_struct {
 #ifdef CONFIG_KVM_BOOK3S_32_HANDLER
 	void*		kvm_shadow_vcpu; /* KVM internal data */
 #endif /* CONFIG_KVM_BOOK3S_32_HANDLER */
-#ifdef CONFIG_PPC64
-	unsigned long	dscr;
-	int		dscr_inherit;
-#endif
 };
 
 #define ARCH_MIN_TASKALIGN 16

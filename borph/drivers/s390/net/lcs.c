@@ -26,7 +26,6 @@
 #define KMSG_COMPONENT		"lcs"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
-#include <linux/kernel_stat.h>
 #include <linux/module.h>
 #include <linux/if.h>
 #include <linux/netdevice.h>
@@ -841,7 +840,7 @@ lcs_notify_lancmd_waiters(struct lcs_card *card, struct lcs_cmd *cmd)
 }
 
 /**
- * Emit buffer of a lan command.
+ * Emit buffer of a lan comand.
  */
 static void
 lcs_lancmd_timeout(unsigned long data)
@@ -1123,7 +1122,7 @@ list_modified:
 	list_for_each_entry_safe(ipm, tmp, &card->ipm_list, list){
 		switch (ipm->ipm_state) {
 		case LCS_IPM_STATE_SET_REQUIRED:
-			/* del from ipm_list so no one else can tamper with
+			/* del from ipm_list so noone else can tamper with
 			 * this entry */
 			list_del_init(&ipm->list);
 			spin_unlock_irqrestore(&card->ipm_lock, flags);
@@ -1189,8 +1188,7 @@ lcs_remove_mc_addresses(struct lcs_card *card, struct in_device *in4_dev)
 	spin_lock_irqsave(&card->ipm_lock, flags);
 	list_for_each(l, &card->ipm_list) {
 		ipm = list_entry(l, struct lcs_ipm_list, list);
-		for (im4 = rcu_dereference(in4_dev->mc_list);
-		     im4 != NULL; im4 = rcu_dereference(im4->next_rcu)) {
+		for (im4 = in4_dev->mc_list; im4 != NULL; im4 = im4->next) {
 			lcs_get_mac_for_ipm(im4->multiaddr, buf, card->dev);
 			if ( (ipm->ipm.ip_addr == im4->multiaddr) &&
 			     (memcmp(buf, &ipm->ipm.mac_addr,
@@ -1235,8 +1233,7 @@ lcs_set_mc_addresses(struct lcs_card *card, struct in_device *in4_dev)
 	unsigned long flags;
 
 	LCS_DBF_TEXT(4, trace, "setmclst");
-	for (im4 = rcu_dereference(in4_dev->mc_list); im4 != NULL;
-	     im4 = rcu_dereference(im4->next_rcu)) {
+	for (im4 = in4_dev->mc_list; im4; im4 = im4->next) {
 		lcs_get_mac_for_ipm(im4->multiaddr, buf, card->dev);
 		ipm = lcs_check_addr_entry(card, im4, buf);
 		if (ipm != NULL)
@@ -1272,10 +1269,10 @@ lcs_register_mc_addresses(void *data)
 	in4_dev = in_dev_get(card->dev);
 	if (in4_dev == NULL)
 		goto out;
-	rcu_read_lock();
+	read_lock(&in4_dev->mc_list_lock);
 	lcs_remove_mc_addresses(card,in4_dev);
 	lcs_set_mc_addresses(card, in4_dev);
-	rcu_read_unlock();
+	read_unlock(&in4_dev->mc_list_lock);
 	in_dev_put(in4_dev);
 
 	netif_carrier_off(card->dev);
@@ -1399,7 +1396,6 @@ lcs_irq(struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
 	int rc, index;
 	int cstat, dstat;
 
-	kstat_cpu(smp_processor_id()).irqs[IOINT_LCS]++;
 	if (lcs_check_irb_error(cdev, irb))
 		return;
 
@@ -1483,6 +1479,7 @@ lcs_tasklet(unsigned long data)
 	struct lcs_channel *channel;
 	struct lcs_buffer *iob;
 	int buf_idx;
+	int rc;
 
 	channel = (struct lcs_channel *) data;
 	LCS_DBF_TEXT_(5, trace, "tlet%s", dev_name(&channel->ccwdev->dev));
@@ -1499,11 +1496,14 @@ lcs_tasklet(unsigned long data)
 	channel->buf_idx = buf_idx;
 
 	if (channel->state == LCS_CH_STATE_STOPPED)
-		lcs_start_channel(channel);
+		// FIXME: what if rc != 0 ??
+		rc = lcs_start_channel(channel);
 	spin_lock_irqsave(get_ccwdev_lock(channel->ccwdev), flags);
 	if (channel->state == LCS_CH_STATE_SUSPENDED &&
-	    channel->iob[channel->io_idx].state == LCS_BUF_STATE_READY)
-		__lcs_resume_channel(channel);
+	    channel->iob[channel->io_idx].state == LCS_BUF_STATE_READY) {
+		// FIXME: what if rc != 0 ??
+		rc = __lcs_resume_channel(channel);
+	}
 	spin_unlock_irqrestore(get_ccwdev_lock(channel->ccwdev), flags);
 
 	/* Something happened on the channel. Wake up waiters. */
@@ -2392,10 +2392,8 @@ static struct ccw_device_id lcs_ids[] = {
 MODULE_DEVICE_TABLE(ccw, lcs_ids);
 
 static struct ccw_driver lcs_ccw_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "lcs",
-	},
+	.owner	= THIS_MODULE,
+	.name	= "lcs",
 	.ids	= lcs_ids,
 	.probe	= ccwgroup_probe_ccwdev,
 	.remove	= ccwgroup_remove_ccwdev,
@@ -2405,10 +2403,8 @@ static struct ccw_driver lcs_ccw_driver = {
  * LCS ccwgroup driver registration
  */
 static struct ccwgroup_driver lcs_group_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "lcs",
-	},
+	.owner       = THIS_MODULE,
+	.name        = "lcs",
 	.max_slaves  = 2,
 	.driver_id   = 0xD3C3E2,
 	.probe       = lcs_probe_device,

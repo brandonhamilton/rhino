@@ -1,5 +1,5 @@
 /*
-    abituguru.c Copyright (c) 2005-2006 Hans de Goede <hdegoede@redhat.com>
+    abituguru.c Copyright (c) 2005-2006 Hans de Goede <j.w.r.degoede@hhs.nl>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,9 +20,6 @@
     the custom Abit uGuru chip found on Abit uGuru motherboards. Note: because
     of lack of specs the CPU/RAM voltage & frequency control is not supported!
 */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/init.h>
@@ -222,10 +219,6 @@ struct abituguru_data {
 	u8 pwms; /* actual number of pwms found */
 	u8 pwm_settings[ABIT_UGURU_MAX_PWMS][5];
 };
-
-static const char *never_happen = "This should never happen.";
-static const char *report_this =
-	"Please report this to the abituguru maintainer (see MAINTAINERS)";
 
 /* wait till the uguru is in the specified state */
 static int abituguru_wait(struct abituguru_data *data, u8 state)
@@ -445,7 +438,8 @@ abituguru_detect_bank1_sensor_type(struct abituguru_data *data,
 
 	/* Test val is sane / usable for sensor type detection. */
 	if ((val < 10u) || (val > 250u)) {
-		pr_warn("bank1-sensor: %d reading (%d) too close to limits, "
+		printk(KERN_WARNING ABIT_UGURU_NAME
+			": bank1-sensor: %d reading (%d) too close to limits, "
 			"unable to determine sensor type, skipping sensor\n",
 			(int)sensor_addr, (int)val);
 		/* assume no sensor is there for sensors for which we can't
@@ -541,8 +535,10 @@ abituguru_detect_bank1_sensor_type_exit:
 				3) == 3)
 			break;
 	if (i == 3) {
-		pr_err("Fatal error could not restore original settings. %s %s\n",
-		       never_happen, report_this);
+		printk(KERN_ERR ABIT_UGURU_NAME
+			": Fatal error could not restore original settings. "
+			"This should never happen please report this to the "
+			"abituguru maintainer (see MAINTAINERS)\n");
 		return -ENODEV;
 	}
 	return ret;
@@ -1272,12 +1268,14 @@ static int __devinit abituguru_probe(struct platform_device *pdev)
 	}
 	/* Fail safe check, this should never happen! */
 	if (sysfs_names_free < 0) {
-		pr_err("Fatal error ran out of space for sysfs attr names. %s %s",
-		       never_happen, report_this);
+		printk(KERN_ERR ABIT_UGURU_NAME ": Fatal error ran out of "
+		       "space for sysfs attr names. This should never "
+		       "happen please report to the abituguru maintainer "
+		       "(see MAINTAINERS)\n");
 		res = -ENAMETOOLONG;
 		goto abituguru_probe_error;
 	}
-	pr_info("found Abit uGuru\n");
+	printk(KERN_INFO ABIT_UGURU_NAME ": found Abit uGuru\n");
 
 	/* Register sysfs hooks */
 	for (i = 0; i < sysfs_attr_i; i++)
@@ -1422,7 +1420,7 @@ static int __init abituguru_detect(void)
 	   at DATA and 0xAC, when this driver has already been loaded once
 	   DATA will hold 0x08. For most uGuru's CMD will hold 0xAC in either
 	   scenario but some will hold 0x00.
-	   Some uGuru's initially hold 0x09 at DATA and will only hold 0x08
+	   Some uGuru's initally hold 0x09 at DATA and will only hold 0x08
 	   after reading CMD first, so CMD must be read first! */
 	u8 cmd_val = inb_p(ABIT_UGURU_BASE + ABIT_UGURU_CMD);
 	u8 data_val = inb_p(ABIT_UGURU_BASE + ABIT_UGURU_DATA);
@@ -1434,7 +1432,8 @@ static int __init abituguru_detect(void)
 		"0x%02X\n", (unsigned int)data_val, (unsigned int)cmd_val);
 
 	if (force) {
-		pr_info("Assuming Abit uGuru is present because of \"force\" parameter\n");
+		printk(KERN_INFO ABIT_UGURU_NAME ": Assuming Abit uGuru is "
+				"present because of \"force\" parameter\n");
 		return ABIT_UGURU_BASE;
 	}
 
@@ -1448,12 +1447,15 @@ static int __init abituguru_init(void)
 {
 	int address, err;
 	struct resource res = { .flags = IORESOURCE_IO };
+
+#ifdef CONFIG_DMI
 	const char *board_vendor = dmi_get_system_info(DMI_BOARD_VENDOR);
 
 	/* safety check, refuse to load on non Abit motherboards */
 	if (!force && (!board_vendor ||
 			strcmp(board_vendor, "http://www.abit.com.tw/")))
 		return -ENODEV;
+#endif
 
 	address = abituguru_detect();
 	if (address < 0)
@@ -1465,7 +1467,8 @@ static int __init abituguru_init(void)
 
 	abituguru_pdev = platform_device_alloc(ABIT_UGURU_NAME, address);
 	if (!abituguru_pdev) {
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR ABIT_UGURU_NAME
+			": Device allocation failed\n");
 		err = -ENOMEM;
 		goto exit_driver_unregister;
 	}
@@ -1476,13 +1479,15 @@ static int __init abituguru_init(void)
 
 	err = platform_device_add_resources(abituguru_pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR ABIT_UGURU_NAME
+			": Device resource addition failed (%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(abituguru_pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR ABIT_UGURU_NAME
+			": Device addition failed (%d)\n", err);
 		goto exit_device_put;
 	}
 
@@ -1502,7 +1507,7 @@ static void __exit abituguru_exit(void)
 	platform_driver_unregister(&abituguru_driver);
 }
 
-MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
+MODULE_AUTHOR("Hans de Goede <j.w.r.degoede@hhs.nl>");
 MODULE_DESCRIPTION("Abit uGuru Sensor device");
 MODULE_LICENSE("GPL");
 

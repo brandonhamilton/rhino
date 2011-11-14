@@ -48,16 +48,16 @@
 /*************************************************************************
  * IXDP2x01 IRQ Handling
  *************************************************************************/
-static void ixdp2x01_irq_mask(struct irq_data *d)
+static void ixdp2x01_irq_mask(unsigned int irq)
 {
 	ixp2000_reg_wrb(IXDP2X01_INT_MASK_SET_REG,
-				IXP2000_BOARD_IRQ_MASK(d->irq));
+				IXP2000_BOARD_IRQ_MASK(irq));
 }
 
-static void ixdp2x01_irq_unmask(struct irq_data *d)
+static void ixdp2x01_irq_unmask(unsigned int irq)
 {
 	ixp2000_reg_write(IXDP2X01_INT_MASK_CLR_REG,
-				IXP2000_BOARD_IRQ_MASK(d->irq));
+				IXP2000_BOARD_IRQ_MASK(irq));
 }
 
 static u32 valid_irq_mask;
@@ -67,7 +67,7 @@ static void ixdp2x01_irq_handler(unsigned int irq, struct irq_desc *desc)
 	u32 ex_interrupt;
 	int i;
 
-	desc->irq_data.chip->irq_mask(&desc->irq_data);
+	desc->chip->mask(irq);
 
 	ex_interrupt = *IXDP2X01_INT_STAT_REG & valid_irq_mask;
 
@@ -83,13 +83,13 @@ static void ixdp2x01_irq_handler(unsigned int irq, struct irq_desc *desc)
 		}
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip ixdp2x01_irq_chip = {
-	.irq_mask	= ixdp2x01_irq_mask,
-	.irq_ack	= ixdp2x01_irq_mask,
-	.irq_unmask	= ixdp2x01_irq_unmask
+	.mask	= ixdp2x01_irq_mask,
+	.ack	= ixdp2x01_irq_mask,
+	.unmask	= ixdp2x01_irq_unmask
 };
 
 /*
@@ -115,8 +115,8 @@ void __init ixdp2x01_init_irq(void)
 
 	for (irq = NR_IXP2000_IRQS; irq < NR_IXDP2X01_IRQS; irq++) {
 		if (irq & valid_irq_mask) {
-			irq_set_chip_and_handler(irq, &ixdp2x01_irq_chip,
-						 handle_level_irq);
+			set_irq_chip(irq, &ixdp2x01_irq_chip);
+			set_irq_handler(irq, handle_level_irq);
 			set_irq_flags(irq, IRQF_VALID);
 		} else {
 			set_irq_flags(irq, 0);
@@ -124,7 +124,7 @@ void __init ixdp2x01_init_irq(void)
 	}
 
 	/* Hook into PCI interrupts */
-	irq_set_chained_handler(IRQ_IXP2000_PCIB, ixdp2x01_irq_handler);
+	set_irq_chained_handler(IRQ_IXP2000_PCIB, ixdp2x01_irq_handler);
 }
 
 
@@ -252,8 +252,7 @@ void __init ixdp2x01_pci_preinit(void)
 
 #define DEVPIN(dev, pin) ((pin) | ((dev) << 3))
 
-static int __init ixdp2x01_pci_map_irq(const struct pci_dev *dev, u8 slot,
-	u8 pin)
+static int __init ixdp2x01_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	u8 bus = dev->bus->number;
 	u32 devpin = DEVPIN(PCI_SLOT(dev->devfn), pin);

@@ -13,7 +13,7 @@ do_command()
 	fi
 }
 
-archs=${HDR_ARCH_LIST:-$(ls ${srctree}/arch)}
+archs=$(ls ${srctree}/arch)
 
 for arch in ${archs}; do
 	case ${arch} in

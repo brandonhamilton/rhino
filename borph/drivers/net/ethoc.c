@@ -11,17 +11,14 @@
  * Written by Thierry Reding <thierry.reding@avionic-design.de>
  */
 
-#include <linux/dma-mapping.h>
 #include <linux/etherdevice.h>
 #include <linux/crc32.h>
-#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/mii.h>
 #include <linux/phy.h>
 #include <linux/platform_device.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/of.h>
 #include <net/ethoc.h>
 
 static int buffer_size = 0x8000; /* 32 KBytes */
@@ -187,6 +184,7 @@ MODULE_PARM_DESC(buffer_size, "DMA buffer allocation size");
  * @netdev:	pointer to network device structure
  * @napi:	NAPI structure
  * @msg_enable:	device state flags
+ * @rx_lock:	receive lock
  * @lock:	device lock
  * @phy:	attached PHY
  * @mdio:	MDIO bus for PHY access
@@ -211,6 +209,7 @@ struct ethoc {
 	struct napi_struct napi;
 	u32 msg_enable;
 
+	spinlock_t rx_lock;
 	spinlock_t lock;
 
 	struct phy_device *phy;
@@ -414,21 +413,10 @@ static int ethoc_rx(struct net_device *dev, int limit)
 		unsigned int entry;
 		struct ethoc_bd bd;
 
-		entry = priv->num_tx + priv->cur_rx;
+		entry = priv->num_tx + (priv->cur_rx % priv->num_rx);
 		ethoc_read_bd(priv, entry, &bd);
-		if (bd.stat & RX_BD_EMPTY) {
-			ethoc_ack_irq(priv, INT_MASK_RX);
-			/* If packet (interrupt) came in between checking
-			 * BD_EMTPY and clearing the interrupt source, then we
-			 * risk missing the packet as the RX interrupt won't
-			 * trigger right away when we reenable it; hence, check
-			 * BD_EMTPY here again to make sure there isn't such a
-			 * packet waiting for us...
-			 */
-			ethoc_read_bd(priv, entry, &bd);
-			if (bd.stat & RX_BD_EMPTY)
-				break;
-		}
+		if (bd.stat & RX_BD_EMPTY)
+			break;
 
 		if (ethoc_update_rx_stats(priv, &bd) == 0) {
 			int size = bd.stat >> 16;
@@ -458,14 +446,13 @@ static int ethoc_rx(struct net_device *dev, int limit)
 		bd.stat &= ~RX_BD_STATS;
 		bd.stat |=  RX_BD_EMPTY;
 		ethoc_write_bd(priv, entry, &bd);
-		if (++priv->cur_rx == priv->num_rx)
-			priv->cur_rx = 0;
+		priv->cur_rx++;
 	}
 
 	return count;
 }
 
-static void ethoc_update_tx_stats(struct ethoc *dev, struct ethoc_bd *bd)
+static int ethoc_update_tx_stats(struct ethoc *dev, struct ethoc_bd *bd)
 {
 	struct net_device *netdev = dev->netdev;
 
@@ -495,44 +482,32 @@ static void ethoc_update_tx_stats(struct ethoc *dev, struct ethoc_bd *bd)
 	netdev->stats.collisions += (bd->stat >> 4) & 0xf;
 	netdev->stats.tx_bytes += bd->stat >> 16;
 	netdev->stats.tx_packets++;
+	return 0;
 }
 
-static int ethoc_tx(struct net_device *dev, int limit)
+static void ethoc_tx(struct net_device *dev)
 {
 	struct ethoc *priv = netdev_priv(dev);
-	int count;
-	struct ethoc_bd bd;
 
-	for (count = 0; count < limit; ++count) {
-		unsigned int entry;
+	spin_lock(&priv->lock);
 
-		entry = priv->dty_tx & (priv->num_tx-1);
+	while (priv->dty_tx != priv->cur_tx) {
+		unsigned int entry = priv->dty_tx % priv->num_tx;
+		struct ethoc_bd bd;
 
 		ethoc_read_bd(priv, entry, &bd);
+		if (bd.stat & TX_BD_READY)
+			break;
 
-		if (bd.stat & TX_BD_READY || (priv->dty_tx == priv->cur_tx)) {
-			ethoc_ack_irq(priv, INT_MASK_TX);
-			/* If interrupt came in between reading in the BD
-			 * and clearing the interrupt source, then we risk
-			 * missing the event as the TX interrupt won't trigger
-			 * right away when we reenable it; hence, check
-			 * BD_EMPTY here again to make sure there isn't such an
-			 * event pending...
-			 */
-			ethoc_read_bd(priv, entry, &bd);
-			if (bd.stat & TX_BD_READY ||
-			    (priv->dty_tx == priv->cur_tx))
-				break;
-		}
-
-		ethoc_update_tx_stats(priv, &bd);
-		priv->dty_tx++;
+		entry = (++priv->dty_tx) % priv->num_tx;
+		(void)ethoc_update_tx_stats(priv, &bd);
 	}
 
 	if ((priv->cur_tx - priv->dty_tx) <= (priv->num_tx / 2))
 		netif_wake_queue(dev);
 
-	return count;
+	ethoc_ack_irq(priv, INT_MASK_TX);
+	spin_unlock(&priv->lock);
 }
 
 static irqreturn_t ethoc_interrupt(int irq, void *dev_id)
@@ -540,38 +515,32 @@ static irqreturn_t ethoc_interrupt(int irq, void *dev_id)
 	struct net_device *dev = dev_id;
 	struct ethoc *priv = netdev_priv(dev);
 	u32 pending;
-	u32 mask;
 
-	/* Figure out what triggered the interrupt...
-	 * The tricky bit here is that the interrupt source bits get
-	 * set in INT_SOURCE for an event regardless of whether that
-	 * event is masked or not.  Thus, in order to figure out what
-	 * triggered the interrupt, we need to remove the sources
-	 * for all events that are currently masked.  This behaviour
-	 * is not particularly well documented but reasonable...
-	 */
-	mask = ethoc_read(priv, INT_MASK);
+	ethoc_disable_irq(priv, INT_MASK_ALL);
 	pending = ethoc_read(priv, INT_SOURCE);
-	pending &= mask;
-
 	if (unlikely(pending == 0)) {
+		ethoc_enable_irq(priv, INT_MASK_ALL);
 		return IRQ_NONE;
 	}
 
 	ethoc_ack_irq(priv, pending);
 
-	/* We always handle the dropped packet interrupt */
 	if (pending & INT_MASK_BUSY) {
 		dev_err(&dev->dev, "packet dropped\n");
 		dev->stats.rx_dropped++;
 	}
 
-	/* Handle receive/transmit event by switching to polling */
-	if (pending & (INT_MASK_TX | INT_MASK_RX)) {
-		ethoc_disable_irq(priv, INT_MASK_TX | INT_MASK_RX);
-		napi_schedule(&priv->napi);
+	if (pending & INT_MASK_RX) {
+		if (napi_schedule_prep(&priv->napi))
+			__napi_schedule(&priv->napi);
+	} else {
+		ethoc_enable_irq(priv, INT_MASK_RX);
 	}
 
+	if (pending & INT_MASK_TX)
+		ethoc_tx(dev);
+
+	ethoc_enable_irq(priv, INT_MASK_ALL & ~INT_MASK_RX);
 	return IRQ_HANDLED;
 }
 
@@ -597,29 +566,26 @@ static int ethoc_get_mac_address(struct net_device *dev, void *addr)
 static int ethoc_poll(struct napi_struct *napi, int budget)
 {
 	struct ethoc *priv = container_of(napi, struct ethoc, napi);
-	int rx_work_done = 0;
-	int tx_work_done = 0;
+	int work_done = 0;
 
-	rx_work_done = ethoc_rx(priv->netdev, budget);
-	tx_work_done = ethoc_tx(priv->netdev, budget);
-
-	if (rx_work_done < budget && tx_work_done < budget) {
+	work_done = ethoc_rx(priv->netdev, budget);
+	if (work_done < budget) {
+		ethoc_enable_irq(priv, INT_MASK_RX);
 		napi_complete(napi);
-		ethoc_enable_irq(priv, INT_MASK_TX | INT_MASK_RX);
 	}
 
-	return rx_work_done;
+	return work_done;
 }
 
 static int ethoc_mdio_read(struct mii_bus *bus, int phy, int reg)
 {
+	unsigned long timeout = jiffies + ETHOC_MII_TIMEOUT;
 	struct ethoc *priv = bus->priv;
-	int i;
 
 	ethoc_write(priv, MIIADDRESS, MIIADDRESS_ADDR(phy, reg));
 	ethoc_write(priv, MIICOMMAND, MIICOMMAND_READ);
 
-	for (i=0; i < 5; i++) {
+	while (time_before(jiffies, timeout)) {
 		u32 status = ethoc_read(priv, MIISTATUS);
 		if (!(status & MIISTATUS_BUSY)) {
 			u32 data = ethoc_read(priv, MIIRX_DATA);
@@ -627,7 +593,8 @@ static int ethoc_mdio_read(struct mii_bus *bus, int phy, int reg)
 			ethoc_write(priv, MIICOMMAND, 0);
 			return data;
 		}
-		usleep_range(100,200);
+
+		schedule();
 	}
 
 	return -EBUSY;
@@ -635,21 +602,22 @@ static int ethoc_mdio_read(struct mii_bus *bus, int phy, int reg)
 
 static int ethoc_mdio_write(struct mii_bus *bus, int phy, int reg, u16 val)
 {
+	unsigned long timeout = jiffies + ETHOC_MII_TIMEOUT;
 	struct ethoc *priv = bus->priv;
-	int i;
 
 	ethoc_write(priv, MIIADDRESS, MIIADDRESS_ADDR(phy, reg));
 	ethoc_write(priv, MIITX_DATA, val);
 	ethoc_write(priv, MIICOMMAND, MIICOMMAND_WRITE);
 
-	for (i=0; i < 5; i++) {
+	while (time_before(jiffies, timeout)) {
 		u32 stat = ethoc_read(priv, MIISTATUS);
 		if (!(stat & MIISTATUS_BUSY)) {
 			/* reset MII command register */
 			ethoc_write(priv, MIICOMMAND, 0);
 			return 0;
 		}
-		usleep_range(100,200);
+
+		schedule();
 	}
 
 	return -EBUSY;
@@ -876,7 +844,6 @@ static netdev_tx_t ethoc_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	spin_unlock_irq(&priv->lock);
-	skb_tx_timestamp(skb);
 out:
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
@@ -968,7 +935,7 @@ static int __devinit ethoc_probe(struct platform_device *pdev)
 	priv = netdev_priv(netdev);
 	priv->netdev = netdev;
 	priv->dma_alloc = 0;
-	priv->io_region_size = resource_size(mmio);
+	priv->io_region_size = mmio->end - mmio->start + 1;
 
 	priv->iobase = devm_ioremap_nocache(&pdev->dev, netdev->base_addr,
 			resource_size(mmio));
@@ -1004,16 +971,8 @@ static int __devinit ethoc_probe(struct platform_device *pdev)
 	/* calculate the number of TX/RX buffers, maximum 128 supported */
 	num_bd = min_t(unsigned int,
 		128, (netdev->mem_end - netdev->mem_start + 1) / ETHOC_BUFSIZ);
-	if (num_bd < 4) {
-		ret = -ENODEV;
-		goto error;
-	}
-	/* num_tx must be a power of two */
-	priv->num_tx = rounddown_pow_of_two(num_bd >> 1);
+	priv->num_tx = max(2, num_bd / 4);
 	priv->num_rx = num_bd - priv->num_tx;
-
-	dev_dbg(&pdev->dev, "ethoc: num_tx: %d num_rx: %d\n",
-		priv->num_tx, priv->num_rx);
 
 	priv->vma = devm_kzalloc(&pdev->dev, num_bd*sizeof(void*), GFP_KERNEL);
 	if (!priv->vma) {
@@ -1023,23 +982,10 @@ static int __devinit ethoc_probe(struct platform_device *pdev)
 
 	/* Allow the platform setup code to pass in a MAC address. */
 	if (pdev->dev.platform_data) {
-		struct ethoc_platform_data *pdata = pdev->dev.platform_data;
+		struct ethoc_platform_data *pdata =
+			(struct ethoc_platform_data *)pdev->dev.platform_data;
 		memcpy(netdev->dev_addr, pdata->hwaddr, IFHWADDRLEN);
 		priv->phy_id = pdata->phy_id;
-	} else {
-		priv->phy_id = -1;
-
-#ifdef CONFIG_OF
-		{
-		const uint8_t* mac;
-
-		mac = of_get_property(pdev->dev.of_node,
-				      "local-mac-address",
-				      NULL);
-		if (mac)
-			memcpy(netdev->dev_addr, mac, IFHWADDRLEN);
-		}
-#endif
 	}
 
 	/* Check that the given MAC address is valid. If it isn't, read the
@@ -1100,6 +1046,7 @@ static int __devinit ethoc_probe(struct platform_device *pdev)
 	/* setup NAPI */
 	netif_napi_add(netdev, &priv->napi, ethoc_poll, 64);
 
+	spin_lock_init(&priv->rx_lock);
 	spin_lock_init(&priv->lock);
 
 	ret = register_netdev(netdev);
@@ -1166,12 +1113,6 @@ static int ethoc_resume(struct platform_device *pdev)
 # define ethoc_resume  NULL
 #endif
 
-static struct of_device_id ethoc_match[] = {
-	{ .compatible = "opencores,ethoc", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, ethoc_match);
-
 static struct platform_driver ethoc_driver = {
 	.probe   = ethoc_probe,
 	.remove  = __devexit_p(ethoc_remove),
@@ -1179,8 +1120,6 @@ static struct platform_driver ethoc_driver = {
 	.resume  = ethoc_resume,
 	.driver  = {
 		.name = "ethoc",
-		.owner = THIS_MODULE,
-		.of_match_table = ethoc_match,
 	},
 };
 

@@ -17,7 +17,6 @@
  *
  */
 
-#include <linux/dma-mapping.h>
 #include <linux/serial_8250.h>
 #include <linux/io.h>
 #ifdef CONFIG_MTD_PHYSMAP

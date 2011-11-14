@@ -282,7 +282,6 @@ struct tcp_request_sock {
 #endif
 	u32				rcv_isn;
 	u32				snt_isn;
-	u32				snt_synack; /* synack sent time */
 };
 
 static inline struct tcp_request_sock *tcp_rsk(const struct request_sock *req)

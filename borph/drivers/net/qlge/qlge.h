@@ -7,18 +7,16 @@
 #ifndef _QLGE_H_
 #define _QLGE_H_
 
-#include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
 #include <linux/rtnetlink.h>
-#include <linux/if_vlan.h>
 
 /*
  * General definitions...
  */
 #define DRV_NAME  	"qlge"
 #define DRV_STRING 	"QLogic 10 Gigabit PCI-E Ethernet Driver "
-#define DRV_VERSION	"v1.00.00.29.00.00-01"
+#define DRV_VERSION	"v1.00.00.25.00.00-01"
 
 #define WQ_ADDR_ALIGN	0x3	/* 4 byte alignment */
 
@@ -1998,7 +1996,6 @@ enum {
 	QL_LB_LINK_UP = 10,
 	QL_FRC_COREDUMP = 11,
 	QL_EEH_FATAL = 12,
-	QL_ASIC_RECOVERY = 14, /* We are in ascic recovery. */
 };
 
 /* link_status bit definitions */
@@ -2053,7 +2050,7 @@ struct ql_adapter {
 
 	struct nic_stats nic_stats;
 
-	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+	struct vlan_group *vlgrp;
 
 	/* PCI Configuration information for this device */
 	struct pci_dev *pdev;
@@ -2137,7 +2134,7 @@ struct ql_adapter {
 	struct delayed_work mpi_idc_work;
 	struct delayed_work mpi_core_to_log;
 	struct completion ide_completion;
-	const struct nic_operations *nic_ops;
+	struct nic_operations *nic_ops;
 	u16 device_id;
 	struct timer_list timer;
 	atomic_t lb_count;
@@ -2225,7 +2222,6 @@ int ql_write_mpi_reg(struct ql_adapter *qdev, u32 reg, u32 data);
 int ql_unpause_mpi_risc(struct ql_adapter *qdev);
 int ql_pause_mpi_risc(struct ql_adapter *qdev);
 int ql_hard_reset_mpi_risc(struct ql_adapter *qdev);
-int ql_soft_reset_mpi_risc(struct ql_adapter *qdev);
 int ql_dump_risc_ram_area(struct ql_adapter *qdev, void *buf,
 		u32 ram_addr, int word_count);
 int ql_core_dump(struct ql_adapter *qdev,
@@ -2241,7 +2237,6 @@ int ql_mb_set_mgmnt_traffic_ctl(struct ql_adapter *qdev, u32 control);
 int ql_mb_get_port_cfg(struct ql_adapter *qdev);
 int ql_mb_set_port_cfg(struct ql_adapter *qdev);
 int ql_wait_fifo_empty(struct ql_adapter *qdev);
-void ql_get_dump(struct ql_adapter *qdev, void *buff);
 void ql_gen_reg_dump(struct ql_adapter *qdev,
 			struct ql_reg_dump *mpi_coredump);
 netdev_tx_t ql_lb_send(struct sk_buff *skb, struct net_device *ndev);

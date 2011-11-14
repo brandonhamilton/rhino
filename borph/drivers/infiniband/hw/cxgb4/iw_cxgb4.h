@@ -35,7 +35,7 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/idr.h>
-#include <linux/completion.h>
+#include <linux/workqueue.h>
 #include <linux/netdevice.h>
 #include <linux/sched.h>
 #include <linux/pci.h>
@@ -46,6 +46,7 @@
 #include <linux/timer.h>
 #include <linux/io.h>
 #include <linux/kfifo.h>
+#include <linux/mutex.h>
 
 #include <asm/byteorder.h>
 
@@ -132,20 +133,16 @@ static inline int c4iw_num_stags(struct c4iw_rdev *rdev)
 #define C4IW_WR_TO (10*HZ)
 
 struct c4iw_wr_wait {
-	struct completion completion;
+	wait_queue_head_t wait;
+	int done;
 	int ret;
 };
 
 static inline void c4iw_init_wr_wait(struct c4iw_wr_wait *wr_waitp)
 {
 	wr_waitp->ret = 0;
-	init_completion(&wr_waitp->completion);
-}
-
-static inline void c4iw_wake_up(struct c4iw_wr_wait *wr_waitp, int ret)
-{
-	wr_waitp->ret = ret;
-	complete(&wr_waitp->completion);
+	wr_waitp->done = 0;
+	init_waitqueue_head(&wr_waitp->wait);
 }
 
 static inline int c4iw_wait_for_reply(struct c4iw_rdev *rdev,
@@ -154,26 +151,22 @@ static inline int c4iw_wait_for_reply(struct c4iw_rdev *rdev,
 				 const char *func)
 {
 	unsigned to = C4IW_WR_TO;
-	int ret;
-
 	do {
-		ret = wait_for_completion_timeout(&wr_waitp->completion, to);
-		if (!ret) {
+
+		wait_event_timeout(wr_waitp->wait, wr_waitp->done, to);
+		if (!wr_waitp->done) {
 			printk(KERN_ERR MOD "%s - Device %s not responding - "
 			       "tid %u qpid %u\n", func,
 			       pci_name(rdev->lldi.pdev), hwtid, qpid);
-			if (c4iw_fatal_error(rdev)) {
-				wr_waitp->ret = -EIO;
-				break;
-			}
 			to = to << 2;
 		}
-	} while (!ret);
+	} while (!wr_waitp->done);
 	if (wr_waitp->ret)
-		PDBG("%s: FW reply %d tid %u qpid %u\n",
-		     pci_name(rdev->lldi.pdev), wr_waitp->ret, hwtid, qpid);
+		printk(KERN_WARNING MOD "%s: FW reply %d tid %u qpid %u\n",
+		       pci_name(rdev->lldi.pdev), wr_waitp->ret, hwtid, qpid);
 	return wr_waitp->ret;
 }
+
 
 struct c4iw_dev {
 	struct ib_device ibdev;
@@ -183,7 +176,10 @@ struct c4iw_dev {
 	struct idr qpidr;
 	struct idr mmidr;
 	spinlock_t lock;
+	struct list_head entry;
+	struct delayed_work db_drop_task;
 	struct dentry *debugfs_root;
+	u8 registered;
 };
 
 static inline struct c4iw_dev *to_c4iw_dev(struct ib_device *ibdev)
@@ -764,6 +760,7 @@ int c4iw_flush_rq(struct t4_wq *wq, struct t4_cq *cq, int count);
 int c4iw_flush_sq(struct t4_wq *wq, struct t4_cq *cq, int count);
 int c4iw_ev_handler(struct c4iw_dev *rnicp, u32 qid);
 u16 c4iw_rqes_posted(struct c4iw_qp *qhp);
+int c4iw_post_zb_read(struct c4iw_qp *qhp);
 int c4iw_post_terminate(struct c4iw_qp *qhp, struct t4_cqe *err_cqe);
 u32 c4iw_get_cqid(struct c4iw_rdev *rdev, struct c4iw_dev_ucontext *uctx);
 void c4iw_put_cqid(struct c4iw_rdev *rdev, u32 qid,

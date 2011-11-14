@@ -48,6 +48,9 @@
  * struct page (these bits with information) are always mapped into kernel
  * address space...
  *
+ * PG_buddy is set to indicate that the page is free and in the buddy system
+ * (see mm/page_alloc.c).
+ *
  * PG_hwpoison indicates that a page got corrupted in hardware and contains
  * data with incorrect ECC bits that triggered a machine check. Accessing is
  * not safe since it may cause another machine check. Don't touch!
@@ -93,6 +96,7 @@ enum pageflags {
 	PG_swapcache,		/* Swap page: swp_entry_t in private */
 	PG_mappedtodisk,	/* Has blocks allocated on-disk */
 	PG_reclaim,		/* To be reclaimed asap */
+	PG_buddy,		/* Page is free, on buddy lists */
 	PG_swapbacked,		/* Page is backed by RAM/swap */
 	PG_unevictable,		/* Page is "unevictable"  */
 #ifdef CONFIG_MMU
@@ -103,9 +107,6 @@ enum pageflags {
 #endif
 #ifdef CONFIG_MEMORY_FAILURE
 	PG_hwpoison,		/* hardware poisoned page. Don't touch */
-#endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	PG_compound_lock,
 #endif
 	__NR_PAGEFLAGS,
 
@@ -124,6 +125,9 @@ enum pageflags {
 
 	/* SLOB */
 	PG_slob_free = PG_private,
+
+	/* SLUB */
+	PG_slub_frozen = PG_active,
 };
 
 #ifndef __GENERATING_BOUNDS_H
@@ -132,7 +136,7 @@ enum pageflags {
  * Macros to create function definitions for page flags
  */
 #define TESTPAGEFLAG(uname, lname)					\
-static inline int Page##uname(const struct page *page)			\
+static inline int Page##uname(struct page *page) 			\
 			{ return test_bit(PG_##lname, &page->flags); }
 
 #define SETPAGEFLAG(uname, lname)					\
@@ -170,7 +174,7 @@ static inline int __TestClearPage##uname(struct page *page)		\
 	__SETPAGEFLAG(uname, lname)  __CLEARPAGEFLAG(uname, lname)
 
 #define PAGEFLAG_FALSE(uname) 						\
-static inline int Page##uname(const struct page *page)			\
+static inline int Page##uname(struct page *page) 			\
 			{ return 0; }
 
 #define TESTSCFLAG(uname, lname)					\
@@ -193,8 +197,8 @@ static inline int __TestClearPage##uname(struct page *page) { return 0; }
 
 struct page;	/* forward declaration */
 
-TESTPAGEFLAG(Locked, locked)
-PAGEFLAG(Error, error) TESTCLEARFLAG(Error, error)
+TESTPAGEFLAG(Locked, locked) TESTSETFLAG(Locked, locked)
+PAGEFLAG(Error, error)
 PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
 PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
 PAGEFLAG(LRU, lru) __CLEARPAGEFLAG(LRU, lru)
@@ -208,6 +212,8 @@ PAGEFLAG(Reserved, reserved) __CLEARPAGEFLAG(Reserved, reserved)
 PAGEFLAG(SwapBacked, swapbacked) __CLEARPAGEFLAG(SwapBacked, swapbacked)
 
 __PAGEFLAG(SlobFree, slob_free)
+
+__PAGEFLAG(SlubFrozen, slub_frozen)
 
 /*
  * Private page markings that may be used by the filesystem that owns the page
@@ -224,6 +230,7 @@ PAGEFLAG(OwnerPriv1, owner_priv_1) TESTCLEARFLAG(OwnerPriv1, owner_priv_1)
  * risky: they bypass page accounting.
  */
 TESTPAGEFLAG(Writeback, writeback) TESTSCFLAG(Writeback, writeback)
+__PAGEFLAG(Buddy, buddy)
 PAGEFLAG(MappedToDisk, mappedtodisk)
 
 /* PG_readahead is only used for file reads; PG_reclaim is only for writes */
@@ -303,7 +310,7 @@ static inline void SetPageUptodate(struct page *page)
 {
 #ifdef CONFIG_S390
 	if (!test_and_set_bit(PG_uptodate, &page->flags))
-		page_set_storage_key(page_to_phys(page), PAGE_DEFAULT_KEY, 0);
+		page_clear_dirty(page, 0);
 #else
 	/*
 	 * Memory barrier must be issued before setting the PG_uptodate bit,
@@ -337,7 +344,7 @@ static inline void set_page_writeback(struct page *page)
  * tests can be used in performance sensitive paths. PageCompound is
  * generally not used in hot code paths.
  */
-__PAGEFLAG(Head, head) CLEARPAGEFLAG(Head, head)
+__PAGEFLAG(Head, head)
 __PAGEFLAG(Tail, tail)
 
 static inline int PageCompound(struct page *page)
@@ -345,13 +352,6 @@ static inline int PageCompound(struct page *page)
 	return page->flags & ((1L << PG_head) | (1L << PG_tail));
 
 }
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-static inline void ClearPageCompound(struct page *page)
-{
-	BUG_ON(!PageHead(page));
-	ClearPageHead(page);
-}
-#endif
 #else
 /*
  * Reduce page flag use as much as possible by overlapping
@@ -389,59 +389,12 @@ static inline void __ClearPageTail(struct page *page)
 	page->flags &= ~PG_head_tail_mask;
 }
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-static inline void ClearPageCompound(struct page *page)
-{
-	BUG_ON((page->flags & PG_head_tail_mask) != (1 << PG_compound));
-	clear_bit(PG_compound, &page->flags);
-}
-#endif
-
 #endif /* !PAGEFLAGS_EXTENDED */
-
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-/*
- * PageHuge() only returns true for hugetlbfs pages, but not for
- * normal or transparent huge pages.
- *
- * PageTransHuge() returns true for both transparent huge and
- * hugetlbfs pages, but not normal pages. PageTransHuge() can only be
- * called only in the core VM paths where hugetlbfs pages can't exist.
- */
-static inline int PageTransHuge(struct page *page)
-{
-	VM_BUG_ON(PageTail(page));
-	return PageHead(page);
-}
-
-static inline int PageTransCompound(struct page *page)
-{
-	return PageCompound(page);
-}
-
-#else
-
-static inline int PageTransHuge(struct page *page)
-{
-	return 0;
-}
-
-static inline int PageTransCompound(struct page *page)
-{
-	return 0;
-}
-#endif
 
 #ifdef CONFIG_MMU
 #define __PG_MLOCKED		(1 << PG_mlocked)
 #else
 #define __PG_MLOCKED		0
-#endif
-
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-#define __PG_COMPOUND_LOCK		(1 << PG_compound_lock)
-#else
-#define __PG_COMPOUND_LOCK		0
 #endif
 
 /*
@@ -451,10 +404,9 @@ static inline int PageTransCompound(struct page *page)
 #define PAGE_FLAGS_CHECK_AT_FREE \
 	(1 << PG_lru	 | 1 << PG_locked    | \
 	 1 << PG_private | 1 << PG_private_2 | \
-	 1 << PG_writeback | 1 << PG_reserved | \
+	 1 << PG_buddy	 | 1 << PG_writeback | 1 << PG_reserved | \
 	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
-	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | \
-	 __PG_COMPOUND_LOCK)
+	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON)
 
 /*
  * Flags checked when a page is prepped for return by the page allocator.

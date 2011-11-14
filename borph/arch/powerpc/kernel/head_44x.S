@@ -37,7 +37,6 @@
 #include <asm/thread_info.h>
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
-#include <asm/ptrace.h>
 #include <asm/synch.h>
 #include "head_booke.h"
 
@@ -92,30 +91,6 @@ _ENTRY(_start);
 	stwu	r0,THREAD_SIZE-STACK_FRAME_OVERHEAD(r1)
 
 	bl	early_init
-
-#ifdef CONFIG_RELOCATABLE
-	/*
-	 * r25 will contain RPN/ERPN for the start address of memory
-	 *
-	 * Add the difference between KERNELBASE and PAGE_OFFSET to the
-	 * start of physical memory to get kernstart_addr.
-	 */
-	lis	r3,kernstart_addr@ha
-	la	r3,kernstart_addr@l(r3)
-
-	lis	r4,KERNELBASE@h
-	ori	r4,r4,KERNELBASE@l
-	lis	r5,PAGE_OFFSET@h
-	ori	r5,r5,PAGE_OFFSET@l
-	subf	r4,r5,r4
-
-	rlwinm	r6,r25,0,28,31	/* ERPN */
-	rlwinm	r7,r25,0,0,3	/* RPN - assuming 256 MB page size */
-	add	r7,r7,r4
-
-	stw	r6,0(r3)
-	stw	r7,4(r3)
-#endif
 
 /*
  * Decide what sort of machine this is and initialize the MMU.
@@ -202,7 +177,7 @@ interrupt_base:
 	NORMAL_EXCEPTION_PROLOG
 	EXC_XFER_EE_LITE(0x0c00, DoSyscall)
 
-	/* Auxiliary Processor Unavailable Interrupt */
+	/* Auxillary Processor Unavailable Interrupt */
 	EXCEPTION(0x2020, AuxillaryProcessorUnavailable, unknown_exception, EXC_XFER_EE)
 
 	/* Decrementer Interrupt */
@@ -1025,6 +1000,9 @@ clear_utlb_entry:
 	lis	r3,PAGE_OFFSET@h
 	ori	r3,r3,PAGE_OFFSET@l
 
+	/* Kernel is at the base of RAM */
+	li r4, 0			/* Load the kernel physical address */
+
 	/* Load the kernel PID = 0 */
 	li	r0,0
 	mtspr	SPRN_PID,r0
@@ -1034,8 +1012,9 @@ clear_utlb_entry:
 	clrrwi	r3,r3,12		/* Mask off the effective page number */
 	ori	r3,r3,PPC47x_TLB0_VALID | PPC47x_TLB0_256M
 
-	/* Word 1 - use r25.  RPN is the same as the original entry */
-
+	/* Word 1 */
+	clrrwi	r4,r4,12		/* Mask off the real page number */
+					/* ERPN is 0 for first 4GB page */
 	/* Word 2 */
 	li	r5,0
 	ori	r5,r5,PPC47x_TLB2_S_RWX
@@ -1046,7 +1025,7 @@ clear_utlb_entry:
 	/* We write to way 0 and bolted 0 */
 	lis	r0,0x8800
 	tlbwe	r3,r0,0
-	tlbwe	r25,r0,1
+	tlbwe	r4,r0,1
 	tlbwe	r5,r0,2
 
 /*
@@ -1144,13 +1123,7 @@ head_start_common:
 	lis	r4,interrupt_base@h	/* IVPR only uses the high 16-bits */
 	mtspr	SPRN_IVPR,r4
 
-	/*
-	 * If the kernel was loaded at a non-zero 256 MB page, we need to
-	 * mask off the most significant 4 bits to get the relative address
-	 * from the start of physical memory
-	 */
-	rlwinm	r22,r22,0,4,31
-	addis	r22,r22,PAGE_OFFSET@h
+	addis	r22,r22,KERNELBASE@h
 	mtlr	r22
 	isync
 	blr

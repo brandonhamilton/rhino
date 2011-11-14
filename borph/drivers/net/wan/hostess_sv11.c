@@ -15,12 +15,10 @@
  *	The hardware does the bus handling to avoid the need for delays between
  *	touching control registers.
  *
- *	Port B isn't wired (why - beats me)
+ *	Port B isnt wired (why - beats me)
  *
  *	Generic HDLC port Copyright (C) 2008 Krzysztof Halasa <khc@pm.waw.pl>
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -194,7 +192,8 @@ static struct z8530_dev *sv11_init(int iobase, int irq)
 	 */
 
 	if (!request_region(iobase, 8, "Comtrol SV11")) {
-		pr_warn("I/O 0x%X already in use\n", iobase);
+		printk(KERN_WARNING "hostess: I/O 0x%X already in use.\n",
+		       iobase);
 		return NULL;
 	}
 
@@ -222,7 +221,7 @@ static struct z8530_dev *sv11_init(int iobase, int irq)
 
 	if (request_irq(irq, z8530_interrupt, IRQF_DISABLED,
 			"Hostess SV11", sv) < 0) {
-		pr_warn("IRQ %d already in use\n", irq);
+		printk(KERN_WARNING "hostess: IRQ %d already in use.\n", irq);
 		goto err_irq;
 	}
 
@@ -256,7 +255,7 @@ static struct z8530_dev *sv11_init(int iobase, int irq)
 	 */
 
 	if (z8530_init(sv)) {
-		pr_err("Z8530 series device not found\n");
+		printk(KERN_ERR "Z8530 series device not found.\n");
 		enable_irq(irq);
 		goto free_dma;
 	}
@@ -283,7 +282,7 @@ static struct z8530_dev *sv11_init(int iobase, int irq)
 	netdev->irq = irq;
 
 	if (register_hdlc_device(netdev)) {
-		pr_err("unable to register HDLC device\n");
+		printk(KERN_ERR "hostess: unable to register HDLC device.\n");
 		free_netdev(netdev);
 		goto free_dma;
 	}

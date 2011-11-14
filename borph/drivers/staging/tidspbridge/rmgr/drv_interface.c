@@ -59,6 +59,7 @@
 #include <dspbridge/chnl.h>
 #include <dspbridge/proc.h>
 #include <dspbridge/dev.h>
+#include <dspbridge/drvdefs.h>
 #include <dspbridge/drv.h>
 
 #ifdef CONFIG_TIDSPBRIDGE_DVFS

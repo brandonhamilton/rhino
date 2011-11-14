@@ -250,8 +250,7 @@ static int floppy_ioctl(struct block_device *bdev, fmode_t mode,
 			unsigned int cmd, unsigned long param);
 static int floppy_open(struct block_device *bdev, fmode_t mode);
 static int floppy_release(struct gendisk *disk, fmode_t mode);
-static unsigned int floppy_check_events(struct gendisk *disk,
-					unsigned int clearing);
+static int floppy_check_change(struct gendisk *disk);
 static int floppy_revalidate(struct gendisk *disk);
 
 static bool swim3_end_request(int err, unsigned int nr_bytes)
@@ -976,11 +975,10 @@ static int floppy_release(struct gendisk *disk, fmode_t mode)
 	return 0;
 }
 
-static unsigned int floppy_check_events(struct gendisk *disk,
-					unsigned int clearing)
+static int floppy_check_change(struct gendisk *disk)
 {
 	struct floppy_state *fs = disk->private_data;
-	return fs->ejected ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return fs->ejected;
 }
 
 static int floppy_revalidate(struct gendisk *disk)
@@ -1027,7 +1025,7 @@ static const struct block_device_operations floppy_fops = {
 	.open		= floppy_unlocked_open,
 	.release	= floppy_release,
 	.ioctl		= floppy_ioctl,
-	.check_events	= floppy_check_events,
+	.media_changed	= floppy_check_change,
 	.revalidate_disk= floppy_revalidate,
 };
 

@@ -7,6 +7,7 @@ config ARCH_OMAP2PLUS_TYPICAL
 	default y
 	select AEABI
 	select REGULATOR
+	select PM
 	select PM_RUNTIME
 	select VFP
 	select NEON if ARCH_OMAP3 || ARCH_OMAP4
@@ -15,9 +16,6 @@ config ARCH_OMAP2PLUS_TYPICAL
 	select I2C
 	select I2C_OMAP
 	select MFD_SUPPORT
-	select MENELAUS if ARCH_OMAP2
-	select TWL4030_CORE if ARCH_OMAP3 || ARCH_OMAP4
-	select TWL4030_POWER if ARCH_OMAP3 || ARCH_OMAP4
 	help
 	  Compile a kernel suitable for booting most boards
 
@@ -43,39 +41,49 @@ config ARCH_OMAP4
 	depends on ARCH_OMAP2PLUS
 	select CPU_V7
 	select ARM_GIC
-	select LOCAL_TIMERS if SMP
 	select PL310_ERRATA_588369
-	select PL310_ERRATA_727915
 	select ARM_ERRATA_720789
 	select ARCH_HAS_OPP
 	select PM_OPP if PM
-	select USB_ARCH_HAS_EHCI
+
+config ARCH_TI81XX
+	bool "TI 81XX"
+	depends on ARCH_OMAP2PLUS
+	default n
+	select CPU_V7
+	select ARM_L1_CACHE_SHIFT_6 if !ARCH_OMAP4
+	select ARCH_SUPPORTS_MSI
 
 comment "OMAP Core Type"
 	depends on ARCH_OMAP2
 
-config SOC_OMAP2420
+config ARCH_OMAP2420
 	bool "OMAP2420 support"
 	depends on ARCH_OMAP2
 	default y
 	select OMAP_DM_TIMER
 	select ARCH_OMAP_OTG
 
-config SOC_OMAP2430
+config ARCH_OMAP2430
 	bool "OMAP2430 support"
 	depends on ARCH_OMAP2
 	default y
 	select ARCH_OMAP_OTG
 
-config SOC_OMAP3430
+config ARCH_OMAP3430
 	bool "OMAP3430 support"
 	depends on ARCH_OMAP3
 	default y
 	select ARCH_OMAP_OTG
 
-config SOC_OMAPTI816X
+config ARCH_TI816X
 	bool "TI816X support"
-	depends on ARCH_OMAP3
+	depends on ARCH_TI81XX
+	default y
+
+config ARCH_TI814X
+	bool "TI814X support"
+	depends on ARCH_TI81XX
 	default y
 
 config OMAP_PACKAGE_ZAF
@@ -112,25 +120,25 @@ config MACH_OMAP_GENERIC
 
 config MACH_OMAP2_TUSB6010
 	bool
-	depends on ARCH_OMAP2 && SOC_OMAP2420
+	depends on ARCH_OMAP2 && ARCH_OMAP2420
 	default y if MACH_NOKIA_N8X0
 
 config MACH_OMAP_H4
 	bool "OMAP 2420 H4 board"
-	depends on SOC_OMAP2420
+	depends on ARCH_OMAP2420
 	default y
 	select OMAP_PACKAGE_ZAF
 	select OMAP_DEBUG_DEVICES
 
 config MACH_OMAP_APOLLON
 	bool "OMAP 2420 Apollon board"
-	depends on SOC_OMAP2420
+	depends on ARCH_OMAP2420
 	default y
 	select OMAP_PACKAGE_ZAC
 
 config MACH_OMAP_2430SDP
 	bool "OMAP 2430 SDP board"
-	depends on SOC_OMAP2430
+	depends on ARCH_OMAP2430
 	default y
 	select OMAP_PACKAGE_ZAC
 
@@ -172,12 +180,6 @@ config MACH_OMAP3_TORPEDO
 	 for full description please see the products webpage at
 	 http://www.logicpd.com/products/development-kits/zoom-omap35x-torpedo-development-kit
 
-config MACH_ENCORE
-        bool "Barnes & Noble Encore (Nook Color)"
-        depends on ARCH_OMAP3
-	default y
-        select OMAP_PACKAGE_CBP
-
 config MACH_OVERO
 	bool "Gumstix Overo board"
 	depends on ARCH_OMAP3
@@ -196,12 +198,15 @@ config MACH_OMAP3517EVM
 	default y
 	select OMAP_PACKAGE_CBB
 
+config MACH_CRANEBOARD
+	bool "AM3517/05 CRANE board"
+	depends on ARCH_OMAP3
+	select OMAP_PACKAGE_CBB
+
 config MACH_RHINO
 	bool "RHINO board"
 	depends on ARCH_OMAP3
-	default y
 	select OMAP_PACKAGE_CBB
-	select REGULATOR_TPS65023
 
 config BORPH
 	bool "BORPH"
@@ -226,11 +231,6 @@ config BKEXECD
 config BINFMT_BOF
 	bool
 	depends on BORPH
-
-config MACH_CRANEBOARD
-	bool "AM3517/05 CRANE board"
-	depends on ARCH_OMAP3
-	select OMAP_PACKAGE_CBB
 
 config MACH_OMAP3_PANDORA
 	bool "OMAP3 Pandora"
@@ -262,7 +262,7 @@ config MACH_NOKIA_N810_WIMAX
 
 config MACH_NOKIA_N8X0
 	bool "Nokia N800/N810"
-	depends on SOC_OMAP2420
+	depends on ARCH_OMAP2420
 	default y
 	select OMAP_PACKAGE_ZAC
 	select MACH_NOKIA_N800
@@ -286,9 +286,7 @@ config MACH_OMAP_ZOOM2
 	depends on ARCH_OMAP3
 	default y
 	select OMAP_PACKAGE_CBB
-	select SERIAL_8250
 	select SERIAL_CORE_CONSOLE
-	select SERIAL_8250_CONSOLE
 	select REGULATOR_FIXED_VOLTAGE
 
 config MACH_OMAP_ZOOM3
@@ -296,16 +294,13 @@ config MACH_OMAP_ZOOM3
 	depends on ARCH_OMAP3
 	default y
 	select OMAP_PACKAGE_CBP
-	select SERIAL_8250
 	select SERIAL_CORE_CONSOLE
-	select SERIAL_8250_CONSOLE
 	select REGULATOR_FIXED_VOLTAGE
 
 config MACH_CM_T35
-	bool "CompuLab CM-T35/CM-T3730 modules"
+	bool "CompuLab CM-T35 module"
 	depends on ARCH_OMAP3
 	default y
-	select MACH_CM_T3730
 	select OMAP_PACKAGE_CUS
 
 config MACH_CM_T3517
@@ -313,9 +308,6 @@ config MACH_CM_T3517
 	depends on ARCH_OMAP3
 	default y
 	select OMAP_PACKAGE_CBB
-
-config MACH_CM_T3730
-       bool
 
 config MACH_IGEP0020
 	bool "IGEP v2 board"
@@ -328,7 +320,6 @@ config MACH_IGEP0030
 	depends on ARCH_OMAP3
 	default y
 	select OMAP_PACKAGE_CBB
-	select MACH_IGEP0020
 
 config MACH_SBC3530
 	bool "OMAP3 SBC STALKER board"
@@ -342,18 +333,12 @@ config MACH_OMAP_3630SDP
 	default y
 	select OMAP_PACKAGE_CBP
 
-config MACH_TI8168EVM
-	bool "TI8168 Evaluation Module"
-	depends on SOC_OMAPTI816X
-	default y
-
 config MACH_OMAP_4430SDP
 	bool "OMAP 4430 SDP board"
 	default y
 	depends on ARCH_OMAP4
 	select OMAP_PACKAGE_CBL
 	select OMAP_PACKAGE_CBS
-	select REGULATOR_FIXED_VOLTAGE
 
 config MACH_OMAP4_PANDA
 	bool "OMAP4 Panda Board"
@@ -361,13 +346,19 @@ config MACH_OMAP4_PANDA
 	depends on ARCH_OMAP4
 	select OMAP_PACKAGE_CBL
 	select OMAP_PACKAGE_CBS
-	select REGULATOR_FIXED_VOLTAGE
 
-config MACH_PCM049
-	bool "OMAP4 based phyCORE OMAP4"
-	depends on ARCH_OMAP4
+comment "TI81XX Board Type"
+	depends on ARCH_TI81XX
+
+config MACH_TI8148EVM
+	bool "TI8148 Evaluation Module"
 	default y
-	select OMAP_PACKAGE_CBS
+	depends on ARCH_TI814X
+
+config MACH_TI8168EVM
+	bool "TI8168 Evaluation Module"
+	default y
+	depends on ARCH_TI816X
 
 config OMAP3_EMU
 	bool "OMAP3 debugging peripherals"

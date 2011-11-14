@@ -123,7 +123,7 @@ static void xes_mpc85xx_fixups(void)
 			continue;
 		}
 
-		l2_base = ioremap(r[0].start, resource_size(&r[0]));
+		l2_base = ioremap(r[0].start, r[0].end - r[0].start + 1);
 
 		xes_mpc85xx_configure_l2(l2_base);
 	}

@@ -94,7 +94,11 @@
 #define P4e_s(a)	(TF(a & NAND_Ecc_P4e)		<< 0)
 #define P4o_s(a)	(TF(a & NAND_Ecc_P4o)		<< 1)
 
+#ifdef CONFIG_MTD_PARTITIONS
 static const char *part_probes[] = { "cmdlinepart", NULL };
+#endif
+
+int decode_bch(int select_4_8, unsigned char *ecc, unsigned int *err_loc);
 
 /* oob info generated runtime depending on ecc algorithm and layout selected */
 static struct nand_ecclayout omap_oobinfo;
@@ -128,7 +132,8 @@ struct omap_nand_info {
 		OMAP_NAND_IO_WRITE,	/* write */
 	} iomode;
 	u_char				*buf;
-	int					buf_len;
+	int				buf_len;
+	int				ecc_opt;
 };
 
 /**
@@ -261,10 +266,11 @@ static void omap_read_buf_pref(struct mtd_info *mtd, u_char *buf, int len)
 	if (ret) {
 		/* PFPW engine is busy, use cpu copy method */
 		if (info->nand.options & NAND_BUSWIDTH_16)
-			omap_read_buf16(mtd, (u_char *)p, len);
+			omap_read_buf16(mtd, buf, len);
 		else
-			omap_read_buf8(mtd, (u_char *)p, len);
+			omap_read_buf8(mtd, buf, len);
 	} else {
+		p = (u32 *) buf;
 		do {
 			r_count = gpmc_read_status(GPMC_PREFETCH_FIFO_CNT);
 			r_count = r_count >> 2;
@@ -290,7 +296,7 @@ static void omap_write_buf_pref(struct mtd_info *mtd,
 						struct omap_nand_info, mtd);
 	uint32_t w_count = 0;
 	int i = 0, ret = 0;
-	u16 *p = (u16 *)buf;
+	u16 *p;
 	unsigned long tim, limit;
 
 	/* take care of subpage writes */
@@ -306,10 +312,11 @@ static void omap_write_buf_pref(struct mtd_info *mtd,
 	if (ret) {
 		/* PFPW engine is busy, use cpu copy method */
 		if (info->nand.options & NAND_BUSWIDTH_16)
-			omap_write_buf16(mtd, (u_char *)p, len);
+			omap_write_buf16(mtd, buf, len);
 		else
-			omap_write_buf8(mtd, (u_char *)p, len);
+			omap_write_buf8(mtd, buf, len);
 	} else {
+		p = (u16 *) buf;
 		while (len) {
 			w_count = gpmc_read_status(GPMC_PREFETCH_FIFO_CNT);
 			w_count = w_count >> 1;
@@ -525,7 +532,6 @@ static void omap_read_buf_irq_pref(struct mtd_info *mtd, u_char *buf, int len)
 	struct omap_nand_info *info = container_of(mtd,
 						struct omap_nand_info, mtd);
 	int ret = 0;
-
 	if (len <= mtd->oobsize) {
 		omap_read_buf_pref(mtd, buf, len);
 		return;
@@ -664,8 +670,6 @@ static void gen_true_ecc(u8 *ecc_buf)
  *
  * This function compares two ECC's and indicates if there is an error.
  * If the error can be corrected it will be corrected to the buffer.
- * If there is no error, %0 is returned. If there is an error but it
- * was corrected, %1 is returned. Otherwise, %-1 is returned.
  */
 static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
 			    u8 *ecc_data2,	/* read from register */
@@ -771,7 +775,7 @@ static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
 
 		page_data[find_byte] ^= (1 << find_bit);
 
-		return 1;
+		return 0;
 	default:
 		if (isEccFF) {
 			if (ecc_data2[0] == 0 &&
@@ -792,11 +796,8 @@ static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
  * @calc_ecc: ecc read from HW ECC registers
  *
  * Compares the ecc read from nand spare area with ECC registers values
- * and if ECC's mismatched, it will call 'omap_compare_ecc' for error
- * detection and correction. If there are no errors, %0 is returned. If
- * there were errors and all of the errors were corrected, the number of
- * corrected errors is returned. If uncorrectable errors exist, %-1 is
- * returned.
+ * and if ECC's mismached, it will call 'omap_compare_ecc' for error detection
+ * and correction.
  */
 static int omap_correct_data(struct mtd_info *mtd, u_char *dat,
 				u_char *read_ecc, u_char *calc_ecc)
@@ -804,7 +805,8 @@ static int omap_correct_data(struct mtd_info *mtd, u_char *dat,
 	struct omap_nand_info *info = container_of(mtd, struct omap_nand_info,
 							mtd);
 	int blockCnt = 0, i = 0, ret = 0;
-	int stat = 0;
+	int j, eccsize, eccflag, count;
+	unsigned int err_loc[8];
 
 	/* Ex NAND_ECC_HW12_2048 */
 	if ((info->nand.ecc.mode == NAND_ECC_HW) &&
@@ -813,19 +815,58 @@ static int omap_correct_data(struct mtd_info *mtd, u_char *dat,
 	else
 		blockCnt = 1;
 
-	for (i = 0; i < blockCnt; i++) {
-		if (memcmp(read_ecc, calc_ecc, 3) != 0) {
-			ret = omap_compare_ecc(read_ecc, calc_ecc, dat);
-			if (ret < 0)
-				return ret;
-			/* keep track of the number of corrected errors */
-			stat += ret;
+	switch (info->ecc_opt) {
+	case OMAP_ECC_HAMMING_CODE_HW:
+	case OMAP_ECC_HAMMING_CODE_HW_ROMCODE:
+		for (i = 0; i < blockCnt; i++) {
+			if (memcmp(read_ecc, calc_ecc, 3) != 0) {
+				ret = omap_compare_ecc(read_ecc, calc_ecc, dat);
+				if (ret < 0)
+					return ret;
+			}
+			read_ecc += 3;
+			calc_ecc += 3;
+			dat      += 512;
 		}
-		read_ecc += 3;
-		calc_ecc += 3;
-		dat      += 512;
+		break;
+
+	case OMAP_ECC_BCH4_CODE_HW:
+		eccsize = 7;
+		gpmc_calculate_ecc(info->ecc_opt, info->gpmc_cs, dat, calc_ecc);
+		for (i = 0; i < blockCnt; i++) {
+			/* check if any ecc error */
+			eccflag = 0;
+			for (j = 0; (j < eccsize) && (eccflag == 0); j++)
+				if (calc_ecc[j] != 0)
+					eccflag = 1;
+
+			if (eccflag == 1) {
+				eccflag = 0;
+				for (j = 0; (j < eccsize) &&
+						(eccflag == 0); j++)
+					if (read_ecc[j] != 0xFF)
+						eccflag = 1;
+			}
+
+			count = 0;
+			if (eccflag == 1)
+				count = decode_bch(0, calc_ecc, err_loc);
+
+			for (j = 0; j < count; j++) {
+				if (err_loc[j] < 4096)
+					dat[err_loc[j] >> 3] ^=
+							1 << (err_loc[j] & 7);
+				/* else, not interested to correct ecc */
+			}
+
+			calc_ecc = calc_ecc + eccsize;
+			read_ecc = read_ecc + eccsize;
+			dat += 512;
+		}
+		break;
 	}
-	return stat;
+
+	return 0;
 }
 
 /**
@@ -845,7 +886,7 @@ static int omap_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
 {
 	struct omap_nand_info *info = container_of(mtd, struct omap_nand_info,
 							mtd);
-	return gpmc_calculate_ecc(info->gpmc_cs, dat, ecc_code);
+	return gpmc_calculate_ecc(info->ecc_opt, info->gpmc_cs, dat, ecc_code);
 }
 
 /**
@@ -860,7 +901,8 @@ static void omap_enable_hwecc(struct mtd_info *mtd, int mode)
 	struct nand_chip *chip = mtd->priv;
 	unsigned int dev_width = (chip->options & NAND_BUSWIDTH_16) ? 1 : 0;
 
-	gpmc_enable_hwecc(info->gpmc_cs, mode, dev_width, info->nand.ecc.size);
+	gpmc_enable_hwecc(info->ecc_opt, info->gpmc_cs, mode,
+				dev_width, info->nand.ecc.size);
 }
 
 /**
@@ -957,9 +999,13 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 	info->mtd.priv		= &info->nand;
 	info->mtd.name		= dev_name(&pdev->dev);
 	info->mtd.owner		= THIS_MODULE;
+	pdata->ecc_opt		= OMAP_ECC_HAMMING_CODE_HW;
+	info->ecc_opt		= pdata->ecc_opt;
 
 	info->nand.options	= pdata->devsize;
 	info->nand.options	|= NAND_SKIP_BBTSCAN;
+
+	info->nand.badblockbits = 8;
 
 	/* NAND write protect off */
 	gpmc_cs_configure(info->gpmc_cs, GPMC_CONFIG_WP, 0);
@@ -995,7 +1041,6 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 		info->nand.waitfunc = omap_wait;
 		info->nand.chip_delay = 50;
 	}
-
 	switch (pdata->xfer_type) {
 	case NAND_OMAP_PREFETCH_POLLED:
 		info->nand.read_buf   = omap_read_buf_pref;
@@ -1056,10 +1101,17 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 	/* selsect the ecc type */
 	if (pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_DEFAULT)
 		info->nand.ecc.mode = NAND_ECC_SOFT;
-	else if ((pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW) ||
-		(pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW_ROMCODE)) {
-		info->nand.ecc.bytes            = 3;
-		info->nand.ecc.size             = 512;
+	else {
+		if (pdata->ecc_opt == OMAP_ECC_BCH4_CODE_HW) {
+			info->nand.ecc.bytes    = 4*7;
+			info->nand.ecc.size     = 4*512;
+		} else if (pdata->ecc_opt == OMAP_ECC_BCH8_CODE_HW) {
+			info->nand.ecc.bytes    = 13;
+			info->nand.ecc.size     = 4*512;
+		} else {
+			info->nand.ecc.bytes    = 3;
+			info->nand.ecc.size     = 512;
+		}
 		info->nand.ecc.calculate        = omap_calculate_ecc;
 		info->nand.ecc.hwctl            = omap_enable_hwecc;
 		info->nand.ecc.correct          = omap_correct_data;
@@ -1077,8 +1129,8 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 		}
 	}
 
-	/* rom code layout */
-	if (pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW_ROMCODE) {
+	/* select ecc lyout */
+	if (info->nand.ecc.mode != NAND_ECC_SOFT) {
 
 		if (info->nand.options & NAND_BUSWIDTH_16)
 			offset = 2;
@@ -1086,30 +1138,48 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 			offset = 1;
 			info->nand.badblock_pattern = &bb_descrip_flashbased;
 		}
-		omap_oobinfo.eccbytes = 3 * (info->mtd.oobsize/16);
-		for (i = 0; i < omap_oobinfo.eccbytes; i++)
-			omap_oobinfo.eccpos[i] = i+offset;
 
-		omap_oobinfo.oobfree->offset = offset + omap_oobinfo.eccbytes;
-		omap_oobinfo.oobfree->length = info->mtd.oobsize -
-					(offset + omap_oobinfo.eccbytes);
+		if (info->mtd.oobsize == 64)
+			omap_oobinfo.eccbytes = info->nand.ecc.bytes *
+						2048/info->nand.ecc.size;
+		else
+			omap_oobinfo.eccbytes = info->nand.ecc.bytes;
 
+		if (pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW_ROMCODE) {
+			for (i = 0; i < omap_oobinfo.eccbytes; i++)
+				omap_oobinfo.eccpos[i] = i + offset;
+			omap_oobinfo.oobfree->offset =
+						offset + omap_oobinfo.eccbytes;
+			omap_oobinfo.oobfree->length = info->mtd.oobsize -
+						offset - omap_oobinfo.eccbytes;
+		} else {
+
+			omap_oobinfo.oobfree->offset = offset;
+			omap_oobinfo.oobfree->length = info->mtd.oobsize -
+						offset - omap_oobinfo.eccbytes;
+			offset = info->mtd.oobsize - omap_oobinfo.eccbytes;
+			for (i = 0; i < omap_oobinfo.eccbytes; i++)
+				omap_oobinfo.eccpos[i] = i + offset;
+		}
 		info->nand.ecc.layout = &omap_oobinfo;
+
 	}
 
 	/* second phase scan */
 	if (nand_scan_tail(&info->mtd)) {
-		err = -ENXIO;
-		goto out_release_mem_region;
+			err = -ENXIO;
+			goto out_release_mem_region;
 	}
 
+#ifdef CONFIG_MTD_PARTITIONS
 	err = parse_mtd_partitions(&info->mtd, part_probes, &info->parts, 0);
 	if (err > 0)
-		mtd_device_register(&info->mtd, info->parts, err);
+		add_mtd_partitions(&info->mtd, info->parts, err);
 	else if (pdata->parts)
-		mtd_device_register(&info->mtd, pdata->parts, pdata->nr_parts);
+		add_mtd_partitions(&info->mtd, pdata->parts, pdata->nr_parts);
 	else
-		mtd_device_register(&info->mtd, NULL, 0);
+#endif
+		add_mtd_device(&info->mtd);
 
 	platform_set_drvdata(pdev, &info->mtd);
 
@@ -1167,6 +1237,6 @@ static void __exit omap_nand_exit(void)
 module_init(omap_nand_init);
 module_exit(omap_nand_exit);
 
-MODULE_ALIAS("platform:" DRIVER_NAME);
+MODULE_ALIAS(DRIVER_NAME);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Glue layer for NAND flash on TI OMAP boards");

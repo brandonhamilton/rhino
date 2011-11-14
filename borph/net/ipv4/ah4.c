@@ -73,7 +73,7 @@ static inline struct scatterlist *ah_req_sg(struct crypto_ahash *ahash,
  * into IP header for icv calculation. Options are already checked
  * for validity, so paranoia is not required. */
 
-static int ip_clear_mutable_options(const struct iphdr *iph, __be32 *daddr)
+static int ip_clear_mutable_options(struct iphdr *iph, __be32 *daddr)
 {
 	unsigned char * optptr = (unsigned char*)(iph+1);
 	int  l = iph->ihl*4 - sizeof(struct iphdr);
@@ -201,14 +201,11 @@ static int ah_output(struct xfrm_state *x, struct sk_buff *skb)
 	top_iph->ttl = 0;
 	top_iph->check = 0;
 
-	if (x->props.flags & XFRM_STATE_ALIGN4)
-		ah->hdrlen  = (XFRM_ALIGN4(sizeof(*ah) + ahp->icv_trunc_len) >> 2) - 2;
-	else
-		ah->hdrlen  = (XFRM_ALIGN8(sizeof(*ah) + ahp->icv_trunc_len) >> 2) - 2;
+	ah->hdrlen  = (XFRM_ALIGN8(sizeof(*ah) + ahp->icv_trunc_len) >> 2) - 2;
 
 	ah->reserved = 0;
 	ah->spi = x->id.spi;
-	ah->seq_no = htonl(XFRM_SKB_CB(skb)->seq.output.low);
+	ah->seq_no = htonl(XFRM_SKB_CB(skb)->seq.output);
 
 	sg_init_table(sg, nfrags);
 	skb_to_sgvec(skb, sg, 0, skb->len);
@@ -302,15 +299,9 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
 	nexthdr = ah->nexthdr;
 	ah_hlen = (ah->hdrlen + 2) << 2;
 
-	if (x->props.flags & XFRM_STATE_ALIGN4) {
-		if (ah_hlen != XFRM_ALIGN4(sizeof(*ah) + ahp->icv_full_len) &&
-		    ah_hlen != XFRM_ALIGN4(sizeof(*ah) + ahp->icv_trunc_len))
-			goto out;
-	} else {
-		if (ah_hlen != XFRM_ALIGN8(sizeof(*ah) + ahp->icv_full_len) &&
-		    ah_hlen != XFRM_ALIGN8(sizeof(*ah) + ahp->icv_trunc_len))
-			goto out;
-	}
+	if (ah_hlen != XFRM_ALIGN8(sizeof(*ah) + ahp->icv_full_len) &&
+	    ah_hlen != XFRM_ALIGN8(sizeof(*ah) + ahp->icv_trunc_len))
+		goto out;
 
 	if (!pskb_may_pull(skb, ah_hlen))
 		goto out;
@@ -323,14 +314,13 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
 
 	skb->ip_summed = CHECKSUM_NONE;
 
+	ah = (struct ip_auth_hdr *)skb->data;
+	iph = ip_hdr(skb);
+	ihl = ip_hdrlen(skb);
 
 	if ((err = skb_cow_data(skb, 0, &trailer)) < 0)
 		goto out;
 	nfrags = err;
-
-	ah = (struct ip_auth_hdr *)skb->data;
-	iph = ip_hdr(skb);
-	ihl = ip_hdrlen(skb);
 
 	work_iph = ah_alloc_tmp(ahash, nfrags, ihl + ahp->icv_trunc_len);
 	if (!work_iph)
@@ -396,7 +386,7 @@ out:
 static void ah4_err(struct sk_buff *skb, u32 info)
 {
 	struct net *net = dev_net(skb->dev);
-	const struct iphdr *iph = (const struct iphdr *)skb->data;
+	struct iphdr *iph = (struct iphdr *)skb->data;
 	struct ip_auth_hdr *ah = (struct ip_auth_hdr *)(skb->data+(iph->ihl<<2));
 	struct xfrm_state *x;
 
@@ -404,8 +394,7 @@ static void ah4_err(struct sk_buff *skb, u32 info)
 	    icmp_hdr(skb)->code != ICMP_FRAG_NEEDED)
 		return;
 
-	x = xfrm_state_lookup(net, skb->mark, (const xfrm_address_t *)&iph->daddr,
-			      ah->spi, IPPROTO_AH, AF_INET);
+	x = xfrm_state_lookup(net, skb->mark, (xfrm_address_t *)&iph->daddr, ah->spi, IPPROTO_AH, AF_INET);
 	if (!x)
 		return;
 	printk(KERN_DEBUG "pmtu discovery on SA AH/%08x/%08x\n",
@@ -460,12 +449,8 @@ static int ah_init_state(struct xfrm_state *x)
 
 	BUG_ON(ahp->icv_trunc_len > MAX_AH_AUTH_LEN);
 
-	if (x->props.flags & XFRM_STATE_ALIGN4)
-		x->props.header_len = XFRM_ALIGN4(sizeof(struct ip_auth_hdr) +
-						  ahp->icv_trunc_len);
-	else
-		x->props.header_len = XFRM_ALIGN8(sizeof(struct ip_auth_hdr) +
-						  ahp->icv_trunc_len);
+	x->props.header_len = XFRM_ALIGN8(sizeof(struct ip_auth_hdr) +
+					  ahp->icv_trunc_len);
 	if (x->props.mode == XFRM_MODE_TUNNEL)
 		x->props.header_len += sizeof(struct iphdr);
 	x->data = ahp;

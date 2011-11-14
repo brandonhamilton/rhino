@@ -66,7 +66,7 @@ nilfs_mdt_insert_new_block(struct inode *inode, unsigned long block,
 	kunmap_atomic(kaddr, KM_USER0);
 
 	set_buffer_uptodate(bh);
-	mark_buffer_dirty(bh);
+	nilfs_mark_buffer_dirty(bh);
 	nilfs_mdt_mark_dirty(inode);
 	return 0;
 }
@@ -237,6 +237,8 @@ static int nilfs_mdt_read_block(struct inode *inode, unsigned long block,
  *
  * %-ENOENT - the specified block does not exist (hole block)
  *
+ * %-EINVAL - bmap is broken. (the caller should call nilfs_error())
+ *
  * %-EROFS - Read only filesystem (for create mode)
  */
 int nilfs_mdt_get_block(struct inode *inode, unsigned long blkoff, int create,
@@ -271,6 +273,8 @@ int nilfs_mdt_get_block(struct inode *inode, unsigned long blkoff, int create,
  * %-ENOMEM - Insufficient memory available.
  *
  * %-EIO - I/O error
+ *
+ * %-EINVAL - bmap is broken. (the caller should call nilfs_error())
  */
 int nilfs_mdt_delete_block(struct inode *inode, unsigned long block)
 {
@@ -346,6 +350,8 @@ int nilfs_mdt_forget_block(struct inode *inode, unsigned long block)
  * %-EIO - I/O error
  *
  * %-ENOENT - the specified block does not exist (hole block)
+ *
+ * %-EINVAL - bmap is broken. (the caller should call nilfs_error())
  */
 int nilfs_mdt_mark_block_dirty(struct inode *inode, unsigned long block)
 {
@@ -355,7 +361,7 @@ int nilfs_mdt_mark_block_dirty(struct inode *inode, unsigned long block)
 	err = nilfs_mdt_read_block(inode, block, 0, &bh);
 	if (unlikely(err))
 		return err;
-	mark_buffer_dirty(bh);
+	nilfs_mark_buffer_dirty(bh);
 	nilfs_mdt_mark_dirty(inode);
 	brelse(bh);
 	return 0;
@@ -399,6 +405,7 @@ nilfs_mdt_write_page(struct page *page, struct writeback_control *wbc)
 
 static const struct address_space_operations def_mdt_aops = {
 	.writepage		= nilfs_mdt_write_page,
+	.sync_page		= block_sync_page,
 };
 
 static const struct inode_operations def_mdt_iops;
@@ -437,6 +444,10 @@ void nilfs_mdt_set_entry_size(struct inode *inode, unsigned entry_size,
 	mi->mi_first_entry_offset = DIV_ROUND_UP(header_size, entry_size);
 }
 
+static const struct address_space_operations shadow_map_aops = {
+	.sync_page		= block_sync_page,
+};
+
 /**
  * nilfs_mdt_setup_shadow_map - setup shadow map and bind it to metadata file
  * @inode: inode of the metadata file
@@ -449,10 +460,10 @@ int nilfs_mdt_setup_shadow_map(struct inode *inode,
 	struct backing_dev_info *bdi = inode->i_sb->s_bdi;
 
 	INIT_LIST_HEAD(&shadow->frozen_buffers);
-	address_space_init_once(&shadow->frozen_data);
-	nilfs_mapping_init(&shadow->frozen_data, inode, bdi);
-	address_space_init_once(&shadow->frozen_btnodes);
-	nilfs_mapping_init(&shadow->frozen_btnodes, inode, bdi);
+	nilfs_mapping_init_once(&shadow->frozen_data);
+	nilfs_mapping_init(&shadow->frozen_data, bdi, &shadow_map_aops);
+	nilfs_mapping_init_once(&shadow->frozen_btnodes);
+	nilfs_mapping_init(&shadow->frozen_btnodes, bdi, &shadow_map_aops);
 	mi->mi_shadow = shadow;
 	return 0;
 }
@@ -488,29 +499,31 @@ int nilfs_mdt_freeze_buffer(struct inode *inode, struct buffer_head *bh)
 	struct buffer_head *bh_frozen;
 	struct page *page;
 	int blkbits = inode->i_blkbits;
+	int ret = -ENOMEM;
 
 	page = grab_cache_page(&shadow->frozen_data, bh->b_page->index);
 	if (!page)
-		return -ENOMEM;
+		return ret;
 
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, 1 << blkbits, 0);
 
 	bh_frozen = nilfs_page_get_nth_block(page, bh_offset(bh) >> blkbits);
-
-	if (!buffer_uptodate(bh_frozen))
-		nilfs_copy_buffer(bh_frozen, bh);
-	if (list_empty(&bh_frozen->b_assoc_buffers)) {
-		list_add_tail(&bh_frozen->b_assoc_buffers,
-			      &shadow->frozen_buffers);
-		set_buffer_nilfs_redirected(bh);
-	} else {
-		brelse(bh_frozen); /* already frozen */
+	if (bh_frozen) {
+		if (!buffer_uptodate(bh_frozen))
+			nilfs_copy_buffer(bh_frozen, bh);
+		if (list_empty(&bh_frozen->b_assoc_buffers)) {
+			list_add_tail(&bh_frozen->b_assoc_buffers,
+				      &shadow->frozen_buffers);
+			set_buffer_nilfs_redirected(bh);
+		} else {
+			brelse(bh_frozen); /* already frozen */
+		}
+		ret = 0;
 	}
-
 	unlock_page(page);
 	page_cache_release(page);
-	return 0;
+	return ret;
 }
 
 struct buffer_head *

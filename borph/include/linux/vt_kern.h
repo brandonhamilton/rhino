@@ -137,11 +137,19 @@ int vty_init(const struct file_operations *console_fops);
 
 static inline bool vt_force_oops_output(struct vc_data *vc)
 {
-	if (oops_in_progress && vc->vc_panic_force_write  && panic_timeout >= 0)
+	if (oops_in_progress && vc->vc_panic_force_write)
 		return true;
 	return false;
 }
 
+/*
+ * vc_screen.c shares this temporary buffer with the console write code so that
+ * we can easily avoid touching user space while holding the console spinlock.
+ */
+
+#define CON_BUF_SIZE (CONFIG_BASE_SMALL ? 256 : PAGE_SIZE)
+extern char con_buf[CON_BUF_SIZE];
+extern struct mutex con_buf_mtx;
 extern char vt_dont_switch;
 extern int default_utf8;
 extern int global_cursor_default;

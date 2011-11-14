@@ -72,16 +72,18 @@ EXPORT_SYMBOL(percpu_counter_set);
 void __percpu_counter_add(struct percpu_counter *fbc, s64 amount, s32 batch)
 {
 	s64 count;
+	s32 *pcount;
 
 	preempt_disable();
-	count = __this_cpu_read(*fbc->counters) + amount;
+	pcount = this_cpu_ptr(fbc->counters);
+	count = *pcount + amount;
 	if (count >= batch || count <= -batch) {
 		spin_lock(&fbc->lock);
 		fbc->count += count;
-		__this_cpu_write(*fbc->counters, 0);
+		*pcount = 0;
 		spin_unlock(&fbc->lock);
 	} else {
-		__this_cpu_write(*fbc->counters, count);
+		*pcount = count;
 	}
 	preempt_enable();
 }

@@ -2,7 +2,7 @@
 #include <linux/compiler.h>
 #include <linux/slab.h>
 #include <linux/io.h>
-#include <linux/clkdev.h>
+#include <asm/clkdev.h>
 #include <asm/clock.h>
 
 static struct clk master_clk = {
@@ -35,6 +35,8 @@ static struct clk *onchip_clocks[] = {
 	&cpu_clk,
 };
 
+#define CLKDEV_CON_ID(_id, _clk) { .con_id = _id, .clk = _clk }
+
 static struct clk_lookup lookups[] = {
 	/* main clocks */
 	CLKDEV_CON_ID("master_clk", &master_clk),
@@ -65,7 +67,7 @@ int __init __deprecated cpg_clk_init(void)
 }
 
 /*
- * Placeholder for compatibility, until the lazy CPUs do this
+ * Placeholder for compatability, until the lazy CPUs do this
  * on their own.
  */
 int __init __weak arch_clk_init(void)

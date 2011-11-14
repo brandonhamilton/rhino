@@ -18,7 +18,6 @@
 #define MCS_KEY_CODE(v)		((v) & 0xffff)
 
 struct mcs_platform_data {
-	void (*poweron)(bool);
 	void (*cfg_pin)(void);
 
 	/* touchscreen */

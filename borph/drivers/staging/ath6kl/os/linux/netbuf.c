@@ -22,6 +22,7 @@
 //------------------------------------------------------------------------------
 #include <a_config.h>
 #include "athdefs.h"
+#include "a_types.h"
 #include "a_osapi.h"
 #include "htc_packet.h"
 
@@ -62,8 +63,8 @@ a_netbuf_alloc(int size)
 {
     struct sk_buff *skb;
     size += 2 * (A_GET_CACHE_LINE_BYTES()); /* add some cacheline space at front and back of buffer */
-    skb = dev_alloc_skb(AR6000_DATA_OFFSET + sizeof(struct htc_packet) + size);
-    skb_reserve(skb, AR6000_DATA_OFFSET + sizeof(struct htc_packet) + A_GET_CACHE_LINE_BYTES());    
+    skb = dev_alloc_skb(AR6000_DATA_OFFSET + sizeof(HTC_PACKET) + size);
+    skb_reserve(skb, AR6000_DATA_OFFSET + sizeof(HTC_PACKET) + A_GET_CACHE_LINE_BYTES());    
     return ((void *)skb);
 }
 
@@ -88,7 +89,8 @@ a_netbuf_free(void *bufPtr)
     dev_kfree_skb(skb);
 }
 
-u32 a_netbuf_to_len(void *bufPtr)
+A_UINT32
+a_netbuf_to_len(void *bufPtr)
 {
     return (((struct sk_buff *)bufPtr)->len);
 }
@@ -103,97 +105,98 @@ a_netbuf_to_data(void *bufPtr)
  * Add len # of bytes to the beginning of the network buffer
  * pointed to by bufPtr
  */
-int
-a_netbuf_push(void *bufPtr, s32 len)
+A_STATUS
+a_netbuf_push(void *bufPtr, A_INT32 len)
 {
     skb_push((struct sk_buff *)bufPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Add len # of bytes to the beginning of the network buffer
  * pointed to by bufPtr and also fill with data
  */
-int
-a_netbuf_push_data(void *bufPtr, char *srcPtr, s32 len)
+A_STATUS
+a_netbuf_push_data(void *bufPtr, char *srcPtr, A_INT32 len)
 {
     skb_push((struct sk_buff *) bufPtr, len);
-    memcpy(((struct sk_buff *)bufPtr)->data, srcPtr, len);
+    A_MEMCPY(((struct sk_buff *)bufPtr)->data, srcPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Add len # of bytes to the end of the network buffer
  * pointed to by bufPtr
  */
-int
-a_netbuf_put(void *bufPtr, s32 len)
+A_STATUS
+a_netbuf_put(void *bufPtr, A_INT32 len)
 {
     skb_put((struct sk_buff *)bufPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Add len # of bytes to the end of the network buffer
  * pointed to by bufPtr and also fill with data
  */
-int
-a_netbuf_put_data(void *bufPtr, char *srcPtr, s32 len)
+A_STATUS
+a_netbuf_put_data(void *bufPtr, char *srcPtr, A_INT32 len)
 {
     char *start = (char*)(((struct sk_buff *)bufPtr)->data +
         ((struct sk_buff *)bufPtr)->len);
     skb_put((struct sk_buff *)bufPtr, len);
-    memcpy(start, srcPtr, len);
+    A_MEMCPY(start, srcPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 
 /*
  * Trim the network buffer pointed to by bufPtr to len # of bytes 
  */
-int
-a_netbuf_setlen(void *bufPtr, s32 len)
+A_STATUS
+a_netbuf_setlen(void *bufPtr, A_INT32 len)
 {
     skb_trim((struct sk_buff *)bufPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Chop of len # of bytes from the end of the buffer.
  */
-int
-a_netbuf_trim(void *bufPtr, s32 len)
+A_STATUS
+a_netbuf_trim(void *bufPtr, A_INT32 len)
 {
     skb_trim((struct sk_buff *)bufPtr, ((struct sk_buff *)bufPtr)->len - len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Chop of len # of bytes from the end of the buffer and return the data.
  */
-int
-a_netbuf_trim_data(void *bufPtr, char *dstPtr, s32 len)
+A_STATUS
+a_netbuf_trim_data(void *bufPtr, char *dstPtr, A_INT32 len)
 {
     char *start = (char*)(((struct sk_buff *)bufPtr)->data +
         (((struct sk_buff *)bufPtr)->len - len));
     
-    memcpy(dstPtr, start, len);
+    A_MEMCPY(dstPtr, start, len);
     skb_trim((struct sk_buff *)bufPtr, ((struct sk_buff *)bufPtr)->len - len);
 
-    return 0;
+    return A_OK;
 }
 
 
 /*
  * Returns the number of bytes available to a a_netbuf_push()
  */
-s32 a_netbuf_headroom(void *bufPtr)
+A_INT32
+a_netbuf_headroom(void *bufPtr)
 {
     return (skb_headroom((struct sk_buff *)bufPtr));
 }
@@ -201,25 +204,25 @@ s32 a_netbuf_headroom(void *bufPtr)
 /*
  * Removes specified number of bytes from the beginning of the buffer
  */
-int
-a_netbuf_pull(void *bufPtr, s32 len)
+A_STATUS
+a_netbuf_pull(void *bufPtr, A_INT32 len)
 {
     skb_pull((struct sk_buff *)bufPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 /*
  * Removes specified number of bytes from the beginning of the buffer
  * and return the data
  */
-int
-a_netbuf_pull_data(void *bufPtr, char *dstPtr, s32 len)
+A_STATUS
+a_netbuf_pull_data(void *bufPtr, char *dstPtr, A_INT32 len)
 {
-    memcpy(dstPtr, ((struct sk_buff *)bufPtr)->data, len);
+    A_MEMCPY(dstPtr, ((struct sk_buff *)bufPtr)->data, len);
     skb_pull((struct sk_buff *)bufPtr, len);
 
-    return 0;
+    return A_OK;
 }
 
 #ifdef EXPORT_HCI_BRIDGE_INTERFACE

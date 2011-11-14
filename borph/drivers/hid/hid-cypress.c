@@ -107,13 +107,13 @@ static int cp_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		goto err_free;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		goto err_free;
 	}
 

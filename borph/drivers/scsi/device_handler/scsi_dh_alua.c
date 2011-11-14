@@ -253,15 +253,13 @@ static void stpg_endio(struct request *req, int error)
 {
 	struct alua_dh_data *h = req->end_io_data;
 	struct scsi_sense_hdr sense_hdr;
-	unsigned err = SCSI_DH_OK;
+	unsigned err = SCSI_DH_IO;
 
 	if (error || host_byte(req->errors) != DID_OK ||
-			msg_byte(req->errors) != COMMAND_COMPLETE) {
-		err = SCSI_DH_IO;
+			msg_byte(req->errors) != COMMAND_COMPLETE)
 		goto done;
-	}
 
-	if (h->senselen > 0) {
+	if (err == SCSI_DH_IO && h->senselen > 0) {
 		err = scsi_normalize_sense(h->sense, SCSI_SENSE_BUFFERSIZE,
 					   &sense_hdr);
 		if (!err) {
@@ -287,8 +285,7 @@ static void stpg_endio(struct request *req, int error)
 			    print_alua_state(h->state));
 	}
 done:
-	req->end_io_data = NULL;
-	__blk_put_request(req->q, req);
+	blk_put_request(req);
 	if (h->callback_fn) {
 		h->callback_fn(h->callback_data, err);
 		h->callback_fn = h->callback_data = NULL;
@@ -306,6 +303,7 @@ done:
 static unsigned submit_stpg(struct alua_dh_data *h)
 {
 	struct request *rq;
+	int err = SCSI_DH_RES_TEMP_UNAVAIL;
 	int stpg_len = 8;
 	struct scsi_device *sdev = h->sdev;
 
@@ -334,7 +332,7 @@ static unsigned submit_stpg(struct alua_dh_data *h)
 	rq->end_io_data = h;
 
 	blk_execute_rq_nowait(rq->q, NULL, rq, 1, stpg_endio);
-	return SCSI_DH_OK;
+	return err;
 }
 
 /*
@@ -541,7 +539,7 @@ static int alua_check_sense(struct scsi_device *sdev,
  *
  * Evaluate the Target Port Group State.
  * Returns SCSI_DH_DEV_OFFLINED if the path is
- * found to be unusable.
+ * found to be unuseable.
  */
 static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 {
@@ -620,7 +618,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_dh_data *h)
 		break;
 	case TPGS_STATE_OFFLINE:
 	case TPGS_STATE_UNAVAILABLE:
-		/* Path unusable for unavailable/offline */
+		/* Path unuseable for unavailable/offline */
 		err = SCSI_DH_DEV_OFFLINED;
 		break;
 	default:
@@ -732,9 +730,7 @@ static const struct scsi_dh_devlist alua_dev_list[] = {
 	{"Pillar", "Axiom" },
 	{"Intel", "Multi-Flex"},
 	{"NETAPP", "LUN"},
-	{"NETAPP", "LUN C-Mode"},
 	{"AIX", "NVDISK"},
-	{"Promise", "VTrak"},
 	{NULL, NULL}
 };
 
@@ -763,7 +759,7 @@ static int alua_bus_attach(struct scsi_device *sdev)
 	unsigned long flags;
 	int err = SCSI_DH_OK;
 
-	scsi_dh_data = kzalloc(sizeof(*scsi_dh_data)
+	scsi_dh_data = kzalloc(sizeof(struct scsi_device_handler *)
 			       + sizeof(*h) , GFP_KERNEL);
 	if (!scsi_dh_data) {
 		sdev_printk(KERN_ERR, sdev, "%s: Attach failed\n",
@@ -782,7 +778,7 @@ static int alua_bus_attach(struct scsi_device *sdev)
 	h->sdev = sdev;
 
 	err = alua_initialize(sdev, h);
-	if ((err != SCSI_DH_OK) && (err != SCSI_DH_DEV_OFFLINED))
+	if (err != SCSI_DH_OK)
 		goto failed;
 
 	if (!try_module_get(THIS_MODULE))

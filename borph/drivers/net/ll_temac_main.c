@@ -48,8 +48,6 @@
 #include <linux/io.h>
 #include <linux/ip.h>
 #include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/dma-mapping.h>
 
 #include "ll_temac.h"
 
@@ -240,7 +238,7 @@ static int temac_dma_bd_init(struct net_device *ndev)
 		goto out;
 	}
 	/* allocate the tx and rx ring buffer descriptors. */
-	/* returns a virtual address and a physical address. */
+	/* returns a virtual addres and a physical address. */
 	lp->tx_bd_v = dma_alloc_coherent(ndev->dev.parent,
 					 sizeof(*lp->tx_bd_v) * TX_BD_NUM,
 					 &lp->tx_bd_p, GFP_KERNEL);
@@ -694,7 +692,7 @@ static int temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	cur_p->app0 = 0;
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		unsigned int csum_start_off = skb_checksum_start_offset(skb);
+		unsigned int csum_start_off = skb_transport_offset(skb);
 		unsigned int csum_index_off = csum_start_off + skb->csum_offset;
 
 		cur_p->app0 |= 1; /* TX Checksum Enabled */
@@ -728,8 +726,6 @@ static int temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	lp->tx_bd_tail++;
 	if (lp->tx_bd_tail >= TX_BD_NUM)
 		lp->tx_bd_tail = 0;
-
-	skb_tx_timestamp(skb);
 
 	/* Kick off the transfer */
 	lp->dma_out(lp, TX_TAILDESC_PTR, tail_p); /* DMA start */
@@ -776,8 +772,7 @@ static void ll_temac_recv(struct net_device *ndev)
 			skb->ip_summed = CHECKSUM_COMPLETE;
 		}
 
-		if (!skb_defer_rx_timestamp(skb))
-			netif_rx(skb);
+		netif_rx(skb);
 
 		ndev->stats.rx_packets++;
 		ndev->stats.rx_bytes += length;
@@ -957,7 +952,8 @@ static const struct attribute_group temac_attr_group = {
 	.attrs = temac_device_attrs,
 };
 
-static int __devinit temac_of_probe(struct platform_device *op)
+static int __init
+temac_of_probe(struct platform_device *op, const struct of_device_id *match)
 {
 	struct device_node *np;
 	struct temac_local *lp;
@@ -1127,7 +1123,7 @@ static struct of_device_id temac_of_match[] __devinitdata = {
 };
 MODULE_DEVICE_TABLE(of, temac_of_match);
 
-static struct platform_driver temac_of_driver = {
+static struct of_platform_driver temac_of_driver = {
 	.probe = temac_of_probe,
 	.remove = __devexit_p(temac_of_remove),
 	.driver = {
@@ -1139,13 +1135,13 @@ static struct platform_driver temac_of_driver = {
 
 static int __init temac_init(void)
 {
-	return platform_driver_register(&temac_of_driver);
+	return of_register_platform_driver(&temac_of_driver);
 }
 module_init(temac_init);
 
 static void __exit temac_exit(void)
 {
-	platform_driver_unregister(&temac_of_driver);
+	of_unregister_platform_driver(&temac_of_driver);
 }
 module_exit(temac_exit);
 

@@ -24,7 +24,7 @@
 #ifndef _LINUX_NTFS_INODE_H
 #define _LINUX_NTFS_INODE_H
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <linux/fs.h>
 #include <linux/list.h>

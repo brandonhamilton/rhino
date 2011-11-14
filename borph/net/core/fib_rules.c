@@ -181,13 +181,13 @@ static int fib_rule_match(struct fib_rule *rule, struct fib_rules_ops *ops,
 {
 	int ret = 0;
 
-	if (rule->iifindex && (rule->iifindex != fl->flowi_iif))
+	if (rule->iifindex && (rule->iifindex != fl->iif))
 		goto out;
 
-	if (rule->oifindex && (rule->oifindex != fl->flowi_oif))
+	if (rule->oifindex && (rule->oifindex != fl->oif))
 		goto out;
 
-	if ((rule->mark ^ fl->flowi_mark) & rule->mark_mask)
+	if ((rule->mark ^ fl->mark) & rule->mark_mask)
 		goto out;
 
 	ret = ops->match(rule, fl, flags);
@@ -590,8 +590,7 @@ static int dump_rules(struct sk_buff *skb, struct netlink_callback *cb,
 	int idx = 0;
 	struct fib_rule *rule;
 
-	rcu_read_lock();
-	list_for_each_entry_rcu(rule, &ops->rules_list, list) {
+	list_for_each_entry(rule, &ops->rules_list, list) {
 		if (idx < cb->args[1])
 			goto skip;
 
@@ -602,7 +601,6 @@ static int dump_rules(struct sk_buff *skb, struct netlink_callback *cb,
 skip:
 		idx++;
 	}
-	rcu_read_unlock();
 	cb->args[1] = idx;
 	rules_ops_put(ops);
 
@@ -740,9 +738,9 @@ static struct pernet_operations fib_rules_net_ops = {
 static int __init fib_rules_init(void)
 {
 	int err;
-	rtnl_register(PF_UNSPEC, RTM_NEWRULE, fib_nl_newrule, NULL, NULL);
-	rtnl_register(PF_UNSPEC, RTM_DELRULE, fib_nl_delrule, NULL, NULL);
-	rtnl_register(PF_UNSPEC, RTM_GETRULE, NULL, fib_nl_dumprule, NULL);
+	rtnl_register(PF_UNSPEC, RTM_NEWRULE, fib_nl_newrule, NULL);
+	rtnl_register(PF_UNSPEC, RTM_DELRULE, fib_nl_delrule, NULL);
+	rtnl_register(PF_UNSPEC, RTM_GETRULE, NULL, fib_nl_dumprule);
 
 	err = register_pernet_subsys(&fib_rules_net_ops);
 	if (err < 0)

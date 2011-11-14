@@ -34,13 +34,11 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <linux/list.h>
 #include <linux/kernel.h>
 
 #include "../perf.h"
 #include "trace-event.h"
 #include "debugfs.h"
-#include "evsel.h"
 
 #define VERSION "0.5"
 
@@ -183,20 +181,11 @@ int bigendian(void)
 	return *ptr == 0x01020304;
 }
 
-/* unfortunately, you can not stat debugfs or proc files for size */
-static void record_file(const char *file, size_t hdr_sz)
+static unsigned long long copy_file_fd(int fd)
 {
 	unsigned long long size = 0;
-	char buf[BUFSIZ], *sizep;
-	off_t hdr_pos = lseek(output_fd, 0, SEEK_CUR);
-	int r, fd;
-
-	fd = open(file, O_RDONLY);
-	if (fd < 0)
-		die("Can't read '%s'", file);
-
-	/* put in zeros for file size, then fill true size later */
-	write_or_die(&size, hdr_sz);
+	char buf[BUFSIZ];
+	int r;
 
 	do {
 		r = read(fd, buf, BUFSIZ);
@@ -205,37 +194,93 @@ static void record_file(const char *file, size_t hdr_sz)
 			write_or_die(buf, r);
 		}
 	} while (r > 0);
+
+	return size;
+}
+
+static unsigned long long copy_file(const char *file)
+{
+	unsigned long long size = 0;
+	int fd;
+
+	fd = open(file, O_RDONLY);
+	if (fd < 0)
+		die("Can't read '%s'", file);
+	size = copy_file_fd(fd);
 	close(fd);
 
-	/* ugh, handle big-endian hdr_size == 4 */
-	sizep = (char*)&size;
-	if (bigendian())
-		sizep += sizeof(u64) - hdr_sz;
+	return size;
+}
 
-	if (pwrite(output_fd, sizep, hdr_sz, hdr_pos) < 0)
-		die("writing to %s", output_file);
+static unsigned long get_size_fd(int fd)
+{
+	unsigned long long size = 0;
+	char buf[BUFSIZ];
+	int r;
+
+	do {
+		r = read(fd, buf, BUFSIZ);
+		if (r > 0)
+			size += r;
+	} while (r > 0);
+
+	lseek(fd, 0, SEEK_SET);
+
+	return size;
+}
+
+static unsigned long get_size(const char *file)
+{
+	unsigned long long size = 0;
+	int fd;
+
+	fd = open(file, O_RDONLY);
+	if (fd < 0)
+		die("Can't read '%s'", file);
+	size = get_size_fd(fd);
+	close(fd);
+
+	return size;
 }
 
 static void read_header_files(void)
 {
+	unsigned long long size, check_size;
 	char *path;
-	struct stat st;
+	int fd;
 
 	path = get_tracing_file("events/header_page");
-	if (stat(path, &st) < 0)
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
 		die("can't read '%s'", path);
 
+	/* unfortunately, you can not stat debugfs files for size */
+	size = get_size_fd(fd);
+
 	write_or_die("header_page", 12);
-	record_file(path, 8);
+	write_or_die(&size, 8);
+	check_size = copy_file_fd(fd);
+	close(fd);
+
+	if (size != check_size)
+		die("wrong size for '%s' size=%lld read=%lld",
+		    path, size, check_size);
 	put_tracing_file(path);
 
 	path = get_tracing_file("events/header_event");
-	if (stat(path, &st) < 0)
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
 		die("can't read '%s'", path);
 
+	size = get_size_fd(fd);
+
 	write_or_die("header_event", 13);
-	record_file(path, 8);
+	write_or_die(&size, 8);
+	check_size = copy_file_fd(fd);
+	if (size != check_size)
+		die("wrong size for '%s'", path);
 	put_tracing_file(path);
+	close(fd);
 }
 
 static bool name_in_tp_list(char *sys, struct tracepoint_path *tps)
@@ -251,6 +296,7 @@ static bool name_in_tp_list(char *sys, struct tracepoint_path *tps)
 
 static void copy_event_system(const char *sys, struct tracepoint_path *tps)
 {
+	unsigned long long size, check_size;
 	struct dirent *dent;
 	struct stat st;
 	char *format;
@@ -290,8 +336,14 @@ static void copy_event_system(const char *sys, struct tracepoint_path *tps)
 		sprintf(format, "%s/%s/format", sys, dent->d_name);
 		ret = stat(format, &st);
 
-		if (ret >= 0)
-			record_file(format, 8);
+		if (ret >= 0) {
+			/* unfortunately, you can not stat debugfs files for size */
+			size = get_size(format);
+			write_or_die(&size, 8);
+			check_size = copy_file(format);
+			if (size != check_size)
+				die("error in size of file '%s'", format);
+		}
 
 		free(format);
 	}
@@ -372,7 +424,7 @@ static void read_event_files(struct tracepoint_path *tps)
 
 static void read_proc_kallsyms(void)
 {
-	unsigned int size;
+	unsigned int size, check_size;
 	const char *path = "/proc/kallsyms";
 	struct stat st;
 	int ret;
@@ -384,12 +436,17 @@ static void read_proc_kallsyms(void)
 		write_or_die(&size, 4);
 		return;
 	}
-	record_file(path, 4);
+	size = get_size(path);
+	write_or_die(&size, 4);
+	check_size = copy_file(path);
+	if (size != check_size)
+		die("error in size of file '%s'", path);
+
 }
 
 static void read_ftrace_printk(void)
 {
-	unsigned int size;
+	unsigned int size, check_size;
 	char *path;
 	struct stat st;
 	int ret;
@@ -402,24 +459,26 @@ static void read_ftrace_printk(void)
 		write_or_die(&size, 4);
 		goto out;
 	}
-	record_file(path, 4);
-
+	size = get_size(path);
+	write_or_die(&size, 4);
+	check_size = copy_file(path);
+	if (size != check_size)
+		die("error in size of file '%s'", path);
 out:
 	put_tracing_file(path);
 }
 
 static struct tracepoint_path *
-get_tracepoints_path(struct list_head *pattrs)
+get_tracepoints_path(struct perf_event_attr *pattrs, int nb_events)
 {
 	struct tracepoint_path path, *ppath = &path;
-	struct perf_evsel *pos;
-	int nr_tracepoints = 0;
+	int i, nr_tracepoints = 0;
 
-	list_for_each_entry(pos, pattrs, node) {
-		if (pos->attr.type != PERF_TYPE_TRACEPOINT)
+	for (i = 0; i < nb_events; i++) {
+		if (pattrs[i].type != PERF_TYPE_TRACEPOINT)
 			continue;
 		++nr_tracepoints;
-		ppath->next = tracepoint_id_to_path(pos->attr.config);
+		ppath->next = tracepoint_id_to_path(pattrs[i].config);
 		if (!ppath->next)
 			die("%s\n", "No memory to alloc tracepoints list");
 		ppath = ppath->next;
@@ -428,21 +487,21 @@ get_tracepoints_path(struct list_head *pattrs)
 	return nr_tracepoints > 0 ? path.next : NULL;
 }
 
-bool have_tracepoints(struct list_head *pattrs)
+bool have_tracepoints(struct perf_event_attr *pattrs, int nb_events)
 {
-	struct perf_evsel *pos;
+	int i;
 
-	list_for_each_entry(pos, pattrs, node)
-		if (pos->attr.type == PERF_TYPE_TRACEPOINT)
+	for (i = 0; i < nb_events; i++)
+		if (pattrs[i].type == PERF_TYPE_TRACEPOINT)
 			return true;
 
 	return false;
 }
 
-int read_tracing_data(int fd, struct list_head *pattrs)
+int read_tracing_data(int fd, struct perf_event_attr *pattrs, int nb_events)
 {
 	char buf[BUFSIZ];
-	struct tracepoint_path *tps = get_tracepoints_path(pattrs);
+	struct tracepoint_path *tps = get_tracepoints_path(pattrs, nb_events);
 
 	/*
 	 * What? No tracepoints? No sense writing anything here, bail out.
@@ -486,13 +545,14 @@ int read_tracing_data(int fd, struct list_head *pattrs)
 	return 0;
 }
 
-ssize_t read_tracing_data_size(int fd, struct list_head *pattrs)
+ssize_t read_tracing_data_size(int fd, struct perf_event_attr *pattrs,
+			       int nb_events)
 {
 	ssize_t size;
 	int err = 0;
 
 	calc_data_size = 1;
-	err = read_tracing_data(fd, pattrs);
+	err = read_tracing_data(fd, pattrs, nb_events);
 	size = calc_data_size - 1;
 	calc_data_size = 0;
 

@@ -17,7 +17,7 @@
  * @file crypto4xx_sa.c
  *
  * This file implements the security context
- * associate format.
+ * assoicate format.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>

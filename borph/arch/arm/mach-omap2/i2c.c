@@ -27,12 +27,12 @@
 #include "mux.h"
 
 /* In register I2C_CON, Bit 15 is the I2C enable bit */
-#define I2C_EN					BIT(15)
-#define OMAP2_I2C_CON_OFFSET			0x24
-#define OMAP4_I2C_CON_OFFSET			0xA4
+#define I2C_EN                                 BIT(15)
+#define OMAP2_I2C_CON_OFFSET                   0x24
+#define OMAP4_I2C_CON_OFFSET                   0xA4
 
 /* Maximum microseconds to wait for OMAP module to softreset */
-#define MAX_MODULE_SOFTRESET_WAIT	10000
+#define MAX_MODULE_SOFTRESET_WAIT      10000
 
 void __init omap2_i2c_mux_pins(int bus_id)
 {
@@ -63,45 +63,37 @@ void __init omap2_i2c_mux_pins(int bus_id)
  */
 int omap_i2c_reset(struct omap_hwmod *oh)
 {
-	u32 v;
-	u16 i2c_con;
-	int c = 0;
+       u32 v;
+       u16 i2c_con;
+       int c = 0;
 
-	if (oh->class->rev == OMAP_I2C_IP_VERSION_2) {
-		i2c_con = OMAP4_I2C_CON_OFFSET;
-	} else if (oh->class->rev == OMAP_I2C_IP_VERSION_1) {
-		i2c_con = OMAP2_I2C_CON_OFFSET;
-	} else {
-		WARN(1, "Cannot reset I2C block %s: unsupported revision\n",
-		     oh->name);
-		return -EINVAL;
-	}
+       i2c_con = OMAP2_I2C_CON_OFFSET;
 
-	/* Disable I2C */
-	v = omap_hwmod_read(oh, i2c_con);
-	v &= ~I2C_EN;
-	omap_hwmod_write(v, oh, i2c_con);
+       /* Disable I2C */
+       v = omap_hwmod_read(oh, i2c_con);
+       v &= ~I2C_EN;
+       omap_hwmod_write(v, oh, i2c_con);
 
-	/* Write to the SOFTRESET bit */
-	omap_hwmod_softreset(oh);
+       /* Write to the SOFTRESET bit */
+       omap_hwmod_softreset(oh);
 
-	/* Enable I2C */
-	v = omap_hwmod_read(oh, i2c_con);
-	v |= I2C_EN;
-	omap_hwmod_write(v, oh, i2c_con);
+       /* Enable I2C */
+       v = omap_hwmod_read(oh, i2c_con);
+       v |= I2C_EN;
+       omap_hwmod_write(v, oh, i2c_con);
 
-	/* Poll on RESETDONE bit */
-	omap_test_timeout((omap_hwmod_read(oh,
-				oh->class->sysc->syss_offs)
-				& SYSS_RESETDONE_MASK),
-				MAX_MODULE_SOFTRESET_WAIT, c);
+       /* Poll on RESETDONE bit */
+       omap_test_timeout((omap_hwmod_read(oh,
+                               oh->class->sysc->syss_offs)
+                               & SYSS_RESETDONE_MASK),
+                               MAX_MODULE_SOFTRESET_WAIT, c);
 
-	if (c == MAX_MODULE_SOFTRESET_WAIT)
-		pr_warning("%s: %s: softreset failed (waited %d usec)\n",
-			__func__, oh->name, MAX_MODULE_SOFTRESET_WAIT);
-	else
-		pr_debug("%s: %s: softreset in %d usec\n", __func__,
-			oh->name, c);
+       if (c == MAX_MODULE_SOFTRESET_WAIT)
+               pr_warning("%s: %s: softreset failed (waited %d usec)\n",
+                       __func__, oh->name, MAX_MODULE_SOFTRESET_WAIT);
+       else
+               pr_debug("%s: %s: softreset in %d usec\n", __func__,
+                       oh->name, c);
 
-	return 0;
+       return 0;
 }

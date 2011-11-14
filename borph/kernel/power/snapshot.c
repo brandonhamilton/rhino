@@ -41,18 +41,6 @@ static void swsusp_set_page_forbidden(struct page *);
 static void swsusp_unset_page_forbidden(struct page *);
 
 /*
- * Number of bytes to reserve for memory allocations made by device drivers
- * from their ->freeze() and ->freeze_noirq() callbacks so that they don't
- * cause image creation to fail (tunable via /sys/power/reserved_size).
- */
-unsigned long reserved_size;
-
-void __init hibernate_reserved_size_init(void)
-{
-	reserved_size = SPARE_PAGES * PAGE_SIZE;
-}
-
-/*
  * Preferred image size in bytes (tunable via /sys/power/image_size).
  * When it is set to N, swsusp will do its best to ensure the image
  * size will not exceed N bytes, but if that is impossible, it will
@@ -1211,11 +1199,7 @@ static void free_unnecessary_pages(void)
 		to_free_highmem = alloc_highmem - save;
 	} else {
 		to_free_highmem = 0;
-		save -= alloc_highmem;
-		if (to_free_normal > save)
-			to_free_normal -= save;
-		else
-			to_free_normal = 0;
+		to_free_normal -= save - alloc_highmem;
 	}
 
 	memory_bm_position_reset(&copy_bm);
@@ -1279,13 +1263,11 @@ static unsigned long minimum_image_size(unsigned long saveable)
  * frame in use.  We also need a number of page frames to be free during
  * hibernation for allocations made while saving the image and for device
  * drivers, in case they need to allocate memory from their hibernation
- * callbacks (these two numbers are given by PAGES_FOR_IO (which is a rough
- * estimate) and reserverd_size divided by PAGE_SIZE (which is tunable through
- * /sys/power/reserved_size, respectively).  To make this happen, we compute the
- * total number of available page frames and allocate at least
+ * callbacks (these two numbers are given by PAGES_FOR_IO and SPARE_PAGES,
+ * respectively, both of which are rough estimates).  To make this happen, we
+ * compute the total number of available page frames and allocate at least
  *
- * ([page frames total] + PAGES_FOR_IO + [metadata pages]) / 2
- *  + 2 * DIV_ROUND_UP(reserved_size, PAGE_SIZE)
+ * ([page frames total] + PAGES_FOR_IO + [metadata pages]) / 2 + 2 * SPARE_PAGES
  *
  * of them, which corresponds to the maximum size of a hibernation image.
  *
@@ -1340,8 +1322,7 @@ int hibernate_preallocate_memory(void)
 	count -= totalreserve_pages;
 
 	/* Compute the maximum number of saveable pages to leave in memory. */
-	max_size = (count - (size + PAGES_FOR_IO)) / 2
-			- 2 * DIV_ROUND_UP(reserved_size, PAGE_SIZE);
+	max_size = (count - (size + PAGES_FOR_IO)) / 2 - 2 * SPARE_PAGES;
 	/* Compute the desired number of image pages specified by image_size. */
 	size = DIV_ROUND_UP(image_size, PAGE_SIZE);
 	if (size > max_size)
@@ -1538,8 +1519,11 @@ static int
 swsusp_alloc(struct memory_bitmap *orig_bm, struct memory_bitmap *copy_bm,
 		unsigned int nr_pages, unsigned int nr_highmem)
 {
+	int error = 0;
+
 	if (nr_highmem > 0) {
-		if (get_highmem_buffer(PG_ANY))
+		error = get_highmem_buffer(PG_ANY);
+		if (error)
 			goto err_out;
 		if (nr_highmem > alloc_highmem) {
 			nr_highmem -= alloc_highmem;
@@ -1562,7 +1546,7 @@ swsusp_alloc(struct memory_bitmap *orig_bm, struct memory_bitmap *copy_bm,
 
  err_out:
 	swsusp_free();
-	return -ENOMEM;
+	return error;
 }
 
 asmlinkage int swsusp_save(void)

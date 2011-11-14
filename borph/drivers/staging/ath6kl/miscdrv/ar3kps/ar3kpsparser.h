@@ -33,6 +33,7 @@
 #include "athdefs.h"
 #ifdef HCI_TRANSPORT_SDIO
 #include "a_config.h"
+#include "a_types.h"
 #include "a_osapi.h"
 #define ATH_MODULE_NAME misc
 #include "a_debug.h"
@@ -47,17 +48,30 @@
 
 /* Helper data type declaration */
 
+#ifndef A_UINT32
+#define A_UCHAR                 unsigned char
+#define A_UINT32                unsigned long
+#define A_UINT16                unsigned short
+#define A_UINT8                 unsigned char
+#define A_BOOL                  unsigned char
+#endif /* A_UINT32 */
+
 #define ATH_DEBUG_ERR          (1 << 0)
 #define ATH_DEBUG_WARN         (1 << 1)
 #define ATH_DEBUG_INFO         (1 << 2)
 
 
 
-#define false   0
-#define true    1
+#define FALSE   0
+#define TRUE    1
 
 #ifndef A_MALLOC
 #define A_MALLOC(size)  kmalloc((size),GFP_KERNEL)
+#endif /* A_MALLOC */
+
+
+#ifndef A_FREE
+#define A_FREE(addr)  kfree((addr))
 #endif /* A_MALLOC */
 #endif /* HCI_TRANSPORT_UART */
 
@@ -83,17 +97,17 @@
 
 
 
-struct ps_cmd_packet
+typedef struct PSCmdPacket
 {
-    u8 *Hcipacket;
+    A_UCHAR *Hcipacket;
     int packetLen;
-};
+} PSCmdPacket;
 
 /* Parses a Patch information buffer and store it in global structure */
-int AthDoParsePatch(u8 *, u32 );
+A_STATUS AthDoParsePatch(A_UCHAR *, A_UINT32);
 
 /* parses a PS information buffer and stores it in a global structure */
-int AthDoParsePS(u8 *, u32 );
+A_STATUS AthDoParsePS(A_UCHAR *, A_UINT32);
 
 /* 
  *  Uses the output of Both AthDoParsePS and AthDoParsePatch APIs to form HCI command array with
@@ -106,8 +120,8 @@ int AthDoParsePS(u8 *, u32 );
  *  PS Tag Command(s)
  *
  */  
-int AthCreateCommandList(struct ps_cmd_packet **, u32 *);
+int AthCreateCommandList(PSCmdPacket **, A_UINT32 *);
 
 /* Cleanup the dynamically allicated HCI command list */
-int AthFreeCommandList(struct ps_cmd_packet **HciPacketList, u32 numPackets);
+A_STATUS AthFreeCommandList(PSCmdPacket **HciPacketList, A_UINT32 numPackets);
 #endif /* __AR3KPSPARSER_H */

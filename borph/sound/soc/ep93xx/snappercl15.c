@@ -2,7 +2,7 @@
  * snappercl15.c -- SoC audio for Bluewater Systems Snapper CL15 module
  *
  * Copyright (C) 2008 Bluewater Systems Ltd
- * Author: Ryan Mallon
+ * Author: Ryan Mallon <ryan@bluewatersys.com>
  *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
@@ -15,6 +15,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
@@ -78,12 +79,11 @@ static const struct snd_soc_dapm_route audio_map[] = {
 static int snappercl15_tlv320aic23_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 
-	snd_soc_dapm_new_controls(dapm, tlv320aic23_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, tlv320aic23_dapm_widgets,
 				  ARRAY_SIZE(tlv320aic23_dapm_widgets));
 
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 	return 0;
 }
 
@@ -140,7 +140,7 @@ static void __exit snappercl15_exit(void)
 module_init(snappercl15_init);
 module_exit(snappercl15_exit);
 
-MODULE_AUTHOR("Ryan Mallon");
+MODULE_AUTHOR("Ryan Mallon <ryan@bluewatersys.com>");
 MODULE_DESCRIPTION("ALSA SoC Snapper CL15");
 MODULE_LICENSE("GPL");
 

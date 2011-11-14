@@ -16,6 +16,8 @@
 
 #include <linux/list.h>
 
+#include <sound/soc.h>
+
 struct snd_pcm_substream;
 
 /*
@@ -203,16 +205,12 @@ struct snd_soc_dai_driver {
 	int (*resume)(struct snd_soc_dai *dai);
 
 	/* ops */
-	const struct snd_soc_dai_ops *ops;
+	struct snd_soc_dai_ops *ops;
 
 	/* DAI capabilities */
 	struct snd_soc_pcm_stream capture;
 	struct snd_soc_pcm_stream playback;
 	unsigned int symmetric_rates:1;
-
-	/* probe ordering - for components with runtime dependencies */
-	int probe_order;
-	int remove_order;
 };
 
 /*

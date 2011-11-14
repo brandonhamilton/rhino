@@ -37,6 +37,7 @@
 #include <linux/interrupt.h>	/* For task queue support */
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/pagemap.h>
 
 #define I810_BUF_FREE		2
@@ -93,6 +94,7 @@ static int i810_mmap_buffers(struct file *filp, struct vm_area_struct *vma)
 	struct drm_buf *buf;
 	drm_i810_buf_priv_t *buf_priv;
 
+	lock_kernel();
 	dev = priv->minor->dev;
 	dev_priv = dev->dev_private;
 	buf = dev_priv->mmap_buffer;
@@ -102,6 +104,7 @@ static int i810_mmap_buffers(struct file *filp, struct vm_area_struct *vma)
 	vma->vm_file = filp;
 
 	buf_priv->currently_mapped = I810_BUF_MAPPED;
+	unlock_kernel();
 
 	if (io_remap_pfn_range(vma, vma->vm_start,
 			       vma->vm_pgoff,
@@ -113,7 +116,7 @@ static int i810_mmap_buffers(struct file *filp, struct vm_area_struct *vma)
 static const struct file_operations i810_buffer_fops = {
 	.open = drm_open,
 	.release = drm_release,
-	.unlocked_ioctl = drm_ioctl,
+	.unlocked_ioctl = i810_ioctl,
 	.mmap = i810_mmap_buffers,
 	.fasync = drm_fasync,
 	.llseek = noop_llseek,
@@ -1237,6 +1240,19 @@ int i810_driver_dma_quiescent(struct drm_device *dev)
 {
 	i810_dma_quiescent(dev);
 	return 0;
+}
+
+/*
+ * call the drm_ioctl under the big kernel lock because
+ * to lock against the i810_mmap_buffers function.
+ */
+long i810_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int ret;
+	lock_kernel();
+	ret = drm_ioctl(file, cmd, arg);
+	unlock_kernel();
+	return ret;
 }
 
 struct drm_ioctl_desc i810_ioctls[] = {

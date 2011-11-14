@@ -2,7 +2,7 @@
  * OMAP3 powerdomain definitions
  *
  * Copyright (C) 2007-2008 Texas Instruments, Inc.
- * Copyright (C) 2007-2011 Nokia Corporation
+ * Copyright (C) 2007-2010 Nokia Corporation
  *
  * Paul Walmsley, Jouni Högander
  *
@@ -16,6 +16,7 @@
 
 #include "powerdomain.h"
 #include "powerdomains2xxx_3xxx_data.h"
+#include "powerdomains81xx.h"
 
 #include "prcm-common.h"
 #include "prm2xxx_3xxx.h"
@@ -47,10 +48,10 @@ static struct powerdomain iva2_pwrdm = {
 		[3] = PWRSTS_OFF_RET,
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,
-		[1] = PWRSTS_ON,
+		[0] = PWRDM_POWER_ON,
+		[1] = PWRDM_POWER_ON,
 		[2] = PWRSTS_OFF_ON,
-		[3] = PWRSTS_ON,
+		[3] = PWRDM_POWER_ON,
 	},
 };
 
@@ -72,7 +73,7 @@ static struct powerdomain mpu_3xxx_pwrdm = {
 
 /*
  * The USBTLL Save-and-Restore mechanism is broken on
- * 3430s up to ES3.0 and 3630ES1.0. Hence this feature
+ * 3430s upto ES3.0 and 3630ES1.0. Hence this feature
  * needs to be disabled on these chips.
  * Refer: 3430 errata ID i459 and 3630 errata ID i579
  *
@@ -128,13 +129,13 @@ static struct powerdomain dss_pwrdm = {
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_IS_OMAP3430),
 	.prcm_offs	  = OMAP3430_DSS_MOD,
 	.pwrsts		  = PWRSTS_OFF_RET_ON,
-	.pwrsts_logic_ret = PWRSTS_RET,
+	.pwrsts_logic_ret = PWRDM_POWER_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
-		[0] = PWRSTS_RET, /* MEMRETSTATE */
+		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,  /* MEMONSTATE */
+		[0] = PWRDM_POWER_ON,  /* MEMONSTATE */
 	},
 };
 
@@ -149,13 +150,13 @@ static struct powerdomain sgx_pwrdm = {
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_GE_OMAP3430ES2),
 	/* XXX This is accurate for 3430 SGX, but what about GFX? */
 	.pwrsts		  = PWRSTS_OFF_ON,
-	.pwrsts_logic_ret = PWRSTS_RET,
+	.pwrsts_logic_ret = PWRDM_POWER_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
-		[0] = PWRSTS_RET, /* MEMRETSTATE */
+		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,  /* MEMONSTATE */
+		[0] = PWRDM_POWER_ON,  /* MEMONSTATE */
 	},
 };
 
@@ -164,13 +165,13 @@ static struct powerdomain cam_pwrdm = {
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_IS_OMAP3430),
 	.prcm_offs	  = OMAP3430_CAM_MOD,
 	.pwrsts		  = PWRSTS_OFF_RET_ON,
-	.pwrsts_logic_ret = PWRSTS_RET,
+	.pwrsts_logic_ret = PWRDM_POWER_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
-		[0] = PWRSTS_RET, /* MEMRETSTATE */
+		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,  /* MEMONSTATE */
+		[0] = PWRDM_POWER_ON,  /* MEMONSTATE */
 	},
 };
 
@@ -182,10 +183,10 @@ static struct powerdomain per_pwrdm = {
 	.pwrsts_logic_ret = PWRSTS_OFF_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
-		[0] = PWRSTS_RET, /* MEMRETSTATE */
+		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,  /* MEMONSTATE */
+		[0] = PWRDM_POWER_ON,  /* MEMONSTATE */
 	},
 };
 
@@ -200,7 +201,7 @@ static struct powerdomain neon_pwrdm = {
 	.prcm_offs	  = OMAP3430_NEON_MOD,
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_IS_OMAP3430),
 	.pwrsts		  = PWRSTS_OFF_RET_ON,
-	.pwrsts_logic_ret = PWRSTS_RET,
+	.pwrsts_logic_ret = PWRDM_POWER_RET,
 };
 
 static struct powerdomain usbhost_pwrdm = {
@@ -208,20 +209,23 @@ static struct powerdomain usbhost_pwrdm = {
 	.prcm_offs	  = OMAP3430ES2_USBHOST_MOD,
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_GE_OMAP3430ES2),
 	.pwrsts		  = PWRSTS_OFF_RET_ON,
-	.pwrsts_logic_ret = PWRSTS_RET,
+	.pwrsts_logic_ret = PWRDM_POWER_RET,
 	/*
-	 * REVISIT: Enabling usb host save and restore mechanism seems to
-	 * leave the usb host domain permanently in ACTIVE mode after
-	 * changing the usb host power domain state from OFF to active once.
-	 * Disabling for now.
+	 * With EHCI power management support added in driver we don't see
+	 * earlier issue where usb host domain permanently remains in ACTIVE
+	 * mode. This issue is still observed if this flag is enabled and EHCI
+	 * driver is not selected in kernel config so putting this flag within
+	 * EHCI driver config.
 	 */
-	/*.flags	  = PWRDM_HAS_HDWR_SAR,*/ /* for USBHOST ctrlr only */
+#if 0 /* defined(CONFIG_USB_EHCI_HCD) || defined(CONFIG_USB_EHCI_HCD_MODULE) */
+	.flags	  = PWRDM_HAS_HDWR_SAR, /* for USBHOST ctrlr only */
+#endif
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
-		[0] = PWRSTS_RET, /* MEMRETSTATE */
+		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */
 	},
 	.pwrsts_mem_on	  = {
-		[0] = PWRSTS_ON,  /* MEMONSTATE */
+		[0] = PWRDM_POWER_ON,  /* MEMONSTATE */
 	},
 };
 
@@ -254,10 +258,12 @@ static struct powerdomain dpll5_pwrdm = {
 	.prcm_offs	= PLL_MOD,
 	.omap_chip	= OMAP_CHIP_INIT(CHIP_GE_OMAP3430ES2),
 };
+#endif
 
 /* As powerdomains are added or removed above, this list must also be changed */
 static struct powerdomain *powerdomains_omap3xxx[] __initdata = {
 
+#ifdef CONFIG_ARCH_OMAP3
 	&wkup_omap2_pwrdm,
 	&gfx_omap2_pwrdm,
 	&iva2_pwrdm,
@@ -280,8 +286,33 @@ static struct powerdomain *powerdomains_omap3xxx[] __initdata = {
 	NULL
 };
 
+/* As powerdomains are added or removed above, this list must also be changed */
+static struct powerdomain *powerdomains_ti81xx[] __initdata = {
+
+#ifdef CONFIG_ARCH_TI81XX
+	&alwon_81xx_pwrdm,
+	&gem_814x_pwrdm,
+	&alwon2_814x_pwrdm,
+	&ivahd_814x_pwrdm,
+	&hdvpss_814x_pwrdm,
+	&sgx_814x_pwrdm,
+	&isp_814x_pwrdm,
+	&active_816x_pwrdm,
+	&default_816x_pwrdm,
+	&ivahd0_816x_pwrdm,
+	&ivahd1_816x_pwrdm,
+	&ivahd2_816x_pwrdm,
+	&sgx_816x_pwrdm,
+#endif
+	NULL
+};
 
 void __init omap3xxx_powerdomains_init(void)
 {
 	pwrdm_init(powerdomains_omap3xxx, &omap3_pwrdm_operations);
+}
+
+void __init ti81xx_powerdomains_init(void)
+{
+	pwrdm_init(powerdomains_ti81xx, &ti81xx_pwrdm_operations);
 }

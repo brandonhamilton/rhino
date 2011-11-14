@@ -63,7 +63,7 @@ static inline int put_stack_long(struct task_struct *task, int offset,
 	return 0;
 }
 
-void ptrace_triggered(struct perf_event *bp,
+void ptrace_triggered(struct perf_event *bp, int nmi,
 		      struct perf_sample_data *data, struct pt_regs *regs)
 {
 	struct perf_event_attr attr;
@@ -91,8 +91,7 @@ static int set_single_step(struct task_struct *tsk, unsigned long addr)
 		attr.bp_len = HW_BREAKPOINT_LEN_2;
 		attr.bp_type = HW_BREAKPOINT_R;
 
-		bp = register_user_hw_breakpoint(&attr, ptrace_triggered,
-						 NULL, tsk);
+		bp = register_user_hw_breakpoint(&attr, ptrace_triggered, tsk);
 		if (IS_ERR(bp))
 			return PTR_ERR(bp);
 
@@ -102,8 +101,6 @@ static int set_single_step(struct task_struct *tsk, unsigned long addr)
 
 		attr = bp->attr;
 		attr.bp_addr = addr;
-		/* reenable breakpoint */
-		attr.disabled = false;
 		err = modify_user_hw_breakpoint(bp, &attr);
 		if (unlikely(err))
 			return err;
@@ -118,11 +115,7 @@ void user_enable_single_step(struct task_struct *child)
 
 	set_tsk_thread_flag(child, TIF_SINGLESTEP);
 
-	if (ptrace_get_breakpoints(child) < 0)
-		return;
-
 	set_single_step(child, pc);
-	ptrace_put_breakpoints(child);
 }
 
 void user_disable_single_step(struct task_struct *child)
@@ -399,9 +392,6 @@ long arch_ptrace(struct task_struct *child, long request,
 					tmp = 0;
 			} else {
 				unsigned long index;
-				ret = init_fpu(child);
-				if (ret)
-					break;
 				index = addr - offsetof(struct user, fpu);
 				tmp = ((unsigned long *)child->thread.xstate)
 					[index >> 2];
@@ -433,9 +423,6 @@ long arch_ptrace(struct task_struct *child, long request,
 		else if (addr >= offsetof(struct user, fpu) &&
 			 addr < offsetof(struct user, u_fpvalid)) {
 			unsigned long index;
-			ret = init_fpu(child);
-			if (ret)
-				break;
 			index = addr - offsetof(struct user, fpu);
 			set_stopped_child_used_math(child);
 			((unsigned long *)child->thread.xstate)

@@ -74,16 +74,6 @@
 
 #define BPRINTK(fmt, args...) if (ap->flags & ATA_FLAG_DEBUGMSG) printk(KERN_ERR "%s: " fmt, __func__, ## args)
 
-#define ata_print_version_once(dev, version)			\
-({								\
-	static bool __print_once;				\
-								\
-	if (!__print_once) {					\
-		__print_once = true;				\
-		ata_print_version(dev, version);		\
-	}							\
-})
-
 /* NEW: debug levels */
 #define HAVE_LIBATA_MSG 1
 
@@ -147,6 +137,8 @@ enum {
 	ATA_DFLAG_ACPI_PENDING	= (1 << 5), /* ACPI resume action pending */
 	ATA_DFLAG_ACPI_FAILED	= (1 << 6), /* ACPI on devcfg has failed */
 	ATA_DFLAG_AN		= (1 << 7), /* AN configured */
+	ATA_DFLAG_HIPM		= (1 << 8), /* device supports HIPM */
+	ATA_DFLAG_DIPM		= (1 << 9), /* device supports DIPM */
 	ATA_DFLAG_DMADIR	= (1 << 10), /* device requires DMADIR */
 	ATA_DFLAG_CFG_MASK	= (1 << 12) - 1,
 
@@ -187,6 +179,10 @@ enum {
 	ATA_FLAG_SLAVE_POSS	= (1 << 0), /* host supports slave dev */
 					    /* (doesn't imply presence) */
 	ATA_FLAG_SATA		= (1 << 1),
+	ATA_FLAG_NO_LEGACY	= (1 << 2), /* no legacy mode check */
+	ATA_FLAG_MMIO		= (1 << 3), /* use MMIO, not PIO */
+	ATA_FLAG_SRST		= (1 << 4), /* (obsolete) use ATA SRST, not E.D.D. */
+	ATA_FLAG_SATA_RESET	= (1 << 5), /* (obsolete) use COMRESET */
 	ATA_FLAG_NO_ATAPI	= (1 << 6), /* No ATAPI support */
 	ATA_FLAG_PIO_DMA	= (1 << 7), /* PIO cmds via DMA */
 	ATA_FLAG_PIO_LBA48	= (1 << 8), /* Host DMA engine is LBA28 only */
@@ -202,11 +198,11 @@ enum {
 	ATA_FLAG_ACPI_SATA	= (1 << 17), /* need native SATA ACPI layout */
 	ATA_FLAG_AN		= (1 << 18), /* controller supports AN */
 	ATA_FLAG_PMP		= (1 << 19), /* controller supports PMP */
+	ATA_FLAG_LPM		= (1 << 20), /* driver can handle LPM */
 	ATA_FLAG_EM		= (1 << 21), /* driver supports enclosure
 					      * management */
 	ATA_FLAG_SW_ACTIVITY	= (1 << 22), /* driver supports sw activity
 					      * led */
-	ATA_FLAG_NO_DIPM	= (1 << 23), /* host not happy with DIPM */
 
 	/* bits 24:31 of ap->flags are reserved for LLD specific flags */
 
@@ -373,7 +369,7 @@ enum {
 	ATA_EH_CMD_TIMEOUT_TABLE_SIZE = 6,
 
 	/* Horkage types. May be set by libata or controller on drives
-	   (some horkage may be drive/controller pair dependent */
+	   (some horkage may be drive/controller pair dependant */
 
 	ATA_HORKAGE_DIAGNOSTIC	= (1 << 0),	/* Failed boot diag */
 	ATA_HORKAGE_NODMA	= (1 << 1),	/* DMA problems */
@@ -1000,7 +996,8 @@ extern int ata_sas_port_init(struct ata_port *);
 extern int ata_sas_port_start(struct ata_port *ap);
 extern void ata_sas_port_stop(struct ata_port *ap);
 extern int ata_sas_slave_configure(struct scsi_device *, struct ata_port *);
-extern int ata_sas_queuecmd(struct scsi_cmnd *cmd, struct ata_port *ap);
+extern int ata_sas_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *),
+			    struct ata_port *ap);
 extern int sata_scr_valid(struct ata_link *link);
 extern int sata_scr_read(struct ata_link *link, int reg, u32 *val);
 extern int sata_scr_write(struct ata_link *link, int reg, u32 val);
@@ -1043,7 +1040,8 @@ extern unsigned int ata_do_dev_read_id(struct ata_device *dev,
 					struct ata_taskfile *tf, u16 *id);
 extern void ata_qc_complete(struct ata_queued_cmd *qc);
 extern int ata_qc_complete_multiple(struct ata_port *ap, u32 qc_active);
-extern void ata_scsi_simulate(struct ata_device *dev, struct scsi_cmnd *cmd);
+extern void ata_scsi_simulate(struct ata_device *dev, struct scsi_cmnd *cmd,
+			      void (*done)(struct scsi_cmnd *));
 extern int ata_std_bios_param(struct scsi_device *sdev,
 			      struct block_device *bdev,
 			      sector_t capacity, int geom[]);
@@ -1054,8 +1052,6 @@ extern int ata_scsi_change_queue_depth(struct scsi_device *sdev,
 				       int queue_depth, int reason);
 extern struct ata_device *ata_dev_pair(struct ata_device *adev);
 extern int ata_do_set_mode(struct ata_link *link, struct ata_device **r_failed_dev);
-extern void ata_scsi_port_error_handler(struct Scsi_Host *host, struct ata_port *ap);
-extern void ata_scsi_cmd_error_handler(struct Scsi_Host *host, struct ata_port *ap, struct list_head *eh_q);
 
 extern int ata_cable_40wire(struct ata_port *ap);
 extern int ata_cable_80wire(struct ata_port *ap);
@@ -1161,7 +1157,6 @@ extern void ata_do_eh(struct ata_port *ap, ata_prereset_fn_t prereset,
 		      ata_reset_fn_t softreset, ata_reset_fn_t hardreset,
 		      ata_postreset_fn_t postreset);
 extern void ata_std_error_handler(struct ata_port *ap);
-extern int ata_link_nr_enabled(struct ata_link *link);
 
 /*
  * Base operations to inherit from and initializers for sht
@@ -1254,50 +1249,20 @@ static inline int sata_srst_pmp(struct ata_link *link)
 /*
  * printk helpers
  */
-__attribute__((format (printf, 3, 4)))
-int ata_port_printk(const struct ata_port *ap, const char *level,
-		    const char *fmt, ...);
-__attribute__((format (printf, 3, 4)))
-int ata_link_printk(const struct ata_link *link, const char *level,
-		    const char *fmt, ...);
-__attribute__((format (printf, 3, 4)))
-int ata_dev_printk(const struct ata_device *dev, const char *level,
-		   const char *fmt, ...);
+#define ata_port_printk(ap, lv, fmt, args...) \
+	printk("%sata%u: "fmt, lv, (ap)->print_id , ##args)
 
-#define ata_port_err(ap, fmt, ...)				\
-	ata_port_printk(ap, KERN_ERR, fmt, ##__VA_ARGS__)
-#define ata_port_warn(ap, fmt, ...)				\
-	ata_port_printk(ap, KERN_WARNING, fmt, ##__VA_ARGS__)
-#define ata_port_notice(ap, fmt, ...)				\
-	ata_port_printk(ap, KERN_NOTICE, fmt, ##__VA_ARGS__)
-#define ata_port_info(ap, fmt, ...)				\
-	ata_port_printk(ap, KERN_INFO, fmt, ##__VA_ARGS__)
-#define ata_port_dbg(ap, fmt, ...)				\
-	ata_port_printk(ap, KERN_DEBUG, fmt, ##__VA_ARGS__)
+#define ata_link_printk(link, lv, fmt, args...) do { \
+	if (sata_pmp_attached((link)->ap) || (link)->ap->slave_link)	\
+		printk("%sata%u.%02u: "fmt, lv, (link)->ap->print_id,	\
+		       (link)->pmp , ##args); \
+	else \
+		printk("%sata%u: "fmt, lv, (link)->ap->print_id , ##args); \
+	} while(0)
 
-#define ata_link_err(link, fmt, ...)				\
-	ata_link_printk(link, KERN_ERR, fmt, ##__VA_ARGS__)
-#define ata_link_warn(link, fmt, ...)				\
-	ata_link_printk(link, KERN_WARNING, fmt, ##__VA_ARGS__)
-#define ata_link_notice(link, fmt, ...)				\
-	ata_link_printk(link, KERN_NOTICE, fmt, ##__VA_ARGS__)
-#define ata_link_info(link, fmt, ...)				\
-	ata_link_printk(link, KERN_INFO, fmt, ##__VA_ARGS__)
-#define ata_link_dbg(link, fmt, ...)				\
-	ata_link_printk(link, KERN_DEBUG, fmt, ##__VA_ARGS__)
-
-#define ata_dev_err(dev, fmt, ...)				\
-	ata_dev_printk(dev, KERN_ERR, fmt, ##__VA_ARGS__)
-#define ata_dev_warn(dev, fmt, ...)				\
-	ata_dev_printk(dev, KERN_WARNING, fmt, ##__VA_ARGS__)
-#define ata_dev_notice(dev, fmt, ...)				\
-	ata_dev_printk(dev, KERN_NOTICE, fmt, ##__VA_ARGS__)
-#define ata_dev_info(dev, fmt, ...)				\
-	ata_dev_printk(dev, KERN_INFO, fmt, ##__VA_ARGS__)
-#define ata_dev_dbg(dev, fmt, ...)				\
-	ata_dev_printk(dev, KERN_DEBUG, fmt, ##__VA_ARGS__)
-
-void ata_print_version(const struct device *dev, const char *version);
+#define ata_dev_printk(dev, lv, fmt, args...) \
+	printk("%sata%u.%02u: "fmt, lv, (dev)->link->ap->print_id,	\
+	       (dev)->link->pmp + (dev)->devno , ##args)
 
 /*
  * ata_eh_info helpers
@@ -1650,9 +1615,6 @@ extern void ata_sff_irq_on(struct ata_port *ap);
 extern void ata_sff_irq_clear(struct ata_port *ap);
 extern int ata_sff_hsm_move(struct ata_port *ap, struct ata_queued_cmd *qc,
 			    u8 status, int in_wq);
-extern void ata_sff_queue_work(struct work_struct *work);
-extern void ata_sff_queue_delayed_work(struct delayed_work *dwork,
-		unsigned long delay);
 extern void ata_sff_queue_pio_task(struct ata_link *link, unsigned long delay);
 extern unsigned int ata_sff_qc_issue(struct ata_queued_cmd *qc);
 extern bool ata_sff_qc_fill_rtf(struct ata_queued_cmd *qc);

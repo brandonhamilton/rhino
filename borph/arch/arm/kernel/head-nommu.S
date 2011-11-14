@@ -32,16 +32,8 @@
  * numbers for r1.
  *
  */
-	.arm
-
 	__HEAD
 ENTRY(stext)
-
- THUMB(	adr	r9, BSYM(1f)	)	@ Kernel is always entered in ARM.
- THUMB(	bx	r9		)	@ If this is a Thumb-2 kernel,
- THUMB(	.thumb			)	@ switch to Thumb now.
- THUMB(1:			)
-
 	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
 						@ and irqs disabled
 #ifndef CONFIG_CPU_CP15
@@ -52,6 +44,9 @@ ENTRY(stext)
 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
 	movs	r10, r5				@ invalid processor (r5=0)?
 	beq	__error_p				@ yes, error 'p'
+	bl	__lookup_machine_type		@ r5=machinfo
+	movs	r8, r5				@ invalid machine (r5=0)?
+	beq	__error_a			@ yes, error 'a'
 
 	adr	lr, BSYM(__after_proc_init)	@ return (PIC) address
  ARM(	add	pc, r10, #PROCINFO_INITFUNC	)

@@ -13,7 +13,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>
-#include <linux/namei.h>
 #include <linux/pagemap.h>
 #include <linux/ctype.h>
 #include <linux/sched.h>
@@ -24,7 +23,7 @@ static struct dentry *afs_lookup(struct inode *dir, struct dentry *dentry,
 static int afs_dir_open(struct inode *inode, struct file *file);
 static int afs_readdir(struct file *file, void *dirent, filldir_t filldir);
 static int afs_d_revalidate(struct dentry *dentry, struct nameidata *nd);
-static int afs_d_delete(const struct dentry *dentry);
+static int afs_d_delete(struct dentry *dentry);
 static void afs_d_release(struct dentry *dentry);
 static int afs_lookup_filldir(void *_cookie, const char *name, int nlen,
 				  loff_t fpos, u64 ino, unsigned dtype);
@@ -62,11 +61,10 @@ const struct inode_operations afs_dir_inode_operations = {
 	.setattr	= afs_setattr,
 };
 
-const struct dentry_operations afs_fs_dentry_operations = {
+static const struct dentry_operations afs_fs_dentry_operations = {
 	.d_revalidate	= afs_d_revalidate,
 	.d_delete	= afs_d_delete,
 	.d_release	= afs_d_release,
-	.d_automount	= afs_d_automount,
 };
 
 #define AFS_DIR_HASHTBL_SIZE	128
@@ -583,12 +581,14 @@ static struct dentry *afs_lookup(struct inode *dir, struct dentry *dentry,
 	}
 
 success:
+	dentry->d_op = &afs_fs_dentry_operations;
+
 	d_add(dentry, inode);
-	_leave(" = 0 { vn=%u u=%u } -> { ino=%lu v=%u }",
+	_leave(" = 0 { vn=%u u=%u } -> { ino=%lu v=%llu }",
 	       fid.vnode,
 	       fid.unique,
 	       dentry->d_inode->i_ino,
-	       dentry->d_inode->i_generation);
+	       (unsigned long long)dentry->d_inode->i_version);
 
 	return NULL;
 }
@@ -606,9 +606,6 @@ static int afs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct key *key;
 	void *dir_version;
 	int ret;
-
-	if (nd->flags & LOOKUP_RCU)
-		return -ECHILD;
 
 	vnode = AFS_FS_I(dentry->d_inode);
 
@@ -671,10 +668,10 @@ static int afs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 		 * been deleted and replaced, and the original vnode ID has
 		 * been reused */
 		if (fid.unique != vnode->fid.unique) {
-			_debug("%s: file deleted (uq %u -> %u I:%u)",
+			_debug("%s: file deleted (uq %u -> %u I:%llu)",
 			       dentry->d_name.name, fid.unique,
 			       vnode->fid.unique,
-			       dentry->d_inode->i_generation);
+			       (unsigned long long)dentry->d_inode->i_version);
 			spin_lock(&vnode->lock);
 			set_bit(AFS_VNODE_DELETED, &vnode->flags);
 			spin_unlock(&vnode->lock);
@@ -733,7 +730,7 @@ out_bad:
  * - called from dput() when d_count is going to 0.
  * - return 1 to request dentry be unhashed, 0 otherwise
  */
-static int afs_d_delete(const struct dentry *dentry)
+static int afs_d_delete(struct dentry *dentry)
 {
 	_enter("%s", dentry->d_name.name);
 

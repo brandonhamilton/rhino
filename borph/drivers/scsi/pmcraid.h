@@ -43,6 +43,7 @@
 #define PMCRAID_DRIVER_NAME		"PMC MaxRAID"
 #define PMCRAID_DEVFILE			"pmcsas"
 #define PMCRAID_DRIVER_VERSION		"1.0.3"
+#define PMCRAID_DRIVER_DATE		__DATE__
 
 #define PMCRAID_FW_VERSION_1		0x002
 
@@ -1023,7 +1024,7 @@ static struct pmcraid_ioasc_error pmcraid_ioasc_error_table[] = {
 
 
 /*
- * pmcraid_ioctl_header - definition of header structure that precedes all the
+ * pmcraid_ioctl_header - definition of header structure that preceeds all the
  * buffers given as ioctl arguments.
  *
  * .signature           : always ASCII string, "PMCRAID"

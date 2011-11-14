@@ -31,21 +31,15 @@ char kdb_prompt_str[CMD_BUFLEN];
 
 int kdb_trap_printk;
 
-static int kgdb_transition_check(char *buffer)
+static void kgdb_transition_check(char *buffer)
 {
-	if (buffer[0] != '+' && buffer[0] != '$') {
+	int slen = strlen(buffer);
+	if (strncmp(buffer, "$?#3f", slen) != 0 &&
+	    strncmp(buffer, "$qSupported#37", slen) != 0 &&
+	    strncmp(buffer, "+$qSupported#37", slen) != 0) {
 		KDB_STATE_SET(KGDB_TRANS);
 		kdb_printf("%s", buffer);
-	} else {
-		int slen = strlen(buffer);
-		if (slen > 3 && buffer[slen - 3] == '#') {
-			kdb_gdb_state_pass(buffer);
-			strcpy(buffer, "kgdb");
-			KDB_STATE_SET(DOING_KGDB);
-			return 1;
-		}
 	}
-	return 0;
 }
 
 static int kdb_read_get_key(char *buffer, size_t bufsize)
@@ -257,10 +251,6 @@ poll_again:
 	case 13: /* enter */
 		*lastchar++ = '\n';
 		*lastchar++ = '\0';
-		if (!KDB_STATE(KGDB_TRANS)) {
-			KDB_STATE_SET(KGDB_TRANS);
-			kdb_printf("%s", buffer);
-		}
 		kdb_printf("\n");
 		return buffer;
 	case 4: /* Del */
@@ -392,26 +382,22 @@ poll_again:
 				 * printed characters if we think that
 				 * kgdb is connecting, until the check
 				 * fails */
-				if (!KDB_STATE(KGDB_TRANS)) {
-					if (kgdb_transition_check(buffer))
-						return buffer;
-				} else {
+				if (!KDB_STATE(KGDB_TRANS))
+					kgdb_transition_check(buffer);
+				else
 					kdb_printf("%c", key);
-				}
 			}
 			/* Special escape to kgdb */
 			if (lastchar - buffer >= 5 &&
 			    strcmp(lastchar - 5, "$?#3f") == 0) {
-				kdb_gdb_state_pass(lastchar - 5);
 				strcpy(buffer, "kgdb");
 				KDB_STATE_SET(DOING_KGDB);
 				return buffer;
 			}
-			if (lastchar - buffer >= 11 &&
-			    strcmp(lastchar - 11, "$qSupported") == 0) {
-				kdb_gdb_state_pass(lastchar - 11);
+			if (lastchar - buffer >= 14 &&
+			    strcmp(lastchar - 14, "$qSupported#37") == 0) {
 				strcpy(buffer, "kgdb");
-				KDB_STATE_SET(DOING_KGDB);
+				KDB_STATE_SET(DOING_KGDB2);
 				return buffer;
 			}
 		}

@@ -24,17 +24,36 @@
 #define OMAP1_MMC2_BASE		0xfffb7c00	/* omap16xx only */
 
 #define OMAP24XX_NR_MMC		2
+#define OMAP34XX_NR_MMC		3
+#define OMAP44XX_NR_MMC		5
 #define OMAP2420_MMC_SIZE	OMAP1_MMC_SIZE
+#define OMAP3_HSMMC_SIZE	0x200
+#define OMAP4_HSMMC_SIZE	0x1000
 #define OMAP2_MMC1_BASE		0x4809c000
-
+#define OMAP2_MMC2_BASE		0x480b4000
+#define OMAP3_MMC3_BASE		0x480ad000
+#define OMAP4_MMC4_BASE		0x480d1000
+#define OMAP4_MMC5_BASE		0x480d5000
 #define OMAP4_MMC_REG_OFFSET	0x100
+
+#define TI81XX_NR_MMC		1
+#define TI81XX_HSMMC_SIZE	0x10000
+#define TI816X_MMC1_BASE	0x48060100 /* TI816X MMC/SD config base */
+#define TI816X_MMC1_HL_BASE	0x48060000 /* TI816X HL configuration*/
+#define TI814X_MMC1_BASE	0x481D8100 /* TI814X MMC/SD config base */
+#define TI814X_MMC1_HL_BASE	0x481D8000 /* TI814X HL configuration*/
+
+#define HSMMC5			(1 << 4)
+#define HSMMC4			(1 << 3)
+#define HSMMC3			(1 << 2)
+#define HSMMC2			(1 << 1)
+#define HSMMC1			(1 << 0)
 
 #define OMAP_MMC_MAX_SLOTS	2
 
-#define OMAP_HSMMC_SUPPORTS_DUAL_VOLT	BIT(1)
-
-struct omap_mmc_dev_attr {
-	u8 flags;
+enum {
+	MMC_CTRL_VERSION_1 = 0, /* OMAP class devicess */
+	MMC_CTRL_VERSION_2	/* TI81XX class devicess */
 };
 
 struct omap_mmc_platform_data {
@@ -64,9 +83,6 @@ struct omap_mmc_platform_data {
 	int (*get_context_loss_count)(struct device *dev);
 
 	u64 dma_mask;
-
-	/* Integrating attributes from the omap_hwmod layer */
-	u8 controller_flags;
 
 	/* Register offset deviation */
 	u16 reg_offset;
@@ -100,9 +116,6 @@ struct omap_mmc_platform_data {
 
 		/* If using power_saving and the MMC power is not to go off */
 		unsigned no_off:1;
-
-		/* eMMC does not handle power off when not in sleep state */
-		unsigned no_regulator_off_init:1;
 
 		/* Regulator off remapped to sleep */
 		unsigned vcc_aux_disable_is_sleep:1;
@@ -149,6 +162,8 @@ struct omap_mmc_platform_data {
 		unsigned int ban_openended:1;
 
 	} slots[OMAP_MMC_MAX_SLOTS];
+
+	u8 version;
 };
 
 /* called from board-specific card detection service routine */
@@ -159,7 +174,8 @@ extern void omap_mmc_notify_cover_event(struct device *dev, int slot,
 	defined(CONFIG_MMC_OMAP_HS) || defined(CONFIG_MMC_OMAP_HS_MODULE)
 void omap1_init_mmc(struct omap_mmc_platform_data **mmc_data,
 				int nr_controllers);
-void omap242x_init_mmc(struct omap_mmc_platform_data **mmc_data);
+void omap2_init_mmc(struct omap_mmc_platform_data **mmc_data,
+				int nr_controllers);
 int omap_mmc_add(const char *name, int id, unsigned long base,
 				unsigned long size, unsigned int irq,
 				struct omap_mmc_platform_data *data);
@@ -168,7 +184,8 @@ static inline void omap1_init_mmc(struct omap_mmc_platform_data **mmc_data,
 				int nr_controllers)
 {
 }
-static inline void omap242x_init_mmc(struct omap_mmc_platform_data **mmc_data)
+static inline void omap2_init_mmc(struct omap_mmc_platform_data **mmc_data,
+				int nr_controllers)
 {
 }
 static inline int omap_mmc_add(const char *name, int id, unsigned long base,

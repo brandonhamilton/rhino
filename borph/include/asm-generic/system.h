@@ -14,6 +14,7 @@
 #ifndef __ASM_GENERIC_SYSTEM_H
 #define __ASM_GENERIC_SYSTEM_H
 
+#ifdef __KERNEL__
 #ifndef __ASSEMBLY__
 
 #include <linux/types.h>
@@ -138,4 +139,5 @@ unsigned long __xchg(unsigned long x, volatile void *ptr, int size)
 
 #endif /* !__ASSEMBLY__ */
 
+#endif /* __KERNEL__ */
 #endif /* __ASM_GENERIC_SYSTEM_H */

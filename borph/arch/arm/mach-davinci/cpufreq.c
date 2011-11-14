@@ -94,7 +94,9 @@ static int davinci_target(struct cpufreq_policy *policy,
 	if (freqs.old == freqs.new)
 		return ret;
 
-	dev_dbg(&cpufreq.dev, "transition: %u --> %u\n", freqs.old, freqs.new);
+	cpufreq_debug_printk(CPUFREQ_DEBUG_DRIVER,
+			dev_driver_string(cpufreq.dev),
+			"transition: %u --> %u\n", freqs.old, freqs.new);
 
 	ret = cpufreq_frequency_table_target(policy, pdata->freq_table,
 						freqs.new, relation, &idx);
@@ -130,7 +132,7 @@ out:
 	return ret;
 }
 
-static int davinci_cpu_init(struct cpufreq_policy *policy)
+static int __init davinci_cpu_init(struct cpufreq_policy *policy)
 {
 	int result = 0;
 	struct davinci_cpufreq_config *pdata = cpufreq.dev->platform_data;
@@ -165,7 +167,7 @@ static int davinci_cpu_init(struct cpufreq_policy *policy)
 	/*
 	 * Time measurement across the target() function yields ~1500-1800us
 	 * time taken with no drivers on notification list.
-	 * Setting the latency to 2000 us to accommodate addition of drivers
+	 * Setting the latency to 2000 us to accomodate addition of drivers
 	 * to pre/post change notification list.
 	 */
 	policy->cpuinfo.transition_latency = 2000 * 1000;

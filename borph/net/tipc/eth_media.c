@@ -34,8 +34,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "core.h"
-#include "bearer.h"
+#include <net/tipc/tipc.h>
+#include <net/tipc/tipc_bearer.h>
+#include <net/tipc/tipc_msg.h>
+#include <linux/netdevice.h>
+#include <linux/slab.h>
+#include <net/net_namespace.h>
 
 #define MAX_ETH_BEARERS		2
 #define ETH_LINK_PRIORITY	TIPC_DEF_LINK_PRI
@@ -56,7 +60,7 @@ struct eth_bearer {
 };
 
 static struct eth_bearer eth_bearers[MAX_ETH_BEARERS];
-static int eth_started;
+static int eth_started = 0;
 static struct notifier_block notifier;
 
 /**
@@ -144,7 +148,7 @@ static int enable_bearer(struct tipc_bearer *tb_ptr)
 
 	/* Find device with specified name */
 
-	for_each_netdev(&init_net, pdev) {
+	for_each_netdev(&init_net, pdev){
 		if (!strncmp(pdev->name, driver_name, IFNAMSIZ)) {
 			dev = pdev;
 			break;
@@ -155,8 +159,7 @@ static int enable_bearer(struct tipc_bearer *tb_ptr)
 
 	/* Find Ethernet bearer for device (or create one) */
 
-	while ((eb_ptr != stop) && eb_ptr->dev && (eb_ptr->dev != dev))
-		eb_ptr++;
+	for (;(eb_ptr != stop) && eb_ptr->dev && (eb_ptr->dev != dev); eb_ptr++);
 	if (eb_ptr == stop)
 		return -EDQUOT;
 	if (!eb_ptr->dev) {

@@ -50,20 +50,14 @@
 #include <asm/io-unit.h>
 #include <asm/leon.h>
 
-/* This function must make sure that caches and memory are coherent after DMA
- * On LEON systems without cache snooping it flushes the entire D-CACHE.
- */
-#ifndef CONFIG_SPARC_LEON
-static inline void dma_make_coherent(unsigned long pa, unsigned long len)
-{
-}
+#ifdef CONFIG_SPARC_LEON
+#define mmu_inval_dma_area(p, l) leon_flush_dcache_all()
 #else
-static inline void dma_make_coherent(unsigned long pa, unsigned long len)
-{
-	if (!sparc_leon3_snooping_enabled())
-		leon_flush_dcache_all();
-}
+#define mmu_inval_dma_area(p, l)	/* Anton pulled it out for 2.4.0-xx */
 #endif
+
+static struct resource *_sparc_find_resource(struct resource *r,
+					     unsigned long);
 
 static void __iomem *_sparc_ioremap(struct resource *res, u32 bus, u32 pa, int sz);
 static void __iomem *_sparc_alloc_io(unsigned int busno, unsigned long phys,
@@ -140,11 +134,7 @@ void iounmap(volatile void __iomem *virtual)
 	unsigned long vaddr = (unsigned long) virtual & PAGE_MASK;
 	struct resource *res;
 
-	/*
-	 * XXX Too slow. Can have 8192 DVMA pages on sun4m in the worst case.
-	 * This probably warrants some sort of hashing.
-	*/
-	if ((res = lookup_resource(&sparc_iomap, vaddr)) == NULL) {
+	if ((res = _sparc_find_resource(&sparc_iomap, vaddr)) == NULL) {
 		printk("free_io/iounmap: cannot free %lx\n", vaddr);
 		return;
 	}
@@ -229,7 +219,7 @@ _sparc_ioremap(struct resource *res, u32 bus, u32 pa, int sz)
 	}
 
 	pa &= PAGE_MASK;
-	sparc_mapiorange(bus, pa, res->start, resource_size(res));
+	sparc_mapiorange(bus, pa, res->start, res->end - res->start + 1);
 
 	return (void __iomem *)(unsigned long)(res->start + offset);
 }
@@ -241,7 +231,7 @@ static void _sparc_free_io(struct resource *res)
 {
 	unsigned long plen;
 
-	plen = resource_size(res);
+	plen = res->end - res->start + 1;
 	BUG_ON((plen & (PAGE_SIZE-1)) != 0);
 	sparc_unmapiorange(res->start, plen);
 	release_resource(res);
@@ -264,7 +254,7 @@ static void *sbus_alloc_coherent(struct device *dev, size_t len,
 				 dma_addr_t *dma_addrp, gfp_t gfp)
 {
 	struct platform_device *op = to_platform_device(dev);
-	unsigned long len_total = PAGE_ALIGN(len);
+	unsigned long len_total = (len + PAGE_SIZE-1) & PAGE_MASK;
 	unsigned long va;
 	struct resource *res;
 	int order;
@@ -290,7 +280,7 @@ static void *sbus_alloc_coherent(struct device *dev, size_t len,
 		printk("sbus_alloc_consistent: cannot occupy 0x%lx", len_total);
 		goto err_nova;
 	}
-
+	mmu_inval_dma_area(va, len_total);
 	// XXX The mmu_map_dma_area does this for us below, see comments.
 	// sparc_mapiorange(0, virt_to_phys(va), res->start, len_total);
 	/*
@@ -307,9 +297,9 @@ static void *sbus_alloc_coherent(struct device *dev, size_t len,
 err_noiommu:
 	release_resource(res);
 err_nova:
-	kfree(res);
-err_nomem:
 	free_pages(va, order);
+err_nomem:
+	kfree(res);
 err_nopages:
 	return NULL;
 }
@@ -320,7 +310,7 @@ static void sbus_free_coherent(struct device *dev, size_t n, void *p,
 	struct resource *res;
 	struct page *pgv;
 
-	if ((res = lookup_resource(&_sparc_dvma,
+	if ((res = _sparc_find_resource(&_sparc_dvma,
 	    (unsigned long)p)) == NULL) {
 		printk("sbus_free_consistent: cannot free %p\n", p);
 		return;
@@ -331,16 +321,17 @@ static void sbus_free_coherent(struct device *dev, size_t n, void *p,
 		return;
 	}
 
-	n = PAGE_ALIGN(n);
-	if (resource_size(res) != n) {
+	n = (n + PAGE_SIZE-1) & PAGE_MASK;
+	if ((res->end-res->start)+1 != n) {
 		printk("sbus_free_consistent: region 0x%lx asked 0x%zx\n",
-		    (long)resource_size(res), n);
+		    (long)((res->end-res->start)+1), n);
 		return;
 	}
 
 	release_resource(res);
 	kfree(res);
 
+	/* mmu_inval_dma_area(va, n); */ /* it's consistent, isn't it */
 	pgv = virt_to_page(p);
 	mmu_unmap_dma_area(dev, ba, n);
 
@@ -417,6 +408,9 @@ struct dma_map_ops sbus_dma_ops = {
 	.sync_sg_for_device	= sbus_sync_sg_for_device,
 };
 
+struct dma_map_ops *dma_ops = &sbus_dma_ops;
+EXPORT_SYMBOL(dma_ops);
+
 static int __init sparc_register_ioport(void)
 {
 	register_proc_sparc_ioport();
@@ -428,9 +422,7 @@ arch_initcall(sparc_register_ioport);
 
 #endif /* CONFIG_SBUS */
 
-
-/* LEON reuses PCI DMA ops */
-#if defined(CONFIG_PCI) || defined(CONFIG_SPARC_LEON)
+#ifdef CONFIG_PCI
 
 /* Allocate and map kernel buffer using consistent mode DMA for a device.
  * hwdev should be valid struct pci_dev pointer for PCI devices.
@@ -438,8 +430,8 @@ arch_initcall(sparc_register_ioport);
 static void *pci32_alloc_coherent(struct device *dev, size_t len,
 				  dma_addr_t *pba, gfp_t gfp)
 {
-	unsigned long len_total = PAGE_ALIGN(len);
-	void *va;
+	unsigned long len_total = (len + PAGE_SIZE-1) & PAGE_MASK;
+	unsigned long va;
 	struct resource *res;
 	int order;
 
@@ -451,33 +443,34 @@ static void *pci32_alloc_coherent(struct device *dev, size_t len,
 	}
 
 	order = get_order(len_total);
-	va = (void *) __get_free_pages(GFP_KERNEL, order);
-	if (va == NULL) {
+	va = __get_free_pages(GFP_KERNEL, order);
+	if (va == 0) {
 		printk("pci_alloc_consistent: no %ld pages\n", len_total>>PAGE_SHIFT);
-		goto err_nopages;
+		return NULL;
 	}
 
 	if ((res = kzalloc(sizeof(struct resource), GFP_KERNEL)) == NULL) {
+		free_pages(va, order);
 		printk("pci_alloc_consistent: no core\n");
-		goto err_nomem;
+		return NULL;
 	}
 
 	if (allocate_resource(&_sparc_dvma, res, len_total,
 	    _sparc_dvma.start, _sparc_dvma.end, PAGE_SIZE, NULL, NULL) != 0) {
 		printk("pci_alloc_consistent: cannot occupy 0x%lx", len_total);
-		goto err_nova;
+		free_pages(va, order);
+		kfree(res);
+		return NULL;
 	}
+	mmu_inval_dma_area(va, len_total);
+#if 0
+/* P3 */ printk("pci_alloc_consistent: kva %lx uncva %lx phys %lx size %lx\n",
+  (long)va, (long)res->start, (long)virt_to_phys(va), len_total);
+#endif
 	sparc_mapiorange(0, virt_to_phys(va), res->start, len_total);
 
 	*pba = virt_to_phys(va); /* equals virt_to_bus (R.I.P.) for us. */
 	return (void *) res->start;
-
-err_nova:
-	kfree(res);
-err_nomem:
-	free_pages((unsigned long)va, order);
-err_nopages:
-	return NULL;
 }
 
 /* Free and unmap a consistent DMA buffer.
@@ -492,8 +485,9 @@ static void pci32_free_coherent(struct device *dev, size_t n, void *p,
 				dma_addr_t ba)
 {
 	struct resource *res;
+	unsigned long pgp;
 
-	if ((res = lookup_resource(&_sparc_dvma,
+	if ((res = _sparc_find_resource(&_sparc_dvma,
 	    (unsigned long)p)) == NULL) {
 		printk("pci_free_consistent: cannot free %p\n", p);
 		return;
@@ -504,19 +498,21 @@ static void pci32_free_coherent(struct device *dev, size_t n, void *p,
 		return;
 	}
 
-	n = PAGE_ALIGN(n);
-	if (resource_size(res) != n) {
+	n = (n + PAGE_SIZE-1) & PAGE_MASK;
+	if ((res->end-res->start)+1 != n) {
 		printk("pci_free_consistent: region 0x%lx asked 0x%lx\n",
-		    (long)resource_size(res), (long)n);
+		    (long)((res->end-res->start)+1), (long)n);
 		return;
 	}
 
-	dma_make_coherent(ba, n);
+	pgp = (unsigned long) phys_to_virt(ba);	/* bus_to_virt actually */
+	mmu_inval_dma_area(pgp, n);
 	sparc_unmapiorange((unsigned long)p, n);
 
 	release_resource(res);
 	kfree(res);
-	free_pages((unsigned long)phys_to_virt(ba), get_order(n));
+
+	free_pages(pgp, get_order(n));
 }
 
 /*
@@ -529,13 +525,6 @@ static dma_addr_t pci32_map_page(struct device *dev, struct page *page,
 {
 	/* IIep is write-through, not flushing. */
 	return page_to_phys(page) + offset;
-}
-
-static void pci32_unmap_page(struct device *dev, dma_addr_t ba, size_t size,
-			     enum dma_data_direction dir, struct dma_attrs *attrs)
-{
-	if (dir != PCI_DMA_TODEVICE)
-		dma_make_coherent(ba, PAGE_ALIGN(size));
 }
 
 /* Map a set of buffers described by scatterlist in streaming
@@ -562,7 +551,8 @@ static int pci32_map_sg(struct device *device, struct scatterlist *sgl,
 
 	/* IIep is write-through, not flushing. */
 	for_each_sg(sgl, sg, nents, n) {
-		sg->dma_address = sg_phys(sg);
+		BUG_ON(page_address(sg_page(sg)) == NULL);
+		sg->dma_address = virt_to_phys(sg_virt(sg));
 		sg->dma_length = sg->length;
 	}
 	return nents;
@@ -581,7 +571,10 @@ static void pci32_unmap_sg(struct device *dev, struct scatterlist *sgl,
 
 	if (dir != PCI_DMA_TODEVICE) {
 		for_each_sg(sgl, sg, nents, n) {
-			dma_make_coherent(sg_phys(sg), PAGE_ALIGN(sg->length));
+			BUG_ON(page_address(sg_page(sg)) == NULL);
+			mmu_inval_dma_area(
+			    (unsigned long) page_address(sg_page(sg)),
+			    (sg->length + PAGE_SIZE-1) & PAGE_MASK);
 		}
 	}
 }
@@ -600,7 +593,8 @@ static void pci32_sync_single_for_cpu(struct device *dev, dma_addr_t ba,
 				      size_t size, enum dma_data_direction dir)
 {
 	if (dir != PCI_DMA_TODEVICE) {
-		dma_make_coherent(ba, PAGE_ALIGN(size));
+		mmu_inval_dma_area((unsigned long)phys_to_virt(ba),
+		    (size + PAGE_SIZE-1) & PAGE_MASK);
 	}
 }
 
@@ -608,7 +602,8 @@ static void pci32_sync_single_for_device(struct device *dev, dma_addr_t ba,
 					 size_t size, enum dma_data_direction dir)
 {
 	if (dir != PCI_DMA_TODEVICE) {
-		dma_make_coherent(ba, PAGE_ALIGN(size));
+		mmu_inval_dma_area((unsigned long)phys_to_virt(ba),
+		    (size + PAGE_SIZE-1) & PAGE_MASK);
 	}
 }
 
@@ -626,7 +621,10 @@ static void pci32_sync_sg_for_cpu(struct device *dev, struct scatterlist *sgl,
 
 	if (dir != PCI_DMA_TODEVICE) {
 		for_each_sg(sgl, sg, nents, n) {
-			dma_make_coherent(sg_phys(sg), PAGE_ALIGN(sg->length));
+			BUG_ON(page_address(sg_page(sg)) == NULL);
+			mmu_inval_dma_area(
+			    (unsigned long) page_address(sg_page(sg)),
+			    (sg->length + PAGE_SIZE-1) & PAGE_MASK);
 		}
 	}
 }
@@ -639,7 +637,10 @@ static void pci32_sync_sg_for_device(struct device *device, struct scatterlist *
 
 	if (dir != PCI_DMA_TODEVICE) {
 		for_each_sg(sgl, sg, nents, n) {
-			dma_make_coherent(sg_phys(sg), PAGE_ALIGN(sg->length));
+			BUG_ON(page_address(sg_page(sg)) == NULL);
+			mmu_inval_dma_area(
+			    (unsigned long) page_address(sg_page(sg)),
+			    (sg->length + PAGE_SIZE-1) & PAGE_MASK);
 		}
 	}
 }
@@ -648,7 +649,6 @@ struct dma_map_ops pci32_dma_ops = {
 	.alloc_coherent		= pci32_alloc_coherent,
 	.free_coherent		= pci32_free_coherent,
 	.map_page		= pci32_map_page,
-	.unmap_page		= pci32_unmap_page,
 	.map_sg			= pci32_map_sg,
 	.unmap_sg		= pci32_unmap_sg,
 	.sync_single_for_cpu	= pci32_sync_single_for_cpu,
@@ -658,16 +658,7 @@ struct dma_map_ops pci32_dma_ops = {
 };
 EXPORT_SYMBOL(pci32_dma_ops);
 
-#endif /* CONFIG_PCI || CONFIG_SPARC_LEON */
-
-#ifdef CONFIG_SPARC_LEON
-struct dma_map_ops *dma_ops = &pci32_dma_ops;
-#elif defined(CONFIG_SBUS)
-struct dma_map_ops *dma_ops = &sbus_dma_ops;
-#endif
-
-EXPORT_SYMBOL(dma_ops);
-
+#endif /* CONFIG_PCI */
 
 /*
  * Return whether the given PCI device DMA address mask can be
@@ -715,6 +706,25 @@ static const struct file_operations sparc_io_proc_fops = {
 	.release	= single_release,
 };
 #endif /* CONFIG_PROC_FS */
+
+/*
+ * This is a version of find_resource and it belongs to kernel/resource.c.
+ * Until we have agreement with Linus and Martin, it lingers here.
+ *
+ * XXX Too slow. Can have 8192 DVMA pages on sun4m in the worst case.
+ * This probably warrants some sort of hashing.
+ */
+static struct resource *_sparc_find_resource(struct resource *root,
+					     unsigned long hit)
+{
+        struct resource *tmp;
+
+	for (tmp = root->child; tmp != 0; tmp = tmp->sibling) {
+		if (tmp->start <= hit && tmp->end >= hit)
+			return tmp;
+	}
+	return NULL;
+}
 
 static void register_proc_sparc_ioport(void)
 {

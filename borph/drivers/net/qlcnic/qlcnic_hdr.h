@@ -1,8 +1,25 @@
 /*
- * QLogic qlcnic NIC Driver
- * Copyright (c)  2009-2010 QLogic Corporation
+ * Copyright (C) 2009 - QLogic Corporation.
+ * All rights reserved.
  *
- * See LICENSE.qlcnic for copyright and licensing details.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston,
+ * MA  02111-1307, USA.
+ *
+ * The full GNU General Public License is included in this distribution
+ * in the file called "COPYING".
+ *
  */
 
 #ifndef __QLCNIC_HDR_H_
@@ -492,10 +509,10 @@ enum {
 
 #define TEST_AGT_CTRL	(0x00)
 
-#define TA_CTL_START	BIT_0
-#define TA_CTL_ENABLE	BIT_1
-#define TA_CTL_WRITE	BIT_2
-#define TA_CTL_BUSY	BIT_3
+#define TA_CTL_START	1
+#define TA_CTL_ENABLE	2
+#define TA_CTL_WRITE	4
+#define TA_CTL_BUSY	8
 
 /*
  *   Register offsets for MN
@@ -621,7 +638,7 @@ enum {
 #define PCIX_INT_MASK		(0x10104)
 
 #define PCIX_OCM_WINDOW		(0x10800)
-#define PCIX_OCM_WINDOW_REG(func)	(PCIX_OCM_WINDOW + 0x4 * (func))
+#define PCIX_OCM_WINDOW_REG(func)	(PCIX_OCM_WINDOW + 0x20 * (func))
 
 #define PCIX_TARGET_STATUS	(0x10118)
 #define PCIX_TARGET_STATUS_F1	(0x10160)
@@ -705,7 +722,7 @@ enum {
 #define QLCNIC_DEV_NPAR_OPER		1 /* NPAR Operational */
 #define QLCNIC_DEV_NPAR_OPER_TIMEO	30 /* Operational time out */
 
-#define QLC_DEV_CHECK_ACTIVE(VAL, FN)		((VAL) & (1 << (FN * 4)))
+#define QLC_DEV_CHECK_ACTIVE(VAL, FN)		((VAL) &= (1 << (FN * 4)))
 #define QLC_DEV_SET_REF_CNT(VAL, FN)		((VAL) |= (1 << (FN * 4)))
 #define QLC_DEV_CLR_REF_CNT(VAL, FN)		((VAL) &= ~(1 << (FN * 4)))
 #define QLC_DEV_SET_RST_RDY(VAL, FN)		((VAL) |= (1 << (FN * 4)))
@@ -764,38 +781,6 @@ struct qlcnic_legacy_intr_set {
 #define QLCNIC_MSIX_BASE	0x132110
 #define QLCNIC_MAX_PCI_FUNC	8
 #define QLCNIC_MAX_VLAN_FILTERS	64
-
-/* FW dump defines */
-#define MIU_TEST_CTR		0x41000090
-#define MIU_TEST_ADDR_LO	0x41000094
-#define MIU_TEST_ADDR_HI	0x41000098
-#define FLASH_ROM_WINDOW	0x42110030
-#define FLASH_ROM_DATA		0x42150000
-
-static const u32 MIU_TEST_READ_DATA[] = {
-	0x410000A8, 0x410000AC, 0x410000B8, 0x410000BC, };
-
-#define QLCNIC_FW_DUMP_REG1	0x00130060
-#define QLCNIC_FW_DUMP_REG2	0x001e0000
-#define QLCNIC_FLASH_SEM2_LK	0x0013C010
-#define QLCNIC_FLASH_SEM2_ULK	0x0013C014
-#define QLCNIC_FLASH_LOCK_ID	0x001B2100
-
-#define QLCNIC_RD_DUMP_REG(addr, bar0, data) do {			\
-	writel((addr & 0xFFFF0000), (void *) (bar0 +			\
-		QLCNIC_FW_DUMP_REG1));					\
-	readl((void *) (bar0 + QLCNIC_FW_DUMP_REG1));			\
-	*data = readl((void *) (bar0 + QLCNIC_FW_DUMP_REG2 +		\
-		LSW(addr)));						\
-} while (0)
-
-#define QLCNIC_WR_DUMP_REG(addr, bar0, data) do {			\
-	writel((addr & 0xFFFF0000), (void *) (bar0 +			\
-		QLCNIC_FW_DUMP_REG1));					\
-	readl((void *) (bar0 + QLCNIC_FW_DUMP_REG1));			\
-	writel(data, (void *) (bar0 + QLCNIC_FW_DUMP_REG2 + LSW(addr)));\
-	readl((void *) (bar0 + QLCNIC_FW_DUMP_REG2 + LSW(addr)));	\
-} while (0)
 
 /* PCI function operational mode */
 enum {

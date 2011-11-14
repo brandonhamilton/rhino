@@ -101,15 +101,14 @@
  *	any pending driver I/O is completed.
  *
  * void (*dcd_change)(struct tty_struct *tty, unsigned int status,
- *			struct pps_event_time *ts)
+ * 			struct timespec *ts)
  *
  *	Tells the discipline that the DCD pin has changed its status and
- *	the relative timestamp. Pointer ts cannot be NULL.
+ *	the relative timestamp. Pointer ts can be NULL.
  */
 
 #include <linux/fs.h>
 #include <linux/wait.h>
-#include <linux/pps_kernel.h>
 
 struct tty_ldisc_ops {
 	int	magic;
@@ -144,7 +143,7 @@ struct tty_ldisc_ops {
 			       char *fp, int count);
 	void	(*write_wakeup)(struct tty_struct *);
 	void	(*dcd_change)(struct tty_struct *, unsigned int,
-				struct pps_event_time *);
+				struct timespec *);
 
 	struct  module *owner;
 	

@@ -213,27 +213,41 @@ static int m41t80_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	return m41t80_set_datetime(to_i2c_client(dev), tm);
 }
 
-static int m41t80_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+#if defined(CONFIG_RTC_INTF_DEV) || defined(CONFIG_RTC_INTF_DEV_MODULE)
+static int
+m41t80_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	int rc;
 
+	switch (cmd) {
+	case RTC_AIE_OFF:
+	case RTC_AIE_ON:
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
+
 	rc = i2c_smbus_read_byte_data(client, M41T80_REG_ALARM_MON);
 	if (rc < 0)
 		goto err;
-
-	if (enabled)
-		rc |= M41T80_ALMON_AFE;
-	else
+	switch (cmd) {
+	case RTC_AIE_OFF:
 		rc &= ~M41T80_ALMON_AFE;
-
+		break;
+	case RTC_AIE_ON:
+		rc |= M41T80_ALMON_AFE;
+		break;
+	}
 	if (i2c_smbus_write_byte_data(client, M41T80_REG_ALARM_MON, rc) < 0)
 		goto err;
-
 	return 0;
 err:
 	return -EIO;
 }
+#else
+#define	m41t80_rtc_ioctl NULL
+#endif
 
 static int m41t80_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 {
@@ -360,7 +374,7 @@ static struct rtc_class_ops m41t80_rtc_ops = {
 	.read_alarm = m41t80_rtc_read_alarm,
 	.set_alarm = m41t80_rtc_set_alarm,
 	.proc = m41t80_rtc_proc,
-	.alarm_irq_enable = m41t80_rtc_alarm_irq_enable,
+	.ioctl = m41t80_rtc_ioctl,
 };
 
 #if defined(CONFIG_RTC_INTF_SYSFS) || defined(CONFIG_RTC_INTF_SYSFS_MODULE)
@@ -783,9 +797,6 @@ static int m41t80_probe(struct i2c_client *client,
 		goto exit;
 	}
 
-	clientdata->features = id->driver_data;
-	i2c_set_clientdata(client, clientdata);
-
 	rtc = rtc_device_register(client->name, &client->dev,
 				  &m41t80_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc)) {
@@ -795,6 +806,8 @@ static int m41t80_probe(struct i2c_client *client,
 	}
 
 	clientdata->rtc = rtc;
+	clientdata->features = id->driver_data;
+	i2c_set_clientdata(client, clientdata);
 
 	/* Make sure HT (Halt Update) bit is cleared */
 	rc = i2c_smbus_read_byte_data(client, M41T80_REG_ALARM_HOUR);

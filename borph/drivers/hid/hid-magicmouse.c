@@ -12,8 +12,6 @@
  * any later version.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/module.h>
@@ -76,7 +74,7 @@ MODULE_PARM_DESC(report_undeciphered, "Report undeciphered multi-touch state fie
  * This is true when single_touch_id is equal to NO_TOUCHES. If multiple touches
  * are down and the touch providing for single touch emulation is lifted,
  * single_touch_id is equal to SINGLE_TOUCH_UP. While single touch emulation is
- * occurring, single_touch_id corresponds with the tracking id of the touch used.
+ * occuring, single_touch_id corresponds with the tracking id of the touch used.
  */
 #define NO_TOUCHES -1
 #define SINGLE_TOUCH_UP -2
@@ -258,7 +256,7 @@ static void magicmouse_emit_touch(struct magicmouse_sc *msc, int raw_id, u8 *tda
 		input_report_abs(input, ABS_MT_TRACKING_ID, id);
 		input_report_abs(input, ABS_MT_TOUCH_MAJOR, touch_major << 2);
 		input_report_abs(input, ABS_MT_TOUCH_MINOR, touch_minor << 2);
-		input_report_abs(input, ABS_MT_ORIENTATION, -orientation);
+		input_report_abs(input, ABS_MT_ORIENTATION, orientation);
 		input_report_abs(input, ABS_MT_POSITION_X, x);
 		input_report_abs(input, ABS_MT_POSITION_Y, y);
 
@@ -397,7 +395,7 @@ static void magicmouse_setup_input(struct input_dev *input, struct hid_device *h
 		input_set_abs_params(input, ABS_MT_TRACKING_ID, 0, 15, 0, 0);
 		input_set_abs_params(input, ABS_MT_TOUCH_MAJOR, 0, 255, 4, 0);
 		input_set_abs_params(input, ABS_MT_TOUCH_MINOR, 0, 255, 4, 0);
-		input_set_abs_params(input, ABS_MT_ORIENTATION, -31, 32, 1, 0);
+		input_set_abs_params(input, ABS_MT_ORIENTATION, -32, 31, 1, 0);
 
 		/* Note: Touch Y position from the device is inverted relative
 		 * to how pointer motion is reported (and relative to how USB
@@ -418,8 +416,6 @@ static void magicmouse_setup_input(struct input_dev *input, struct hid_device *h
 			input_set_abs_params(input, ABS_MT_POSITION_Y, -2456,
 				2565, 4, 0);
 		}
-
-		input_set_events_per_packet(input, 60);
 	}
 
 	if (report_undeciphered) {
@@ -437,11 +433,6 @@ static int magicmouse_input_mapping(struct hid_device *hdev,
 	if (!msc->input)
 		msc->input = hi->input;
 
-	/* Magic Trackpad does not give relative data after switching to MT */
-	if (hi->input->id.product == USB_DEVICE_ID_APPLE_MAGICTRACKPAD &&
-	    field->flags & HID_MAIN_ITEM_RELATIVE)
-		return -1;
-
 	return 0;
 }
 
@@ -455,7 +446,7 @@ static int magicmouse_probe(struct hid_device *hdev,
 
 	msc = kzalloc(sizeof(*msc), GFP_KERNEL);
 	if (msc == NULL) {
-		hid_err(hdev, "can't alloc magicmouse descriptor\n");
+		dev_err(&hdev->dev, "can't alloc magicmouse descriptor\n");
 		return -ENOMEM;
 	}
 
@@ -468,13 +459,13 @@ static int magicmouse_probe(struct hid_device *hdev,
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "magicmouse hid parse failed\n");
+		dev_err(&hdev->dev, "magicmouse hid parse failed\n");
 		goto err_free;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
-		hid_err(hdev, "magicmouse hw start failed\n");
+		dev_err(&hdev->dev, "magicmouse hw start failed\n");
 		goto err_free;
 	}
 
@@ -495,7 +486,7 @@ static int magicmouse_probe(struct hid_device *hdev,
 	}
 
 	if (!report) {
-		hid_err(hdev, "unable to register touch report\n");
+		dev_err(&hdev->dev, "unable to register touch report\n");
 		ret = -ENOMEM;
 		goto err_stop_hw;
 	}
@@ -504,7 +495,8 @@ static int magicmouse_probe(struct hid_device *hdev,
 	ret = hdev->hid_output_raw_report(hdev, feature, sizeof(feature),
 			HID_FEATURE_REPORT);
 	if (ret != sizeof(feature)) {
-		hid_err(hdev, "unable to request touch data (%d)\n", ret);
+		dev_err(&hdev->dev, "unable to request touch data (%d)\n",
+				ret);
 		goto err_stop_hw;
 	}
 
@@ -548,7 +540,7 @@ static int __init magicmouse_init(void)
 
 	ret = hid_register_driver(&magicmouse_driver);
 	if (ret)
-		pr_err("can't register magicmouse driver\n");
+		printk(KERN_ERR "can't register magicmouse driver\n");
 
 	return ret;
 }

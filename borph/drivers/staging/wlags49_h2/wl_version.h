@@ -66,6 +66,7 @@
  *  include files
  ******************************************************************************/
 //#include <linux/config.h>
+#include <linux/version.h>
 
 #ifndef CONFIG_MODVERSIONS
 #define __NO_VERSION__

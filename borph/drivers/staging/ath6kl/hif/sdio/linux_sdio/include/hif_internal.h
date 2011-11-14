@@ -27,6 +27,7 @@
 
 #include "a_config.h"
 #include "athdefs.h"
+#include "a_types.h"
 #include "a_osapi.h"
 #include "hif.h"
 #include "../../../common/hif_sdio_common.h"
@@ -46,17 +47,19 @@
 #define HIF_MBOX2_BLOCK_SIZE               HIF_MBOX_BLOCK_SIZE
 #define HIF_MBOX3_BLOCK_SIZE               HIF_MBOX_BLOCK_SIZE
 
+struct _HIF_SCATTER_REQ_PRIV;
+
 typedef struct bus_request {
     struct bus_request *next;       /* link list of available requests */
     struct bus_request *inusenext;  /* link list of in use requests */
     struct semaphore sem_req;
-    u32 address;               /* request data */
-    u8 *buffer;
-    u32 length;
-    u32 request;
+    A_UINT32 address;               /* request data */
+    A_UCHAR *buffer;
+    A_UINT32 length;
+    A_UINT32 request;
     void *context;
-    int status;
-    struct hif_scatter_req_priv *pScatterReq;      /* this request is a scatter request */
+    A_STATUS status;
+    struct _HIF_SCATTER_REQ_PRIV *pScatterReq;      /* this request is a scatter request */
 } BUS_REQUEST;
 
 struct hif_device {
@@ -73,11 +76,11 @@ struct hif_device {
     BUS_REQUEST busRequest[BUS_REQUEST_MAX_NUM]; /* available bus requests */
     void     *claimedContext;
     HTC_CALLBACKS htcCallbacks;
-    u8 *dma_buffer;
-    struct dl_list      ScatterReqHead;                /* scatter request list head */
-    bool       scatter_enabled;               /* scatter enabled flag */
-    bool   is_suspend;
-    bool   is_disabled;
+    A_UINT8     *dma_buffer;
+    DL_LIST      ScatterReqHead;                /* scatter request list head */
+    A_BOOL       scatter_enabled;               /* scatter enabled flag */
+    A_BOOL   is_suspend;
+    A_BOOL   is_disabled;
     atomic_t   irqHandling;
     HIF_DEVICE_POWER_CHANGE_TYPE powerConfig;
     const struct sdio_device_id *id;
@@ -87,9 +90,9 @@ struct hif_device {
 #define CMD53_FIXED_ADDRESS 1
 #define CMD53_INCR_ADDRESS  2
 
-BUS_REQUEST *hifAllocateBusRequest(struct hif_device *device);
-void hifFreeBusRequest(struct hif_device *device, BUS_REQUEST *busrequest);
-void AddToAsyncList(struct hif_device *device, BUS_REQUEST *busrequest);
+BUS_REQUEST *hifAllocateBusRequest(HIF_DEVICE *device);
+void hifFreeBusRequest(HIF_DEVICE *device, BUS_REQUEST *busrequest);
+void AddToAsyncList(HIF_DEVICE *device, BUS_REQUEST *busrequest);
 
 #ifdef HIF_LINUX_MMC_SCATTER_SUPPORT
 
@@ -97,28 +100,28 @@ void AddToAsyncList(struct hif_device *device, BUS_REQUEST *busrequest);
 #define MAX_SCATTER_ENTRIES_PER_REQ      16
 #define MAX_SCATTER_REQ_TRANSFER_SIZE    32*1024
 
-struct hif_scatter_req_priv {
-    struct hif_scatter_req     *pHifScatterReq;  /* HIF scatter request with allocated entries */   
-    struct hif_device          *device;          /* this device */
+typedef struct _HIF_SCATTER_REQ_PRIV {
+    HIF_SCATTER_REQ     *pHifScatterReq;  /* HIF scatter request with allocated entries */   
+    HIF_DEVICE          *device;          /* this device */
     BUS_REQUEST         *busrequest;      /* request associated with request */
         /* scatter list for linux */    
     struct scatterlist  sgentries[MAX_SCATTER_ENTRIES_PER_REQ];   
-};
+} HIF_SCATTER_REQ_PRIV;
 
 #define ATH_DEBUG_SCATTER  ATH_DEBUG_MAKE_MODULE_MASK(0)
 
-int SetupHIFScatterSupport(struct hif_device *device, struct hif_device_scatter_support_info *pInfo);
-void CleanupHIFScatterResources(struct hif_device *device);
-int DoHifReadWriteScatter(struct hif_device *device, BUS_REQUEST *busrequest);
+A_STATUS SetupHIFScatterSupport(HIF_DEVICE *device, HIF_DEVICE_SCATTER_SUPPORT_INFO *pInfo);
+void CleanupHIFScatterResources(HIF_DEVICE *device);
+A_STATUS DoHifReadWriteScatter(HIF_DEVICE *device, BUS_REQUEST *busrequest);
 
 #else  // HIF_LINUX_MMC_SCATTER_SUPPORT
 
-static inline int SetupHIFScatterSupport(struct hif_device *device, struct hif_device_scatter_support_info *pInfo)
+static inline A_STATUS SetupHIFScatterSupport(HIF_DEVICE *device, HIF_DEVICE_SCATTER_SUPPORT_INFO *pInfo) 
 {
     return A_ENOTSUP;
 }
 
-static inline int DoHifReadWriteScatter(struct hif_device *device, BUS_REQUEST *busrequest)
+static inline A_STATUS DoHifReadWriteScatter(HIF_DEVICE *device, BUS_REQUEST *busrequest) 
 {
     return A_ENOTSUP;
 }

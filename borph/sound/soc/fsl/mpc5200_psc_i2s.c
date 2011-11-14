@@ -150,7 +150,8 @@ static struct snd_soc_dai_driver psc_i2s_dai[] = {{
  * - Probe/remove operations
  * - OF device match table
  */
-static int __devinit psc_i2s_of_probe(struct platform_device *op)
+static int __devinit psc_i2s_of_probe(struct platform_device *op,
+				      const struct of_device_id *match)
 {
 	int rc;
 	struct psc_dma *psc_dma;
@@ -212,7 +213,7 @@ static struct of_device_id psc_i2s_match[] __devinitdata = {
 };
 MODULE_DEVICE_TABLE(of, psc_i2s_match);
 
-static struct platform_driver psc_i2s_driver = {
+static struct of_platform_driver psc_i2s_driver = {
 	.probe = psc_i2s_of_probe,
 	.remove = __devexit_p(psc_i2s_of_remove),
 	.driver = {
@@ -228,13 +229,13 @@ static struct platform_driver psc_i2s_driver = {
  */
 static int __init psc_i2s_init(void)
 {
-	return platform_driver_register(&psc_i2s_driver);
+	return of_register_platform_driver(&psc_i2s_driver);
 }
 module_init(psc_i2s_init);
 
 static void __exit psc_i2s_exit(void)
 {
-	platform_driver_unregister(&psc_i2s_driver);
+	of_unregister_platform_driver(&psc_i2s_driver);
 }
 module_exit(psc_i2s_exit);
 

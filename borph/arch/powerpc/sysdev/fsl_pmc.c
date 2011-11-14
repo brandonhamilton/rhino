@@ -58,7 +58,8 @@ static const struct platform_suspend_ops pmc_suspend_ops = {
 	.enter = pmc_suspend_enter,
 };
 
-static int pmc_probe(struct platform_device *ofdev)
+static int pmc_probe(struct platform_device *ofdev,
+		     const struct of_device_id *id)
 {
 	pmc_regs = of_iomap(ofdev->dev.of_node, 0);
 	if (!pmc_regs)
@@ -75,7 +76,7 @@ static const struct of_device_id pmc_ids[] = {
 	{ },
 };
 
-static struct platform_driver pmc_driver = {
+static struct of_platform_driver pmc_driver = {
 	.driver = {
 		.name = "fsl-pmc",
 		.owner = THIS_MODULE,
@@ -86,6 +87,6 @@ static struct platform_driver pmc_driver = {
 
 static int __init pmc_init(void)
 {
-	return platform_driver_register(&pmc_driver);
+	return of_register_platform_driver(&pmc_driver);
 }
 device_initcall(pmc_init);

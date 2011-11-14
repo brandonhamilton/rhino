@@ -77,8 +77,6 @@
 #include <asm/signal.h>
 #include <asm/asm-offsets.h>
 
-#undef DEBUG
-
 /* Helpful Macros */
 #define NUM_TO_REG(num)		r ## num
 
@@ -93,7 +91,7 @@
 		lwi	r6, r1, PT_R6;		\
 		lwi	r11, r1, PT_R11;	\
 		lwi	r31, r1, PT_R31;	\
-		lwi	r1, r1, PT_R1;
+		lwi	r1, r0, TOPHYS(r0_ram + 0);
 #endif /* CONFIG_MMU */
 
 #define LWREG_NOP			\
@@ -149,6 +147,10 @@
 	#if CONFIG_XILINX_MICROBLAZE0_USE_BARREL > 0
 	#define BSRLI(rD, rA, imm)	\
 		bsrli rD, rA, imm
+	#elif CONFIG_XILINX_MICROBLAZE0_USE_DIV > 0
+	#define BSRLI(rD, rA, imm)	\
+		ori rD, r0, (1 << imm);	\
+		idivu rD, rD, rA
 	#else
 	#define BSRLI(rD, rA, imm) BSRLI ## imm (rD, rA)
 	/* Only the used shift constants defined here - add more if needed */
@@ -208,8 +210,8 @@
  *      |      .      |
  *      |      .      |
  *
- * MMU kernel uses the same 'pt_pool_space' pointed space
- * which is used for storing register values - noMMu style was, that values were
+ * NO_MMU kernel use the same r0_ram pointed space - look to vmlinux.lds.S
+ * which is used for storing register values - old style was, that value were
  * stored in stack but in case of failure you lost information about register.
  * Currently you can see register value in memory in specific place.
  * In compare to with previous solution the speed should be the same.
@@ -228,22 +230,8 @@
  */
 
 /* wrappers to restore state before coming to entry.S */
+
 #ifdef CONFIG_MMU
-.section .data
-.align 4
-pt_pool_space:
-	.space	PT_SIZE
-
-#ifdef DEBUG
-/* Create space for exception counting. */
-.section .data
-.global exception_debug_table
-.align 4
-exception_debug_table:
-	/* Look at exception vector table. There is 32 exceptions * word size */
-	.space	(32 * 4)
-#endif /* DEBUG */
-
 .section .rodata
 .align 4
 _MB_HW_ExceptionVectorTable:
@@ -303,10 +291,10 @@ _hw_exception_handler:
 #ifndef CONFIG_MMU
 	addik	r1, r1, -(EX_HANDLER_STACK_SIZ); /* Create stack frame */
 #else
-	swi	r1, r0, TOPHYS(pt_pool_space + PT_R1); /* GET_SP */
+	swi	r1, r0, TOPHYS(r0_ram + 0); /* GET_SP */
 	/* Save date to kernel memory. Here is the problem
 	 * when you came from user space */
-	ori	r1, r0, TOPHYS(pt_pool_space);
+	ori	r1, r0, TOPHYS(r0_ram + 28);
 #endif
 	swi	r3, r1, PT_R3
 	swi	r4, r1, PT_R4
@@ -345,12 +333,12 @@ not_in_delay_slot:
 
 #ifdef DEBUG
 /* counting which exception happen */
-	lwi	r5, r0, TOPHYS(exception_debug_table)
+	lwi	r5, r0, 0x200 + TOPHYS(r0_ram)
 	addi	r5, r5, 1
-	swi	r5, r0, TOPHYS(exception_debug_table)
-	lwi	r5, r6, TOPHYS(exception_debug_table)
+	swi	r5, r0, 0x200 + TOPHYS(r0_ram)
+	lwi	r5, r6, 0x200 + TOPHYS(r0_ram)
 	addi	r5, r5, 1
-	swi	r5, r6, TOPHYS(exception_debug_table)
+	swi	r5, r6, 0x200 + TOPHYS(r0_ram)
 #endif
 /* end */
 	/* Load the HW Exception vector */
@@ -490,7 +478,7 @@ ex_lw_tail:
 	/* Get the destination register number into r5 */
 	lbui	r5, r0, TOPHYS(ex_reg_op);
 	/* Form load_word jump table offset (lw_table + (8 * regnum)) */
-	addik	r6, r0, TOPHYS(lw_table);
+	la	r6, r0, TOPHYS(lw_table);
 	addk	r5, r5, r5;
 	addk	r5, r5, r5;
 	addk	r5, r5, r5;
@@ -501,7 +489,7 @@ ex_sw:
 	/* Get the destination register number into r5 */
 	lbui	r5, r0, TOPHYS(ex_reg_op);
 	/* Form store_word jump table offset (sw_table + (8 * regnum)) */
-	addik	r6, r0, TOPHYS(sw_table);
+	la	r6, r0, TOPHYS(sw_table);
 	add	r5, r5, r5;
 	add	r5, r5, r5;
 	add	r5, r5, r5;
@@ -912,7 +900,7 @@ ex_lw_vm:
 	beqid	r6, ex_lhw_vm;
 load1:	lbui	r5, r4, 0;	/* Exception address in r4 - delay slot */
 /* Load a word, byte-by-byte from destination address and save it in tmp space*/
-	addik	r6, r0, ex_tmp_data_loc_0;
+	la	r6, r0, ex_tmp_data_loc_0;
 	sbi	r5, r6, 0;
 load2:	lbui	r5, r4, 1;
 	sbi	r5, r6, 1;
@@ -926,7 +914,7 @@ load4:	lbui	r5, r4, 3;
 ex_lhw_vm:
 	/* Load a half-word, byte-by-byte from destination address and
 	 * save it in tmp space */
-	addik	r6, r0, ex_tmp_data_loc_0;
+	la	r6, r0, ex_tmp_data_loc_0;
 	sbi	r5, r6, 0;
 load5:	lbui	r5, r4, 1;
 	sbi	r5, r6, 1;
@@ -942,7 +930,7 @@ ex_sw_vm:
 	addik	r5, r8, sw_table_vm;
 	bra	r5;
 ex_sw_tail_vm:
-	addik	r5, r0, ex_tmp_data_loc_0;
+	la	r5, r0, ex_tmp_data_loc_0;
 	beqid	r6, ex_shw_vm;
 	swi	r3, r5, 0;	/* Get the word - delay slot */
 	/* Store the word, byte-by-byte into destination address */
@@ -957,20 +945,11 @@ store3:	sbi	r3, r4, 2;
 store4:	sbi	r3, r4, 3;	/* Delay slot */
 ex_shw_vm:
 	/* Store the lower half-word, byte-by-byte into destination address */
-#ifdef __MICROBLAZEEL__
-	lbui	r3, r5, 0;
-store5:	sbi	r3, r4, 0;
-	lbui	r3, r5, 1;
-	brid	ret_from_exc;
-store6:	sbi	r3, r4, 1;	/* Delay slot */
-#else
 	lbui	r3, r5, 2;
 store5:	sbi	r3, r4, 0;
 	lbui	r3, r5, 3;
 	brid	ret_from_exc;
 store6:	sbi	r3, r4, 1;	/* Delay slot */
-#endif
-
 ex_sw_end_vm:			/* Exception handling of store word, ends. */
 
 /* We have to prevent cases that get/put_user macros get unaligned pointer
@@ -985,7 +964,7 @@ ex_unaligned_fixup:
 	addik	r7, r0, SIGSEGV
 	/* call bad_page_fault for finding aligned fixup, fixup address is saved
 	 * in PT_PC which is used as return address from exception */
-	addik	r15, r0, ret_from_exc-8 /* setup return address */
+	la	r15, r0, ret_from_exc-8 /* setup return address */
 	brid	bad_page_fault
 	nop
 
@@ -1113,23 +1092,23 @@ lw_r10_vm:	R3_TO_LWREG_VM_V	(10);
 lw_r11_vm:	R3_TO_LWREG_VM_V	(11);
 lw_r12_vm:	R3_TO_LWREG_VM_V	(12);
 lw_r13_vm:	R3_TO_LWREG_VM_V	(13);
-lw_r14_vm:	R3_TO_LWREG_VM_V	(14);
+lw_r14_vm:	R3_TO_LWREG_VM		(14);
 lw_r15_vm:	R3_TO_LWREG_VM_V	(15);
-lw_r16_vm:	R3_TO_LWREG_VM_V	(16);
+lw_r16_vm:	R3_TO_LWREG_VM		(16);
 lw_r17_vm:	R3_TO_LWREG_VM_V	(17);
 lw_r18_vm:	R3_TO_LWREG_VM_V	(18);
-lw_r19_vm:	R3_TO_LWREG_VM_V	(19);
-lw_r20_vm:	R3_TO_LWREG_VM_V	(20);
-lw_r21_vm:	R3_TO_LWREG_VM_V	(21);
-lw_r22_vm:	R3_TO_LWREG_VM_V	(22);
-lw_r23_vm:	R3_TO_LWREG_VM_V	(23);
-lw_r24_vm:	R3_TO_LWREG_VM_V	(24);
-lw_r25_vm:	R3_TO_LWREG_VM_V	(25);
-lw_r26_vm:	R3_TO_LWREG_VM_V	(26);
-lw_r27_vm:	R3_TO_LWREG_VM_V	(27);
-lw_r28_vm:	R3_TO_LWREG_VM_V	(28);
-lw_r29_vm:	R3_TO_LWREG_VM_V	(29);
-lw_r30_vm:	R3_TO_LWREG_VM_V	(30);
+lw_r19_vm:	R3_TO_LWREG_VM		(19);
+lw_r20_vm:	R3_TO_LWREG_VM		(20);
+lw_r21_vm:	R3_TO_LWREG_VM		(21);
+lw_r22_vm:	R3_TO_LWREG_VM		(22);
+lw_r23_vm:	R3_TO_LWREG_VM		(23);
+lw_r24_vm:	R3_TO_LWREG_VM		(24);
+lw_r25_vm:	R3_TO_LWREG_VM		(25);
+lw_r26_vm:	R3_TO_LWREG_VM		(26);
+lw_r27_vm:	R3_TO_LWREG_VM		(27);
+lw_r28_vm:	R3_TO_LWREG_VM		(28);
+lw_r29_vm:	R3_TO_LWREG_VM		(29);
+lw_r30_vm:	R3_TO_LWREG_VM		(30);
 lw_r31_vm:	R3_TO_LWREG_VM_V	(31);
 
 sw_table_vm:
@@ -1147,23 +1126,23 @@ sw_r10_vm:	SWREG_TO_R3_VM_V	(10);
 sw_r11_vm:	SWREG_TO_R3_VM_V	(11);
 sw_r12_vm:	SWREG_TO_R3_VM_V	(12);
 sw_r13_vm:	SWREG_TO_R3_VM_V	(13);
-sw_r14_vm:	SWREG_TO_R3_VM_V	(14);
+sw_r14_vm:	SWREG_TO_R3_VM		(14);
 sw_r15_vm:	SWREG_TO_R3_VM_V	(15);
-sw_r16_vm:	SWREG_TO_R3_VM_V	(16);
+sw_r16_vm:	SWREG_TO_R3_VM		(16);
 sw_r17_vm:	SWREG_TO_R3_VM_V	(17);
 sw_r18_vm:	SWREG_TO_R3_VM_V	(18);
-sw_r19_vm:	SWREG_TO_R3_VM_V	(19);
-sw_r20_vm:	SWREG_TO_R3_VM_V	(20);
-sw_r21_vm:	SWREG_TO_R3_VM_V	(21);
-sw_r22_vm:	SWREG_TO_R3_VM_V	(22);
-sw_r23_vm:	SWREG_TO_R3_VM_V	(23);
-sw_r24_vm:	SWREG_TO_R3_VM_V	(24);
-sw_r25_vm:	SWREG_TO_R3_VM_V	(25);
-sw_r26_vm:	SWREG_TO_R3_VM_V	(26);
-sw_r27_vm:	SWREG_TO_R3_VM_V	(27);
-sw_r28_vm:	SWREG_TO_R3_VM_V	(28);
-sw_r29_vm:	SWREG_TO_R3_VM_V	(29);
-sw_r30_vm:	SWREG_TO_R3_VM_V	(30);
+sw_r19_vm:	SWREG_TO_R3_VM		(19);
+sw_r20_vm:	SWREG_TO_R3_VM		(20);
+sw_r21_vm:	SWREG_TO_R3_VM		(21);
+sw_r22_vm:	SWREG_TO_R3_VM		(22);
+sw_r23_vm:	SWREG_TO_R3_VM		(23);
+sw_r24_vm:	SWREG_TO_R3_VM		(24);
+sw_r25_vm:	SWREG_TO_R3_VM		(25);
+sw_r26_vm:	SWREG_TO_R3_VM		(26);
+sw_r27_vm:	SWREG_TO_R3_VM		(27);
+sw_r28_vm:	SWREG_TO_R3_VM		(28);
+sw_r29_vm:	SWREG_TO_R3_VM		(29);
+sw_r30_vm:	SWREG_TO_R3_VM		(30);
 sw_r31_vm:	SWREG_TO_R3_VM_V	(31);
 #endif /* CONFIG_MMU */
 

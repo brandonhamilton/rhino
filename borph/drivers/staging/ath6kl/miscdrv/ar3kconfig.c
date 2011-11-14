@@ -24,6 +24,7 @@
 
 #include "a_config.h"
 #include "athdefs.h"
+#include "a_types.h"
 #include "a_osapi.h"
 #define ATH_MODULE_NAME misc
 #include "a_debug.h"
@@ -46,24 +47,24 @@
 #define HCI_MAX_EVT_RECV_LENGTH             257
 #define EXIT_MIN_BOOT_COMMAND_STATUS_OFFSET  5
 
-int AthPSInitialize(struct ar3k_config_info *hdev);
+A_STATUS AthPSInitialize(AR3K_CONFIG_INFO *hdev);
 
-static int SendHCICommand(struct ar3k_config_info *pConfig,
-                               u8 *pBuffer,
+static A_STATUS SendHCICommand(AR3K_CONFIG_INFO *pConfig,
+                               A_UINT8          *pBuffer,
                                int              Length)
 {
-    struct htc_packet  *pPacket = NULL;
-    int    status = 0;
+    HTC_PACKET  *pPacket = NULL;
+    A_STATUS    status = A_OK;
        
     do {   
         
-        pPacket = (struct htc_packet *)A_MALLOC(sizeof(struct htc_packet));     
+        pPacket = (HTC_PACKET *)A_MALLOC(sizeof(HTC_PACKET));     
         if (NULL == pPacket) {
             status = A_NO_MEMORY;
             break;    
         }       
         
-        A_MEMZERO(pPacket,sizeof(struct htc_packet));      
+        A_MEMZERO(pPacket,sizeof(HTC_PACKET));      
         SET_HTC_PACKET_INFO_TX(pPacket,
                                NULL,
                                pBuffer, 
@@ -72,67 +73,67 @@ static int SendHCICommand(struct ar3k_config_info *pConfig,
                                AR6K_CONTROL_PKT_TAG);
         
             /* issue synchronously */                                      
-        status = HCI_TransportSendPkt(pConfig->pHCIDev,pPacket,true);
+        status = HCI_TransportSendPkt(pConfig->pHCIDev,pPacket,TRUE);   
         
-    } while (false);
+    } while (FALSE);
    
     if (pPacket != NULL) {
-        kfree(pPacket);
+        A_FREE(pPacket);
     }
         
     return status;
 }
 
-static int RecvHCIEvent(struct ar3k_config_info *pConfig,
-                             u8 *pBuffer,
+static A_STATUS RecvHCIEvent(AR3K_CONFIG_INFO *pConfig,
+                             A_UINT8          *pBuffer,
                              int              *pLength)
 {
-    int    status = 0;
-    struct htc_packet  *pRecvPacket = NULL;
+    A_STATUS    status = A_OK; 
+    HTC_PACKET  *pRecvPacket = NULL;
     
     do {
                  
-        pRecvPacket = (struct htc_packet *)A_MALLOC(sizeof(struct htc_packet));
+        pRecvPacket = (HTC_PACKET *)A_MALLOC(sizeof(HTC_PACKET));
         if (NULL == pRecvPacket) {
             status = A_NO_MEMORY;
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Failed to alloc HTC struct \n"));
             break;    
         }     
         
-        A_MEMZERO(pRecvPacket,sizeof(struct htc_packet)); 
+        A_MEMZERO(pRecvPacket,sizeof(HTC_PACKET)); 
          
         SET_HTC_PACKET_INFO_RX_REFILL(pRecvPacket,NULL,pBuffer,*pLength,HCI_EVENT_TYPE);
         
         status = HCI_TransportRecvHCIEventSync(pConfig->pHCIDev,
                                                pRecvPacket,
                                                HCI_EVENT_RESP_TIMEOUTMS);
-        if (status) {
+        if (A_FAILED(status)) {
             break;    
         }
 
         *pLength = pRecvPacket->ActualLength;
         
-    } while (false);
+    } while (FALSE);
        
     if (pRecvPacket != NULL) {
-        kfree(pRecvPacket);    
+        A_FREE(pRecvPacket);    
     }
     
     return status;
 } 
     
-int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
-                                           u8 *pHCICommand,
+A_STATUS SendHCICommandWaitCommandComplete(AR3K_CONFIG_INFO *pConfig,
+                                           A_UINT8          *pHCICommand,
                                            int              CmdLength,
-                                           u8 **ppEventBuffer,
-                                           u8 **ppBufferToFree)
+                                           A_UINT8          **ppEventBuffer,
+                                           A_UINT8          **ppBufferToFree)
 {
-    int    status = 0;
-    u8 *pBuffer = NULL;
-    u8 *pTemp;
+    A_STATUS    status = A_OK;   
+    A_UINT8     *pBuffer = NULL;
+    A_UINT8     *pTemp;
     int         length;
-    bool      commandComplete = false;
-    u8 opCodeBytes[2];
+    A_BOOL      commandComplete = FALSE;
+    A_UINT8     opCodeBytes[2];
                                
     do {
         
@@ -140,7 +141,7 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
         length += pConfig->pHCIProps->HeadRoom + pConfig->pHCIProps->TailRoom;
         length += pConfig->pHCIProps->IOBlockPad;
                                      
-        pBuffer = (u8 *)A_MALLOC(length);
+        pBuffer = (A_UINT8 *)A_MALLOC(length);        
         if (NULL == pBuffer) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("AR3K Config: Failed to allocate bt buffer \n"));
             status = A_NO_MEMORY;
@@ -152,12 +153,12 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
         opCodeBytes[1] = pHCICommand[HCI_CMD_OPCODE_BYTE_HI_OFFSET];
         
             /* copy HCI command */
-        memcpy(pBuffer + pConfig->pHCIProps->HeadRoom,pHCICommand,CmdLength);         
+        A_MEMCPY(pBuffer + pConfig->pHCIProps->HeadRoom,pHCICommand,CmdLength);         
             /* send command */
         status = SendHCICommand(pConfig,
                                 pBuffer + pConfig->pHCIProps->HeadRoom,
                                 CmdLength);
-        if (status) {
+        if (A_FAILED(status)) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("AR3K Config: Failed to send HCI Command (%d) \n", status));
             AR_DEBUG_PRINTBUF(pHCICommand,CmdLength,"HCI Bridge Failed HCI Command");
             break;    
@@ -166,7 +167,7 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
             /* reuse buffer to capture command complete event */
         A_MEMZERO(pBuffer,length);
         status = RecvHCIEvent(pConfig,pBuffer,&length);        
-        if (status) {
+        if (A_FAILED(status)) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("AR3K Config: HCI event recv failed \n"));
             AR_DEBUG_PRINTBUF(pHCICommand,CmdLength,"HCI Bridge Failed HCI Command");
             break;    
@@ -176,7 +177,7 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
         if (pTemp[0] == HCI_CMD_COMPLETE_EVENT_CODE) {
             if ((pTemp[HCI_EVENT_OPCODE_BYTE_LOW] == opCodeBytes[0]) &&
                 (pTemp[HCI_EVENT_OPCODE_BYTE_HI] == opCodeBytes[1])) {
-                commandComplete = true;
+                commandComplete = TRUE;    
             }
         }
         
@@ -199,36 +200,36 @@ int SendHCICommandWaitCommandComplete(struct ar3k_config_info *pConfig,
             pBuffer = NULL;            
         }
         
-    } while (false);
+    } while (FALSE);
 
     if (pBuffer != NULL) {
-        kfree(pBuffer);    
+        A_FREE(pBuffer);    
     }
     
     return status;    
 }
 
-static int AR3KConfigureHCIBaud(struct ar3k_config_info *pConfig)
+static A_STATUS AR3KConfigureHCIBaud(AR3K_CONFIG_INFO *pConfig)
 {
-    int    status = 0;
-    u8 hciBaudChangeCommand[] =  {0x0c,0xfc,0x2,0,0};
-    u16 baudVal;
-    u8 *pEvent = NULL;
-    u8 *pBufferToFree = NULL;
+    A_STATUS    status = A_OK;
+    A_UINT8     hciBaudChangeCommand[] =  {0x0c,0xfc,0x2,0,0};
+    A_UINT16    baudVal; 
+    A_UINT8     *pEvent = NULL;
+    A_UINT8     *pBufferToFree = NULL;
     
     do {
         
         if (pConfig->Flags & AR3K_CONFIG_FLAG_SET_AR3K_BAUD) {
-            baudVal = (u16)(pConfig->AR3KBaudRate / 100);
-            hciBaudChangeCommand[3] = (u8)baudVal;
-            hciBaudChangeCommand[4] = (u8)(baudVal >> 8);
+            baudVal = (A_UINT16)(pConfig->AR3KBaudRate / 100);
+            hciBaudChangeCommand[3] = (A_UINT8)baudVal;
+            hciBaudChangeCommand[4] = (A_UINT8)(baudVal >> 8);
             
             status = SendHCICommandWaitCommandComplete(pConfig,
                                                        hciBaudChangeCommand,
                                                        sizeof(hciBaudChangeCommand),
                                                        &pEvent,
                                                        &pBufferToFree);          
-            if (status) {
+            if (A_FAILED(status)) {
                 AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("AR3K Config: Baud rate change failed! \n"));  
                 break;    
             }
@@ -254,7 +255,7 @@ static int AR3KConfigureHCIBaud(struct ar3k_config_info *pConfig)
             /* Tell target to change UART baud rate for AR6K */
             status = HCI_TransportSetBaudRate(pConfig->pHCIDev, pConfig->AR3KBaudRate);
 
-            if (status) {
+            if (A_FAILED(status)) {
                 AR_DEBUG_PRINTF(ATH_DEBUG_ERR,
                     ("AR3K Config: failed to set scale and step values: %d \n", status));
                 break;    
@@ -264,22 +265,22 @@ static int AR3KConfigureHCIBaud(struct ar3k_config_info *pConfig)
                     ("AR3K Config: Baud changed to %d for AR6K\n", pConfig->AR3KBaudRate));            
         }
                 
-    } while (false);
+    } while (FALSE);
                         
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
         
     return status;
 }
 
-static int AR3KExitMinBoot(struct ar3k_config_info *pConfig)
+static A_STATUS AR3KExitMinBoot(AR3K_CONFIG_INFO *pConfig)
 {
-    int  status;
-    char exitMinBootCmd[] = {0x25,0xFC,0x0c,0x03,0x00,0x00,0x00,0x00,0x00,0x00,
+    A_STATUS  status;
+    A_CHAR    exitMinBootCmd[] = {0x25,0xFC,0x0c,0x03,0x00,0x00,0x00,0x00,0x00,0x00,
                                   0x00,0x00,0x00,0x00,0x00};
-    u8 *pEvent = NULL;
-    u8 *pBufferToFree = NULL;
+    A_UINT8   *pEvent = NULL;
+    A_UINT8   *pBufferToFree = NULL;
     
     status = SendHCICommandWaitCommandComplete(pConfig,
                                                exitMinBootCmd,
@@ -287,7 +288,7 @@ static int AR3KExitMinBoot(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     
-    if (!status) {
+    if (A_SUCCESS(status)) {
         if (pEvent[EXIT_MIN_BOOT_COMMAND_STATUS_OFFSET] != 0) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,
                 ("AR3K Config: MinBoot exit command event status failed: %d \n", 
@@ -303,18 +304,18 @@ static int AR3KExitMinBoot(struct ar3k_config_info *pConfig)
     }
     
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
     
     return status;                                              
 }
                                  
-static int AR3KConfigureSendHCIReset(struct ar3k_config_info *pConfig)
+static A_STATUS AR3KConfigureSendHCIReset(AR3K_CONFIG_INFO *pConfig)
 {
-    int status = 0;
-    u8 hciResetCommand[] = {0x03,0x0c,0x0};
-    u8 *pEvent = NULL;
-    u8 *pBufferToFree = NULL;
+    A_STATUS status = A_OK;
+    A_UINT8 hciResetCommand[] = {0x03,0x0c,0x0};
+    A_UINT8 *pEvent = NULL;
+    A_UINT8 *pBufferToFree = NULL;
 
     status = SendHCICommandWaitCommandComplete( pConfig,
                                                 hciResetCommand,
@@ -322,22 +323,22 @@ static int AR3KConfigureSendHCIReset(struct ar3k_config_info *pConfig)
                                                 &pEvent,
                                                 &pBufferToFree );
 
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("AR3K Config: HCI reset failed! \n"));
     }
 
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);
+        A_FREE(pBufferToFree);
     }
 
     return status;
 }
 
-static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
+static A_STATUS AR3KEnableTLPM(AR3K_CONFIG_INFO *pConfig)
 {
-    int  status;
+    A_STATUS  status;
     /* AR3K vendor specific command for Host Wakeup Config */
-    char hostWakeupConfig[] = {0x31,0xFC,0x18,
+    A_CHAR    hostWakeupConfig[] = {0x31,0xFC,0x18,
                                     0x02,0x00,0x00,0x00,
                                     0x01,0x00,0x00,0x00,
                                     TLPM_DEFAULT_IDLE_TIMEOUT_LSB,TLPM_DEFAULT_IDLE_TIMEOUT_MSB,0x00,0x00,    //idle timeout in ms
@@ -345,7 +346,7 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                     TLPM_DEFAULT_WAKEUP_TIMEOUT_MS,0x00,0x00,0x00,    //wakeup timeout in ms
                                     0x00,0x00,0x00,0x00};
     /* AR3K vendor specific command for Target Wakeup Config */
-    char targetWakeupConfig[] = {0x31,0xFC,0x18,
+    A_CHAR    targetWakeupConfig[] = {0x31,0xFC,0x18,
                                       0x04,0x00,0x00,0x00,
                                       0x01,0x00,0x00,0x00,
                                       TLPM_DEFAULT_IDLE_TIMEOUT_LSB,TLPM_DEFAULT_IDLE_TIMEOUT_MSB,0x00,0x00,  //idle timeout in ms
@@ -353,20 +354,20 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                       TLPM_DEFAULT_WAKEUP_TIMEOUT_MS,0x00,0x00,0x00,  //wakeup timeout in ms
                                       0x00,0x00,0x00,0x00};
     /* AR3K vendor specific command for Host Wakeup Enable */
-    char hostWakeupEnable[] = {0x31,0xFC,0x4,
+    A_CHAR    hostWakeupEnable[] = {0x31,0xFC,0x4,
                                     0x01,0x00,0x00,0x00};
     /* AR3K vendor specific command for Target Wakeup Enable */
-    char targetWakeupEnable[] = {0x31,0xFC,0x4,
+    A_CHAR    targetWakeupEnable[] = {0x31,0xFC,0x4,
                                       0x06,0x00,0x00,0x00};
     /* AR3K vendor specific command for Sleep Enable */
-    char sleepEnable[] = {0x4,0xFC,0x1,
+    A_CHAR    sleepEnable[] = {0x4,0xFC,0x1,
                                0x1};
-    u8 *pEvent = NULL;
-    u8 *pBufferToFree = NULL;
+    A_UINT8   *pEvent = NULL;
+    A_UINT8   *pBufferToFree = NULL;
     
     if (0 != pConfig->IdleTimeout) {
-        u8 idle_lsb = pConfig->IdleTimeout & 0xFF;
-        u8 idle_msb = (pConfig->IdleTimeout & 0xFF00) >> 8;
+        A_UINT8 idle_lsb = pConfig->IdleTimeout & 0xFF;
+        A_UINT8 idle_msb = (pConfig->IdleTimeout & 0xFF00) >> 8;
         hostWakeupConfig[11] = targetWakeupConfig[11] = idle_lsb;
         hostWakeupConfig[12] = targetWakeupConfig[12] = idle_msb;
     }
@@ -381,9 +382,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("HostWakeup Config Failed! \n"));    
         return status;
     }
@@ -396,9 +397,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Target Wakeup Config Failed! \n"));    
         return status;
     }
@@ -411,9 +412,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("HostWakeup Enable Failed! \n"));    
         return status;
     }
@@ -426,9 +427,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Target Wakeup Enable Failed! \n"));    
         return status;
     }
@@ -441,9 +442,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
                                                &pEvent,
                                                &pBufferToFree);
     if (pBufferToFree != NULL) {
-        kfree(pBufferToFree);    
+        A_FREE(pBufferToFree);    
     }
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Sleep Enable Failed! \n"));    
     }
     
@@ -452,9 +453,9 @@ static int AR3KEnableTLPM(struct ar3k_config_info *pConfig)
     return status;                                              
 }
 
-int AR3KConfigure(struct ar3k_config_info *pConfig)
+A_STATUS AR3KConfigure(AR3K_CONFIG_INFO *pConfig)
 {
-    int        status = 0;
+    A_STATUS        status = A_OK; 
         
     AR_DEBUG_PRINTF(ATH_DEBUG_INFO,("AR3K Config: Configuring AR3K ...\n"));
                                 
@@ -466,21 +467,21 @@ int AR3KConfigure(struct ar3k_config_info *pConfig)
         }
         
             /* disable asynchronous recv while we issue commands and receive events synchronously */
-        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,false);
-        if (status) {
+        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,FALSE);
+        if (A_FAILED(status)) {
             break;    
         }
       
         if (pConfig->Flags & AR3K_CONFIG_FLAG_FORCE_MINBOOT_EXIT) {
             status =  AR3KExitMinBoot(pConfig);   
-            if (status) {
+            if (A_FAILED(status)) {
                 break;    
             }    
         }
         
        
         /* Load patching and PST file if available*/
-        if (0 != AthPSInitialize(pConfig)) {
+        if (A_OK != AthPSInitialize(pConfig)) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Patch Download Failed!\n"));
         }
 
@@ -490,7 +491,7 @@ int AR3KConfigure(struct ar3k_config_info *pConfig)
  	if (pConfig->Flags & 
                 (AR3K_CONFIG_FLAG_SET_AR3K_BAUD | AR3K_CONFIG_FLAG_SET_AR6K_SCALE_STEP)) {
             status = AR3KConfigureHCIBaud(pConfig);      
-            if (status) {
+            if (A_FAILED(status)) {
                 break;    
             }
         }     
@@ -506,13 +507,13 @@ int AR3KConfigure(struct ar3k_config_info *pConfig)
         }
                
            /* re-enable asynchronous recv */
-        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,true);
-        if (status) {
+        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,TRUE);
+        if (A_FAILED(status)) {
             break;    
         }     
     
     
-    } while (false);
+    } while (FALSE);   
     
   
     AR_DEBUG_PRINTF(ATH_DEBUG_INFO,("AR3K Config: Configuration Complete (status = %d) \n",status));
@@ -520,10 +521,10 @@ int AR3KConfigure(struct ar3k_config_info *pConfig)
     return status;
 }
 
-int AR3KConfigureExit(void *config)
+A_STATUS AR3KConfigureExit(void *config)
 {
-    int        status = 0;
-    struct ar3k_config_info *pConfig = (struct ar3k_config_info *)config;
+    A_STATUS        status = A_OK; 
+    AR3K_CONFIG_INFO *pConfig = (AR3K_CONFIG_INFO *)config;
         
     AR_DEBUG_PRINTF(ATH_DEBUG_INFO,("AR3K Config: Cleaning up AR3K ...\n"));
                                 
@@ -535,27 +536,27 @@ int AR3KConfigureExit(void *config)
         }
         
             /* disable asynchronous recv while we issue commands and receive events synchronously */
-        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,false);
-        if (status) {
+        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,FALSE);
+        if (A_FAILED(status)) {
             break;    
         }
       
         if (pConfig->Flags & 
                 (AR3K_CONFIG_FLAG_SET_AR3K_BAUD | AR3K_CONFIG_FLAG_SET_AR6K_SCALE_STEP)) {
             status = AR3KConfigureHCIBaud(pConfig);      
-            if (status) {
+            if (A_FAILED(status)) {
                 break;    
             }
         }
 
            /* re-enable asynchronous recv */
-        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,true);
-        if (status) {
+        status = HCI_TransportEnableDisableAsyncRecv(pConfig->pHCIDev,TRUE);
+        if (A_FAILED(status)) {
             break;    
         }     
     
     
-    } while (false);
+    } while (FALSE);   
     
   
     AR_DEBUG_PRINTF(ATH_DEBUG_INFO,("AR3K Config: Cleanup Complete (status = %d) \n",status));

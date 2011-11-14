@@ -97,7 +97,7 @@ static LIST_HEAD(br2684_devs);
 
 static inline struct br2684_dev *BRPRIV(const struct net_device *net_dev)
 {
-	return netdev_priv(net_dev);
+	return (struct br2684_dev *)netdev_priv(net_dev);
 }
 
 static inline struct net_device *list_entry_brdev(const struct list_head *le)
@@ -242,6 +242,8 @@ static int br2684_xmit_vcc(struct sk_buff *skb, struct net_device *dev,
 		if (brdev->payload == p_bridged) {
 			skb_push(skb, 2);
 			memset(skb->data, 0, 2);
+		} else { /* p_routed */
+			skb_pull(skb, ETH_HLEN);
 		}
 	}
 	skb_debug(skb);
@@ -507,7 +509,7 @@ static int br2684_regvcc(struct atm_vcc *atmvcc, void __user * arg)
 	write_lock_irq(&devs_lock);
 	net_dev = br2684_find_dev(&be.ifspec);
 	if (net_dev == NULL) {
-		pr_err("tried to attach to non-existent device\n");
+		pr_err("tried to attach to non-existant device\n");
 		err = -ENXIO;
 		goto error;
 	}

@@ -753,6 +753,7 @@ struct atl1_adapter {
 	struct pci_dev *pdev;
 
 	struct atl1_sft_stats soft_stats;
+	struct vlan_group *vlgrp;
 	u32 rx_buffer_len;
 	u32 wol;
 	u16 link_speed;

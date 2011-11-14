@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/math64.h>
-#include <linux/kernel.h>
 
 /*
  * fixed point arithmetic scale factor for skew
@@ -58,11 +57,11 @@ int timecompare_offset(struct timecompare *sync,
 	int index;
 	int num_samples = sync->num_samples;
 
-	if (num_samples > ARRAY_SIZE(buffer)) {
+	if (num_samples > sizeof(buffer)/sizeof(buffer[0])) {
 		samples = kmalloc(sizeof(*samples) * num_samples, GFP_ATOMIC);
 		if (!samples) {
 			samples = buffer;
-			num_samples = ARRAY_SIZE(buffer);
+			num_samples = sizeof(buffer)/sizeof(buffer[0]);
 		}
 	} else {
 		samples = buffer;

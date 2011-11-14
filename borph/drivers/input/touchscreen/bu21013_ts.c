@@ -12,7 +12,6 @@
 #include <linux/input.h>
 #include <linux/input/bu21013.h>
 #include <linux/slab.h>
-#include <linux/regulator/consumer.h>
 
 #define PEN_DOWN_INTR	0
 #define MAX_FINGERS	2
@@ -140,7 +139,6 @@
  * @chip: pointer to the touch panel controller
  * @in_dev: pointer to the input device structure
  * @intr_pin: interrupt pin value
- * @regulator: pointer to the Regulator used for touch screen
  *
  * Touch panel device data structure
  */
@@ -151,7 +149,6 @@ struct bu21013_ts_data {
 	const struct bu21013_platform_device *chip;
 	struct input_dev *in_dev;
 	unsigned int intr_pin;
-	struct regulator *regulator;
 };
 
 /**
@@ -368,7 +365,7 @@ static int bu21013_init_chip(struct bu21013_ts_data *data)
 	}
 
 	retval = i2c_smbus_write_byte_data(i2c, BU21013_TH_OFF_REG,
-				BU21013_TH_OFF_4 | BU21013_TH_OFF_3);
+				BU21013_TH_OFF_4 || BU21013_TH_OFF_3);
 	if (retval < 0) {
 		dev_err(&i2c->dev, "BU21013_TH_OFF reg write failed\n");
 		return retval;
@@ -459,20 +456,6 @@ static int __devinit bu21013_probe(struct i2c_client *client,
 	bu21013_data->in_dev = in_dev;
 	bu21013_data->chip = pdata;
 	bu21013_data->client = client;
-
-	bu21013_data->regulator = regulator_get(&client->dev, "V-TOUCH");
-	if (IS_ERR(bu21013_data->regulator)) {
-		dev_err(&client->dev, "regulator_get failed\n");
-		error = PTR_ERR(bu21013_data->regulator);
-		goto err_free_mem;
-	}
-
-	error = regulator_enable(bu21013_data->regulator);
-	if (error < 0) {
-		dev_err(&client->dev, "regulator enable failed\n");
-		goto err_put_regulator;
-	}
-
 	bu21013_data->touch_stopped = false;
 	init_waitqueue_head(&bu21013_data->wait);
 
@@ -481,7 +464,7 @@ static int __devinit bu21013_probe(struct i2c_client *client,
 		error = pdata->cs_en(pdata->cs_pin);
 		if (error < 0) {
 			dev_err(&client->dev, "chip init failed\n");
-			goto err_disable_regulator;
+			goto err_free_mem;
 		}
 	}
 
@@ -502,9 +485,9 @@ static int __devinit bu21013_probe(struct i2c_client *client,
 	__set_bit(EV_ABS, in_dev->evbit);
 
 	input_set_abs_params(in_dev, ABS_MT_POSITION_X, 0,
-						pdata->touch_x_max, 0, 0);
+						pdata->x_max_res, 0, 0);
 	input_set_abs_params(in_dev, ABS_MT_POSITION_Y, 0,
-						pdata->touch_y_max, 0, 0);
+						pdata->y_max_res, 0, 0);
 	input_set_drvdata(in_dev, bu21013_data);
 
 	error = request_threaded_irq(pdata->irq, NULL, bu21013_gpio_irq,
@@ -530,10 +513,6 @@ err_free_irq:
 	bu21013_free_irq(bu21013_data);
 err_cs_disable:
 	pdata->cs_dis(pdata->cs_pin);
-err_disable_regulator:
-	regulator_disable(bu21013_data->regulator);
-err_put_regulator:
-	regulator_put(bu21013_data->regulator);
 err_free_mem:
 	input_free_device(in_dev);
 	kfree(bu21013_data);
@@ -556,10 +535,6 @@ static int __devexit bu21013_remove(struct i2c_client *client)
 	bu21013_data->chip->cs_dis(bu21013_data->chip->cs_pin);
 
 	input_unregister_device(bu21013_data->in_dev);
-
-	regulator_disable(bu21013_data->regulator);
-	regulator_put(bu21013_data->regulator);
-
 	kfree(bu21013_data);
 
 	device_init_wakeup(&client->dev, false);
@@ -586,8 +561,6 @@ static int bu21013_suspend(struct device *dev)
 	else
 		disable_irq(bu21013_data->chip->irq);
 
-	regulator_disable(bu21013_data->regulator);
-
 	return 0;
 }
 
@@ -603,12 +576,6 @@ static int bu21013_resume(struct device *dev)
 	struct bu21013_ts_data *bu21013_data = dev_get_drvdata(dev);
 	struct i2c_client *client = bu21013_data->client;
 	int retval;
-
-	retval = regulator_enable(bu21013_data->regulator);
-	if (retval < 0) {
-		dev_err(&client->dev, "bu21013 regulator enable failed\n");
-		return retval;
-	}
 
 	retval = bu21013_init_chip(bu21013_data);
 	if (retval < 0) {

@@ -22,6 +22,10 @@
 #ifndef __BMI_MSG_H__
 #define __BMI_MSG_H__
 
+#ifndef ATH_TARGET
+#include "athstartpack.h"
+#endif
+
 /*
  * Bootloader Messaging Interface (BMI)
  *
@@ -61,7 +65,7 @@
         /*
          * Semantics: Host is done using BMI
          * Request format:
-         *    u32 command (BMI_DONE)
+         *    A_UINT32      command (BMI_DONE)
          * Response format: none
          */
 
@@ -69,21 +73,21 @@
         /*
          * Semantics: Host reads AR6K memory
          * Request format:
-         *    u32 command (BMI_READ_MEMORY)
-         *    u32 address
-         *    u32 length, at most BMI_DATASZ_MAX
+         *    A_UINT32      command (BMI_READ_MEMORY)
+         *    A_UINT32      address
+         *    A_UINT32      length, at most BMI_DATASZ_MAX
          * Response format:
-         *    u8 data[length]
+         *    A_UINT8       data[length]
          */
 
 #define BMI_WRITE_MEMORY                    3
         /*
          * Semantics: Host writes AR6K memory
          * Request format:
-         *    u32 command (BMI_WRITE_MEMORY)
-         *    u32 address
-         *    u32 length, at most BMI_DATASZ_MAX
-         *    u8 data[length]
+         *    A_UINT32       command (BMI_WRITE_MEMORY)
+         *    A_UINT32      address
+         *    A_UINT32      length, at most BMI_DATASZ_MAX
+         *    A_UINT8       data[length]
          * Response format: none
          */
 
@@ -91,19 +95,19 @@
         /*
          * Semantics: Causes AR6K to execute code
          * Request format:
-         *    u32 command (BMI_EXECUTE)
-         *    u32 address
-         *    u32 parameter
+         *    A_UINT32      command (BMI_EXECUTE)
+         *    A_UINT32      address
+         *    A_UINT32      parameter
          * Response format:
-         *    u32 return value
+         *    A_UINT32      return value
          */
 
 #define BMI_SET_APP_START                   5
         /*
          * Semantics: Set Target application starting address
          * Request format:
-         *    u32 command (BMI_SET_APP_START)
-         *    u32 address
+         *    A_UINT32      command (BMI_SET_APP_START)
+         *    A_UINT32      address
          * Response format: none
          */
 
@@ -111,19 +115,19 @@
         /*
          * Semantics: Read a 32-bit Target SOC register.
          * Request format:
-         *    u32 command (BMI_READ_REGISTER)
-         *    u32 address
+         *    A_UINT32      command (BMI_READ_REGISTER)
+         *    A_UINT32      address
          * Response format: 
-         *    u32 value
+         *    A_UINT32      value
          */
 
 #define BMI_WRITE_SOC_REGISTER              7
         /*
          * Semantics: Write a 32-bit Target SOC register.
          * Request format:
-         *    u32 command (BMI_WRITE_REGISTER)
-         *    u32 address
-         *    u32 value
+         *    A_UINT32      command (BMI_WRITE_REGISTER)
+         *    A_UINT32      address
+         *    A_UINT32      value
          *
          * Response format: none
          */
@@ -133,18 +137,18 @@
         /*
          * Semantics: Fetch the 4-byte Target information
          * Request format:
-         *    u32 command (BMI_GET_TARGET_ID/INFO)
+         *    A_UINT32      command (BMI_GET_TARGET_ID/INFO)
          * Response format1 (old firmware):
-         *    u32 TargetVersionID
+         *    A_UINT32      TargetVersionID
          * Response format2 (newer firmware):
-         *    u32 TARGET_VERSION_SENTINAL
+         *    A_UINT32      TARGET_VERSION_SENTINAL
          *    struct bmi_target_info;
          */
 
 PREPACK struct bmi_target_info {
-    u32 target_info_byte_count; /* size of this structure */
-    u32 target_ver;             /* Target Version ID */
-    u32 target_type;            /* Target type */
+    A_UINT32 target_info_byte_count; /* size of this structure */
+    A_UINT32 target_ver;             /* Target Version ID */
+    A_UINT32 target_type;            /* Target type */
 } POSTPACK;
 #define TARGET_VERSION_SENTINAL 0xffffffff
 #define TARGET_TYPE_AR6001 1
@@ -156,14 +160,14 @@ PREPACK struct bmi_target_info {
         /*
          * Semantics: Install a ROM Patch.
          * Request format:
-         *    u32 command (BMI_ROMPATCH_INSTALL)
-         *    u32 Target ROM Address
-         *    u32 Target RAM Address or Value (depending on Target Type)
-         *    u32 Size, in bytes
-         *    u32 Activate? 1-->activate;
+         *    A_UINT32      command (BMI_ROMPATCH_INSTALL)
+         *    A_UINT32      Target ROM Address
+         *    A_UINT32      Target RAM Address or Value (depending on Target Type)
+         *    A_UINT32      Size, in bytes
+         *    A_UINT32      Activate? 1-->activate;
          *                            0-->install but do not activate
          * Response format:
-         *    u32 PatchID
+         *    A_UINT32      PatchID
          */
 
 #define BMI_ROMPATCH_UNINSTALL             10
@@ -171,8 +175,8 @@ PREPACK struct bmi_target_info {
          * Semantics: Uninstall a previously-installed ROM Patch,
          * automatically deactivating, if necessary.
          * Request format:
-         *    u32 command (BMI_ROMPATCH_UNINSTALL)
-         *    u32 PatchID
+         *    A_UINT32      command (BMI_ROMPATCH_UNINSTALL)
+         *    A_UINT32      PatchID
          *
          * Response format: none
          */
@@ -181,9 +185,9 @@ PREPACK struct bmi_target_info {
         /*
          * Semantics: Activate a list of previously-installed ROM Patches.
          * Request format:
-         *    u32 command (BMI_ROMPATCH_ACTIVATE)
-         *    u32 rompatch_count
-         *    u32 PatchID[rompatch_count]
+         *    A_UINT32      command (BMI_ROMPATCH_ACTIVATE)
+         *    A_UINT32      rompatch_count
+         *    A_UINT32      PatchID[rompatch_count]
          *
          * Response format: none
          */
@@ -192,9 +196,9 @@ PREPACK struct bmi_target_info {
         /*
          * Semantics: Deactivate a list of active ROM Patches.
          * Request format:
-         *    u32 command (BMI_ROMPATCH_DEACTIVATE)
-         *    u32 rompatch_count
-         *    u32 PatchID[rompatch_count]
+         *    A_UINT32      command (BMI_ROMPATCH_DEACTIVATE)
+         *    A_UINT32      rompatch_count
+         *    A_UINT32      PatchID[rompatch_count]
          *
          * Response format: none
          */
@@ -209,8 +213,8 @@ PREPACK struct bmi_target_info {
          * output from the compressed input stream.  This BMI
          * command should be followed by a series of 1 or more
          * BMI_LZ_DATA commands.
-         *    u32 command (BMI_LZ_STREAM_START)
-         *    u32 address
+         *    A_UINT32      command (BMI_LZ_STREAM_START)
+         *    A_UINT32      address
          * Note: Not supported on all versions of ROM firmware.
          */
 
@@ -222,12 +226,16 @@ PREPACK struct bmi_target_info {
          * of BMI_LZ_DATA commands are considered part of a single
          * input stream until another BMI_LZ_STREAM_START is issued.
          * Request format:
-         *    u32 command (BMI_LZ_DATA)
-         *    u32 length (of compressed data),
+         *    A_UINT32      command (BMI_LZ_DATA)
+         *    A_UINT32      length (of compressed data),
          *                  at most BMI_DATASZ_MAX
-         *    u8 CompressedData[length]
+         *    A_UINT8       CompressedData[length]
          * Response format: none
          * Note: Not supported on all versions of ROM firmware.
          */
+
+#ifndef ATH_TARGET
+#include "athendpack.h"
+#endif
 
 #endif /* __BMI_MSG_H__ */

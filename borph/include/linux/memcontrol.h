@@ -20,17 +20,10 @@
 #ifndef _LINUX_MEMCONTROL_H
 #define _LINUX_MEMCONTROL_H
 #include <linux/cgroup.h>
-#include <linux/vm_event_item.h>
-
 struct mem_cgroup;
 struct page_cgroup;
 struct page;
 struct mm_struct;
-
-/* Stats that can be updated by kernel. */
-enum mem_cgroup_page_stat_item {
-	MEMCG_NR_FILE_MAPPED, /* # of pages charged as file rss */
-};
 
 extern unsigned long mem_cgroup_isolate_pages(unsigned long nr_to_scan,
 					struct list_head *dst,
@@ -38,16 +31,6 @@ extern unsigned long mem_cgroup_isolate_pages(unsigned long nr_to_scan,
 					int mode, struct zone *z,
 					struct mem_cgroup *mem_cont,
 					int active, int file);
-
-struct memcg_scanrecord {
-	struct mem_cgroup *mem; /* scanend memory cgroup */
-	struct mem_cgroup *root; /* scan target hierarchy root */
-	int context;		/* scanning context (see memcontrol.c) */
-	unsigned long nr_scanned[2]; /* the number of scanned pages */
-	unsigned long nr_rotated[2]; /* the number of rotated pages */
-	unsigned long nr_freed[2]; /* the number of freed pages */
-	unsigned long elapsed; /* nsec of time elapsed while scanning */
-};
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
 /*
@@ -74,7 +57,6 @@ extern int mem_cgroup_cache_charge(struct page *page, struct mm_struct *mm,
 					gfp_t gfp_mask);
 extern void mem_cgroup_add_lru_list(struct page *page, enum lru_list lru);
 extern void mem_cgroup_del_lru_list(struct page *page, enum lru_list lru);
-extern void mem_cgroup_rotate_reclaimable_page(struct page *page);
 extern void mem_cgroup_rotate_lru_list(struct page *page, enum lru_list lru);
 extern void mem_cgroup_del_lru(struct page *page);
 extern void mem_cgroup_move_lists(struct page *page,
@@ -86,13 +68,14 @@ extern void mem_cgroup_uncharge_end(void);
 
 extern void mem_cgroup_uncharge_page(struct page *page);
 extern void mem_cgroup_uncharge_cache_page(struct page *page);
+extern int mem_cgroup_shmem_charge_fallback(struct page *page,
+			struct mm_struct *mm, gfp_t gfp_mask);
 
 extern void mem_cgroup_out_of_memory(struct mem_cgroup *mem, gfp_t gfp_mask);
 int task_in_mem_cgroup(struct task_struct *task, const struct mem_cgroup *mem);
 
 extern struct mem_cgroup *try_get_mem_cgroup_from_page(struct page *page);
 extern struct mem_cgroup *mem_cgroup_from_task(struct task_struct *p);
-extern struct mem_cgroup *try_get_mem_cgroup_from_mm(struct mm_struct *mm);
 
 static inline
 int mm_match_cgroup(const struct mm_struct *mm, const struct mem_cgroup *cgroup)
@@ -108,33 +91,24 @@ extern struct cgroup_subsys_state *mem_cgroup_css(struct mem_cgroup *mem);
 
 extern int
 mem_cgroup_prepare_migration(struct page *page,
-	struct page *newpage, struct mem_cgroup **ptr, gfp_t gfp_mask);
+	struct page *newpage, struct mem_cgroup **ptr);
 extern void mem_cgroup_end_migration(struct mem_cgroup *mem,
-	struct page *oldpage, struct page *newpage, bool migration_ok);
+	struct page *oldpage, struct page *newpage);
 
 /*
  * For memory reclaim.
  */
 int mem_cgroup_inactive_anon_is_low(struct mem_cgroup *memcg);
 int mem_cgroup_inactive_file_is_low(struct mem_cgroup *memcg);
-int mem_cgroup_select_victim_node(struct mem_cgroup *memcg);
-unsigned long mem_cgroup_zone_nr_lru_pages(struct mem_cgroup *memcg,
-					int nid, int zid, unsigned int lrumask);
+unsigned long mem_cgroup_zone_nr_pages(struct mem_cgroup *memcg,
+				       struct zone *zone,
+				       enum lru_list lru);
 struct zone_reclaim_stat *mem_cgroup_get_reclaim_stat(struct mem_cgroup *memcg,
 						      struct zone *zone);
 struct zone_reclaim_stat*
 mem_cgroup_get_reclaim_stat_from_page(struct page *page);
 extern void mem_cgroup_print_oom_info(struct mem_cgroup *memcg,
 					struct task_struct *p);
-
-extern unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *mem,
-						  gfp_t gfp_mask, bool noswap,
-						  struct memcg_scanrecord *rec);
-extern unsigned long mem_cgroup_shrink_node_zone(struct mem_cgroup *mem,
-						gfp_t gfp_mask, bool noswap,
-						struct zone *zone,
-						struct memcg_scanrecord *rec,
-						unsigned long *nr_scanned);
 
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR_SWAP
 extern int do_swap_account;
@@ -147,36 +121,11 @@ static inline bool mem_cgroup_disabled(void)
 	return false;
 }
 
-void mem_cgroup_update_page_stat(struct page *page,
-				 enum mem_cgroup_page_stat_item idx,
-				 int val);
-
-static inline void mem_cgroup_inc_page_stat(struct page *page,
-					    enum mem_cgroup_page_stat_item idx)
-{
-	mem_cgroup_update_page_stat(page, idx, 1);
-}
-
-static inline void mem_cgroup_dec_page_stat(struct page *page,
-					    enum mem_cgroup_page_stat_item idx)
-{
-	mem_cgroup_update_page_stat(page, idx, -1);
-}
-
+void mem_cgroup_update_file_mapped(struct page *page, int val);
 unsigned long mem_cgroup_soft_limit_reclaim(struct zone *zone, int order,
-						gfp_t gfp_mask,
-						unsigned long *total_scanned);
+						gfp_t gfp_mask);
 u64 mem_cgroup_get_limit(struct mem_cgroup *mem);
 
-void mem_cgroup_count_vm_event(struct mm_struct *mm, enum vm_event_item idx);
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-void mem_cgroup_split_huge_fixup(struct page *head, struct page *tail);
-#endif
-
-#ifdef CONFIG_DEBUG_VM
-bool mem_cgroup_bad_page_check(struct page *page);
-void mem_cgroup_print_bad_page(struct page *page);
-#endif
 #else /* CONFIG_CGROUP_MEM_RES_CTLR */
 struct mem_cgroup;
 
@@ -223,16 +172,17 @@ static inline void mem_cgroup_uncharge_cache_page(struct page *page)
 {
 }
 
+static inline int mem_cgroup_shmem_charge_fallback(struct page *page,
+			struct mm_struct *mm, gfp_t gfp_mask)
+{
+	return 0;
+}
+
 static inline void mem_cgroup_add_lru_list(struct page *page, int lru)
 {
 }
 
 static inline void mem_cgroup_del_lru_list(struct page *page, int lru)
-{
-	return ;
-}
-
-static inline void mem_cgroup_rotate_reclaimable_page(struct page *page)
 {
 	return ;
 }
@@ -257,11 +207,6 @@ static inline struct mem_cgroup *try_get_mem_cgroup_from_page(struct page *page)
 	return NULL;
 }
 
-static inline struct mem_cgroup *try_get_mem_cgroup_from_mm(struct mm_struct *mm)
-{
-	return NULL;
-}
-
 static inline int mm_match_cgroup(struct mm_struct *mm, struct mem_cgroup *mem)
 {
 	return 1;
@@ -280,13 +225,14 @@ static inline struct cgroup_subsys_state *mem_cgroup_css(struct mem_cgroup *mem)
 
 static inline int
 mem_cgroup_prepare_migration(struct page *page, struct page *newpage,
-	struct mem_cgroup **ptr, gfp_t gfp_mask)
+	struct mem_cgroup **ptr)
 {
 	return 0;
 }
 
 static inline void mem_cgroup_end_migration(struct mem_cgroup *mem,
-		struct page *oldpage, struct page *newpage, bool migration_ok)
+					struct page *oldpage,
+					struct page *newpage)
 {
 }
 
@@ -323,8 +269,8 @@ mem_cgroup_inactive_file_is_low(struct mem_cgroup *memcg)
 }
 
 static inline unsigned long
-mem_cgroup_zone_nr_lru_pages(struct mem_cgroup *memcg, int nid, int zid,
-				unsigned int lru_mask)
+mem_cgroup_zone_nr_pages(struct mem_cgroup *memcg, struct zone *zone,
+			 enum lru_list lru)
 {
 	return 0;
 }
@@ -347,20 +293,14 @@ mem_cgroup_print_oom_info(struct mem_cgroup *memcg, struct task_struct *p)
 {
 }
 
-static inline void mem_cgroup_inc_page_stat(struct page *page,
-					    enum mem_cgroup_page_stat_item idx)
-{
-}
-
-static inline void mem_cgroup_dec_page_stat(struct page *page,
-					    enum mem_cgroup_page_stat_item idx)
+static inline void mem_cgroup_update_file_mapped(struct page *page,
+							int val)
 {
 }
 
 static inline
 unsigned long mem_cgroup_soft_limit_reclaim(struct zone *zone, int order,
-					    gfp_t gfp_mask,
-					    unsigned long *total_scanned)
+					    gfp_t gfp_mask)
 {
 	return 0;
 }
@@ -371,29 +311,7 @@ u64 mem_cgroup_get_limit(struct mem_cgroup *mem)
 	return 0;
 }
 
-static inline void mem_cgroup_split_huge_fixup(struct page *head,
-						struct page *tail)
-{
-}
-
-static inline
-void mem_cgroup_count_vm_event(struct mm_struct *mm, enum vm_event_item idx)
-{
-}
 #endif /* CONFIG_CGROUP_MEM_CONT */
-
-#if !defined(CONFIG_CGROUP_MEM_RES_CTLR) || !defined(CONFIG_DEBUG_VM)
-static inline bool
-mem_cgroup_bad_page_check(struct page *page)
-{
-	return false;
-}
-
-static inline void
-mem_cgroup_print_bad_page(struct page *page)
-{
-}
-#endif
 
 #endif /* _LINUX_MEMCONTROL_H */
 

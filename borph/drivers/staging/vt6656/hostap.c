@@ -858,7 +858,8 @@ int vt6656_hostap_ioctl(PSDevice pDevice, struct iw_point *p)
 	}
 
  out:
-	kfree(param);
+	if (param != NULL)
+		kfree(param);
 
 	return ret;
 }

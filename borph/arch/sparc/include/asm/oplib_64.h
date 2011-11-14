@@ -18,8 +18,8 @@ extern char prom_version[];
  */
 extern phandle prom_root_node;
 
-/* PROM stdout */
-extern int prom_stdout;
+/* PROM stdin and stdout */
+extern int prom_stdin, prom_stdout;
 
 /* /chosen node of the prom device tree, this stays constant after
  * initialization is complete.

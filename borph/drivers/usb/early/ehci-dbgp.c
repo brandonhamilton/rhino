@@ -102,9 +102,6 @@ static struct kgdb_io kgdbdbgp_io_ops;
 #define dbgp_kgdb_mode (0)
 #endif
 
-/* Local version of HC_LENGTH macro as ehci struct is not available here */
-#define EARLY_HC_LENGTH(p)	(0x00ff & (p)) /* bits 7 : 0 */
-
 /*
  * USB Packet IDs (PIDs)
  */
@@ -604,7 +601,7 @@ try_again:
 		dbgp_printk("dbgp_bulk_write failed: %d\n", ret);
 		goto err;
 	}
-	dbgp_printk("small write done\n");
+	dbgp_printk("small write doned\n");
 	dbgp_not_safe = 0;
 
 	return 0;
@@ -651,7 +648,7 @@ static int ehci_reset_port(int port)
 		if (!(portsc & PORT_CONNECT))
 			return -ENOTCONN;
 
-		/* bomb out completely if something weird happened */
+		/* bomb out completely if something weird happend */
 		if ((portsc & PORT_CSC))
 			return -EINVAL;
 
@@ -895,7 +892,7 @@ int __init early_dbgp_init(char *s)
 	dbgp_printk("ehci_bar: %p\n", ehci_bar);
 
 	ehci_caps  = ehci_bar;
-	ehci_regs  = ehci_bar + EARLY_HC_LENGTH(readl(&ehci_caps->hc_capbase));
+	ehci_regs  = ehci_bar + HC_LENGTH(readl(&ehci_caps->hc_capbase));
 	ehci_debug = ehci_bar + offset;
 	ehci_dev.bus = bus;
 	ehci_dev.slot = slot;

@@ -162,7 +162,7 @@ static void __devexit snd_card_cs46xx_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Sound Fusion CS46xx",
 	.id_table = snd_cs46xx_ids,
 	.probe = snd_card_cs46xx_probe,
 	.remove = __devexit_p(snd_card_cs46xx_remove),

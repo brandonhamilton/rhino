@@ -19,7 +19,6 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -32,7 +31,7 @@
  * Global variables
  */
 
-static struct pps_device *pps;
+static int source;
 static struct timer_list ktimer;
 
 /*
@@ -41,12 +40,19 @@ static struct timer_list ktimer;
 
 static void pps_ktimer_event(unsigned long ptr)
 {
-	struct pps_event_time ts;
+	struct timespec __ts;
+	struct pps_ktime ts;
 
 	/* First of all we get the time stamp... */
-	pps_get_ts(&ts);
+	getnstimeofday(&__ts);
 
-	pps_event(pps, &ts, PPS_CAPTUREASSERT, NULL);
+	pr_info("PPS event at %lu\n", jiffies);
+
+	/* ... and translate it to PPS time data struct */
+	ts.sec = __ts.tv_sec;
+	ts.nsec = __ts.tv_nsec;
+
+	pps_event(source, &ts, PPS_CAPTUREASSERT, NULL);
 
 	mod_timer(&ktimer, jiffies + HZ);
 }
@@ -55,11 +61,12 @@ static void pps_ktimer_event(unsigned long ptr)
  * The echo function
  */
 
-static void pps_ktimer_echo(struct pps_device *pps, int event, void *data)
+static void pps_ktimer_echo(int source, int event, void *data)
 {
-	dev_info(pps->dev, "echo %s %s\n",
+	pr_info("echo %s %s for source %d\n",
 		event & PPS_CAPTUREASSERT ? "assert" : "",
-		event & PPS_CAPTURECLEAR ? "clear" : "");
+		event & PPS_CAPTURECLEAR ? "clear" : "",
+		source);
 }
 
 /*
@@ -82,27 +89,30 @@ static struct pps_source_info pps_ktimer_info = {
 
 static void __exit pps_ktimer_exit(void)
 {
-	dev_info(pps->dev, "ktimer PPS source unregistered\n");
-
 	del_timer_sync(&ktimer);
-	pps_unregister_source(pps);
+	pps_unregister_source(source);
+
+	pr_info("ktimer PPS source unregistered\n");
 }
 
 static int __init pps_ktimer_init(void)
 {
-	pps = pps_register_source(&pps_ktimer_info,
+	int ret;
+
+	ret = pps_register_source(&pps_ktimer_info,
 				PPS_CAPTUREASSERT | PPS_OFFSETASSERT);
-	if (pps == NULL) {
-		pr_err("cannot register PPS source\n");
-		return -ENOMEM;
+	if (ret < 0) {
+		printk(KERN_ERR "cannot register ktimer source\n");
+		return ret;
 	}
+	source = ret;
 
 	setup_timer(&ktimer, pps_ktimer_event, 0);
 	mod_timer(&ktimer, jiffies + HZ);
 
-	dev_info(pps->dev, "ktimer PPS source registered\n");
+	pr_info("ktimer PPS source registered at %d\n", source);
 
-	return 0;
+	return  0;
 }
 
 module_init(pps_ktimer_init);

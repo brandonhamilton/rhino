@@ -65,7 +65,6 @@ static int pxa2xx_pcm_hw_free(struct snd_pcm_substream *substream)
 	if (prtd->dma_ch >= 0) {
 		pxa_free_dma(prtd->dma_ch);
 		prtd->dma_ch = -1;
-		prtd->params = NULL;
 	}
 
 	return 0;
@@ -85,10 +84,9 @@ static struct snd_pcm_ops pxa2xx_pcm_ops = {
 
 static u64 pxa2xx_pcm_dmamask = DMA_BIT_MASK(32);
 
-static int pxa2xx_soc_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int pxa2xx_soc_pcm_new(struct snd_card *card, struct snd_soc_dai *dai,
+	struct snd_pcm *pcm)
 {
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_pcm *pcm = rtd->pcm;
 	int ret = 0;
 
 	if (!card->dev->dma_mask)
@@ -96,14 +94,14 @@ static int pxa2xx_soc_pcm_new(struct snd_soc_pcm_runtime *rtd)
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
-	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
+	if (dai->driver->playback.channels_min) {
 		ret = pxa2xx_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret)
 			goto out;
 	}
 
-	if (pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
+	if (dai->driver->capture.channels_min) {
 		ret = pxa2xx_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_CAPTURE);
 		if (ret)

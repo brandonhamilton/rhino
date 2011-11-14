@@ -485,18 +485,17 @@ static int __setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 asmlinkage int
 sys_sigsuspend(int history0, int history1, old_sigset_t mask)
 {
-	sigset_t blocked;
-
-	current->saved_sigmask = current->blocked;
-
 	mask &= _BLOCKABLE;
-	siginitset(&blocked, mask);
-	set_current_blocked(&blocked);
+	spin_lock_irq(&current->sighand->siglock);
+	current->saved_sigmask = current->blocked;
+	siginitset(&current->blocked, mask);
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	current->state = TASK_INTERRUPTIBLE;
 	schedule();
-
 	set_restore_sigmask();
+
 	return -ERESTARTNOHAND;
 }
 
@@ -573,7 +572,10 @@ unsigned long sys_sigreturn(struct pt_regs *regs)
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	if (restore_sigcontext(regs, &frame->sc, &ax))
 		goto badframe;
@@ -599,7 +601,10 @@ long sys_rt_sigreturn(struct pt_regs *regs)
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &ax))
 		goto badframe;
@@ -651,14 +656,10 @@ int ia32_setup_frame(int sig, struct k_sigaction *ka,
 
 static int
 setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
-		struct pt_regs *regs)
+	       sigset_t *set, struct pt_regs *regs)
 {
 	int usig = signr_convert(sig);
-	sigset_t *set = &current->blocked;
 	int ret;
-
-	if (current_thread_info()->status & TS_RESTORE_SIGMASK)
-		set = &current->saved_sigmask;
 
 	/* Set up the stack frame */
 	if (is_ia32) {
@@ -674,15 +675,13 @@ setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 		return -EFAULT;
 	}
 
-	current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
 	return ret;
 }
 
 static int
 handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
-		struct pt_regs *regs)
+	      sigset_t *oldset, struct pt_regs *regs)
 {
-	sigset_t blocked;
 	int ret;
 
 	/* Are we from a system call? */
@@ -715,10 +714,19 @@ handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
 	    likely(test_and_clear_thread_flag(TIF_FORCED_TF)))
 		regs->flags &= ~X86_EFLAGS_TF;
 
-	ret = setup_rt_frame(sig, ka, info, regs);
+	ret = setup_rt_frame(sig, ka, info, oldset, regs);
 
 	if (ret)
 		return ret;
+
+#ifdef CONFIG_X86_64
+	/*
+	 * This has nothing to do with segment registers,
+	 * despite the name.  This magic affects uaccess.h
+	 * macros' behavior.  Reset it to the normal setting.
+	 */
+	set_fs(USER_DS);
+#endif
 
 	/*
 	 * Clear the direction flag as per the ABI for function entry.
@@ -733,10 +741,12 @@ handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
 	 */
 	regs->flags &= ~X86_EFLAGS_TF;
 
-	sigorsets(&blocked, &current->blocked, &ka->sa.sa_mask);
+	spin_lock_irq(&current->sighand->siglock);
+	sigorsets(&current->blocked, &current->blocked, &ka->sa.sa_mask);
 	if (!(ka->sa.sa_flags & SA_NODEFER))
-		sigaddset(&blocked, sig);
-	set_current_blocked(&blocked);
+		sigaddset(&current->blocked, sig);
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	tracehook_signal_handler(sig, info, ka, regs,
 				 test_thread_flag(TIF_SINGLESTEP));
@@ -761,6 +771,7 @@ static void do_signal(struct pt_regs *regs)
 	struct k_sigaction ka;
 	siginfo_t info;
 	int signr;
+	sigset_t *oldset;
 
 	/*
 	 * We want the common case to go fast, which is why we may in certain
@@ -772,10 +783,23 @@ static void do_signal(struct pt_regs *regs)
 	if (!user_mode(regs))
 		return;
 
+	if (current_thread_info()->status & TS_RESTORE_SIGMASK)
+		oldset = &current->saved_sigmask;
+	else
+		oldset = &current->blocked;
+
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
 	if (signr > 0) {
 		/* Whee! Actually deliver the signal.  */
-		handle_signal(signr, &info, &ka, regs);
+		if (handle_signal(signr, &info, &ka, oldset, regs) == 0) {
+			/*
+			 * A signal was successfully delivered; the saved
+			 * sigmask will have been stored in the signal frame,
+			 * and will be restored by sigreturn, so we can simply
+			 * clear the TS_RESTORE_SIGMASK flag.
+			 */
+			current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
+		}
 		return;
 	}
 
@@ -803,7 +827,7 @@ static void do_signal(struct pt_regs *regs)
 	 */
 	if (current_thread_info()->status & TS_RESTORE_SIGMASK) {
 		current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
-		set_current_blocked(&current->saved_sigmask);
+		sigprocmask(SIG_SETMASK, &current->saved_sigmask, NULL);
 	}
 }
 

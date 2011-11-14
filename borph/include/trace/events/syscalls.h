@@ -40,8 +40,6 @@ TRACE_EVENT_FN(sys_enter,
 	syscall_regfunc, syscall_unregfunc
 );
 
-TRACE_EVENT_FLAGS(sys_enter, TRACE_EVENT_FL_CAP_ANY)
-
 TRACE_EVENT_FN(sys_exit,
 
 	TP_PROTO(struct pt_regs *regs, long ret),
@@ -63,8 +61,6 @@ TRACE_EVENT_FN(sys_exit,
 
 	syscall_regfunc, syscall_unregfunc
 );
-
-TRACE_EVENT_FLAGS(sys_exit, TRACE_EVENT_FL_CAP_ANY)
 
 #endif /* CONFIG_HAVE_SYSCALL_TRACEPOINTS */
 

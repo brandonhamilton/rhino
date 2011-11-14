@@ -23,6 +23,7 @@
 #include <asm/types.h>
 #include <asm/mach-types.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/mach/arch.h>
 #include <mach/irqs.h>
 #include <mach/hardware.h>
@@ -76,5 +77,4 @@ MACHINE_START(H7202, "Hynix HMS30C7202")
 	.init_irq	= h7202_init_irq,
 	.timer		= &h7202_timer,
 	.init_machine	= init_eval_h7202,
-	.dma_zone_size	= SZ_256M,
 MACHINE_END

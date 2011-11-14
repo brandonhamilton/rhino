@@ -56,10 +56,6 @@ extern ssize_t tpm_show_owned(struct device *, struct device_attribute *attr,
 				char *);
 extern ssize_t tpm_show_temp_deactivated(struct device *,
 					 struct device_attribute *attr, char *);
-extern ssize_t tpm_show_durations(struct device *,
-				  struct device_attribute *attr, char *);
-extern ssize_t tpm_show_timeouts(struct device *,
-				 struct device_attribute *attr, char *);
 
 struct tpm_chip;
 
@@ -71,7 +67,6 @@ struct tpm_vendor_specific {
 	unsigned long base;		/* TPM base address */
 
 	int irq;
-	int probed_irq;
 
 	int region_size;
 	int have_region;
@@ -86,9 +81,7 @@ struct tpm_vendor_specific {
 	struct list_head list;
 	int locality;
 	unsigned long timeout_a, timeout_b, timeout_c, timeout_d; /* jiffies */
-	bool timeout_adjusted;
 	unsigned long duration[3]; /* jiffies */
-	bool duration_adjusted;
 
 	wait_queue_head_t read_queue;
 	wait_queue_head_t int_queue;
@@ -119,11 +112,6 @@ struct tpm_chip {
 };
 
 #define to_tpm_chip(n) container_of(n, struct tpm_chip, vendor)
-
-static inline void tpm_chip_put(struct tpm_chip *chip)
-{
-	module_put(chip->dev->driver->owner);
-}
 
 static inline int tpm_read_index(int base, int index)
 {

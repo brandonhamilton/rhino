@@ -47,12 +47,11 @@ struct iscsi_segment {
 	struct scatterlist	*sg;
 	void			*sg_mapped;
 	unsigned int		sg_offset;
-	bool			atomic_mapped;
 
 	iscsi_segment_done_fn_t	*done;
 };
 
-/* Socket connection receive helper */
+/* Socket connection recieve helper */
 struct iscsi_tcp_recv {
 	struct iscsi_hdr	*hdr;
 	struct iscsi_segment	segment;

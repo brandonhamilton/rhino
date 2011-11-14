@@ -28,23 +28,26 @@ nf_tproxy_destructor(struct sk_buff *skb)
 	skb->destructor = NULL;
 
 	if (sk)
-		sock_put(sk);
+		nf_tproxy_put_sock(sk);
 }
 
 /* consumes sk */
-void
+int
 nf_tproxy_assign_sock(struct sk_buff *skb, struct sock *sk)
 {
-	/* assigning tw sockets complicates things; most
-	 * skb->sk->X checks would have to test sk->sk_state first */
-	if (sk->sk_state == TCP_TIME_WAIT) {
-		inet_twsk_put(inet_twsk(sk));
-		return;
-	}
+	bool transparent = (sk->sk_state == TCP_TIME_WAIT) ?
+				inet_twsk(sk)->tw_transparent :
+				inet_sk(sk)->transparent;
 
-	skb_orphan(skb);
-	skb->sk = sk;
-	skb->destructor = nf_tproxy_destructor;
+	if (transparent) {
+		skb_orphan(skb);
+		skb->sk = sk;
+		skb->destructor = nf_tproxy_destructor;
+		return 1;
+	} else
+		nf_tproxy_put_sock(sk);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(nf_tproxy_assign_sock);
 

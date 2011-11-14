@@ -56,7 +56,7 @@
  * IV. Notes
  * The current error (XDU, RFO) recovery code is untested.
  * So far, RDO takes his RX channel down and the right sequence to enable it
- * again is still a mystery. If RDO happens, plan a reboot. More details
+ * again is still a mistery. If RDO happens, plan a reboot. More details
  * in the code (NB: as this happens, TX still works).
  * Don't mess the cables during operation, especially on DTE ports. I don't
  * suggest it for DCE either but at least one can get some messages instead
@@ -80,8 +80,6 @@
  * - misc crapectomy.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/types.h>
@@ -101,7 +99,6 @@
 #include <asm/irq.h>
 
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/string.h>
 
 #include <linux/if_arp.h>
@@ -128,7 +125,7 @@ static u32 dscc4_pci_config_store[16];
 /* Module parameters */
 
 MODULE_AUTHOR("Maintainer: Francois Romieu <romieu@cogenit.fr>");
-MODULE_DESCRIPTION("Siemens PEB20534 PCI Controller");
+MODULE_DESCRIPTION("Siemens PEB20534 PCI Controler");
 MODULE_LICENSE("GPL");
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug,"Enable/disable extra messages");
@@ -555,7 +552,7 @@ static int dscc4_wait_ack_cec(struct dscc4_dev_priv *dpriv,
 		schedule_timeout_uninterruptible(10);
 		rmb();
 	} while (++i > 0);
-	netdev_err(dev, "%s timeout\n", msg);
+	printk(KERN_ERR "%s: %s timeout\n", dev->name, msg);
 done:
 	return (i >= 0) ? i : -EAGAIN;
 }
@@ -571,18 +568,18 @@ static int dscc4_do_action(struct net_device *dev, char *msg)
 		u32 state = readl(ioaddr);
 
 		if (state & ArAck) {
-			netdev_dbg(dev, "%s ack\n", msg);
+			printk(KERN_DEBUG "%s: %s ack\n", dev->name, msg);
 			writel(ArAck, ioaddr);
 			goto done;
 		} else if (state & Arf) {
-			netdev_err(dev, "%s failed\n", msg);
+			printk(KERN_ERR "%s: %s failed\n", dev->name, msg);
 			writel(Arf, ioaddr);
 			i = -1;
 			goto done;
 	}
 		rmb();
 	} while (++i > 0);
-	netdev_err(dev, "%s timeout\n", msg);
+	printk(KERN_ERR "%s: %s timeout\n", dev->name, msg);
 done:
 	return i;
 }
@@ -638,7 +635,7 @@ static void dscc4_tx_reset(struct dscc4_dev_priv *dpriv, struct net_device *dev)
 
 	writel(MTFi|Rdt, dpriv->base_addr + dpriv->dev_id*0x0c + CH0CFG);
 	if (dscc4_do_action(dev, "Rdt") < 0)
-		netdev_err(dev, "Tx reset failed\n");
+		printk(KERN_ERR "%s: Tx reset failed\n", dev->name);
 }
 #endif
 
@@ -724,20 +721,22 @@ static int __devinit dscc4_init_one(struct pci_dev *pdev,
 
 	rc = pci_request_region(pdev, 0, "registers");
 	if (rc < 0) {
-		pr_err("can't reserve MMIO region (regs)\n");
+	        printk(KERN_ERR "%s: can't reserve MMIO region (regs)\n",
+			DRV_NAME);
 	        goto err_disable_0;
 	}
 	rc = pci_request_region(pdev, 1, "LBI interface");
 	if (rc < 0) {
-		pr_err("can't reserve MMIO region (lbi)\n");
+	        printk(KERN_ERR "%s: can't reserve MMIO region (lbi)\n",
+			DRV_NAME);
 	        goto err_free_mmio_region_1;
 	}
 
 	ioaddr = pci_ioremap_bar(pdev, 0);
 	if (!ioaddr) {
-		pr_err("cannot remap MMIO region %llx @ %llx\n",
-		       (unsigned long long)pci_resource_len(pdev, 0),
-		       (unsigned long long)pci_resource_start(pdev, 0));
+		printk(KERN_ERR "%s: cannot remap MMIO region %llx @ %llx\n",
+			DRV_NAME, (unsigned long long)pci_resource_len(pdev, 0),
+			(unsigned long long)pci_resource_start(pdev, 0));
 		rc = -EIO;
 		goto err_free_mmio_regions_2;
 	}
@@ -757,7 +756,7 @@ static int __devinit dscc4_init_one(struct pci_dev *pdev,
 
 	rc = request_irq(pdev->irq, dscc4_irq, IRQF_SHARED, DRV_NAME, priv->root);
 	if (rc < 0) {
-		pr_warn("IRQ %d busy\n", pdev->irq);
+		printk(KERN_WARNING "%s: IRQ %d busy\n", DRV_NAME, pdev->irq);
 		goto err_release_4;
 	}
 
@@ -904,7 +903,7 @@ static int dscc4_found1(struct pci_dev *pdev, void __iomem *ioaddr)
 
 	root = kcalloc(dev_per_card, sizeof(*root), GFP_KERNEL);
 	if (!root) {
-		pr_err("can't allocate data\n");
+		printk(KERN_ERR "%s: can't allocate data\n", DRV_NAME);
 		goto err_out;
 	}
 
@@ -916,7 +915,7 @@ static int dscc4_found1(struct pci_dev *pdev, void __iomem *ioaddr)
 
 	ppriv = kzalloc(sizeof(*ppriv), GFP_KERNEL);
 	if (!ppriv) {
-		pr_err("can't allocate private data\n");
+		printk(KERN_ERR "%s: can't allocate private data\n", DRV_NAME);
 		goto err_free_dev;
 	}
 
@@ -952,7 +951,7 @@ static int dscc4_found1(struct pci_dev *pdev, void __iomem *ioaddr)
 
 		ret = register_hdlc_device(d);
 		if (ret < 0) {
-			pr_err("unable to register\n");
+			printk(KERN_ERR "%s: unable to register\n", DRV_NAME);
 			dscc4_release_ring(dpriv);
 			goto err_unregister;
 	        }
@@ -1005,7 +1004,7 @@ static int dscc4_loopback_check(struct dscc4_dev_priv *dpriv)
 	if (settings->loopback && (settings->clock_type != CLOCK_INT)) {
 		struct net_device *dev = dscc4_to_dev(dpriv);
 
-		netdev_info(dev, "loopback requires clock\n");
+		printk(KERN_INFO "%s: loopback requires clock\n", dev->name);
 		return -1;
 	}
 	return 0;
@@ -1066,7 +1065,7 @@ static int dscc4_open(struct net_device *dev)
 
 	/*
 	 * Due to various bugs, there is no way to reliably reset a
-	 * specific port (manufacturer's dependent special PCI #RST wiring
+	 * specific port (manufacturer's dependant special PCI #RST wiring
 	 * apart: it affects all ports). Thus the device goes in the best
 	 * silent mode possible at dscc4_close() time and simply claims to
 	 * be up if it's opened again. It still isn't possible to change
@@ -1078,7 +1077,7 @@ static int dscc4_open(struct net_device *dev)
 		scc_patchl(0, PowerUp, dpriv, dev, CCR0);
 		scc_patchl(0, 0x00050000, dpriv, dev, CCR2);
 		scc_writel(EventsMask, dpriv, dev, IMR);
-		netdev_info(dev, "up again\n");
+		printk(KERN_INFO "%s: up again.\n", dev->name);
 		goto done;
 	}
 
@@ -1095,11 +1094,11 @@ static int dscc4_open(struct net_device *dev)
 	 * situations.
 	 */
 	if (scc_readl_star(dpriv, dev) & SccBusy) {
-		netdev_err(dev, "busy - try later\n");
+		printk(KERN_ERR "%s busy. Try later\n", dev->name);
 		ret = -EAGAIN;
 		goto err_out;
 	} else
-		netdev_info(dev, "available - good\n");
+		printk(KERN_INFO "%s: available. Good\n", dev->name);
 
 	scc_writel(EventsMask, dpriv, dev, IMR);
 
@@ -1117,7 +1116,7 @@ static int dscc4_open(struct net_device *dev)
 	 * reset is needed. Suggestions anyone ?
 	 */
 	if ((ret = dscc4_xpr_ack(dpriv)) < 0) {
-		pr_err("XPR timeout\n");
+		printk(KERN_ERR "%s: %s timeout\n", DRV_NAME, "XPR");
 		goto err_disable_scc_events;
 	}
 	
@@ -1231,9 +1230,9 @@ static inline int dscc4_check_clock_ability(int port)
  *   scaling. Of course some rounding may take place.
  * - no high speed mode (40Mb/s). May be trivial to do but I don't have an
  *   appropriate external clocking device for testing.
- * - no time-slot/clock mode 5: shameless laziness.
+ * - no time-slot/clock mode 5: shameless lazyness.
  *
- * The clock signals wiring can be (is ?) manufacturer dependent. Good luck.
+ * The clock signals wiring can be (is ?) manufacturer dependant. Good luck.
  *
  * BIG FAT WARNING: if the device isn't provided enough clocking signal, it
  * won't pass the init sequence. For example, straight back-to-back DTE without
@@ -1342,7 +1341,8 @@ static int dscc4_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			return -EPERM;
 
 		if (dpriv->flags & FakeReset) {
-			netdev_info(dev, "please reset the device before this command\n");
+			printk(KERN_INFO "%s: please reset the device"
+			       " before this command\n", dev->name);
 			return -EPERM;
 		}
 		if (copy_from_user(&dpriv->settings, line, size))
@@ -1358,7 +1358,7 @@ static int dscc4_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	return ret;
 }
 
-static int dscc4_match(const struct thingie *p, int value)
+static int dscc4_match(struct thingie *p, int value)
 {
 	int i;
 
@@ -1403,7 +1403,7 @@ done:
 static int dscc4_encoding_setting(struct dscc4_dev_priv *dpriv,
 				  struct net_device *dev)
 {
-	static const struct thingie encoding[] = {
+	struct thingie encoding[] = {
 		{ ENCODING_NRZ,		0x00000000 },
 		{ ENCODING_NRZI,	0x00200000 },
 		{ ENCODING_FM_MARK,	0x00400000 },
@@ -1442,7 +1442,7 @@ static int dscc4_loopback_setting(struct dscc4_dev_priv *dpriv,
 static int dscc4_crc_setting(struct dscc4_dev_priv *dpriv,
 			     struct net_device *dev)
 {
-	static const struct thingie crc[] = {
+	struct thingie crc[] = {
 		{ PARITY_CRC16_PR0_CCITT,	0x00000010 },
 		{ PARITY_CRC16_PR1_CCITT,	0x00000000 },
 		{ PARITY_CRC32_PR0_CCITT,	0x00000011 },
@@ -1505,7 +1505,8 @@ static irqreturn_t dscc4_irq(int irq, void *token)
 	writel(state, ioaddr + GSTAR);
 
 	if (state & Arf) {
-		netdev_err(dev, "failure (Arf). Harass the maintainer\n");
+		printk(KERN_ERR "%s: failure (Arf). Harass the maintener\n",
+		       dev->name);
 		goto out;
 	}
 	state &= ~ArAck;
@@ -1513,7 +1514,7 @@ static irqreturn_t dscc4_irq(int irq, void *token)
 		if (debug > 0)
 			printk(KERN_DEBUG "%s: CfgIV\n", DRV_NAME);
 		if (priv->iqcfg[priv->cfg_cur++%IRQ_RING_SIZE] & cpu_to_le32(Arf))
-			netdev_err(dev, "CFG failed\n");
+			printk(KERN_ERR "%s: %s failed\n", dev->name, "CFG");
 		if (!(state &= ~Cfg))
 			goto out;
 	}
@@ -1594,8 +1595,8 @@ try:
 				++dpriv->tx_dirty;
 			} else {
 				if (debug > 1)
-					netdev_err(dev, "Tx: NULL skb %d\n",
-						   cur);
+					printk(KERN_ERR "%s Tx: NULL skb %d\n",
+						dev->name, cur);
 			}
 			/*
 			 * If the driver ends sending crap on the wire, it
@@ -1614,7 +1615,7 @@ try:
 		 * Transmit Data Underrun
 		 */
 		if (state & Xdu) {
-			netdev_err(dev, "Tx Data Underrun. Ask maintainer\n");
+			printk(KERN_ERR "%s: XDU. Ask maintainer\n", DRV_NAME);
 			dpriv->flags = NeedIDT;
 			/* Tx reset */
 			writel(MTFi | Rdt,
@@ -1623,13 +1624,13 @@ try:
 			return;
 		}
 		if (state & Cts) {
-			netdev_info(dev, "CTS transition\n");
+			printk(KERN_INFO "%s: CTS transition\n", dev->name);
 			if (!(state &= ~Cts)) /* DEBUG */
 				goto try;
 		}
 		if (state & Xmr) {
 			/* Frame needs to be sent again - FIXME */
-			netdev_err(dev, "Tx ReTx. Ask maintainer\n");
+			printk(KERN_ERR "%s: Xmr. Ask maintainer\n", DRV_NAME);
 			if (!(state &= ~Xmr)) /* DEBUG */
 				goto try;
 		}
@@ -1647,7 +1648,7 @@ try:
 					break;
 			}
 			if (!i)
-				netdev_info(dev, "busy in irq\n");
+				printk(KERN_INFO "%s busy in irq\n", dev->name);
 
 			scc_addr = dpriv->base_addr + 0x0c*dpriv->dev_id;
 			/* Keep this order: IDT before IDR */
@@ -1684,7 +1685,7 @@ try:
 		}
 		if (state & Cd) {
 			if (debug > 0)
-				netdev_info(dev, "CD transition\n");
+				printk(KERN_INFO "%s: CD transition\n", dev->name);
 			if (!(state &= ~Cd)) /* DEBUG */
 				goto try;
 		}
@@ -1693,11 +1694,11 @@ try:
 #ifdef DSCC4_POLLING
 			while (!dscc4_tx_poll(dpriv, dev));
 #endif
-			netdev_info(dev, "Tx Hi\n");
+			printk(KERN_INFO "%s: Tx Hi\n", dev->name);
 			state &= ~Hi;
 		}
 		if (state & Err) {
-			netdev_info(dev, "Tx ERR\n");
+			printk(KERN_INFO "%s: Tx ERR\n", dev->name);
 			dev->stats.tx_errors++;
 			state &= ~Err;
 		}
@@ -1767,7 +1768,7 @@ try:
 			goto try;
 		}
 		if (state & Hi ) { /* HI bit */
-			netdev_info(dev, "Rx Hi\n");
+			printk(KERN_INFO "%s: Rx Hi\n", dev->name);
 			state &= ~Hi;
 			goto try;
 		}
@@ -1798,7 +1799,7 @@ try:
 				goto try;
 		}
 		if (state & Cts) {
-			netdev_info(dev, "CTS transition\n");
+			printk(KERN_INFO "%s: CTS transition\n", dev->name);
 			if (!(state &= ~Cts)) /* DEBUG */
 				goto try;
 		}
@@ -1857,12 +1858,14 @@ try:
 			       sizeof(struct RxFD), scc_addr + CH0BRDA);
 			writel(MTFi|Rdr|Idr, scc_addr + CH0CFG);
 			if (dscc4_do_action(dev, "RDR") < 0) {
-				netdev_err(dev, "RDO recovery failed(RDR)\n");
+				printk(KERN_ERR "%s: RDO recovery failed(%s)\n",
+				       dev->name, "RDR");
 				goto rdo_end;
 			}
 			writel(MTFi|Idr, scc_addr + CH0CFG);
 			if (dscc4_do_action(dev, "IDR") < 0) {
-				netdev_err(dev, "RDO recovery failed(IDR)\n");
+				printk(KERN_ERR "%s: RDO recovery failed(%s)\n",
+				       dev->name, "IDR");
 				goto rdo_end;
 			}
 		rdo_end:
@@ -1871,7 +1874,7 @@ try:
 			goto try;
 		}
 		if (state & Cd) {
-			netdev_info(dev, "CD transition\n");
+			printk(KERN_INFO "%s: CD transition\n", dev->name);
 			if (!(state &= ~Cd)) /* DEBUG */
 				goto try;
 		}

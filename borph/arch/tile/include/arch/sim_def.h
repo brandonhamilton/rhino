@@ -243,9 +243,6 @@
  */
 #define SIM_SYSCALL_VALIDATE_LINES_EVICTED 5
 
-/** Syscall number for sim_query_cpu_speed(). */
-#define SIM_SYSCALL_QUERY_CPU_SPEED 6
-
 
 /*
  * Bit masks which can be shifted by 8, combined with

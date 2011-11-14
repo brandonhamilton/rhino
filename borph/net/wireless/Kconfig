@@ -95,7 +95,7 @@ config CFG80211_DEBUGFS
 	  If unsure, say N.
 
 config CFG80211_INTERNAL_REGDB
-	bool "use statically compiled regulatory rules database" if EXPERT
+	bool "use statically compiled regulatory rules database" if EMBEDDED
 	default n
 	depends on CFG80211
 	---help---

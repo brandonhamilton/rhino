@@ -22,7 +22,6 @@
 #include <linux/can/error.h>
 
 #include <linux/mfd/janz.h>
-#include <asm/io.h>
 
 /* the DPM has 64k of memory, organized into 256x 256 byte pages */
 #define DPM_NUM_PAGES		256
@@ -274,7 +273,7 @@ static inline void ican3_set_page(struct ican3_dev *mod, unsigned int page)
  */
 
 /*
- * Receive a message from the ICAN3 "old-style" firmware interface
+ * Recieve a message from the ICAN3 "old-style" firmware interface
  *
  * LOCKING: must hold mod->lock
  *
@@ -1050,7 +1049,7 @@ static void ican3_handle_inquiry(struct ican3_dev *mod, struct ican3_msg *msg)
 		complete(&mod->termination_comp);
 		break;
 	default:
-		dev_err(mod->dev, "received an unknown inquiry response\n");
+		dev_err(mod->dev, "recieved an unknown inquiry response\n");
 		break;
 	}
 }
@@ -1058,7 +1057,7 @@ static void ican3_handle_inquiry(struct ican3_dev *mod, struct ican3_msg *msg)
 static void ican3_handle_unknown_message(struct ican3_dev *mod,
 					struct ican3_msg *msg)
 {
-	dev_warn(mod->dev, "received unknown message: spec 0x%.2x length %d\n",
+	dev_warn(mod->dev, "recieved unknown message: spec 0x%.2x length %d\n",
 			   msg->spec, le16_to_cpu(msg->len));
 }
 
@@ -1113,7 +1112,12 @@ static bool ican3_txok(struct ican3_dev *mod)
 }
 
 /*
- * Receive one CAN frame from the hardware
+ * Recieve one CAN frame from the hardware
+ *
+ * This works like the core of a NAPI function, but is intended to be called
+ * from workqueue context instead. This driver already needs a workqueue to
+ * process control messages, so we use the workqueue instead of using NAPI.
+ * This was done to simplify locking.
  *
  * CONTEXT: must be called from user context
  */
@@ -1247,6 +1251,7 @@ static irqreturn_t ican3_irq(int irq, void *dev_id)
  * Reset an ICAN module to its power-on state
  *
  * CONTEXT: no network device registered
+ * LOCKING: work function disabled
  */
 static int ican3_reset_module(struct ican3_dev *mod)
 {
@@ -1256,6 +1261,9 @@ static int ican3_reset_module(struct ican3_dev *mod)
 
 	/* disable interrupts so no more work is scheduled */
 	iowrite8(1 << mod->num, &mod->ctrl->int_disable);
+
+	/* flush any pending work */
+	flush_scheduled_work();
 
 	/* the first unallocated page in the DPM is #9 */
 	mod->free_page = DPM_FREE_START;
@@ -1619,7 +1627,7 @@ static ssize_t ican3_sysfs_set_term(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(termination, S_IWUSR | S_IRUGO, ican3_sysfs_show_term,
+static DEVICE_ATTR(termination, S_IWUGO | S_IRUGO, ican3_sysfs_show_term,
 						   ican3_sysfs_set_term);
 
 static struct attribute *ican3_sysfs_attrs[] = {

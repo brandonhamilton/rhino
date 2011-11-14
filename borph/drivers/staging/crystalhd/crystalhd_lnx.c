@@ -393,7 +393,8 @@ static int __devinit chd_dec_init_chdev(struct crystalhd_adp *adp)
 
 	/* Allocate general purpose ioctl pool. */
 	for (i = 0; i < CHD_IODATA_POOL_SZ; i++) {
-		temp = kzalloc(sizeof(struct crystalhd_ioctl_data), GFP_KERNEL);
+		/* FIXME: jarod: why atomic? */
+		temp = kzalloc(sizeof(struct crystalhd_ioctl_data), GFP_ATOMIC);
 		if (!temp) {
 			BCMLOG_ERR("ioctl data pool kzalloc failed\n");
 			rc = -ENOMEM;
@@ -515,7 +516,7 @@ static void __devexit chd_dec_pci_remove(struct pci_dev *pdev)
 
 	BCMLOG_ENTER;
 
-	pinfo = pci_get_drvdata(pdev);
+	pinfo = (struct crystalhd_adp *) pci_get_drvdata(pdev);
 	if (!pinfo) {
 		BCMLOG_ERR("could not get adp\n");
 		return;
@@ -548,7 +549,8 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	       pdev->vendor, pdev->device, pdev->subsystem_vendor,
 	       pdev->subsystem_device);
 
-	pinfo = kzalloc(sizeof(struct crystalhd_adp), GFP_KERNEL);
+	/* FIXME: jarod: why atomic? */
+	pinfo = kzalloc(sizeof(struct crystalhd_adp), GFP_ATOMIC);
 	if (!pinfo) {
 		BCMLOG_ERR("Failed to allocate memory\n");
 		return -ENOMEM;
@@ -559,10 +561,10 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	rc = pci_enable_device(pdev);
 	if (rc) {
 		BCMLOG_ERR("Failed to enable PCI device\n");
-		goto err;
+		return rc;
 	}
 
-	snprintf(pinfo->name, sizeof(pinfo->name), "crystalhd_pci_e:%d:%d:%d",
+	snprintf(pinfo->name, 31, "crystalhd_pci_e:%d:%d:%d",
 		 pdev->bus->number, PCI_SLOT(pdev->devfn),
 		 PCI_FUNC(pdev->devfn));
 
@@ -570,8 +572,7 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	if (rc) {
 		BCMLOG_ERR("Failed to setup memory regions.\n");
 		pci_disable_device(pdev);
-		rc = -ENOMEM;
-		goto err;
+		return -ENOMEM;
 	}
 
 	pinfo->present	= 1;
@@ -586,8 +587,7 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	if (rc) {
 		BCMLOG_ERR("_enable_int err:%d\n", rc);
 		pci_disable_device(pdev);
-		rc = -ENODEV;
-		goto err;
+		return -ENODEV;
 	}
 
 	/* Set dma mask... */
@@ -600,16 +600,14 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	} else {
 		BCMLOG_ERR("Unabled to setup DMA %d\n", rc);
 		pci_disable_device(pdev);
-		rc = -ENODEV;
-		goto err;
+		return -ENODEV;
 	}
 
 	sts = crystalhd_setup_cmd_context(&pinfo->cmds, pinfo);
 	if (sts != BC_STS_SUCCESS) {
 		BCMLOG_ERR("cmd setup :%d\n", sts);
 		pci_disable_device(pdev);
-		rc = -ENODEV;
-		goto err;
+		return -ENODEV;
 	}
 
 	pci_set_master(pdev);
@@ -619,10 +617,6 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	g_adp_info = pinfo;
 
 	return 0;
-
-err:
-	kfree(pinfo);
-	return rc;
 }
 
 #ifdef CONFIG_PM
@@ -632,7 +626,7 @@ int chd_dec_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	struct crystalhd_ioctl_data *temp;
 	enum BC_STATUS sts = BC_STS_SUCCESS;
 
-	adp = pci_get_drvdata(pdev);
+	adp = (struct crystalhd_adp *)pci_get_drvdata(pdev);
 	if (!adp) {
 		BCMLOG_ERR("could not get adp\n");
 		return -ENODEV;
@@ -666,7 +660,7 @@ int chd_dec_pci_resume(struct pci_dev *pdev)
 	enum BC_STATUS sts = BC_STS_SUCCESS;
 	int rc;
 
-	adp = pci_get_drvdata(pdev);
+	adp = (struct crystalhd_adp *)pci_get_drvdata(pdev);
 	if (!adp) {
 		BCMLOG_ERR("could not get adp\n");
 		return -ENODEV;

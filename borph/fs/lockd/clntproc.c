@@ -58,7 +58,7 @@ static void nlm_put_lockowner(struct nlm_lockowner *lockowner)
 		return;
 	list_del(&lockowner->list);
 	spin_unlock(&lockowner->host->h_lock);
-	nlmclnt_release_host(lockowner->host);
+	nlm_release_host(lockowner->host);
 	kfree(lockowner);
 }
 
@@ -207,22 +207,22 @@ struct nlm_rqst *nlm_alloc_call(struct nlm_host *host)
 		printk("nlm_alloc_call: failed, waiting for memory\n");
 		schedule_timeout_interruptible(5*HZ);
 	}
-	nlmclnt_release_host(host);
+	nlm_release_host(host);
 	return NULL;
 }
 
-void nlmclnt_release_call(struct nlm_rqst *call)
+void nlm_release_call(struct nlm_rqst *call)
 {
 	if (!atomic_dec_and_test(&call->a_count))
 		return;
-	nlmclnt_release_host(call->a_host);
+	nlm_release_host(call->a_host);
 	nlmclnt_release_lockargs(call);
 	kfree(call);
 }
 
 static void nlmclnt_rpc_release(void *data)
 {
-	nlmclnt_release_call(data);
+	nlm_release_call(data);
 }
 
 static int nlm_wait_on_grace(wait_queue_head_t *queue)
@@ -302,8 +302,7 @@ nlmclnt_call(struct rpc_cred *cred, struct nlm_rqst *req, u32 proc)
 				/* We appear to be out of the grace period */
 				wake_up_all(&host->h_gracewait);
 			}
-			dprintk("lockd: server returns status %d\n",
-				ntohl(resp->status));
+			dprintk("lockd: server returns status %d\n", resp->status);
 			return 0;	/* Okay, call complete */
 		}
 
@@ -437,7 +436,7 @@ nlmclnt_test(struct nlm_rqst *req, struct file_lock *fl)
 			status = nlm_stat_to_errno(req->a_res.status);
 	}
 out:
-	nlmclnt_release_call(req);
+	nlm_release_call(req);
 	return status;
 }
 
@@ -594,7 +593,7 @@ again:
 out_unblock:
 	nlmclnt_finish_block(block);
 out:
-	nlmclnt_release_call(req);
+	nlm_release_call(req);
 	return status;
 out_unlock:
 	/* Fatal error: ensure that we remove the lock altogether */
@@ -691,12 +690,11 @@ nlmclnt_unlock(struct nlm_rqst *req, struct file_lock *fl)
 		goto out;
 
 	if (resp->status != nlm_lck_denied_nolocks)
-		printk("lockd: unexpected unlock status: %d\n",
-			ntohl(resp->status));
+		printk("lockd: unexpected unlock status: %d\n", resp->status);
 	/* What to do now? I'm out of my depth... */
 	status = -ENOLCK;
 out:
-	nlmclnt_release_call(req);
+	nlm_release_call(req);
 	return status;
 }
 
@@ -710,13 +708,7 @@ static void nlmclnt_unlock_callback(struct rpc_task *task, void *data)
 
 	if (task->tk_status < 0) {
 		dprintk("lockd: unlock failed (err = %d)\n", -task->tk_status);
-		switch (task->tk_status) {
-		case -EACCES:
-		case -EIO:
-			goto die;
-		default:
-			goto retry_rebind;
-		}
+		goto retry_rebind;
 	}
 	if (status == NLM_LCK_DENIED_GRACE_PERIOD) {
 		rpc_delay(task, NLMCLNT_GRACE_WAIT);
@@ -763,7 +755,7 @@ static int nlmclnt_cancel(struct nlm_host *host, int block, struct file_lock *fl
 			NLMPROC_CANCEL, &nlmclnt_cancel_ops);
 	if (status == 0 && req->a_res.status == nlm_lck_denied)
 		status = -ENOLCK;
-	nlmclnt_release_call(req);
+	nlm_release_call(req);
 	return status;
 }
 
@@ -845,7 +837,6 @@ nlm_stat_to_errno(__be32 status)
 		return -ENOLCK;
 #endif
 	}
-	printk(KERN_NOTICE "lockd: unexpected server status %d\n",
-		 ntohl(status));
+	printk(KERN_NOTICE "lockd: unexpected server status %d\n", status);
 	return -ENOLCK;
 }

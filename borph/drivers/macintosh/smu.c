@@ -645,7 +645,8 @@ static void smu_expose_childs(struct work_struct *unused)
 
 static DECLARE_WORK(smu_expose_childs_work, smu_expose_childs);
 
-static int smu_platform_probe(struct platform_device* dev)
+static int smu_platform_probe(struct platform_device* dev,
+			      const struct of_device_id *match)
 {
 	if (!smu)
 		return -ENODEV;
@@ -668,7 +669,7 @@ static const struct of_device_id smu_platform_match[] =
 	{},
 };
 
-static struct platform_driver smu_of_platform_driver =
+static struct of_platform_driver smu_of_platform_driver =
 {
 	.driver = {
 		.name = "smu",
@@ -688,7 +689,7 @@ static int __init smu_init_sysfs(void)
 	 * I'm a bit too far from figuring out how that works with those
 	 * new chipsets, but that will come back and bite us
 	 */
-	platform_driver_register(&smu_of_platform_driver);
+	of_register_platform_driver(&smu_of_platform_driver);
 	return 0;
 }
 

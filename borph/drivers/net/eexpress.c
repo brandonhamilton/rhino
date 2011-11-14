@@ -365,7 +365,7 @@ static int __init do_express_probe(struct net_device *dev)
 			dev->irq = mca_irqmap[(pos1>>4)&0x7];
 
 			/*
-			 * XXX: Transceiver selection is done
+			 * XXX: Transciever selection is done
 			 * differently on the MCA version.
 			 * How to get it to select something
 			 * other than external/AUI is currently
@@ -1103,7 +1103,7 @@ static int __init eexp_hw_probe(struct net_device *dev, unsigned short ioaddr)
 		dev->dev_addr[i] = ((unsigned char *)hw_addr)[5-i];
 
 	{
-		static const char irqmap[] = { 0, 9, 3, 4, 5, 10, 11, 0 };
+		static char irqmap[]={0, 9, 3, 4, 5, 10, 11, 0};
 		unsigned short setupval = eexp_hw_readeeprom(ioaddr,0);
 
 		/* Use the IRQ from EEPROM if none was given */

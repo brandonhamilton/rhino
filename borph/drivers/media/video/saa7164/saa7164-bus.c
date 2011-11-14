@@ -43,8 +43,7 @@ int saa7164_bus_setup(struct saa7164_dev *dev)
 
 	b->m_dwSizeGetRing	= SAA_DEVICE_BUFFERBLOCKSIZE;
 
-	b->m_dwSetWritePos	= ((u32)dev->intfdesc.BARLocation) +
-		(2 * sizeof(u64));
+	b->m_dwSetWritePos	= ((u32)dev->intfdesc.BARLocation) + (2 * sizeof(u64));
 	b->m_dwSetReadPos	= b->m_dwSetWritePos + (1 * sizeof(u32));
 
 	b->m_dwGetWritePos	= b->m_dwSetWritePos + (2 * sizeof(u32));
@@ -106,8 +105,7 @@ void saa7164_bus_verify(struct saa7164_dev *dev)
 	}
 }
 
-void saa7164_bus_dumpmsg(struct saa7164_dev *dev, struct tmComResInfo* m,
-	void *buf)
+void saa7164_bus_dumpmsg(struct saa7164_dev *dev, struct tmComResInfo* m, void *buf)
 {
 	dprintk(DBGLVL_BUS, "Dumping msg structure:\n");
 	dprintk(DBGLVL_BUS, " .id               = %d\n",   m->id);
@@ -131,8 +129,7 @@ void saa7164_bus_dumpmsg(struct saa7164_dev *dev, struct tmComResInfo* m,
  *  SAA_OK     The function executed successfully.
  *  < 0        One or more members are not initialized.
  */
-int saa7164_bus_set(struct saa7164_dev *dev, struct tmComResInfo* msg,
-	void *buf)
+int saa7164_bus_set(struct saa7164_dev *dev, struct tmComResInfo* msg, void *buf)
 {
 	struct tmComResBusInfo *bus = &dev->bus;
 	u32 bytes_to_write, free_write_space, timeout, curr_srp, curr_swp;
@@ -158,7 +155,7 @@ int saa7164_bus_set(struct saa7164_dev *dev, struct tmComResInfo* msg,
 		return SAA_ERR_BAD_PARAMETER;
 	}
 
-	if ((msg->size > 0) && (buf == NULL)) {
+	if ((msg->size > 0) && (buf == 0)) {
 		printk(KERN_ERR "%s() Missing message buffer\n", __func__);
 		return SAA_ERR_BAD_PARAMETER;
 	}
@@ -297,15 +294,14 @@ out:
 /*
  * Receive a command or a response from the bus. The implementation does not
  * know if it is a command or a response it simply dequeues the data,
- * depending on the bus information given in the struct tmComResBusInfo
- * structure.
+ * depending on the bus information given in the struct tmComResBusInfo structure.
  *
  * Return Value:
  *  0          The function executed successfully.
  *  < 0        One or more members are not initialized.
  */
-int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
-	void *buf, int peekonly)
+int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg, void *buf,
+	int peekonly)
 {
 	struct tmComResBusInfo *bus = &dev->bus;
 	u32 bytes_to_read, write_distance, curr_grp, curr_gwp,
@@ -315,7 +311,7 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 
 	saa7164_bus_verify(dev);
 
-	if (msg == NULL)
+	if (msg == 0)
 		return ret;
 
 	if (msg->size > dev->bus.m_wMaxReqSize) {
@@ -324,7 +320,7 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 		return ret;
 	}
 
-	if ((peekonly == 0) && (msg->size > 0) && (buf == NULL)) {
+	if ((peekonly == 0) && (msg->size > 0) && (buf == 0)) {
 		printk(KERN_ERR
 			"%s() Missing msg buf, size should be %d bytes\n",
 			__func__, msg->size);
@@ -392,7 +388,7 @@ int saa7164_bus_get(struct saa7164_dev *dev, struct tmComResInfo* msg,
 
 		printk(KERN_ERR "%s() Unexpected msg miss-match\n", __func__);
 		saa7164_bus_dumpmsg(dev, msg, buf);
-		saa7164_bus_dumpmsg(dev, &msg_tmp, NULL);
+		saa7164_bus_dumpmsg(dev, &msg_tmp, 0);
 		ret = SAA_ERR_INVALID_COMMAND;
 		goto out;
 	}

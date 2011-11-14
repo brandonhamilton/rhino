@@ -94,7 +94,8 @@ static struct hwrng pasemi_rng = {
 	.data_read	= pasemi_rng_data_read,
 };
 
-static int __devinit rng_probe(struct platform_device *ofdev)
+static int __devinit rng_probe(struct platform_device *ofdev,
+			       const struct of_device_id *match)
 {
 	void __iomem *rng_regs;
 	struct device_node *rng_np = ofdev->dev.of_node;
@@ -138,7 +139,7 @@ static struct of_device_id rng_match[] = {
 	{ },
 };
 
-static struct platform_driver rng_driver = {
+static struct of_platform_driver rng_driver = {
 	.driver = {
 		.name = "pasemi-rng",
 		.owner = THIS_MODULE,
@@ -150,13 +151,13 @@ static struct platform_driver rng_driver = {
 
 static int __init rng_init(void)
 {
-	return platform_driver_register(&rng_driver);
+	return of_register_platform_driver(&rng_driver);
 }
 module_init(rng_init);
 
 static void __exit rng_exit(void)
 {
-	platform_driver_unregister(&rng_driver);
+	of_unregister_platform_driver(&rng_driver);
 }
 module_exit(rng_exit);
 

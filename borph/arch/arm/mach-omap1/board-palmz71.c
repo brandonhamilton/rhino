@@ -61,7 +61,7 @@ static void __init
 omap_palmz71_init_irq(void)
 {
 	omap1_init_common_hw();
-	omap1_init_irq();
+	omap_init_irq();
 }
 
 static const unsigned int palmz71_keymap[] = {
@@ -256,12 +256,12 @@ palmz71_powercable(int irq, void *dev_id)
 {
 	if (gpio_get_value(PALMZ71_USBDETECT_GPIO)) {
 		printk(KERN_INFO "PM: Power cable connected\n");
-		irq_set_irq_type(gpio_to_irq(PALMZ71_USBDETECT_GPIO),
-				 IRQ_TYPE_EDGE_FALLING);
+		set_irq_type(gpio_to_irq(PALMZ71_USBDETECT_GPIO),
+				IRQ_TYPE_EDGE_FALLING);
 	} else {
 		printk(KERN_INFO "PM: Power cable disconnected\n");
-		irq_set_irq_type(gpio_to_irq(PALMZ71_USBDETECT_GPIO),
-				 IRQ_TYPE_EDGE_RISING);
+		set_irq_type(gpio_to_irq(PALMZ71_USBDETECT_GPIO),
+				IRQ_TYPE_EDGE_RISING);
 	}
 	return IRQ_HANDLED;
 }
@@ -346,5 +346,5 @@ MACHINE_START(OMAP_PALMZ71, "OMAP310 based Palm Zire71")
 	.reserve	= omap_reserve,
 	.init_irq	= omap_palmz71_init_irq,
 	.init_machine	= omap_palmz71_init,
-	.timer		= &omap1_timer,
+	.timer		= &omap_timer,
 MACHINE_END

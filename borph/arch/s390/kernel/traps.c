@@ -18,7 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/errno.h>
-#include <linux/ptrace.h>
+#include <linux/tracehook.h>
 #include <linux/timer.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
@@ -36,16 +36,21 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/mathemu.h>
 #include <asm/cpcmd.h>
+#include <asm/s390_ext.h>
 #include <asm/lowcore.h>
 #include <asm/debug.h>
 #include "entry.h"
 
-void (*pgm_check_table[128])(struct pt_regs *, long, unsigned long);
+pgm_check_handler_t *pgm_check_table[128];
 
 int show_unhandled_signals;
+
+extern pgm_check_handler_t do_protection_exception;
+extern pgm_check_handler_t do_dat_exception;
+extern pgm_check_handler_t do_asce_exception;
 
 #define stack_pointer ({ void **sp; asm("la %0,0(15)" : "=&d" (sp)); sp; })
 
@@ -232,6 +237,43 @@ void show_regs(struct pt_regs *regs)
 	show_last_breaking_event(regs);
 }
 
+/* This is called from fs/proc/array.c */
+void task_show_regs(struct seq_file *m, struct task_struct *task)
+{
+	struct pt_regs *regs;
+
+	regs = task_pt_regs(task);
+	seq_printf(m, "task: %p, ksp: %p\n",
+		       task, (void *)task->thread.ksp);
+	seq_printf(m, "User PSW : %p %p\n",
+		       (void *) regs->psw.mask, (void *)regs->psw.addr);
+
+	seq_printf(m, "User GPRS: " FOURLONG,
+			  regs->gprs[0], regs->gprs[1],
+			  regs->gprs[2], regs->gprs[3]);
+	seq_printf(m, "           " FOURLONG,
+			  regs->gprs[4], regs->gprs[5],
+			  regs->gprs[6], regs->gprs[7]);
+	seq_printf(m, "           " FOURLONG,
+			  regs->gprs[8], regs->gprs[9],
+			  regs->gprs[10], regs->gprs[11]);
+	seq_printf(m, "           " FOURLONG,
+			  regs->gprs[12], regs->gprs[13],
+			  regs->gprs[14], regs->gprs[15]);
+	seq_printf(m, "User ACRS: %08x %08x %08x %08x\n",
+			  task->thread.acrs[0], task->thread.acrs[1],
+			  task->thread.acrs[2], task->thread.acrs[3]);
+	seq_printf(m, "           %08x %08x %08x %08x\n",
+			  task->thread.acrs[4], task->thread.acrs[5],
+			  task->thread.acrs[6], task->thread.acrs[7]);
+	seq_printf(m, "           %08x %08x %08x %08x\n",
+			  task->thread.acrs[8], task->thread.acrs[9],
+			  task->thread.acrs[10], task->thread.acrs[11]);
+	seq_printf(m, "           %08x %08x %08x %08x\n",
+			  task->thread.acrs[12], task->thread.acrs[13],
+			  task->thread.acrs[14], task->thread.acrs[15]);
+}
+
 static DEFINE_SPINLOCK(die_lock);
 
 void die(const char * str, struct pt_regs * regs, long err)
@@ -323,19 +365,14 @@ static inline void __user *get_psw_address(struct pt_regs *regs,
 		((regs->psw.addr - (pgm_int_code >> 16)) & PSW_ADDR_INSN);
 }
 
-void __kprobes do_per_trap(struct pt_regs *regs)
+void __kprobes do_single_step(struct pt_regs *regs)
 {
-	siginfo_t info;
-
-	if (notify_die(DIE_SSTEP, "sstep", regs, 0, 0, SIGTRAP) == NOTIFY_STOP)
+	if (notify_die(DIE_SSTEP, "sstep", regs, 0, 0,
+					SIGTRAP) == NOTIFY_STOP){
 		return;
-	if (!current->ptrace)
-		return;
-	info.si_signo = SIGTRAP;
-	info.si_errno = 0;
-	info.si_code = TRAP_HWBKPT;
-	info.si_addr = (void *) current->thread.per_event.address;
-	force_sig_info(SIGTRAP, &info, current);
+	}
+	if (tracehook_consider_fatal_signal(current, SIGTRAP))
+		force_sig(SIGTRAP, current);
 }
 
 static void default_trap_handler(struct pt_regs *regs, long pgm_int_code,
@@ -414,8 +451,8 @@ static inline void do_fp_trap(struct pt_regs *regs, void __user *location,
 		"floating point exception", regs, &si);
 }
 
-static void __kprobes illegal_op(struct pt_regs *regs, long pgm_int_code,
-				 unsigned long trans_exc_code)
+static void illegal_op(struct pt_regs *regs, long pgm_int_code,
+		       unsigned long trans_exc_code)
 {
 	siginfo_t info;
         __u8 opcode[6];
@@ -428,13 +465,9 @@ static void __kprobes illegal_op(struct pt_regs *regs, long pgm_int_code,
 		if (get_user(*((__u16 *) opcode), (__u16 __user *) location))
 			return;
 		if (*((__u16 *) opcode) == S390_BREAKPOINT_U16) {
-			if (current->ptrace) {
-				info.si_signo = SIGTRAP;
-				info.si_errno = 0;
-				info.si_code = TRAP_BRKPT;
-				info.si_addr = location;
-				force_sig_info(SIGTRAP, &info, current);
-			} else
+			if (tracehook_consider_fatal_signal(current, SIGTRAP))
+				force_sig(SIGTRAP, current);
+			else
 				signal = SIGILL;
 #ifdef CONFIG_MATHEMU
 		} else if (opcode[0] == 0xb3) {
@@ -496,8 +529,9 @@ static void __kprobes illegal_op(struct pt_regs *regs, long pgm_int_code,
 
 
 #ifdef CONFIG_MATHEMU
-void specification_exception(struct pt_regs *regs, long pgm_int_code,
-			     unsigned long trans_exc_code)
+asmlinkage void specification_exception(struct pt_regs *regs,
+					long pgm_int_code,
+					unsigned long trans_exc_code)
 {
         __u8 opcode[6];
 	__u16 __user *location = NULL;
@@ -654,7 +688,7 @@ static void space_switch_exception(struct pt_regs *regs, long pgm_int_code,
 	do_trap(pgm_int_code, SIGILL, "space switch event", regs, &info);
 }
 
-void __kprobes kernel_stack_overflow(struct pt_regs * regs)
+asmlinkage void kernel_stack_overflow(struct pt_regs * regs)
 {
 	bust_spinlocks(1);
 	printk("Kernel stack overflow.\n");
@@ -699,6 +733,5 @@ void __init trap_init(void)
         pgm_check_table[0x15] = &operand_exception;
         pgm_check_table[0x1C] = &space_switch_exception;
         pgm_check_table[0x1D] = &hfp_sqrt_exception;
-	/* Enable machine checks early. */
-	local_mcck_enable();
+	pfault_irq_init();
 }

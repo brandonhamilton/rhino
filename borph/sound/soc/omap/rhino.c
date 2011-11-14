@@ -22,6 +22,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
@@ -34,18 +35,6 @@
 #include "../codecs/tlv320aic23.h"
 
 #define CODEC_CLOCK 	12000000
-
-static struct clk *tlv320aic23_mclk;
-
-static int rhino_startup(struct snd_pcm_substream *substream)
-{
-	return clk_enable(tlv320aic23_mclk);
-}
-
-static void rhino_shutdown(struct snd_pcm_substream *substream)
-{
-	clk_disable(tlv320aic23_mclk);
-}
 
 static int rhino_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
@@ -103,9 +92,7 @@ static int rhino_hw_params(struct snd_pcm_substream *substream,
 }
 
 static struct snd_soc_ops rhino_ops = {
-	.startup   = rhino_startup,
 	.hw_params = rhino_hw_params,
-	.shutdown  = rhino_shutdown,
 };
 
 /* rhino machine dapm widgets */
@@ -131,20 +118,20 @@ static const struct snd_soc_dapm_route audio_map[] = {
 static int rhino_aic23_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
+
 	/* Add rhino specific widgets */
-	snd_soc_dapm_new_controls(dapm, tlv320aic23_spi_dapm_widgets,  ARRAY_SIZE(tlv320aic23_spi_dapm_widgets));
+	snd_soc_dapm_new_controls(codec, tlv320aic23_spi_dapm_widgets,  ARRAY_SIZE(tlv320aic23_spi_dapm_widgets));
 
 	/* Set up davinci-evm specific audio path audio_map */
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
 	/* always connected */
-	snd_soc_dapm_enable_pin(dapm, "Headphone Jack");
-	snd_soc_dapm_enable_pin(dapm, "Line Out");
-	snd_soc_dapm_enable_pin(dapm, "Line In");
+	snd_soc_dapm_enable_pin(codec, "Headphone Jack");
+	snd_soc_dapm_enable_pin(codec, "Line Out");
+	snd_soc_dapm_enable_pin(codec, "Line In");
 
 
-	snd_soc_dapm_sync(dapm);
+	snd_soc_dapm_sync(codec);
 
 	return 0;
 }
@@ -154,9 +141,9 @@ static struct snd_soc_dai_link rhino_dai = {
 	.name = "TLV320AIC23",
 	.stream_name = "AIC23",
 	.cpu_dai_name ="omap-mcbsp-dai.0",
-	.codec_dai_name = "tlv320aic23_spi",
+	.codec_dai_name = "tlv320aic23_spi-hifi",
 	.platform_name = "omap-pcm-audio",
-	.codec_name = "tlv320aic23_spi.1-001a",
+	.codec_name = "tlv320aic23-codec.2-001a",
 	.init = rhino_aic23_init,
 	.ops = &rhino_ops,
 };
@@ -187,6 +174,7 @@ static int __init rhino_soc_init(void)
 	}
 
 	platform_set_drvdata(rhino_snd_device, &snd_soc_rhino);
+
 	ret = platform_device_add(rhino_snd_device);
 	if (ret)
 		goto err1;
@@ -195,8 +183,6 @@ static int __init rhino_soc_init(void)
 
 err1:
 	printk(KERN_ERR "Unable to add platform device\n");
-	clk_put(tlv320aic23_mclk);
-	platform_device_del(rhino_snd_device);
 	platform_device_put(rhino_snd_device);
 
 	return ret;

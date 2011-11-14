@@ -19,6 +19,7 @@
 #include <plat/prcm.h>
 
 #include "powerdomain.h"
+#include "prm-regbits-34xx.h"
 #include "prm.h"
 #include "prm-regbits-24xx.h"
 #include "prm-regbits-34xx.h"
@@ -208,6 +209,63 @@ static int omap3_pwrdm_disable_hdwr_sar(struct powerdomain *pwrdm)
 					  OMAP2_PM_PWSTCTRL);
 }
 
+/* TI81XX specific ops */
+static int ti81xx_pwrdm_set_next_pwrst(struct powerdomain *pwrdm, u8 pwrst)
+{
+	omap2_prm_rmw_mod_reg_bits(OMAP_POWERSTATE_MASK,
+				(pwrst << OMAP_POWERSTATE_SHIFT),
+				pwrdm->prcm_offs, TI81XX_PM_PWSTCTRL);
+	return 0;
+}
+
+static int ti81xx_pwrdm_read_next_pwrst(struct powerdomain *pwrdm)
+{
+	return omap2_prm_read_mod_bits_shift(pwrdm->prcm_offs,
+					     TI81XX_PM_PWSTCTRL,
+					     OMAP_POWERSTATE_MASK);
+}
+
+static int ti81xx_pwrdm_read_pwrst(struct powerdomain *pwrdm)
+{
+	return omap2_prm_read_mod_bits_shift(pwrdm->prcm_offs,
+					     TI81XX_PM_PWSTST,
+					     OMAP_POWERSTATEST_MASK);
+}
+
+static int ti81xx_pwrdm_read_logic_pwrst(struct powerdomain *pwrdm)
+{
+	return omap2_prm_read_mod_bits_shift(pwrdm->prcm_offs,
+					     TI81XX_PM_PWSTST,
+					     OMAP3430_LOGICSTATEST_MASK);
+}
+
+static int ti81xx_pwrdm_wait_transition(struct powerdomain *pwrdm)
+{
+	u32 c = 0;
+
+	/*
+	 * REVISIT: pwrdm_wait_transition() may be better implemented
+	 * via a callback and a periodic timer check -- how long do we expect
+	 * powerdomain transitions to take?
+	 */
+
+	/* XXX Is this udelay() value meaningful? */
+	while ((omap2_prm_read_mod_reg(pwrdm->prcm_offs, TI81XX_PM_PWSTST) &
+		OMAP_INTRANSITION_MASK) &&
+		(c++ < PWRDM_TRANSITION_BAILOUT))
+			udelay(1);
+
+	if (c > PWRDM_TRANSITION_BAILOUT) {
+		printk(KERN_ERR "powerdomain: waited too long for "
+			"powerdomain %s to complete transition\n", pwrdm->name);
+		return -EAGAIN;
+	}
+
+	pr_debug("powerdomain: completed transition in %d loops\n", c);
+
+	return 0;
+}
+
 struct pwrdm_ops omap2_pwrdm_operations = {
 	.pwrdm_set_next_pwrst	= omap2_pwrdm_set_next_pwrst,
 	.pwrdm_read_next_pwrst	= omap2_pwrdm_read_next_pwrst,
@@ -238,4 +296,12 @@ struct pwrdm_ops omap3_pwrdm_operations = {
 	.pwrdm_enable_hdwr_sar	= omap3_pwrdm_enable_hdwr_sar,
 	.pwrdm_disable_hdwr_sar	= omap3_pwrdm_disable_hdwr_sar,
 	.pwrdm_wait_transition	= omap2_pwrdm_wait_transition,
+};
+
+struct pwrdm_ops ti81xx_pwrdm_operations = {
+	.pwrdm_set_next_pwrst	= ti81xx_pwrdm_set_next_pwrst,
+	.pwrdm_read_next_pwrst	= ti81xx_pwrdm_read_next_pwrst,
+	.pwrdm_read_pwrst	= ti81xx_pwrdm_read_pwrst,
+	.pwrdm_read_logic_pwrst	= ti81xx_pwrdm_read_logic_pwrst,
+	.pwrdm_wait_transition	= ti81xx_pwrdm_wait_transition,
 };

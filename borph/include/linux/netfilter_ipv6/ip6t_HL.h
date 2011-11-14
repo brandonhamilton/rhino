@@ -5,8 +5,6 @@
 #ifndef _IP6T_HL_H
 #define _IP6T_HL_H
 
-#include <linux/types.h>
-
 enum {
 	IP6T_HL_SET = 0,
 	IP6T_HL_INC,
@@ -16,8 +14,8 @@ enum {
 #define IP6T_HL_MAXMODE	IP6T_HL_DEC
 
 struct ip6t_HL_info {
-	__u8	mode;
-	__u8	hop_limit;
+	u_int8_t	mode;
+	u_int8_t	hop_limit;
 };
 
 

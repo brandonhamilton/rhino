@@ -10,8 +10,7 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
-#include <linux/mmc/host.h>
-#include <linux/mmc/sh_mobile_sdhi.h>
+#include <linux/mfd/sh_mobile_sdhi.h>
 #include <linux/mfd/tmio.h>
 #include <linux/mtd/physmap.h>
 #include <linux/mtd/onenand.h>
@@ -127,7 +126,7 @@ static struct platform_device kfr2r09_sh_keysc_device = {
 	},
 };
 
-static const struct fb_videomode kfr2r09_lcdc_modes[] = {
+const static struct fb_videomode kfr2r09_lcdc_modes[] = {
 	{
 		.name = "TX07D34VM0AAA",
 		.xres = 240,
@@ -354,7 +353,7 @@ static struct resource kfr2r09_sh_sdhi0_resources[] = {
 	[0] = {
 		.name	= "SDHI0",
 		.start  = 0x04ce0000,
-		.end    = 0x04ce00ff,
+		.end    = 0x04ce01ff,
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
@@ -367,7 +366,6 @@ static struct sh_mobile_sdhi_info sh7724_sdhi0_data = {
 	.dma_slave_tx	= SHDMA_SLAVE_SDHI0_TX,
 	.dma_slave_rx	= SHDMA_SLAVE_SDHI0_RX,
 	.tmio_flags	= TMIO_MMC_WRPROTECT_DISABLE,
-	.tmio_caps      = MMC_CAP_SDIO_IRQ,
 };
 
 static struct platform_device kfr2r09_sh_sdhi0_device = {

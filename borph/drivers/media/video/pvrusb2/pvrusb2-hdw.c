@@ -499,35 +499,31 @@ static int ctrl_cropt_max_get(struct pvr2_ctrl *cptr, int *top)
 	return 0;
 }
 
-static int ctrl_cropw_max_get(struct pvr2_ctrl *cptr, int *width)
+static int ctrl_cropw_max_get(struct pvr2_ctrl *cptr, int *val)
 {
 	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
-	int stat, bleftend, cleft;
-
-	stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
 	if (stat != 0) {
 		return stat;
 	}
-	bleftend = cap->bounds.left+cap->bounds.width;
-	cleft = cptr->hdw->cropl_val;
-
-	*width = cleft < bleftend ? bleftend-cleft : 0;
+	*val = 0;
+	if (cap->bounds.width > cptr->hdw->cropl_val) {
+		*val = cap->bounds.width - cptr->hdw->cropl_val;
+	}
 	return 0;
 }
 
-static int ctrl_croph_max_get(struct pvr2_ctrl *cptr, int *height)
+static int ctrl_croph_max_get(struct pvr2_ctrl *cptr, int *val)
 {
 	struct v4l2_cropcap *cap = &cptr->hdw->cropcap_info;
-	int stat, btopend, ctop;
-
-	stat = pvr2_hdw_check_cropcap(cptr->hdw);
+	int stat = pvr2_hdw_check_cropcap(cptr->hdw);
 	if (stat != 0) {
 		return stat;
 	}
-	btopend = cap->bounds.top+cap->bounds.height;
-	ctop = cptr->hdw->cropt_val;
-
-	*height = ctop < btopend ? btopend-ctop : 0;
+	*val = 0;
+	if (cap->bounds.height > cptr->hdw->cropt_val) {
+		*val = cap->bounds.height - cptr->hdw->cropt_val;
+	}
 	return 0;
 }
 
@@ -1118,7 +1114,6 @@ static const struct pvr2_ctl_info control_defs[] = {
 		.internal_id = PVR2_CID_CROPW,
 		.default_value = 720,
 		DEFREF(cropw),
-		DEFINT(0, 864),
 		.get_max_value = ctrl_cropw_max_get,
 		.get_def_value = ctrl_get_cropcapdw,
 	}, {
@@ -1127,7 +1122,6 @@ static const struct pvr2_ctl_info control_defs[] = {
 		.internal_id = PVR2_CID_CROPH,
 		.default_value = 480,
 		DEFREF(croph),
-		DEFINT(0, 576),
 		.get_max_value = ctrl_croph_max_get,
 		.get_def_value = ctrl_get_cropcapdh,
 	}, {
@@ -2033,8 +2027,6 @@ static void pvr2_hdw_cx25840_vbi_hack(struct pvr2_hdw *hdw)
 		   hdw->decoder_client_id);
 	memset(&fmt, 0, sizeof(fmt));
 	fmt.type = V4L2_BUF_TYPE_SLICED_VBI_CAPTURE;
-	fmt.fmt.sliced.service_lines[0][21] = V4L2_SLICED_CAPTION_525;
-	fmt.fmt.sliced.service_lines[1][21] = V4L2_SLICED_CAPTION_525;
 	v4l2_device_call_all(&hdw->v4l2_dev, hdw->decoder_client_id,
 			     vbi, s_sliced_fmt, &fmt.fmt.sliced);
 }
@@ -2850,23 +2842,15 @@ static void pvr2_hdw_internal_set_std_avail(struct pvr2_hdw *hdw)
 			PVR2_TRACE_ERROR_LEGS,
 			"WARNING: Failed to identify any viable standards");
 	}
-
-	/* Set up the dynamic control for this standard */
 	hdw->std_enum_names = kmalloc(sizeof(char *)*(std_cnt+1),GFP_KERNEL);
-	if (hdw->std_enum_names) {
-		hdw->std_enum_names[0] = "none";
-		for (idx = 0; idx < std_cnt; idx++)
-			hdw->std_enum_names[idx+1] = newstd[idx].name;
-		hdw->std_info_enum.def.type_enum.value_names =
-						hdw->std_enum_names;
-		hdw->std_info_enum.def.type_enum.count = std_cnt+1;
-	} else {
-		pvr2_trace(
-			PVR2_TRACE_ERROR_LEGS,
-			"WARNING: Failed to alloc memory for names");
-		hdw->std_info_enum.def.type_enum.value_names = NULL;
-		hdw->std_info_enum.def.type_enum.count = 0;
+	hdw->std_enum_names[0] = "none";
+	for (idx = 0; idx < std_cnt; idx++) {
+		hdw->std_enum_names[idx+1] =
+			newstd[idx].name;
 	}
+	// Set up the dynamic control for this standard
+	hdw->std_info_enum.def.type_enum.value_names = hdw->std_enum_names;
+	hdw->std_info_enum.def.type_enum.count = std_cnt+1;
 	hdw->std_defs = newstd;
 	hdw->std_enum_cnt = std_cnt+1;
 	hdw->std_enum_cur = 0;
@@ -3046,8 +3030,6 @@ static void pvr2_subdev_update(struct pvr2_hdw *hdw)
 	if (hdw->input_dirty || hdw->audiomode_dirty || hdw->force_dirty) {
 		struct v4l2_tuner vt;
 		memset(&vt, 0, sizeof(vt));
-		vt.type = (hdw->input_val == PVR2_CVAL_INPUT_RADIO) ?
-			V4L2_TUNER_RADIO : V4L2_TUNER_ANALOG_TV;
 		vt.audmode = hdw->audiomode_val;
 		v4l2_device_call_all(&hdw->v4l2_dev, 0, tuner, s_tuner, &vt);
 	}
@@ -3183,19 +3165,6 @@ static int pvr2_hdw_commit_execute(struct pvr2_hdw *hdw)
 	struct pvr2_ctrl *cptr;
 	int disruptive_change;
 
-	if (hdw->input_dirty && hdw->state_pathway_ok &&
-	    (((hdw->input_val == PVR2_CVAL_INPUT_DTV) ?
-	      PVR2_PATHWAY_DIGITAL : PVR2_PATHWAY_ANALOG) !=
-	     hdw->pathway_state)) {
-		/* Change of mode being asked for... */
-		hdw->state_pathway_ok = 0;
-		trace_stbit("state_pathway_ok", hdw->state_pathway_ok);
-	}
-	if (!hdw->state_pathway_ok) {
-		/* Can't commit anything until pathway is ok. */
-		return 0;
-	}
-
 	/* Handle some required side effects when the video standard is
 	   changed.... */
 	if (hdw->std_dirty) {
@@ -3230,6 +3199,18 @@ static int pvr2_hdw_commit_execute(struct pvr2_hdw *hdw)
 		}
 	}
 
+	if (hdw->input_dirty && hdw->state_pathway_ok &&
+	    (((hdw->input_val == PVR2_CVAL_INPUT_DTV) ?
+	      PVR2_PATHWAY_DIGITAL : PVR2_PATHWAY_ANALOG) !=
+	     hdw->pathway_state)) {
+		/* Change of mode being asked for... */
+		hdw->state_pathway_ok = 0;
+		trace_stbit("state_pathway_ok",hdw->state_pathway_ok);
+	}
+	if (!hdw->state_pathway_ok) {
+		/* Can't commit anything until pathway is ok. */
+		return 0;
+	}
 	/* The broadcast decoder can only scale down, so if
 	 * res_*_dirty && crop window < output format ==> enlarge crop.
 	 *
@@ -5173,14 +5154,13 @@ void pvr2_hdw_status_poll(struct pvr2_hdw *hdw)
 {
 	struct v4l2_tuner *vtp = &hdw->tuner_signal_info;
 	memset(vtp, 0, sizeof(*vtp));
-	vtp->type = (hdw->input_val == PVR2_CVAL_INPUT_RADIO) ?
-		V4L2_TUNER_RADIO : V4L2_TUNER_ANALOG_TV;
 	hdw->tuner_signal_stale = 0;
 	/* Note: There apparently is no replacement for VIDIOC_CROPCAP
 	   using v4l2-subdev - therefore we can't support that AT ALL right
 	   now.  (Of course, no sub-drivers seem to implement it either.
 	   But now it's a a chicken and egg problem...) */
-	v4l2_device_call_all(&hdw->v4l2_dev, 0, tuner, g_tuner, vtp);
+	v4l2_device_call_all(&hdw->v4l2_dev, 0, tuner, g_tuner,
+			     &hdw->tuner_signal_info);
 	pvr2_trace(PVR2_TRACE_CHIPS, "subdev status poll"
 		   " type=%u strength=%u audio=0x%x cap=0x%x"
 		   " low=%u hi=%u",

@@ -25,24 +25,25 @@
 
 #include "a_config.h"
 #include "athdefs.h"
-#include "hw/mbox_host_reg.h"
+#include "a_types.h"
+#include "AR6002/hw2.0/hw/mbox_host_reg.h"
 #include "a_osapi.h"
 #include "../htc_debug.h"
 #include "hif.h"
 #include "htc_packet.h"
 #include "ar6k.h"
 
-extern void AR6KFreeIOPacket(struct ar6k_device *pDev, struct htc_packet *pPacket);
-extern struct htc_packet *AR6KAllocIOPacket(struct ar6k_device *pDev);
+extern void AR6KFreeIOPacket(AR6K_DEVICE *pDev, HTC_PACKET *pPacket);
+extern HTC_PACKET *AR6KAllocIOPacket(AR6K_DEVICE *pDev);
 
-static int DevServiceDebugInterrupt(struct ar6k_device *pDev);
+static A_STATUS DevServiceDebugInterrupt(AR6K_DEVICE *pDev);
 
 #define DELAY_PER_INTERVAL_MS 10  /* 10 MS delay per polling interval */
 
 /* completion routine for ALL HIF layer async I/O */
-int DevRWCompletionHandler(void *context, int status)
+A_STATUS DevRWCompletionHandler(void *context, A_STATUS status)
 {
-    struct htc_packet *pPacket = (struct htc_packet *)context;
+    HTC_PACKET *pPacket = (HTC_PACKET *)context;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_RECV,
                 ("+DevRWCompletionHandler (Pkt:0x%lX) , Status: %d \n",
@@ -54,26 +55,26 @@ int DevRWCompletionHandler(void *context, int status)
     AR_DEBUG_PRINTF(ATH_DEBUG_RECV,
                 ("-DevRWCompletionHandler\n"));
 
-    return 0;
+    return A_OK;
 }
 
 /* mailbox recv message polling */
-int DevPollMboxMsgRecv(struct ar6k_device *pDev,
-                            u32 *pLookAhead,
+A_STATUS DevPollMboxMsgRecv(AR6K_DEVICE *pDev,
+                            A_UINT32    *pLookAhead,
                             int          TimeoutMS)
 {
-    int status = 0;
+    A_STATUS status = A_OK;
     int      timeout = TimeoutMS/DELAY_PER_INTERVAL_MS;
 
     A_ASSERT(timeout > 0);
 
     AR_DEBUG_PRINTF(ATH_DEBUG_RECV,("+DevPollMboxMsgRecv \n"));
 
-    while (true) {
+    while (TRUE) {
 
         if (pDev->GetPendingEventsFunc != NULL) {
 
-            struct hif_pending_events_info events;
+            HIF_PENDING_EVENTS_INFO events;
 
 #ifdef THREAD_X
 			events.Polling =1;
@@ -84,7 +85,7 @@ int DevPollMboxMsgRecv(struct ar6k_device *pDev,
             status = pDev->GetPendingEventsFunc(pDev->HIFDevice,
                                             &events,
                                             NULL);
-            if (status)
+            if (A_FAILED(status))
             {
                 AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Failed to get pending events \n"));
                 break;
@@ -103,12 +104,12 @@ int DevPollMboxMsgRecv(struct ar6k_device *pDev,
                 /* load the register table */
             status = HIFReadWrite(pDev->HIFDevice,
                                   HOST_INT_STATUS_ADDRESS,
-                                  (u8 *)&pDev->IrqProcRegisters,
+                                  (A_UINT8 *)&pDev->IrqProcRegisters,
                                   AR6K_IRQ_PROC_REGS_SIZE,
                                   HIF_RD_SYNC_BYTE_INC,
                                   NULL);
 
-            if (status){
+            if (A_FAILED(status)){
                 AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Failed to read register table \n"));
                 break;
             }
@@ -151,11 +152,11 @@ int DevPollMboxMsgRecv(struct ar6k_device *pDev,
     return status;
 }
 
-static int DevServiceCPUInterrupt(struct ar6k_device *pDev)
+static A_STATUS DevServiceCPUInterrupt(AR6K_DEVICE *pDev)
 {
-    int status;
-    u8 cpu_int_status;
-    u8 regBuffer[4];
+    A_STATUS status;
+    A_UINT8  cpu_int_status;
+    A_UINT8  regBuffer[4];
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ, ("CPU Interrupt\n"));
     cpu_int_status = pDev->IrqProcRegisters.cpu_int_status &
@@ -186,16 +187,16 @@ static int DevServiceCPUInterrupt(struct ar6k_device *pDev)
                           HIF_WR_SYNC_BYTE_FIX,
                           NULL);
 
-    A_ASSERT(status == 0);
+    A_ASSERT(status == A_OK);
     return status;
 }
 
 
-static int DevServiceErrorInterrupt(struct ar6k_device *pDev)
+static A_STATUS DevServiceErrorInterrupt(AR6K_DEVICE *pDev)
 {
-    int status;
-    u8 error_int_status;
-    u8 regBuffer[4];
+    A_STATUS status;
+    A_UINT8  error_int_status;
+    A_UINT8  regBuffer[4];
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ, ("Error Interrupt\n"));
     error_int_status = pDev->IrqProcRegisters.error_int_status & 0x0F;
@@ -240,14 +241,14 @@ static int DevServiceErrorInterrupt(struct ar6k_device *pDev)
                           HIF_WR_SYNC_BYTE_FIX,
                           NULL);
 
-    A_ASSERT(status == 0);
+    A_ASSERT(status == A_OK);
     return status;
 }
 
-static int DevServiceDebugInterrupt(struct ar6k_device *pDev)
+static A_STATUS DevServiceDebugInterrupt(AR6K_DEVICE *pDev)
 {
-    u32 dummy;
-    int status;
+    A_UINT32 dummy;
+    A_STATUS status;
 
     /* Send a target failure event to the application */
     AR_DEBUG_PRINTF(ATH_DEBUG_ERR, ("Target debug interrupt\n"));
@@ -265,18 +266,18 @@ static int DevServiceDebugInterrupt(struct ar6k_device *pDev)
         /* read counter to clear interrupt */
     status = HIFReadWrite(pDev->HIFDevice,
                           COUNT_DEC_ADDRESS,
-                          (u8 *)&dummy,
+                          (A_UINT8 *)&dummy,
                           4,
                           HIF_RD_SYNC_BYTE_INC,
                           NULL);
 
-    A_ASSERT(status == 0);
+    A_ASSERT(status == A_OK);
     return status;
 }
 
-static int DevServiceCounterInterrupt(struct ar6k_device *pDev)
+static A_STATUS DevServiceCounterInterrupt(AR6K_DEVICE *pDev)
 {
-    u8 counter_int_status;
+    A_UINT8 counter_int_status;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ, ("Counter Interrupt\n"));
 
@@ -295,21 +296,21 @@ static int DevServiceCounterInterrupt(struct ar6k_device *pDev)
         return DevServiceDebugInterrupt(pDev);
     }
 
-    return 0;
+    return A_OK;
 }
 
 /* callback when our fetch to get interrupt status registers completes */
-static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
+static void DevGetEventAsyncHandler(void *Context, HTC_PACKET *pPacket)
 {
-    struct ar6k_device *pDev = (struct ar6k_device *)Context;
-    u32 lookAhead = 0;
-    bool      otherInts = false;
+    AR6K_DEVICE *pDev = (AR6K_DEVICE *)Context;
+    A_UINT32    lookAhead = 0;
+    A_BOOL      otherInts = FALSE;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("+DevGetEventAsyncHandler: (dev: 0x%lX)\n", (unsigned long)pDev));
 
     do {
 
-        if (pPacket->Status) {
+        if (A_FAILED(pPacket->Status)) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,
                     (" GetEvents I/O request failed, status:%d \n", pPacket->Status));
             /* bail out, don't unmask HIF interrupt */
@@ -318,7 +319,7 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
 
         if (pDev->GetPendingEventsFunc != NULL) {
                 /* the HIF layer collected the information for us */
-            struct hif_pending_events_info *pEvents = (struct hif_pending_events_info *)pPacket->pBuffer;
+            HIF_PENDING_EVENTS_INFO *pEvents = (HIF_PENDING_EVENTS_INFO *)pPacket->pBuffer;
             if (pEvents->Events & HIF_RECV_MSG_AVAIL) {
                 lookAhead = pEvents->LookAhead;
                 if (0 == lookAhead) {
@@ -326,12 +327,12 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
                 }
             }
             if (pEvents->Events & HIF_OTHER_EVENTS) {
-                otherInts = true;
+                otherInts = TRUE;
             }
         } else {
                 /* standard interrupt table handling.... */
-            struct ar6k_irq_proc_registers *pReg = (struct ar6k_irq_proc_registers *)pPacket->pBuffer;
-            u8 host_int_status;
+            AR6K_IRQ_PROC_REGISTERS *pReg = (AR6K_IRQ_PROC_REGISTERS *)pPacket->pBuffer;
+            A_UINT8                 host_int_status;
 
             host_int_status = pReg->host_int_status & pDev->IrqEnableRegisters.int_status_enable;
 
@@ -348,7 +349,7 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
 
             if (host_int_status) {
                     /* there are other interrupts to handle */
-                otherInts = true;
+                otherInts = TRUE;
             }
         }
 
@@ -362,7 +363,7 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
             HIFAckInterrupt(pDev->HIFDevice);
         } else {
             int      fetched = 0;
-            int status;
+            A_STATUS status;
 
             AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,
                     (" DevGetEventAsyncHandler : detected another message, lookahead :0x%X \n",
@@ -371,14 +372,14 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
                  * go get the next message */
             status = pDev->MessagePendingCallback(pDev->HTCContext, &lookAhead, 1, NULL, &fetched);
 
-            if (!status && !fetched) {
+            if (A_SUCCESS(status) && !fetched) {
                     /* HTC layer could not pull out messages due to lack of resources, stop IRQ processing */
                 AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("MessagePendingCallback did not pull any messages, force-ack \n"));
                 DevAsyncIrqProcessComplete(pDev);
             }
         }
 
-    } while (false);
+    } while (FALSE);
 
         /* free this IO packet */
     AR6KFreeIOPacket(pDev,pPacket);
@@ -387,11 +388,11 @@ static void DevGetEventAsyncHandler(void *Context, struct htc_packet *pPacket)
 
 /* called by the HTC layer when it wants us to check if the device has any more pending
  * recv messages, this starts off a series of async requests to read interrupt registers  */
-int DevCheckPendingRecvMsgsAsync(void *context)
+A_STATUS DevCheckPendingRecvMsgsAsync(void *context)
 {
-    struct ar6k_device  *pDev = (struct ar6k_device *)context;
-    int      status = 0;
-    struct htc_packet   *pIOPacket;
+    AR6K_DEVICE  *pDev = (AR6K_DEVICE *)context;
+    A_STATUS      status = A_OK;
+    HTC_PACKET   *pIOPacket;
 
     /* this is called in an ASYNC only context, we may NOT block, sleep or call any apis that can
      * cause us to switch contexts */
@@ -427,7 +428,7 @@ int DevCheckPendingRecvMsgsAsync(void *context)
                 /* there should be only 1 asynchronous request out at a time to read these registers
                  * so this should actually never happen */
             status = A_NO_MEMORY;
-            A_ASSERT(false);
+            A_ASSERT(FALSE);
             break;
         }
 
@@ -438,7 +439,7 @@ int DevCheckPendingRecvMsgsAsync(void *context)
         if (pDev->GetPendingEventsFunc) {
                 /* HIF layer has it's own mechanism, pass the IO to it.. */
             status = pDev->GetPendingEventsFunc(pDev->HIFDevice,
-                                                (struct hif_pending_events_info *)pIOPacket->pBuffer,
+                                                (HIF_PENDING_EVENTS_INFO *)pIOPacket->pBuffer,
                                                 pIOPacket);
 
         } else {
@@ -452,25 +453,25 @@ int DevCheckPendingRecvMsgsAsync(void *context)
         }
 
         AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,(" Async IO issued to get interrupt status...\n"));
-   } while (false);
+   } while (FALSE);
 
    AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("-DevCheckPendingRecvMsgsAsync \n"));
 
    return status;
 }
 
-void DevAsyncIrqProcessComplete(struct ar6k_device *pDev)
+void DevAsyncIrqProcessComplete(AR6K_DEVICE *pDev)
 {
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("DevAsyncIrqProcessComplete - forcing HIF IRQ ACK \n"));
     HIFAckInterrupt(pDev->HIFDevice);
 }
 
 /* process pending interrupts synchronously */
-static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyncProcessing)
+static A_STATUS ProcessPendingIRQs(AR6K_DEVICE *pDev, A_BOOL *pDone, A_BOOL *pASyncProcessing)
 {
-    int    status = 0;
-    u8 host_int_status = 0;
-    u32 lookAhead = 0;
+    A_STATUS    status = A_OK;
+    A_UINT8     host_int_status = 0;
+    A_UINT32    lookAhead = 0;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("+ProcessPendingIRQs: (dev: 0x%lX)\n", (unsigned long)pDev));
 
@@ -489,7 +490,7 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
             }
 
             if (pDev->GetPendingEventsFunc != NULL) {
-                struct hif_pending_events_info events;
+                HIF_PENDING_EVENTS_INFO events;
 
 #ifdef THREAD_X
             events.Polling= 0;
@@ -500,7 +501,7 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
                                                 &events,
                                                 NULL);
 
-            if (status) {
+            if (A_FAILED(status)) {
                 break;
             }
 
@@ -544,12 +545,12 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
 #endif /* CONFIG_MMC_SDHCI_S3C */
         status = HIFReadWrite(pDev->HIFDevice,
                               HOST_INT_STATUS_ADDRESS,
-                              (u8 *)&pDev->IrqProcRegisters,
+                              (A_UINT8 *)&pDev->IrqProcRegisters,
                               AR6K_IRQ_PROC_REGS_SIZE,
                               HIF_RD_SYNC_BYTE_INC,
                               NULL);
 
-        if (status) {
+        if (A_FAILED(status)) {
             break;
         }
 
@@ -590,19 +591,19 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
             status = DevCheckGMboxInterrupts(pDev);
         }
 
-    } while (false);
+    } while (FALSE);
 
 
     do {
 
             /* did the interrupt status fetches succeed? */
-        if (status) {
+        if (A_FAILED(status)) {
             break;
         }
 
         if ((0 == host_int_status) && (0 == lookAhead)) {
                 /* nothing to process, the caller can use this to break out of a loop */
-            *pDone = true;
+            *pDone = TRUE;
             break;
         }
 
@@ -616,14 +617,14 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
                  * completion routine of the callers read request. This can improve performance
                  * by reducing context switching when we rapidly pull packets */
             status = pDev->MessagePendingCallback(pDev->HTCContext, &lookAhead, 1, pASyncProcessing, &fetched);
-            if (status) {
+            if (A_FAILED(status)) {
                 break;
             }
 
             if (!fetched) {
                     /* HTC could not pull any messages out due to lack of resources */
                     /* force DSR handler to ack the interrupt */
-                *pASyncProcessing = false;
+                *pASyncProcessing = FALSE;
                 pDev->RecheckIRQStatusCnt = 0;
             }
         }
@@ -636,7 +637,7 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
         if (HOST_INT_STATUS_CPU_GET(host_int_status)) {
                 /* CPU Interrupt */
             status = DevServiceCPUInterrupt(pDev);
-            if (status){
+            if (A_FAILED(status)){
                 break;
             }
         }
@@ -644,7 +645,7 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
         if (HOST_INT_STATUS_ERROR_GET(host_int_status)) {
                 /* Error Interrupt */
             status = DevServiceErrorInterrupt(pDev);
-            if (status){
+            if (A_FAILED(status)){
                 break;
             }
         }
@@ -652,12 +653,12 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
         if (HOST_INT_STATUS_COUNTER_GET(host_int_status)) {
                 /* Counter Interrupt */
             status = DevServiceCounterInterrupt(pDev);
-            if (status){
+            if (A_FAILED(status)){
                 break;
             }
         }
 
-    } while (false);
+    } while (FALSE);
 
         /* an optimization to bypass reading the IRQ status registers unecessarily which can re-wake
          * the target, if upper layers determine that we are in a low-throughput mode, we can
@@ -669,7 +670,7 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
          * messages from the mailbox before exiting the ISR routine. */
     if (!(*pASyncProcessing) && (pDev->RecheckIRQStatusCnt == 0) && (pDev->GetPendingEventsFunc == NULL)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("Bypassing IRQ Status re-check, forcing done \n"));
-        *pDone = true;
+        *pDone = TRUE;
     }
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("-ProcessPendingIRQs: (done:%d, async:%d) status=%d \n",
@@ -680,12 +681,12 @@ static int ProcessPendingIRQs(struct ar6k_device *pDev, bool *pDone, bool *pASyn
 
 
 /* Synchronousinterrupt handler, this handler kicks off all interrupt processing.*/
-int DevDsrHandler(void *context)
+A_STATUS DevDsrHandler(void *context)
 {
-    struct ar6k_device *pDev = (struct ar6k_device *)context;
-    int    status = 0;
-    bool      done = false;
-    bool      asyncProc = false;
+    AR6K_DEVICE *pDev = (AR6K_DEVICE *)context;
+    A_STATUS    status = A_OK;
+    A_BOOL      done = FALSE;
+    A_BOOL      asyncProc = FALSE;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_IRQ,("+DevDsrHandler: (dev: 0x%lX)\n", (unsigned long)pDev));
 
@@ -696,13 +697,13 @@ int DevDsrHandler(void *context)
 
     while (!done) {
         status = ProcessPendingIRQs(pDev, &done, &asyncProc);
-        if (status) {
+        if (A_FAILED(status)) {
             break;
         }
 
         if (HIF_DEVICE_IRQ_SYNC_ONLY == pDev->HifIRQProcessingMode) {
             /* the HIF layer does not allow async IRQ processing, override the asyncProc flag */
-            asyncProc = false;
+            asyncProc = FALSE;
             /* this will cause us to re-enter ProcessPendingIRQ() and re-read interrupt status registers.
              * this has a nice side effect of blocking us until all async read requests are completed.
              * This behavior is required on some HIF implementations that do not allow ASYNC
@@ -724,7 +725,7 @@ int DevDsrHandler(void *context)
 
     }
 
-    if (!status && !asyncProc) {
+    if (A_SUCCESS(status) && !asyncProc) {
             /* Ack the interrupt only if :
              *  1. we did not get any errors in processing interrupts
              *  2. there are no outstanding async processing requests */
@@ -743,26 +744,26 @@ int DevDsrHandler(void *context)
 }
 
 #ifdef ATH_DEBUG_MODULE
-void DumpAR6KDevState(struct ar6k_device *pDev)
+void DumpAR6KDevState(AR6K_DEVICE *pDev)
 {
-    int                    status;
-    struct ar6k_irq_enable_registers   regs;
-    struct ar6k_irq_proc_registers     procRegs;
+    A_STATUS                    status;
+    AR6K_IRQ_ENABLE_REGISTERS   regs;
+    AR6K_IRQ_PROC_REGISTERS     procRegs;
 
     LOCK_AR6K(pDev);
         /* copy into our temp area */
-    memcpy(&regs,&pDev->IrqEnableRegisters,AR6K_IRQ_ENABLE_REGS_SIZE);
+    A_MEMCPY(&regs,&pDev->IrqEnableRegisters,AR6K_IRQ_ENABLE_REGS_SIZE);
     UNLOCK_AR6K(pDev);
 
         /* load the register table from the device */
     status = HIFReadWrite(pDev->HIFDevice,
                           HOST_INT_STATUS_ADDRESS,
-                          (u8 *)&procRegs,
+                          (A_UINT8 *)&procRegs,
                           AR6K_IRQ_PROC_REGS_SIZE,
                           HIF_RD_SYNC_BYTE_INC,
                           NULL);
 
-    if (status) {
+    if (A_FAILED(status)) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,
             ("DumpAR6KDevState : Failed to read register table (%d) \n",status));
         return;

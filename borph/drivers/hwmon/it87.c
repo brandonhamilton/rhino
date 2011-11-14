@@ -38,8 +38,6 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -77,13 +75,15 @@ static struct platform_device *pdev;
 #define	DEVID	0x20	/* Register: Device ID */
 #define	DEVREV	0x22	/* Register: Device Revision */
 
-static inline int superio_inb(int reg)
+static inline int
+superio_inb(int reg)
 {
 	outb(reg, REG);
 	return inb(VAL);
 }
 
-static inline void superio_outb(int reg, int val)
+static inline void
+superio_outb(int reg, int val)
 {
 	outb(reg, REG);
 	outb(val, VAL);
@@ -99,32 +99,27 @@ static int superio_inw(int reg)
 	return val;
 }
 
-static inline void superio_select(int ldn)
+static inline void
+superio_select(int ldn)
 {
 	outb(DEV, REG);
 	outb(ldn, VAL);
 }
 
-static inline int superio_enter(void)
+static inline void
+superio_enter(void)
 {
-	/*
-	 * Try to reserve REG and REG + 1 for exclusive access.
-	 */
-	if (!request_muxed_region(REG, 2, DRVNAME))
-		return -EBUSY;
-
 	outb(0x87, REG);
 	outb(0x01, REG);
 	outb(0x55, REG);
 	outb(0x55, REG);
-	return 0;
 }
 
-static inline void superio_exit(void)
+static inline void
+superio_exit(void)
 {
 	outb(0x02, REG);
 	outb(0x02, VAL);
-	release_region(REG, 2);
 }
 
 /* Logical device 4 registers */
@@ -1172,32 +1167,6 @@ static ssize_t show_alarm(struct device *dev, struct device_attribute *attr,
 	struct it87_data *data = it87_update_device(dev);
 	return sprintf(buf, "%u\n", (data->alarms >> bitnr) & 1);
 }
-
-static ssize_t clear_intrusion(struct device *dev, struct device_attribute
-		*attr, const char *buf, size_t count)
-{
-	struct it87_data *data = dev_get_drvdata(dev);
-	long val;
-	int config;
-
-	if (strict_strtol(buf, 10, &val) < 0 || val != 0)
-		return -EINVAL;
-
-	mutex_lock(&data->update_lock);
-	config = it87_read_value(data, IT87_REG_CONFIG);
-	if (config < 0) {
-		count = config;
-	} else {
-		config |= 1 << 5;
-		it87_write_value(data, IT87_REG_CONFIG, config);
-		/* Invalidate cache to force re-read */
-		data->valid = 0;
-	}
-	mutex_unlock(&data->update_lock);
-
-	return count;
-}
-
 static SENSOR_DEVICE_ATTR(in0_alarm, S_IRUGO, show_alarm, NULL, 8);
 static SENSOR_DEVICE_ATTR(in1_alarm, S_IRUGO, show_alarm, NULL, 9);
 static SENSOR_DEVICE_ATTR(in2_alarm, S_IRUGO, show_alarm, NULL, 10);
@@ -1214,8 +1183,6 @@ static SENSOR_DEVICE_ATTR(fan5_alarm, S_IRUGO, show_alarm, NULL, 6);
 static SENSOR_DEVICE_ATTR(temp1_alarm, S_IRUGO, show_alarm, NULL, 16);
 static SENSOR_DEVICE_ATTR(temp2_alarm, S_IRUGO, show_alarm, NULL, 17);
 static SENSOR_DEVICE_ATTR(temp3_alarm, S_IRUGO, show_alarm, NULL, 18);
-static SENSOR_DEVICE_ATTR(intrusion0_alarm, S_IRUGO | S_IWUSR,
-			  show_alarm, clear_intrusion, 4);
 
 static ssize_t show_beep(struct device *dev, struct device_attribute *attr,
 		char *buf)
@@ -1378,7 +1345,6 @@ static struct attribute *it87_attributes[] = {
 	&sensor_dev_attr_temp3_alarm.dev_attr.attr,
 
 	&dev_attr_alarms.attr,
-	&sensor_dev_attr_intrusion0_alarm.dev_attr.attr,
 	&dev_attr_name.attr,
 	NULL
 };
@@ -1567,22 +1533,18 @@ static struct attribute *it87_attributes_label[] = {
 };
 
 static const struct attribute_group it87_group_label = {
-	.attrs = it87_attributes_label,
+	.attrs = it87_attributes_vid,
 };
 
 /* SuperIO detection - will change isa_address if a chip is found */
 static int __init it87_find(unsigned short *address,
 	struct it87_sio_data *sio_data)
 {
-	int err;
+	int err = -ENODEV;
 	u16 chip_type;
 	const char *board_vendor, *board_name;
 
-	err = superio_enter();
-	if (err)
-		return err;
-
-	err = -ENODEV;
+	superio_enter();
 	chip_type = force_id ? force_id : superio_inw(DEVID);
 
 	switch (chip_type) {
@@ -1608,25 +1570,26 @@ static int __init it87_find(unsigned short *address,
 	case 0xffff:	/* No device at all */
 		goto exit;
 	default:
-		pr_debug("Unsupported chip (DEVID=0x%x)\n", chip_type);
+		pr_debug(DRVNAME ": Unsupported chip (DEVID=0x%x)\n",
+			 chip_type);
 		goto exit;
 	}
 
 	superio_select(PME);
 	if (!(superio_inb(IT87_ACT_REG) & 0x01)) {
-		pr_info("Device not activated, skipping\n");
+		pr_info("it87: Device not activated, skipping\n");
 		goto exit;
 	}
 
 	*address = superio_inw(IT87_BASE_REG) & ~(IT87_EXTENT - 1);
 	if (*address == 0) {
-		pr_info("Base address not set, skipping\n");
+		pr_info("it87: Base address not set, skipping\n");
 		goto exit;
 	}
 
 	err = 0;
 	sio_data->revision = superio_inb(DEVREV) & 0x0f;
-	pr_info("Found IT%04xF chip at 0x%x, revision %d\n",
+	pr_info("it87: Found IT%04xF chip at 0x%x, revision %d\n",
 		chip_type, *address, sio_data->revision);
 
 	/* in8 (Vbat) is always internal */
@@ -1652,7 +1615,7 @@ static int __init it87_find(unsigned short *address,
 		} else {
 			/* We need at least 4 VID pins */
 			if (reg & 0x0f) {
-				pr_info("VID is disabled (pins used for GPIO)\n");
+				pr_info("it87: VID is disabled (pins used for GPIO)\n");
 				sio_data->skip_vid = 1;
 			}
 		}
@@ -1688,7 +1651,7 @@ static int __init it87_find(unsigned short *address,
 		if (sio_data->type == it8720 && !(reg & (1 << 1))) {
 			reg |= (1 << 1);
 			superio_outb(IT87_SIO_PINX2_REG, reg);
-			pr_notice("Routing internal VCCH to in7\n");
+			pr_notice("it87: Routing internal VCCH to in7\n");
 		}
 		if (reg & (1 << 0))
 			sio_data->internal |= (1 << 0);
@@ -1698,7 +1661,7 @@ static int __init it87_find(unsigned short *address,
 		sio_data->beep_pin = superio_inb(IT87_SIO_BEEP_PIN_REG) & 0x3f;
 	}
 	if (sio_data->beep_pin)
-		pr_info("Beeping is supported\n");
+		pr_info("it87: Beeping is supported\n");
 
 	/* Disable specific features based on DMI strings */
 	board_vendor = dmi_get_system_info(DMI_BOARD_VENDOR);
@@ -1712,7 +1675,8 @@ static int __init it87_find(unsigned short *address,
 			   the PWM2 duty cycle, so we disable it.
 			   I use the board name string as the trigger in case
 			   the same board is ever used in other systems. */
-			pr_info("Disabling pwm2 due to hardware constraints\n");
+			pr_info("it87: Disabling pwm2 due to "
+				"hardware constraints\n");
 			sio_data->skip_pwm = (1 << 1);
 		}
 	}
@@ -2225,26 +2189,28 @@ static int __init it87_device_add(unsigned short address,
 	pdev = platform_device_alloc(DRVNAME, address);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Device allocation failed\n");
 		goto exit;
 	}
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device resource addition failed "
+		       "(%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add_data(pdev, sio_data,
 				       sizeof(struct it87_sio_data));
 	if (err) {
-		pr_err("Platform data allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto exit_device_put;
 	}
 

@@ -68,11 +68,8 @@ int x25_output(struct sock *sk, struct sk_buff *skb)
 		frontlen = skb_headroom(skb);
 
 		while (skb->len > 0) {
-			release_sock(sk);
-			skbn = sock_alloc_send_skb(sk, frontlen + max_len,
-						   noblock, &err);
-			lock_sock(sk);
-			if (!skbn) {
+			if ((skbn = sock_alloc_send_skb(sk, frontlen + max_len,
+							noblock, &err)) == NULL){
 				if (err == -EWOULDBLOCK && noblock){
 					kfree_skb(skb);
 					return sent;

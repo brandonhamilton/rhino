@@ -21,12 +21,11 @@
  * It is inspired by hidraw, but uses only one circular buffer for all readers.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/cdev.h>
 #include <linux/poll.h>
 #include <linux/sched.h>
-#include <linux/hid-roccat.h>
+
+#include "hid-roccat.h"
 
 #define ROCCAT_FIRST_MINOR 0
 #define ROCCAT_MAX_DEVICES 8
@@ -36,11 +35,11 @@
 
 struct roccat_report {
 	uint8_t *value;
+	int len;
 };
 
 struct roccat_device {
 	unsigned int minor;
-	int report_size;
 	int open;
 	int exist;
 	wait_queue_head_t wait;
@@ -66,6 +65,7 @@ struct roccat_reader {
 };
 
 static int roccat_major;
+static struct class *roccat_class;
 static struct cdev roccat_cdev;
 
 static struct roccat_device *devices[ROCCAT_MAX_DEVICES];
@@ -122,7 +122,7 @@ static ssize_t roccat_read(struct file *file, char __user *buffer,
 	 * If report is larger than requested amount of data, rest of report
 	 * is lost!
 	 */
-	len = device->report_size > count ? count : device->report_size;
+	len = report->len > count ? count : report->len;
 
 	if (copy_to_user(buffer, report->value, len)) {
 		retval = -EFAULT;
@@ -165,22 +165,27 @@ static int roccat_open(struct inode *inode, struct file *file)
 	mutex_lock(&device->readers_lock);
 
 	if (!device) {
-		pr_emerg("roccat device with minor %d doesn't exist\n", minor);
+		printk(KERN_EMERG "roccat device with minor %d doesn't exist\n",
+				minor);
 		error = -ENODEV;
 		goto exit_err;
 	}
 
 	if (!device->open++) {
 		/* power on device on adding first reader */
-		error = hid_hw_power(device->hid, PM_HINT_FULLON);
-		if (error < 0) {
-			--device->open;
-			goto exit_err;
+		if (device->hid->ll_driver->power) {
+			error = device->hid->ll_driver->power(device->hid,
+					PM_HINT_FULLON);
+			if (error < 0) {
+				--device->open;
+				goto exit_err;
+			}
 		}
-
-		error = hid_hw_open(device->hid);
+		error = device->hid->ll_driver->open(device->hid);
 		if (error < 0) {
-			hid_hw_power(device->hid, PM_HINT_NORMAL);
+			if (device->hid->ll_driver->power)
+				device->hid->ll_driver->power(device->hid,
+						PM_HINT_NORMAL);
 			--device->open;
 			goto exit_err;
 		}
@@ -213,7 +218,8 @@ static int roccat_release(struct inode *inode, struct file *file)
 	device = devices[minor];
 	if (!device) {
 		mutex_unlock(&devices_lock);
-		pr_emerg("roccat device with minor %d doesn't exist\n", minor);
+		printk(KERN_EMERG "roccat device with minor %d doesn't exist\n",
+				minor);
 		return -ENODEV;
 	}
 
@@ -225,8 +231,10 @@ static int roccat_release(struct inode *inode, struct file *file)
 	if (!--device->open) {
 		/* removing last reader */
 		if (device->exist) {
-			hid_hw_power(device->hid, PM_HINT_NORMAL);
-			hid_hw_close(device->hid);
+			if (device->hid->ll_driver->power)
+				device->hid->ll_driver->power(device->hid,
+						PM_HINT_NORMAL);
+			device->hid->ll_driver->close(device->hid);
 		} else {
 			kfree(device);
 		}
@@ -247,18 +255,18 @@ static int roccat_release(struct inode *inode, struct file *file)
  *
  * This is called from interrupt handler.
  */
-int roccat_report_event(int minor, u8 const *data)
+int roccat_report_event(int minor, u8 const *data, int len)
 {
 	struct roccat_device *device;
 	struct roccat_reader *reader;
 	struct roccat_report *report;
 	uint8_t *new_value;
 
-	device = devices[minor];
-
-	new_value = kmemdup(data, device->report_size, GFP_ATOMIC);
+	new_value = kmemdup(data, len, GFP_ATOMIC);
 	if (!new_value)
 		return -ENOMEM;
+
+	device = devices[minor];
 
 	report = &device->cbuf[device->cbuf_end];
 
@@ -266,6 +274,7 @@ int roccat_report_event(int minor, u8 const *data)
 	kfree(report->value);
 
 	report->value = new_value;
+	report->len = len;
 	device->cbuf_end = (device->cbuf_end + 1) % ROCCAT_CBUF_SIZE;
 
 	list_for_each_entry(reader, &device->readers, node) {
@@ -286,14 +295,12 @@ EXPORT_SYMBOL_GPL(roccat_report_event);
 
 /*
  * roccat_connect() - create a char device for special event output
- * @class: the class thats used to create the device. Meant to hold device
- * specific sysfs attributes.
  * @hid: the hid device the char device should be connected to.
  *
  * Return value is minor device number in Range [0, ROCCAT_MAX_DEVICES] on
  * success, a negative error code on failure.
  */
-int roccat_connect(struct class *klass, struct hid_device *hid, int report_size)
+int roccat_connect(struct hid_device *hid)
 {
 	unsigned int minor;
 	struct roccat_device *device;
@@ -319,7 +326,7 @@ int roccat_connect(struct class *klass, struct hid_device *hid, int report_size)
 		return -EINVAL;
 	}
 
-	device->dev = device_create(klass, &hid->dev,
+	device->dev = device_create(roccat_class, &hid->dev,
 			MKDEV(roccat_major, minor), NULL,
 			"%s%s%d", "roccat", hid->driver->name, minor);
 
@@ -341,7 +348,6 @@ int roccat_connect(struct class *klass, struct hid_device *hid, int report_size)
 	device->hid = hid;
 	device->exist = 1;
 	device->cbuf_end = 0;
-	device->report_size = report_size;
 
 	return minor;
 }
@@ -356,52 +362,21 @@ void roccat_disconnect(int minor)
 
 	mutex_lock(&devices_lock);
 	device = devices[minor];
+	devices[minor] = NULL;
 	mutex_unlock(&devices_lock);
 
 	device->exist = 0; /* TODO exist maybe not needed */
 
-	device_destroy(device->dev->class, MKDEV(roccat_major, minor));
+	device_destroy(roccat_class, MKDEV(roccat_major, minor));
 
-	mutex_lock(&devices_lock);
-	devices[minor] = NULL;
-	mutex_unlock(&devices_lock);
-	
 	if (device->open) {
-		hid_hw_close(device->hid);
+		device->hid->ll_driver->close(device->hid);
 		wake_up_interruptible(&device->wait);
 	} else {
 		kfree(device);
 	}
 }
 EXPORT_SYMBOL_GPL(roccat_disconnect);
-
-static long roccat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct roccat_device *device;
-	unsigned int minor = iminor(inode);
-	long retval = 0;
-
-	mutex_lock(&devices_lock);
-
-	device = devices[minor];
-	if (!device) {
-		retval = -ENODEV;
-		goto out;
-	}
-
-	switch (cmd) {
-	case ROCCATIOCGREPSIZE:
-		if (put_user(device->report_size, (int __user *)arg))
-			retval = -EFAULT;
-		break;
-	default:
-		retval = -ENOTTY;
-	}
-out:
-	mutex_unlock(&devices_lock);
-	return retval;
-}
 
 static const struct file_operations roccat_ops = {
 	.owner = THIS_MODULE,
@@ -410,7 +385,6 @@ static const struct file_operations roccat_ops = {
 	.open = roccat_open,
 	.release = roccat_release,
 	.llseek = noop_llseek,
-	.unlocked_ioctl = roccat_ioctl,
 };
 
 static int __init roccat_init(void)
@@ -424,7 +398,14 @@ static int __init roccat_init(void)
 	roccat_major = MAJOR(dev_id);
 
 	if (retval < 0) {
-		pr_warn("can't get major number\n");
+		printk(KERN_WARNING "roccat: can't get major number\n");
+		return retval;
+	}
+
+	roccat_class = class_create(THIS_MODULE, "roccat");
+	if (IS_ERR(roccat_class)) {
+		retval = PTR_ERR(roccat_class);
+		unregister_chrdev_region(dev_id, ROCCAT_MAX_DEVICES);
 		return retval;
 	}
 
@@ -439,6 +420,7 @@ static void __exit roccat_exit(void)
 	dev_t dev_id = MKDEV(roccat_major, 0);
 
 	cdev_del(&roccat_cdev);
+	class_destroy(roccat_class);
 	unregister_chrdev_region(dev_id, ROCCAT_MAX_DEVICES);
 }
 

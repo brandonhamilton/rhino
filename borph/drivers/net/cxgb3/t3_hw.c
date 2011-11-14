@@ -607,7 +607,7 @@ struct t3_vpd {
  *
  *	Read a 32-bit word from a location in VPD EEPROM using the card's PCI
  *	VPD ROM capability.  A zero is written to the flag bit when the
- *	address is written to the control register.  The hardware device will
+ *	addres is written to the control register.  The hardware device will
  *	set the flag to 1 when 4 bytes have been read into the data register.
  */
 int t3_seeprom_read(struct adapter *adapter, u32 addr, __le32 *data)
@@ -1386,11 +1386,11 @@ struct intr_info {
  *	@reg: the interrupt status register to process
  *	@mask: a mask to apply to the interrupt status
  *	@acts: table of interrupt actions
- *	@stats: statistics counters tracking interrupt occurrences
+ *	@stats: statistics counters tracking interrupt occurences
  *
  *	A table driven interrupt handler that applies a set of masks to an
  *	interrupt status word and performs the corresponding actions if the
- *	interrupts described by the mask have occurred.  The actions include
+ *	interrupts described by the mask have occured.  The actions include
  *	optionally printing a warning or alert message, and optionally
  *	incrementing a stat counter.  The table is terminated by an entry
  *	specifying mask 0.  Returns the number of fatal interrupt conditions.
@@ -1562,7 +1562,7 @@ static void tp_intr_handler(struct adapter *adapter)
 		{0}
 	};
 
-	static const struct intr_info tp_intr_info_t3c[] = {
+	static struct intr_info tp_intr_info_t3c[] = {
 		{0x1fffffff, "TP parity error", -1, 1},
 		{F_FLMRXFLSTEMPTY, "TP out of Rx pages", -1, 1},
 		{F_FLMTXFLSTEMPTY, "TP out of Tx pages", -1, 1},
@@ -2783,7 +2783,7 @@ static void init_mtus(unsigned short mtus[])
 {
 	/*
 	 * See draft-mathis-plpmtud-00.txt for the values.  The min is 88 so
-	 * it can accommodate max size TCP/IP headers when SACK and timestamps
+	 * it can accomodate max size TCP/IP headers when SACK and timestamps
 	 * are enabled and still have at least 8 bytes of payload.
 	 */
 	mtus[0] = 88;
@@ -3290,20 +3290,22 @@ static void config_pcie(struct adapter *adap)
 	unsigned int fst_trn_rx, fst_trn_tx, acklat, rpllmt;
 
 	pci_read_config_word(adap->pdev,
-			     adap->pdev->pcie_cap + PCI_EXP_DEVCTL,
+			     adap->params.pci.pcie_cap_addr + PCI_EXP_DEVCTL,
 			     &val);
 	pldsize = (val & PCI_EXP_DEVCTL_PAYLOAD) >> 5;
 
 	pci_read_config_word(adap->pdev, 0x2, &devid);
 	if (devid == 0x37) {
 		pci_write_config_word(adap->pdev,
-				      adap->pdev->pcie_cap + PCI_EXP_DEVCTL,
+				      adap->params.pci.pcie_cap_addr +
+				      PCI_EXP_DEVCTL,
 				      val & ~PCI_EXP_DEVCTL_READRQ &
 				      ~PCI_EXP_DEVCTL_PAYLOAD);
 		pldsize = 0;
 	}
 
-	pci_read_config_word(adap->pdev, adap->pdev->pcie_cap + PCI_EXP_LNKCTL,
+	pci_read_config_word(adap->pdev,
+			     adap->params.pci.pcie_cap_addr + PCI_EXP_LNKCTL,
 			     &val);
 
 	fst_trn_tx = G_NUMFSTTRNSEQ(t3_read_reg(adap, A_PCIE_PEX_CTRL0));
@@ -3427,11 +3429,12 @@ static void get_pci_mode(struct adapter *adapter, struct pci_params *p)
 	static unsigned short speed_map[] = { 33, 66, 100, 133 };
 	u32 pci_mode, pcie_cap;
 
-	pcie_cap = pci_pcie_cap(adapter->pdev);
+	pcie_cap = pci_find_capability(adapter->pdev, PCI_CAP_ID_EXP);
 	if (pcie_cap) {
 		u16 val;
 
 		p->variant = PCI_VARIANT_PCIE;
+		p->pcie_cap_addr = pcie_cap;
 		pci_read_config_word(adapter->pdev, pcie_cap + PCI_EXP_LNKSTA,
 					&val);
 		p->width = (val >> 4) & 0x3f;

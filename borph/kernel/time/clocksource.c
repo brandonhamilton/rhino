@@ -113,7 +113,7 @@ EXPORT_SYMBOL_GPL(timecounter_cyc2time);
  * @shift:	pointer to shift variable
  * @from:	frequency to convert from
  * @to:		frequency to convert to
- * @maxsec:	guaranteed runtime conversion range in seconds
+ * @minsec:	guaranteed runtime conversion range in seconds
  *
  * The function evaluates the shift/mult pair for the scaled math
  * operations of clocksources and clockevents.
@@ -122,7 +122,7 @@ EXPORT_SYMBOL_GPL(timecounter_cyc2time);
  * NSEC_PER_SEC == 1GHz and @from is the counter frequency. For clock
  * event @to is the counter frequency and @from is NSEC_PER_SEC.
  *
- * The @maxsec conversion range argument controls the time frame in
+ * The @minsec conversion range argument controls the time frame in
  * seconds which must be covered by the runtime conversion with the
  * calculated mult and shift factors. This guarantees that no 64bit
  * overflow happens when the input value of the conversion is
@@ -131,7 +131,7 @@ EXPORT_SYMBOL_GPL(timecounter_cyc2time);
  * factors.
  */
 void
-clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 maxsec)
+clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 minsec)
 {
 	u64 tmp;
 	u32 sft, sftacc= 32;
@@ -140,7 +140,7 @@ clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 maxsec)
 	 * Calculate the shift factor which is limiting the conversion
 	 * range:
 	 */
-	tmp = ((u64)maxsec * from) >> 32;
+	tmp = ((u64)minsec * from) >> 32;
 	while (tmp) {
 		tmp >>=1;
 		sftacc--;
@@ -152,7 +152,6 @@ clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 maxsec)
 	 */
 	for (sft = 32; sft > 0; sft--) {
 		tmp = (u64) to << sft;
-		tmp += from / 2;
 		do_div(tmp, from);
 		if ((tmp >> sftacc) == 0)
 			break;
@@ -185,6 +184,7 @@ static struct clocksource *watchdog;
 static struct timer_list watchdog_timer;
 static DECLARE_WORK(watchdog_work, clocksource_watchdog_work);
 static DEFINE_SPINLOCK(watchdog_lock);
+static cycle_t watchdog_last;
 static int watchdog_running;
 
 static int clocksource_watchdog_kthread(void *data);
@@ -253,6 +253,11 @@ static void clocksource_watchdog(unsigned long data)
 	if (!watchdog_running)
 		goto out;
 
+	wdnow = watchdog->read(watchdog);
+	wd_nsec = clocksource_cyc2ns((wdnow - watchdog_last) & watchdog->mask,
+				     watchdog->mult, watchdog->shift);
+	watchdog_last = wdnow;
+
 	list_for_each_entry(cs, &watchdog_list, wd_list) {
 
 		/* Clocksource already marked unstable? */
@@ -262,28 +267,19 @@ static void clocksource_watchdog(unsigned long data)
 			continue;
 		}
 
-		local_irq_disable();
 		csnow = cs->read(cs);
-		wdnow = watchdog->read(watchdog);
-		local_irq_enable();
 
 		/* Clocksource initialized ? */
 		if (!(cs->flags & CLOCK_SOURCE_WATCHDOG)) {
 			cs->flags |= CLOCK_SOURCE_WATCHDOG;
-			cs->wd_last = wdnow;
-			cs->cs_last = csnow;
+			cs->wd_last = csnow;
 			continue;
 		}
 
-		wd_nsec = clocksource_cyc2ns((wdnow - cs->wd_last) & watchdog->mask,
-					     watchdog->mult, watchdog->shift);
-
-		cs_nsec = clocksource_cyc2ns((csnow - cs->cs_last) &
-					     cs->mask, cs->mult, cs->shift);
-		cs->cs_last = csnow;
-		cs->wd_last = wdnow;
-
 		/* Check the deviation from the watchdog clocksource. */
+		cs_nsec = clocksource_cyc2ns((csnow - cs->wd_last) &
+					     cs->mask, cs->mult, cs->shift);
+		cs->wd_last = csnow;
 		if (abs(cs_nsec - wd_nsec) > WATCHDOG_THRESHOLD) {
 			clocksource_unstable(cs, cs_nsec - wd_nsec);
 			continue;
@@ -321,6 +317,7 @@ static inline void clocksource_start_watchdog(void)
 		return;
 	init_timer(&watchdog_timer);
 	watchdog_timer.function = clocksource_watchdog;
+	watchdog_last = watchdog->read(watchdog);
 	watchdog_timer.expires = jiffies + WATCHDOG_INTERVAL;
 	add_timer_on(&watchdog_timer, cpumask_first(cpu_online_mask));
 	watchdog_running = 1;
@@ -628,6 +625,19 @@ static void clocksource_enqueue(struct clocksource *cs)
 	list_add(&cs->list, entry);
 }
 
+
+/*
+ * Maximum time we expect to go between ticks. This includes idle
+ * tickless time. It provides the trade off between selecting a
+ * mult/shift pair that is very precise but can only handle a short
+ * period of time, vs. a mult/shift pair that can handle long periods
+ * of time but isn't as precise.
+ *
+ * This is a subsystem constant, and actual hardware limitations
+ * may override it (ie: clocksources that wrap every 3 seconds).
+ */
+#define MAX_UPDATE_LENGTH 5 /* Seconds */
+
 /**
  * __clocksource_updatefreq_scale - Used update clocksource with new freq
  * @t:		clocksource to be registered
@@ -641,28 +651,15 @@ static void clocksource_enqueue(struct clocksource *cs)
  */
 void __clocksource_updatefreq_scale(struct clocksource *cs, u32 scale, u32 freq)
 {
-	u64 sec;
-
 	/*
-	 * Calc the maximum number of seconds which we can run before
-	 * wrapping around. For clocksources which have a mask > 32bit
-	 * we need to limit the max sleep time to have a good
-	 * conversion precision. 10 minutes is still a reasonable
-	 * amount. That results in a shift value of 24 for a
-	 * clocksource with mask >= 40bit and f >= 4GHz. That maps to
-	 * ~ 0.06ppm granularity for NTP. We apply the same 12.5%
-	 * margin as we do in clocksource_max_deferment()
+	 * Ideally we want to use  some of the limits used in
+	 * clocksource_max_deferment, to provide a more informed
+	 * MAX_UPDATE_LENGTH. But for now this just gets the
+	 * register interface working properly.
 	 */
-	sec = (cs->mask - (cs->mask >> 5));
-	do_div(sec, freq);
-	do_div(sec, scale);
-	if (!sec)
-		sec = 1;
-	else if (sec > 600 && cs->mask > UINT_MAX)
-		sec = 600;
-
 	clocks_calc_mult_shift(&cs->mult, &cs->shift, freq,
-			       NSEC_PER_SEC / scale, sec * scale);
+				      NSEC_PER_SEC/scale,
+				      MAX_UPDATE_LENGTH*scale);
 	cs->max_idle_ns = clocksource_max_deferment(cs);
 }
 EXPORT_SYMBOL_GPL(__clocksource_updatefreq_scale);
@@ -681,14 +678,14 @@ EXPORT_SYMBOL_GPL(__clocksource_updatefreq_scale);
 int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
 {
 
-	/* Initialize mult/shift and max_idle_ns */
+	/* Intialize mult/shift and max_idle_ns */
 	__clocksource_updatefreq_scale(cs, scale, freq);
 
 	/* Add clocksource to the clcoksource list */
 	mutex_lock(&clocksource_mutex);
 	clocksource_enqueue(cs);
-	clocksource_enqueue_watchdog(cs);
 	clocksource_select();
+	clocksource_enqueue_watchdog(cs);
 	mutex_unlock(&clocksource_mutex);
 	return 0;
 }
@@ -708,8 +705,8 @@ int clocksource_register(struct clocksource *cs)
 
 	mutex_lock(&clocksource_mutex);
 	clocksource_enqueue(cs);
-	clocksource_enqueue_watchdog(cs);
 	clocksource_select();
+	clocksource_enqueue_watchdog(cs);
 	mutex_unlock(&clocksource_mutex);
 	return 0;
 }

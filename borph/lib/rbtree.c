@@ -315,7 +315,6 @@ void rb_augment_insert(struct rb_node *node, rb_augment_f func, void *data)
 
 	rb_augment_path(node, func, data);
 }
-EXPORT_SYMBOL(rb_augment_insert);
 
 /*
  * before removing the node, find the deepest node on the rebalance path
@@ -341,7 +340,6 @@ struct rb_node *rb_augment_erase_begin(struct rb_node *node)
 
 	return deepest;
 }
-EXPORT_SYMBOL(rb_augment_erase_begin);
 
 /*
  * after removal, update the tree to account for the removed entry
@@ -352,7 +350,6 @@ void rb_augment_erase_end(struct rb_node *node, rb_augment_f func, void *data)
 	if (node)
 		rb_augment_path(node, func, data);
 }
-EXPORT_SYMBOL(rb_augment_erase_end);
 
 /*
  * This function returns the first node (in sort order) of the tree.

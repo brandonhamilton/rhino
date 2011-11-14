@@ -30,17 +30,26 @@
 #include <asm/types.h>
 
 #include "pwc.h"
+#include "pwc-uncompress.h"
 #include "pwc-dec1.h"
 #include "pwc-dec23.h"
 
-int pwc_decompress(struct pwc_device *pdev, struct pwc_frame_buf *fbuf)
+int pwc_decompress(struct pwc_device *pdev)
 {
+	struct pwc_frame_buf *fbuf;
 	int n, line, col, stride;
 	void *yuv, *image;
 	u16 *src;
 	u16 *dsty, *dstu, *dstv;
 
-	image = vb2_plane_vaddr(&fbuf->vb, 0);
+	if (pdev == NULL)
+		return -EFAULT;
+
+	fbuf = pdev->read_frame;
+	if (fbuf == NULL)
+		return -EFAULT;
+	image  = pdev->image_data;
+	image += pdev->images[pdev->fill_image].offset;
 
 	yuv = fbuf->data + pdev->frame_header_size;  /* Skip header */
 
@@ -55,12 +64,8 @@ int pwc_decompress(struct pwc_device *pdev, struct pwc_frame_buf *fbuf)
 			 * determine this using the type of the webcam */
 		memcpy(raw_frame->cmd, pdev->cmd_buf, 4);
 		memcpy(raw_frame+1, yuv, pdev->frame_size);
-		vb2_set_plane_payload(&fbuf->vb, 0,
-			pdev->frame_size + sizeof(struct pwc_raw_frame));
 		return 0;
 	}
-
-	vb2_set_plane_payload(&fbuf->vb, 0, pdev->view.size);
 
 	if (pdev->vbandlength == 0) {
 		/* Uncompressed mode.

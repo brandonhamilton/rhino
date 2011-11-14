@@ -41,3 +41,4 @@ Note: when compiling for revision 1.0 boards, the CONFIG_RHINO_REV flag must fir
 $ cd borph
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_defconfig
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm uImage modules
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm INSTALL_MOD_PATH=<root_filesystem_dir> modules_install

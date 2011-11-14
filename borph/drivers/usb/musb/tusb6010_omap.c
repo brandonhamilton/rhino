@@ -65,7 +65,7 @@ static int tusb_omap_dma_start(struct dma_controller *c)
 
 	tusb_dma = container_of(c, struct tusb_omap_dma, controller);
 
-	/* dev_dbg(musb->controller, "ep%i ch: %i\n", chdat->epnum, chdat->ch); */
+	/* DBG(3, "ep%i ch: %i\n", chdat->epnum, chdat->ch); */
 
 	return 0;
 }
@@ -76,7 +76,7 @@ static int tusb_omap_dma_stop(struct dma_controller *c)
 
 	tusb_dma = container_of(c, struct tusb_omap_dma, controller);
 
-	/* dev_dbg(musb->controller, "ep%i ch: %i\n", chdat->epnum, chdat->ch); */
+	/* DBG(3, "ep%i ch: %i\n", chdat->epnum, chdat->ch); */
 
 	return 0;
 }
@@ -89,7 +89,7 @@ static inline int tusb_omap_use_shared_dmareq(struct tusb_omap_dma_ch *chdat)
 	u32		reg = musb_readl(chdat->tbase, TUSB_DMA_EP_MAP);
 
 	if (reg != 0) {
-		dev_dbg(musb->controller, "ep%i dmareq0 is busy for ep%i\n",
+		DBG(3, "ep%i dmareq0 is busy for ep%i\n",
 			chdat->epnum, reg & 0xf);
 		return -EAGAIN;
 	}
@@ -143,7 +143,7 @@ static void tusb_omap_dma_cb(int lch, u16 ch_status, void *data)
 	if (ch_status != OMAP_DMA_BLOCK_IRQ)
 		printk(KERN_ERR "TUSB DMA error status: %i\n", ch_status);
 
-	dev_dbg(musb->controller, "ep%i %s dma callback ch: %i status: %x\n",
+	DBG(3, "ep%i %s dma callback ch: %i status: %x\n",
 		chdat->epnum, chdat->tx ? "tx" : "rx",
 		ch, ch_status);
 
@@ -156,7 +156,7 @@ static void tusb_omap_dma_cb(int lch, u16 ch_status, void *data)
 
 	/* HW issue #10: XFR_SIZE may get corrupt on DMA (both async & sync) */
 	if (unlikely(remaining > chdat->transfer_len)) {
-		dev_dbg(musb->controller, "Corrupt %s dma ch%i XFR_SIZE: 0x%08lx\n",
+		DBG(2, "Corrupt %s dma ch%i XFR_SIZE: 0x%08lx\n",
 			chdat->tx ? "tx" : "rx", chdat->ch,
 			remaining);
 		remaining = 0;
@@ -165,24 +165,24 @@ static void tusb_omap_dma_cb(int lch, u16 ch_status, void *data)
 	channel->actual_len = chdat->transfer_len - remaining;
 	pio = chdat->len - channel->actual_len;
 
-	dev_dbg(musb->controller, "DMA remaining %lu/%u\n", remaining, chdat->transfer_len);
+	DBG(3, "DMA remaining %lu/%u\n", remaining, chdat->transfer_len);
 
 	/* Transfer remaining 1 - 31 bytes */
 	if (pio > 0 && pio < 32) {
 		u8	*buf;
 
-		dev_dbg(musb->controller, "Using PIO for remaining %lu bytes\n", pio);
+		DBG(3, "Using PIO for remaining %lu bytes\n", pio);
 		buf = phys_to_virt((u32)chdat->dma_addr) + chdat->transfer_len;
 		if (chdat->tx) {
 			dma_unmap_single(dev, chdat->dma_addr,
 						chdat->transfer_len,
 						DMA_TO_DEVICE);
-			musb_write_fifo(hw_ep, pio, buf);
+			musb->ops->write_fifo(hw_ep, pio, buf);
 		} else {
 			dma_unmap_single(dev, chdat->dma_addr,
 						chdat->transfer_len,
 						DMA_FROM_DEVICE);
-			musb_read_fifo(hw_ep, pio, buf);
+			musb->ops->read_fifo(hw_ep, pio, buf);
 		}
 		channel->actual_len += pio;
 	}
@@ -209,8 +209,8 @@ static void tusb_omap_dma_cb(int lch, u16 ch_status, void *data)
 		u16	csr;
 
 		if (chdat->tx) {
-			dev_dbg(musb->controller, "terminating short tx packet\n");
-			musb_ep_select(mbase, chdat->epnum);
+			DBG(3, "terminating short tx packet\n");
+			musb_ep_select(musb, mbase, chdat->epnum);
 			csr = musb_readw(hw_ep->regs, MUSB_TXCSR);
 			csr |= MUSB_TXCSR_MODE | MUSB_TXCSR_TXPKTRDY
 				| MUSB_TXCSR_P_WZC_BITS;
@@ -264,7 +264,7 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 
 	dma_remaining = TUSB_EP_CONFIG_XFR_SIZE(dma_remaining);
 	if (dma_remaining) {
-		dev_dbg(musb->controller, "Busy %s dma ch%i, not using: %08x\n",
+		DBG(2, "Busy %s dma ch%i, not using: %08x\n",
 			chdat->tx ? "tx" : "rx", chdat->ch,
 			dma_remaining);
 		return false;
@@ -283,7 +283,7 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 		sync_dev = chdat->sync_dev;
 	} else {
 		if (tusb_omap_use_shared_dmareq(chdat) != 0) {
-			dev_dbg(musb->controller, "could not get dma for ep%i\n", chdat->epnum);
+			DBG(3, "could not get dma for ep%i\n", chdat->epnum);
 			return false;
 		}
 		if (tusb_dma->ch < 0) {
@@ -326,7 +326,7 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 
 	dma_params.frame_count	= chdat->transfer_len / 32; /* Burst sz frame */
 
-	dev_dbg(musb->controller, "ep%i %s dma ch%i dma: %08x len: %u(%u) packet_sz: %i(%i)\n",
+	DBG(3, "ep%i %s dma ch%i dma: %08x len: %u(%u) packet_sz: %i(%i)\n",
 		chdat->epnum, chdat->tx ? "tx" : "rx",
 		ch, dma_addr, chdat->transfer_len, len,
 		chdat->transfer_packet_sz, packet_sz);
@@ -370,7 +370,7 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 		dst_burst = OMAP_DMA_DATA_BURST_16;	/* 16x32 write */
 	}
 
-	dev_dbg(musb->controller, "ep%i %s using %i-bit %s dma from 0x%08lx to 0x%08lx\n",
+	DBG(3, "ep%i %s using %i-bit %s dma from 0x%08lx to 0x%08lx\n",
 		chdat->epnum, chdat->tx ? "tx" : "rx",
 		(dma_params.data_type == OMAP_DMA_DATA_TYPE_S32) ? 32 : 16,
 		((dma_addr & 0x3) == 0) ? "sync" : "async",
@@ -385,14 +385,14 @@ static int tusb_omap_dma_program(struct dma_channel *channel, u16 packet_sz,
 	 * Prepare MUSB for DMA transfer
 	 */
 	if (chdat->tx) {
-		musb_ep_select(mbase, chdat->epnum);
+		musb_ep_select(musb, mbase, chdat->epnum);
 		csr = musb_readw(hw_ep->regs, MUSB_TXCSR);
 		csr |= (MUSB_TXCSR_AUTOSET | MUSB_TXCSR_DMAENAB
 			| MUSB_TXCSR_DMAMODE | MUSB_TXCSR_MODE);
 		csr &= ~MUSB_TXCSR_P_UNDERRUN;
 		musb_writew(hw_ep->regs, MUSB_TXCSR, csr);
 	} else {
-		musb_ep_select(mbase, chdat->epnum);
+		musb_ep_select(musb, mbase, chdat->epnum);
 		csr = musb_readw(hw_ep->regs, MUSB_RXCSR);
 		csr |= MUSB_RXCSR_DMAENAB;
 		csr &= ~(MUSB_RXCSR_AUTOCLEAR | MUSB_RXCSR_DMAMODE);
@@ -525,7 +525,7 @@ tusb_omap_dma_allocate(struct dma_controller *c,
 
 	/* REVISIT: Why does dmareq5 not work? */
 	if (hw_ep->epnum == 0) {
-		dev_dbg(musb->controller, "Not allowing DMA for ep0 %s\n", tx ? "tx" : "rx");
+		DBG(3, "Not allowing DMA for ep0 %s\n", tx ? "tx" : "rx");
 		return NULL;
 	}
 
@@ -585,7 +585,7 @@ tusb_omap_dma_allocate(struct dma_controller *c,
 		chdat->ch = -1;
 	}
 
-	dev_dbg(musb->controller, "ep%i %s dma: %s dma%i dmareq%i sync%i\n",
+	DBG(3, "ep%i %s dma: %s dma%i dmareq%i sync%i\n",
 		chdat->epnum,
 		chdat->tx ? "tx" : "rx",
 		chdat->ch >= 0 ? "dedicated" : "shared",
@@ -598,7 +598,7 @@ tusb_omap_dma_allocate(struct dma_controller *c,
 free_dmareq:
 	tusb_omap_dma_free_dmareq(chdat);
 
-	dev_dbg(musb->controller, "ep%i: Could not get a DMA channel\n", chdat->epnum);
+	DBG(3, "ep%i: Could not get a DMA channel\n", chdat->epnum);
 	channel->status = MUSB_DMA_STATUS_UNKNOWN;
 
 	return NULL;
@@ -611,7 +611,7 @@ static void tusb_omap_dma_release(struct dma_channel *channel)
 	void __iomem		*tbase = musb->ctrl_base;
 	u32			reg;
 
-	dev_dbg(musb->controller, "ep%i ch%i\n", chdat->epnum, chdat->ch);
+	DBG(3, "ep%i ch%i\n", chdat->epnum, chdat->ch);
 
 	reg = musb_readl(tbase, TUSB_DMA_INT_MASK);
 	if (chdat->tx)
@@ -641,7 +641,7 @@ static void tusb_omap_dma_release(struct dma_channel *channel)
 	channel = NULL;
 }
 
-void dma_controller_destroy(struct dma_controller *c)
+void tusb_dma_controller_destroy(struct dma_controller *c)
 {
 	struct tusb_omap_dma	*tusb_dma;
 	int			i;
@@ -660,9 +660,10 @@ void dma_controller_destroy(struct dma_controller *c)
 
 	kfree(tusb_dma);
 }
+EXPORT_SYMBOL(tusb_dma_controller_destroy);
 
-struct dma_controller *__init
-dma_controller_create(struct musb *musb, void __iomem *base)
+struct dma_controller *__devinit
+tusb_dma_controller_create(struct musb *musb, void __iomem *base)
 {
 	void __iomem		*tbase = musb->ctrl_base;
 	struct tusb_omap_dma	*tusb_dma;
@@ -680,7 +681,7 @@ dma_controller_create(struct musb *musb, void __iomem *base)
 
 	tusb_dma = kzalloc(sizeof(struct tusb_omap_dma), GFP_KERNEL);
 	if (!tusb_dma)
-		goto out;
+		goto cleanup;
 
 	tusb_dma->musb = musb;
 	tusb_dma->tbase = musb->ctrl_base;
@@ -696,7 +697,7 @@ dma_controller_create(struct musb *musb, void __iomem *base)
 	tusb_dma->controller.channel_program = tusb_omap_dma_program;
 	tusb_dma->controller.channel_abort = tusb_omap_dma_abort;
 
-	if (tusb_get_revision(musb) >= TUSB_REV_30)
+	if(musb_platform_get_hw_revision(musb) >= TUSB_REV_30)
 		tusb_dma->multichannel = 1;
 
 	for (i = 0; i < MAX_DMAREQ; i++) {
@@ -720,7 +721,23 @@ dma_controller_create(struct musb *musb, void __iomem *base)
 	return &tusb_dma->controller;
 
 cleanup:
-	dma_controller_destroy(&tusb_dma->controller);
-out:
+	tusb_dma_controller_destroy(&tusb_dma->controller);
+
 	return NULL;
 }
+EXPORT_SYMBOL(tusb_dma_controller_create);
+
+
+MODULE_DESCRIPTION("TUSB dma controller driver for musb");
+MODULE_LICENSE("GPL v2");
+
+static int __init tusb_dma_init(void)
+{
+	return 0;
+}
+module_init(tusb_dma_init);
+
+static void __exit tusb_dma__exit(void)
+{
+}
+module_exit(tusb_dma__exit);

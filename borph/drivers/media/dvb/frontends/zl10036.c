@@ -463,16 +463,16 @@ struct dvb_frontend *zl10036_attach(struct dvb_frontend *fe,
 				    const struct zl10036_config *config,
 				    struct i2c_adapter *i2c)
 {
-	struct zl10036_state *state;
+	struct zl10036_state *state = NULL;
 	int ret;
 
-	if (!config) {
+	if (NULL == config) {
 		printk(KERN_ERR "%s: no config specified", __func__);
-		return NULL;
+		goto error;
 	}
 
 	state = kzalloc(sizeof(struct zl10036_state), GFP_KERNEL);
-	if (!state)
+	if (NULL == state)
 		return NULL;
 
 	state->config = config;
@@ -507,7 +507,7 @@ struct dvb_frontend *zl10036_attach(struct dvb_frontend *fe,
 	return fe;
 
 error:
-	kfree(state);
+	zl10036_release(fe);
 	return NULL;
 }
 EXPORT_SYMBOL(zl10036_attach);

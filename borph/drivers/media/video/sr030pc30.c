@@ -714,6 +714,15 @@ static int sr030pc30_base_config(struct v4l2_subdev *sd)
 	return ret;
 }
 
+static int sr030pc30_s_config(struct v4l2_subdev *sd,
+			      int irq, void *platform_data)
+{
+	struct sr030pc30_info *info = to_sr030pc30(sd);
+
+	info->pdata = platform_data;
+	return 0;
+}
+
 static int sr030pc30_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	return 0;
@@ -726,10 +735,8 @@ static int sr030pc30_s_power(struct v4l2_subdev *sd, int on)
 	const struct sr030pc30_platform_data *pdata = info->pdata;
 	int ret;
 
-	if (pdata == NULL) {
-		WARN(1, "No platform data!\n");
-		return -EINVAL;
-	}
+	if (WARN(pdata == NULL, "No platform data!"))
+		return -ENOMEM;
 
 	/*
 	 * Put sensor into power sleep mode before switching off
@@ -748,7 +755,6 @@ static int sr030pc30_s_power(struct v4l2_subdev *sd, int on)
 	if (on) {
 		ret = sr030pc30_base_config(sd);
 	} else {
-		ret = 0;
 		info->curr_win = NULL;
 		info->curr_fmt = NULL;
 	}
@@ -757,6 +763,7 @@ static int sr030pc30_s_power(struct v4l2_subdev *sd, int on)
 }
 
 static const struct v4l2_subdev_core_ops sr030pc30_core_ops = {
+	.s_config	= sr030pc30_s_config,
 	.s_power	= sr030pc30_s_power,
 	.queryctrl	= sr030pc30_queryctrl,
 	.s_ctrl		= sr030pc30_s_ctrl,

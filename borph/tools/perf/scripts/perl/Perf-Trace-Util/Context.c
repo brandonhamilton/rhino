@@ -8,7 +8,7 @@
 
 #line 1 "Context.xs"
 /*
- * Context.xs.  XS interfaces for perf script.
+ * Context.xs.  XS interfaces for perf trace.
  *
  * Copyright (C) 2009 Tom Zanussi <tzanussi@gmail.com>
  *

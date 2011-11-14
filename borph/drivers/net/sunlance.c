@@ -1170,6 +1170,7 @@ static void lance_load_multicast(struct net_device *dev)
 {
 	struct lance_private *lp = netdev_priv(dev);
 	struct netdev_hw_addr *ha;
+	char *addrs;
 	u32 crc;
 	u32 val;
 
@@ -1194,7 +1195,12 @@ static void lance_load_multicast(struct net_device *dev)
 
 	/* Add addresses */
 	netdev_for_each_mc_addr(ha, dev) {
-		crc = ether_crc_le(6, ha->addr);
+		addrs = ha->addr;
+
+		/* multicast address? */
+		if (!(*addrs & 1))
+			continue;
+		crc = ether_crc_le(6, addrs);
 		crc = crc >> 26;
 		if (lp->pio_buffer) {
 			struct lance_init_block __iomem *ib = lp->init_block_iomem;
@@ -1289,9 +1295,17 @@ static void sparc_lance_get_drvinfo(struct net_device *dev, struct ethtool_drvin
 	strcpy(info->version, "2.02");
 }
 
+static u32 sparc_lance_get_link(struct net_device *dev)
+{
+	/* We really do not keep track of this, but this
+	 * is better than not reporting anything at all.
+	 */
+	return 1;
+}
+
 static const struct ethtool_ops sparc_lance_ethtool_ops = {
 	.get_drvinfo		= sparc_lance_get_drvinfo,
-	.get_link		= ethtool_op_get_link,
+	.get_link		= sparc_lance_get_link,
 };
 
 static const struct net_device_ops sparc_lance_ops = {
@@ -1489,7 +1503,7 @@ fail:
 	return -ENODEV;
 }
 
-static int __devinit sunlance_sbus_probe(struct platform_device *op)
+static int __devinit sunlance_sbus_probe(struct platform_device *op, const struct of_device_id *match)
 {
 	struct platform_device *parent = to_platform_device(op->dev.parent);
 	struct device_node *parent_dp = parent->dev.of_node;
@@ -1530,7 +1544,7 @@ static const struct of_device_id sunlance_sbus_match[] = {
 
 MODULE_DEVICE_TABLE(of, sunlance_sbus_match);
 
-static struct platform_driver sunlance_sbus_driver = {
+static struct of_platform_driver sunlance_sbus_driver = {
 	.driver = {
 		.name = "sunlance",
 		.owner = THIS_MODULE,
@@ -1544,12 +1558,12 @@ static struct platform_driver sunlance_sbus_driver = {
 /* Find all the lance cards on the system and initialize them */
 static int __init sparc_lance_init(void)
 {
-	return platform_driver_register(&sunlance_sbus_driver);
+	return of_register_platform_driver(&sunlance_sbus_driver);
 }
 
 static void __exit sparc_lance_exit(void)
 {
-	platform_driver_unregister(&sunlance_sbus_driver);
+	of_unregister_platform_driver(&sunlance_sbus_driver);
 }
 
 module_init(sparc_lance_init);

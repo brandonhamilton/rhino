@@ -79,19 +79,14 @@ static void
 da_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	struct manager	*mgr = fi->userdata;
-	struct va_format vaf;
 	va_list va;
 
 	if (!(*debug & DEBUG_L2_TEIFSM))
 		return;
-
 	va_start(va, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &va;
-
-	printk(KERN_DEBUG "mgr(%d): %pV\n", mgr->ch.st->dev->id, &vaf);
-
+	printk(KERN_DEBUG "mgr(%d): ", mgr->ch.st->dev->id);
+	vprintk(fmt, va);
+	printk("\n");
 	va_end(va);
 }
 
@@ -228,20 +223,14 @@ static void
 tei_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	struct teimgr	*tm = fi->userdata;
-	struct va_format vaf;
 	va_list va;
 
 	if (!(*debug & DEBUG_L2_TEIFSM))
 		return;
-
 	va_start(va, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &va;
-
-	printk(KERN_DEBUG "sapi(%d) tei(%d): %pV\n",
-	       tm->l2->sapi, tm->l2->tei, &vaf);
-
+	printk(KERN_DEBUG "sapi(%d) tei(%d): ", tm->l2->sapi, tm->l2->tei);
+	vprintk(fmt, va);
+	printk("\n");
 	va_end(va);
 }
 

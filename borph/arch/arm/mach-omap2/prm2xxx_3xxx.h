@@ -5,6 +5,9 @@
  * Copyright (C) 2008-2010 Nokia Corporation
  * Paul Walmsley
  *
+ * Added TI86X PRM module offsets as most of the operations fit with OMAP3.
+ * Hemant Pedanekar (hemantp@ti.com)
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -226,6 +229,47 @@
 #define OMAP3430_PRM_IRQSTATUS_IVA2			0x00f8
 #define OMAP3430_PRM_IRQENABLE_IVA2			0x00fc
 
+/* TI81XX PRM DEVICE offsets */
+#define TI81XX_PRM_DEVICE_RSTCTRL			0x00A0
+
+/* TI81XX specific register offsets from each PRM module base */
+#define TI81XX_PM_PWSTCTRL				0x0000
+#define TI81XX_PM_PWSTST				0x0004
+#define TI81XX_RM_RSTCTRL				0x0010
+#define TI81XX_RM_RSTST					0x0014
+
+/*
+ * TI81XX common PRM module offsets
+ */
+
+#define TI81XX_PRM_DEVICE_MOD			0x0000	/* 256B */
+#define TI81XX_PRM_ALWON_MOD			0x1800	/* 1KB */
+
+/* FIXME: TI814X: Same as ALWON2, older doc called this DEFAULT */
+#define TI81XX_PRM_DEFAULT_MOD			0x0b00	/* 256B */
+
+/*
+ * TI816X PRM module offsets
+ */
+
+#define TI816X_PRM_OCP_SOCKET_MOD		0x0200	/* 256B */
+#define TI816X_PRM_ACTIVE_MOD			0x0a00	/* 256B */
+#define TI816X_PRM_IVAHD0_MOD			0x0c00	/* 256B */
+#define TI816X_PRM_IVAHD1_MOD			0x0d00	/* 256B */
+#define TI816X_PRM_IVAHD2_MOD			0x0e00	/* 256B */
+#define TI816X_PRM_SGX_MOD			0x0f00	/* 256B */
+
+/*
+ * TI814X PRM module offsets
+ */
+
+#define TI814X_REVISION_PRM_MOD			0x0200  /* 256B */
+#define TI814X_PRM_DSP_MOD			0x0a00  /* 256B */
+#define TI814X_PRM_ALWON2_MOD			0x0b00  /* 256B */
+#define TI814X_PRM_HDVICP_MOD			0x0c00  /* 256B */
+#define TI814X_PRM_ISP_MOD			0x0d00  /* 256B */
+#define TI814X_PRM_HDVPSS_MOD			0x0e00  /* 256B */
+#define TI814X_PRM_GFX_MOD			0x0f00  /* 256B */
 
 #ifndef __ASSEMBLER__
 /*
@@ -233,59 +277,60 @@
  * continue to build when custom builds are used
  */
 #if defined(CONFIG_ARCH_OMAP4) && !(defined(CONFIG_ARCH_OMAP2) ||	\
-					defined(CONFIG_ARCH_OMAP3))
+					defined(CONFIG_ARCH_OMAP3) ||	\
+					defined(CONFIG_ARCH_TI816X))
 static inline u32 omap2_prm_read_mod_reg(s16 module, u16 idx)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline void omap2_prm_write_mod_reg(u32 val, s16 module, u16 idx)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 }
 static inline u32 omap2_prm_rmw_mod_reg_bits(u32 mask, u32 bits,
 		s16 module, s16 idx)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline u32 omap2_prm_set_mod_reg_bits(u32 bits, s16 module, s16 idx)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline u32 omap2_prm_clear_mod_reg_bits(u32 bits, s16 module, s16 idx)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline u32 omap2_prm_read_mod_bits_shift(s16 domain, s16 idx, u32 mask)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline int omap2_prm_is_hardreset_asserted(s16 prm_mod, u8 shift)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline int omap2_prm_assert_hardreset(s16 prm_mod, u8 shift)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
 static inline int omap2_prm_deassert_hardreset(s16 prm_mod, u8 rst_shift,
 						u8 st_shift)
 {
-	WARN(1, "prm: omap2xxx/omap3xxx specific function and "
+	WARN_ONCE(1, "prm: omap2xxx/omap3xxx specific function and "
 		"not suppose to be used on omap4\n");
 	return 0;
 }
@@ -418,6 +463,10 @@ extern int omap2_prm_deassert_hardreset(s16 prm_mod, u8 rst_shift, u8 st_shift);
  */
 #define OMAP_LOGICRETSTATE_MASK				(1 << 2)
 
+/*
+ * TI81XX PRM_DEVICE
+ */
+#define TI81XX_GLOBAL_RST_COLD				(1 << 1)
 
 /*
  * MAX_MODULE_HARDRESET_WAIT: Maximum microseconds to wait for an OMAP

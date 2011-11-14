@@ -734,7 +734,7 @@ void tcp_update_metrics(struct sock *sk)
 			 * Reset our results.
 			 */
 			if (!(dst_metric_locked(dst, RTAX_RTT)))
-				dst_metric_set(dst, RTAX_RTT, 0);
+				dst->metrics[RTAX_RTT - 1] = 0;
 			return;
 		}
 
@@ -776,38 +776,34 @@ void tcp_update_metrics(struct sock *sk)
 			if (dst_metric(dst, RTAX_SSTHRESH) &&
 			    !dst_metric_locked(dst, RTAX_SSTHRESH) &&
 			    (tp->snd_cwnd >> 1) > dst_metric(dst, RTAX_SSTHRESH))
-				dst_metric_set(dst, RTAX_SSTHRESH, tp->snd_cwnd >> 1);
+				dst->metrics[RTAX_SSTHRESH-1] = tp->snd_cwnd >> 1;
 			if (!dst_metric_locked(dst, RTAX_CWND) &&
 			    tp->snd_cwnd > dst_metric(dst, RTAX_CWND))
-				dst_metric_set(dst, RTAX_CWND, tp->snd_cwnd);
+				dst->metrics[RTAX_CWND - 1] = tp->snd_cwnd;
 		} else if (tp->snd_cwnd > tp->snd_ssthresh &&
 			   icsk->icsk_ca_state == TCP_CA_Open) {
 			/* Cong. avoidance phase, cwnd is reliable. */
 			if (!dst_metric_locked(dst, RTAX_SSTHRESH))
-				dst_metric_set(dst, RTAX_SSTHRESH,
-					       max(tp->snd_cwnd >> 1, tp->snd_ssthresh));
+				dst->metrics[RTAX_SSTHRESH-1] =
+					max(tp->snd_cwnd >> 1, tp->snd_ssthresh);
 			if (!dst_metric_locked(dst, RTAX_CWND))
-				dst_metric_set(dst, RTAX_CWND,
-					       (dst_metric(dst, RTAX_CWND) +
-						tp->snd_cwnd) >> 1);
+				dst->metrics[RTAX_CWND-1] = (dst_metric(dst, RTAX_CWND) + tp->snd_cwnd) >> 1;
 		} else {
 			/* Else slow start did not finish, cwnd is non-sense,
 			   ssthresh may be also invalid.
 			 */
 			if (!dst_metric_locked(dst, RTAX_CWND))
-				dst_metric_set(dst, RTAX_CWND,
-					       (dst_metric(dst, RTAX_CWND) +
-						tp->snd_ssthresh) >> 1);
+				dst->metrics[RTAX_CWND-1] = (dst_metric(dst, RTAX_CWND) + tp->snd_ssthresh) >> 1;
 			if (dst_metric(dst, RTAX_SSTHRESH) &&
 			    !dst_metric_locked(dst, RTAX_SSTHRESH) &&
 			    tp->snd_ssthresh > dst_metric(dst, RTAX_SSTHRESH))
-				dst_metric_set(dst, RTAX_SSTHRESH, tp->snd_ssthresh);
+				dst->metrics[RTAX_SSTHRESH-1] = tp->snd_ssthresh;
 		}
 
 		if (!dst_metric_locked(dst, RTAX_REORDERING)) {
 			if (dst_metric(dst, RTAX_REORDERING) < tp->reordering &&
 			    tp->reordering != sysctl_tcp_reordering)
-				dst_metric_set(dst, RTAX_REORDERING, tp->reordering);
+				dst->metrics[RTAX_REORDERING-1] = tp->reordering;
 		}
 	}
 }
@@ -817,7 +813,7 @@ __u32 tcp_init_cwnd(struct tcp_sock *tp, struct dst_entry *dst)
 	__u32 cwnd = (dst ? dst_metric(dst, RTAX_INITCWND) : 0);
 
 	if (!cwnd)
-		cwnd = TCP_INIT_CWND;
+		cwnd = rfc3390_bytes_to_packets(tp->mss_cache);
 	return min_t(__u32, cwnd, tp->snd_cwnd_clamp);
 }
 
@@ -880,11 +876,6 @@ static void tcp_init_metrics(struct sock *sk)
 		tp->snd_ssthresh = dst_metric(dst, RTAX_SSTHRESH);
 		if (tp->snd_ssthresh > tp->snd_cwnd_clamp)
 			tp->snd_ssthresh = tp->snd_cwnd_clamp;
-	} else {
-		/* ssthresh may have been reduced unnecessarily during.
-		 * 3WHS. Restore it back to its initial default.
-		 */
-		tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 	}
 	if (dst_metric(dst, RTAX_REORDERING) &&
 	    tp->reordering != dst_metric(dst, RTAX_REORDERING)) {
@@ -892,7 +883,10 @@ static void tcp_init_metrics(struct sock *sk)
 		tp->reordering = dst_metric(dst, RTAX_REORDERING);
 	}
 
-	if (dst_metric(dst, RTAX_RTT) == 0 || tp->srtt == 0)
+	if (dst_metric(dst, RTAX_RTT) == 0)
+		goto reset;
+
+	if (!tp->srtt && dst_metric_rtt(dst, RTAX_RTT) < (TCP_TIMEOUT_INIT << 3))
 		goto reset;
 
 	/* Initial rtt is determined from SYN,SYN-ACK.
@@ -918,27 +912,25 @@ static void tcp_init_metrics(struct sock *sk)
 		tp->mdev_max = tp->rttvar = max(tp->mdev, tcp_rto_min(sk));
 	}
 	tcp_set_rto(sk);
-reset:
-	if (tp->srtt == 0) {
-		/* RFC2988bis: We've failed to get a valid RTT sample from
-		 * 3WHS. This is most likely due to retransmission,
-		 * including spurious one. Reset the RTO back to 3secs
-		 * from the more aggressive 1sec to avoid more spurious
-		 * retransmission.
-		 */
-		tp->mdev = tp->mdev_max = tp->rttvar = TCP_TIMEOUT_FALLBACK;
-		inet_csk(sk)->icsk_rto = TCP_TIMEOUT_FALLBACK;
-	}
-	/* Cut cwnd down to 1 per RFC5681 if SYN or SYN-ACK has been
-	 * retransmitted. In light of RFC2988bis' more aggressive 1sec
-	 * initRTO, we only reset cwnd when more than 1 SYN/SYN-ACK
-	 * retransmission has occurred.
-	 */
-	if (tp->total_retrans > 1)
-		tp->snd_cwnd = 1;
-	else
-		tp->snd_cwnd = tcp_init_cwnd(tp, dst);
+	if (inet_csk(sk)->icsk_rto < TCP_TIMEOUT_INIT && !tp->rx_opt.saw_tstamp)
+		goto reset;
+
+cwnd:
+	tp->snd_cwnd = tcp_init_cwnd(tp, dst);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
+	return;
+
+reset:
+	/* Play conservative. If timestamps are not
+	 * supported, TCP will fail to recalculate correct
+	 * rtt, if initial rto is too small. FORGET ALL AND RESET!
+	 */
+	if (!tp->rx_opt.saw_tstamp && tp->srtt) {
+		tp->srtt = 0;
+		tp->mdev = tp->mdev_max = tp->rttvar = TCP_TIMEOUT_INIT;
+		inet_csk(sk)->icsk_rto = TCP_TIMEOUT_INIT;
+	}
+	goto cwnd;
 }
 
 static void tcp_update_reordering(struct sock *sk, const int metric,
@@ -1231,7 +1223,7 @@ static int tcp_check_dsack(struct sock *sk, struct sk_buff *ack_skb,
 	}
 
 	/* D-SACK for already forgotten data... Do dumb counting. */
-	if (dup_sack && tp->undo_marker && tp->undo_retrans &&
+	if (dup_sack &&
 	    !after(end_seq_0, prior_snd_una) &&
 	    after(end_seq_0, tp->undo_marker))
 		tp->undo_retrans--;
@@ -1308,8 +1300,7 @@ static u8 tcp_sacktag_one(struct sk_buff *skb, struct sock *sk,
 
 	/* Account D-SACK for retransmitted packet. */
 	if (dup_sack && (sacked & TCPCB_RETRANS)) {
-		if (tp->undo_marker && tp->undo_retrans &&
-		    after(TCP_SKB_CB(skb)->end_seq, tp->undo_marker))
+		if (after(TCP_SKB_CB(skb)->end_seq, tp->undo_marker))
 			tp->undo_retrans--;
 		if (sacked & TCPCB_SACKED_ACKED)
 			state->reord = min(fack_count, state->reord);
@@ -2668,7 +2659,7 @@ static void DBGUNDO(struct sock *sk, const char *msg)
 #define DBGUNDO(x...) do { } while (0)
 #endif
 
-static void tcp_undo_cwr(struct sock *sk, const bool undo_ssthresh)
+static void tcp_undo_cwr(struct sock *sk, const int undo)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
@@ -2680,13 +2671,14 @@ static void tcp_undo_cwr(struct sock *sk, const bool undo_ssthresh)
 		else
 			tp->snd_cwnd = max(tp->snd_cwnd, tp->snd_ssthresh << 1);
 
-		if (undo_ssthresh && tp->prior_ssthresh > tp->snd_ssthresh) {
+		if (undo && tp->prior_ssthresh > tp->snd_ssthresh) {
 			tp->snd_ssthresh = tp->prior_ssthresh;
 			TCP_ECN_withdraw_cwr(tp);
 		}
 	} else {
 		tp->snd_cwnd = max(tp->snd_cwnd, tp->snd_ssthresh);
 	}
+	tcp_moderate_cwnd(tp);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
 }
 
@@ -2707,7 +2699,7 @@ static int tcp_try_undo_recovery(struct sock *sk)
 		 * or our original transmission succeeded.
 		 */
 		DBGUNDO(sk, inet_csk(sk)->icsk_ca_state == TCP_CA_Loss ? "loss" : "retrans");
-		tcp_undo_cwr(sk, true);
+		tcp_undo_cwr(sk, 1);
 		if (inet_csk(sk)->icsk_ca_state == TCP_CA_Loss)
 			mib_idx = LINUX_MIB_TCPLOSSUNDO;
 		else
@@ -2734,7 +2726,7 @@ static void tcp_try_undo_dsack(struct sock *sk)
 
 	if (tp->undo_marker && !tp->undo_retrans) {
 		DBGUNDO(sk, "D-SACK");
-		tcp_undo_cwr(sk, true);
+		tcp_undo_cwr(sk, 1);
 		tp->undo_marker = 0;
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPDSACKUNDO);
 	}
@@ -2787,7 +2779,7 @@ static int tcp_try_undo_partial(struct sock *sk, int acked)
 		tcp_update_reordering(sk, tcp_fackets_out(tp) + acked, 1);
 
 		DBGUNDO(sk, "Hoe");
-		tcp_undo_cwr(sk, false);
+		tcp_undo_cwr(sk, 0);
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPPARTIALUNDO);
 
 		/* So... Do not make Hoe's retransmit yet.
@@ -2816,7 +2808,7 @@ static int tcp_try_undo_loss(struct sock *sk)
 
 		DBGUNDO(sk, "partial loss");
 		tp->lost_out = 0;
-		tcp_undo_cwr(sk, true);
+		tcp_undo_cwr(sk, 1);
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSSUNDO);
 		inet_csk(sk)->icsk_retransmits = 0;
 		tp->undo_marker = 0;
@@ -2830,11 +2822,8 @@ static int tcp_try_undo_loss(struct sock *sk)
 static inline void tcp_complete_cwr(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	/* Do not moderate cwnd if it's already undone in cwr or recovery */
-	if (tp->undo_marker && tp->snd_cwnd > tp->snd_ssthresh) {
-		tp->snd_cwnd = tp->snd_ssthresh;
-		tp->snd_cwnd_stamp = tcp_time_stamp;
-	}
+	tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_ssthresh);
+	tp->snd_cwnd_stamp = tcp_time_stamp;
 	tcp_ca_event(sk, CA_EVENT_COMPLETE_CWR);
 }
 
@@ -3121,13 +3110,12 @@ static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
 	tcp_xmit_retransmit_queue(sk);
 }
 
-void tcp_valid_rtt_meas(struct sock *sk, u32 seq_rtt)
+static void tcp_valid_rtt_meas(struct sock *sk, u32 seq_rtt)
 {
 	tcp_rtt_estimator(sk, seq_rtt);
 	tcp_set_rto(sk);
 	inet_csk(sk)->icsk_backoff = 0;
 }
-EXPORT_SYMBOL(tcp_valid_rtt_meas);
 
 /* Read draft-ietf-tcplw-high-performance before mucking
  * with this code. (Supersedes RFC1323)
@@ -3362,7 +3350,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
 						 net_invalid_timestamp()))
 					rtt_us = ktime_us_delta(ktime_get_real(),
 								last_ackt);
-				else if (ca_seq_rtt >= 0)
+				else if (ca_seq_rtt > 0)
 					rtt_us = jiffies_to_usecs(ca_seq_rtt);
 			}
 
@@ -3506,7 +3494,7 @@ static void tcp_undo_spur_to_response(struct sock *sk, int flag)
 	if (flag & FLAG_ECE)
 		tcp_ratehalving_spur_to_response(sk);
 	else
-		tcp_undo_cwr(sk, true);
+		tcp_undo_cwr(sk, 1);
 }
 
 /* F-RTO spurious RTO detection algorithm (RFC4138)
@@ -4412,7 +4400,7 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 			if (!skb_copy_datagram_iovec(skb, 0, tp->ucopy.iov, chunk)) {
 				tp->ucopy.len -= chunk;
 				tp->copied_seq += chunk;
-				eaten = (chunk == skb->len);
+				eaten = (chunk == skb->len && !th->fin);
 				tcp_rcv_space_adjust(sk);
 			}
 			local_bh_disable();
@@ -5815,6 +5803,12 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 				tp->snd_wnd = ntohs(th->window) <<
 					      tp->rx_opt.snd_wscale;
 				tcp_init_wl(tp, TCP_SKB_CB(skb)->seq);
+
+				/* tcp_ack considers this ACK as duplicate
+				 * and does not calculate rtt.
+				 * Force it here.
+				 */
+				tcp_ack_update_rtt(sk, 0, 0);
 
 				if (tp->rx_opt.tstamp_ok)
 					tp->advmss -= TCPOLEN_TSTAMP_ALIGNED;

@@ -18,7 +18,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.               *
  ***************************************************************************/
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -49,7 +48,8 @@
 #define ET61X251_MODULE_AUTHOR  "(C) 2006-2007 Luca Risolia"
 #define ET61X251_AUTHOR_EMAIL   "<luca.risolia@studio.unibo.it>"
 #define ET61X251_MODULE_LICENSE "GPL"
-#define ET61X251_MODULE_VERSION "1.1.10"
+#define ET61X251_MODULE_VERSION "1:1.09"
+#define ET61X251_MODULE_VERSION_CODE  KERNEL_VERSION(1, 1, 9)
 
 /*****************************************************************************/
 
@@ -1579,7 +1579,7 @@ et61x251_vidioc_querycap(struct et61x251_device* cam, void __user * arg)
 {
 	struct v4l2_capability cap = {
 		.driver = "et61x251",
-		.version = LINUX_VERSION_CODE,
+		.version = ET61X251_MODULE_VERSION_CODE,
 		.capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
 				V4L2_CAP_STREAMING,
 	};
@@ -1610,7 +1610,6 @@ et61x251_vidioc_enuminput(struct et61x251_device* cam, void __user * arg)
 	memset(&i, 0, sizeof(i));
 	strcpy(i.name, "Camera");
 	i.type = V4L2_INPUT_TYPE_CAMERA;
-	i.capabilities = V4L2_IN_CAP_STD;
 
 	if (copy_to_user(arg, &i, sizeof(i)))
 		return -EFAULT;
@@ -2480,8 +2479,16 @@ static long et61x251_ioctl_v4l2(struct file *filp,
 	case VIDIOC_S_PARM:
 		return et61x251_vidioc_s_parm(cam, arg);
 
+	case VIDIOC_G_STD:
+	case VIDIOC_S_STD:
+	case VIDIOC_QUERYSTD:
+	case VIDIOC_ENUMSTD:
+	case VIDIOC_QUERYMENU:
+	case VIDIOC_ENUM_FRAMEINTERVALS:
+		return -EINVAL;
+
 	default:
-		return -ENOTTY;
+		return -EINVAL;
 
 	}
 }

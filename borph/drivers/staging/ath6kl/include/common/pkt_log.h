@@ -31,11 +31,11 @@ extern "C" {
 /* Pkt log info */
 typedef PREPACK struct pkt_log_t {
     struct info_t {
-        u16 st;
-        u16 end;
-        u16 cur;
+        A_UINT16    st;
+        A_UINT16    end;
+        A_UINT16    cur;
     }info[4096];
-    u16 last_idx;
+    A_UINT16    last_idx;
 }POSTPACK PACKET_LOG;
 
 

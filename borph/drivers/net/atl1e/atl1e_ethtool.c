@@ -51,13 +51,13 @@ static int atl1e_get_settings(struct net_device *netdev,
 	ecmd->transceiver = XCVR_INTERNAL;
 
 	if (adapter->link_speed != SPEED_0) {
-		ethtool_cmd_speed_set(ecmd, adapter->link_speed);
+		ecmd->speed = adapter->link_speed;
 		if (adapter->link_duplex == FULL_DUPLEX)
 			ecmd->duplex = DUPLEX_FULL;
 		else
 			ecmd->duplex = DUPLEX_HALF;
 	} else {
-		ethtool_cmd_speed_set(ecmd, -1);
+		ecmd->speed = -1;
 		ecmd->duplex = -1;
 	}
 
@@ -95,18 +95,18 @@ static int atl1e_set_settings(struct net_device *netdev,
 		ecmd->advertising = hw->autoneg_advertised |
 				    ADVERTISED_TP | ADVERTISED_Autoneg;
 
-		adv4 = hw->mii_autoneg_adv_reg & ~ADVERTISE_ALL;
+		adv4 = hw->mii_autoneg_adv_reg & ~MII_AR_SPEED_MASK;
 		adv9 = hw->mii_1000t_ctrl_reg & ~MII_AT001_CR_1000T_SPEED_MASK;
 		if (hw->autoneg_advertised & ADVERTISE_10_HALF)
-			adv4 |= ADVERTISE_10HALF;
+			adv4 |= MII_AR_10T_HD_CAPS;
 		if (hw->autoneg_advertised & ADVERTISE_10_FULL)
-			adv4 |= ADVERTISE_10FULL;
+			adv4 |= MII_AR_10T_FD_CAPS;
 		if (hw->autoneg_advertised & ADVERTISE_100_HALF)
-			adv4 |= ADVERTISE_100HALF;
+			adv4 |= MII_AR_100TX_HD_CAPS;
 		if (hw->autoneg_advertised & ADVERTISE_100_FULL)
-			adv4 |= ADVERTISE_100FULL;
+			adv4 |= MII_AR_100TX_FD_CAPS;
 		if (hw->autoneg_advertised & ADVERTISE_1000_FULL)
-			adv9 |= ADVERTISE_1000FULL;
+			adv9 |= MII_AT001_CR_1000T_FD_CAPS;
 
 		if (adv4 != hw->mii_autoneg_adv_reg ||
 				adv9 != hw->mii_1000t_ctrl_reg) {
@@ -382,6 +382,9 @@ static const struct ethtool_ops atl1e_ethtool_ops = {
 	.get_eeprom_len         = atl1e_get_eeprom_len,
 	.get_eeprom             = atl1e_get_eeprom,
 	.set_eeprom             = atl1e_set_eeprom,
+	.set_tx_csum            = ethtool_op_set_tx_hw_csum,
+	.set_sg                 = ethtool_op_set_sg,
+	.set_tso                = ethtool_op_set_tso,
 };
 
 void atl1e_set_ethtool_ops(struct net_device *netdev)

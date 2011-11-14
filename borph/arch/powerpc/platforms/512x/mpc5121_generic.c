@@ -26,7 +26,7 @@
 /*
  * list of supported boards
  */
-static const char *board[] __initdata = {
+static char *board[] __initdata = {
 	"prt,prtlvt",
 	NULL
 };
@@ -36,7 +36,16 @@ static const char *board[] __initdata = {
  */
 static int __init mpc5121_generic_probe(void)
 {
-	return of_flat_dt_match(of_get_flat_dt_root(), board);
+	unsigned long node = of_get_flat_dt_root();
+	int i = 0;
+
+	while (board[i]) {
+		if (of_flat_dt_is_compatible(node, board[i]))
+			break;
+		i++;
+	}
+
+	return board[i] != NULL;
 }
 
 define_machine(mpc5121_generic) {

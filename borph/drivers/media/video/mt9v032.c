@@ -15,7 +15,6 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/log2.h>
-#include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/videodev2.h>
 #include <linux/v4l2-mediabus.h>
@@ -25,20 +24,17 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
 
-#define MT9V032_PIXEL_ARRAY_HEIGHT			492
-#define MT9V032_PIXEL_ARRAY_WIDTH			782
-
 #define MT9V032_CHIP_VERSION				0x00
 #define		MT9V032_CHIP_ID_REV1			0x1311
 #define		MT9V032_CHIP_ID_REV3			0x1313
-#define MT9V032_COLUMN_START				0x01
-#define		MT9V032_COLUMN_START_MIN		1
-#define		MT9V032_COLUMN_START_DEF		1
-#define		MT9V032_COLUMN_START_MAX		752
-#define MT9V032_ROW_START				0x02
+#define MT9V032_ROW_START				0x01
 #define		MT9V032_ROW_START_MIN			4
-#define		MT9V032_ROW_START_DEF			5
+#define		MT9V032_ROW_START_DEF			10
 #define		MT9V032_ROW_START_MAX			482
+#define MT9V032_COLUMN_START				0x02
+#define		MT9V032_COLUMN_START_MIN		1
+#define		MT9V032_COLUMN_START_DEF		2
+#define		MT9V032_COLUMN_START_MAX		752
 #define MT9V032_WINDOW_HEIGHT				0x03
 #define		MT9V032_WINDOW_HEIGHT_MIN		1
 #define		MT9V032_WINDOW_HEIGHT_DEF		480
@@ -54,9 +50,9 @@
 #define		MT9V032_VERTICAL_BLANKING_MIN		4
 #define		MT9V032_VERTICAL_BLANKING_MAX		3000
 #define MT9V032_CHIP_CONTROL				0x07
-#define		MT9V032_CHIP_CONTROL_MASTER_MODE	(1 << 3)
-#define		MT9V032_CHIP_CONTROL_DOUT_ENABLE	(1 << 7)
-#define		MT9V032_CHIP_CONTROL_SEQUENTIAL		(1 << 8)
+#define 	MT9V032_CHIP_CONTROL_MASTER_MODE	(1 << 3)
+#define 	MT9V032_CHIP_CONTROL_DOUT_ENABLE	(1 << 7)
+#define 	MT9V032_CHIP_CONTROL_SEQUENTIAL		(1 << 8)
 #define MT9V032_SHUTTER_WIDTH1				0x08
 #define MT9V032_SHUTTER_WIDTH2				0x09
 #define MT9V032_SHUTTER_WIDTH_CONTROL			0x0a
@@ -93,25 +89,25 @@
 #define		MT9V032_ROW_NOISE_CORR_ENABLE		(1 << 5)
 #define		MT9V032_ROW_NOISE_CORR_USE_BLK_AVG	(1 << 7)
 #define MT9V032_PIXEL_CLOCK				0x74
-#define		MT9V032_PIXEL_CLOCK_INV_LINE		(1 << 0)
-#define		MT9V032_PIXEL_CLOCK_INV_FRAME		(1 << 1)
-#define		MT9V032_PIXEL_CLOCK_XOR_LINE		(1 << 2)
-#define		MT9V032_PIXEL_CLOCK_CONT_LINE		(1 << 3)
-#define		MT9V032_PIXEL_CLOCK_INV_PXL_CLK		(1 << 4)
+#define 	MT9V032_PIXEL_CLOCK_INV_LINE		(1 << 0)
+#define 	MT9V032_PIXEL_CLOCK_INV_FRAME		(1 << 1)
+#define 	MT9V032_PIXEL_CLOCK_XOR_LINE		(1 << 2)
+#define 	MT9V032_PIXEL_CLOCK_CONT_LINE		(1 << 3)
+#define 	MT9V032_PIXEL_CLOCK_INV_PXL_CLK		(1 << 4)
 #define MT9V032_TEST_PATTERN				0x7f
-#define		MT9V032_TEST_PATTERN_DATA_MASK		(1023 << 0)
-#define		MT9V032_TEST_PATTERN_DATA_SHIFT		0
-#define		MT9V032_TEST_PATTERN_USE_DATA		(1 << 10)
-#define		MT9V032_TEST_PATTERN_GRAY_MASK		(3 << 11)
-#define		MT9V032_TEST_PATTERN_GRAY_NONE		(0 << 11)
-#define		MT9V032_TEST_PATTERN_GRAY_VERTICAL	(1 << 11)
-#define		MT9V032_TEST_PATTERN_GRAY_HORIZONTAL	(2 << 11)
-#define		MT9V032_TEST_PATTERN_GRAY_DIAGONAL	(3 << 11)
-#define		MT9V032_TEST_PATTERN_ENABLE		(1 << 13)
-#define		MT9V032_TEST_PATTERN_FLIP		(1 << 14)
+#define 	MT9V032_TEST_PATTERN_DATA_MASK		(1023 << 0)
+#define 	MT9V032_TEST_PATTERN_DATA_SHIFT		0
+#define 	MT9V032_TEST_PATTERN_USE_DATA		(1 << 10)
+#define 	MT9V032_TEST_PATTERN_GRAY_MASK		(3 << 11)
+#define 	MT9V032_TEST_PATTERN_GRAY_NONE		(0 << 11)
+#define 	MT9V032_TEST_PATTERN_GRAY_VERTICAL	(1 << 11)
+#define 	MT9V032_TEST_PATTERN_GRAY_HORIZONTAL	(2 << 11)
+#define 	MT9V032_TEST_PATTERN_GRAY_DIAGONAL	(3 << 11)
+#define 	MT9V032_TEST_PATTERN_ENABLE		(1 << 13)
+#define 	MT9V032_TEST_PATTERN_FLIP		(1 << 14)
 #define MT9V032_AEC_AGC_ENABLE				0xaf
-#define		MT9V032_AEC_ENABLE			(1 << 0)
-#define		MT9V032_AGC_ENABLE			(1 << 1)
+#define 	MT9V032_AEC_ENABLE			(1 << 0)
+#define 	MT9V032_AGC_ENABLE			(1 << 1)
 #define MT9V032_THERMAL_INFO				0xc1
 
 struct mt9v032 {
@@ -123,8 +119,7 @@ struct mt9v032 {
 
 	struct v4l2_ctrl_handler ctrls;
 
-	struct mutex power_lock;
-	int power_count;
+	bool power;
 
 	struct mt9v032_platform_data *pdata;
 	u16 chip_control;
@@ -166,8 +161,7 @@ static int mt9v032_set_chip_control(struct mt9v032 *mt9v032, u16 clear, u16 set)
 	return 0;
 }
 
-static int
-mt9v032_update_aec_agc(struct mt9v032 *mt9v032, u16 which, int enable)
+static int mt9v032_update_aec_agc(struct mt9v032 *mt9v032, u16 which, int enable)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&mt9v032->subdev);
 	u16 value = mt9v032->aec_agc;
@@ -214,14 +208,17 @@ static void mt9v032_power_off(struct mt9v032 *mt9v032)
 		mt9v032->pdata->set_clock(&mt9v032->subdev, 0);
 }
 
-static int __mt9v032_set_power(struct mt9v032 *mt9v032, bool on)
+static int __mt9v032_set_power(struct mt9v032 *mt9v032, int on)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&mt9v032->subdev);
 	int ret;
 
+	if (mt9v032->power == on)
+		return 0;
+
 	if (!on) {
 		mt9v032_power_off(mt9v032);
-		return 0;
+		goto done;
 	}
 
 	ret = mt9v032_power_on(mt9v032);
@@ -230,18 +227,15 @@ static int __mt9v032_set_power(struct mt9v032 *mt9v032, bool on)
 
 	/* Configure the pixel clock polarity */
 	if (mt9v032->pdata && mt9v032->pdata->clk_pol) {
-		ret = mt9v032_write(client, MT9V032_PIXEL_CLOCK,
+		ret  = mt9v032_write(client, MT9V032_PIXEL_CLOCK,
 				MT9V032_PIXEL_CLOCK_INV_PXL_CLK);
 		if (ret < 0)
 			return ret;
 	}
 
-	/* Disable the noise correction algorithm and restore the controls. */
-	ret = mt9v032_write(client, MT9V032_ROW_NOISE_CORR_CONTROL, 0);
-	if (ret < 0)
-		return ret;
-
-	return v4l2_ctrl_handler_setup(&mt9v032->ctrls);
+done:
+	mt9v032->power = on;
+	return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -289,8 +283,17 @@ static int mt9v032_s_stream(struct v4l2_subdev *subdev, int enable)
 	unsigned int vratio;
 	int ret;
 
-	if (!enable)
-		return mt9v032_set_chip_control(mt9v032, mode, 0);
+	if (!enable) {
+		ret = mt9v032_set_chip_control(mt9v032, mode, 0);
+		if (ret < 0)
+			return ret;
+
+		return __mt9v032_set_power(mt9v032, 0);
+	}
+
+	ret = __mt9v032_set_power(mt9v032, 1);
+	if (ret < 0)
+		return ret;
 
 	/* Configure the window size and row/column bin */
 	hratio = DIV_ROUND_CLOSEST(crop->width, format->width);
@@ -318,10 +321,12 @@ static int mt9v032_s_stream(struct v4l2_subdev *subdev, int enable)
 	if (ret < 0)
 		return ret;
 
-	ret = mt9v032_write(client, MT9V032_HORIZONTAL_BLANKING,
-			    max(43, 660 - crop->width));
+	/* Disable the noise correction algorithm and restore the controls. */
+	ret  = mt9v032_write(client, MT9V032_ROW_NOISE_CORR_CONTROL, 0);
 	if (ret < 0)
 		return ret;
+
+	v4l2_ctrl_handler_setup(&mt9v032->ctrls);
 
 	/* Switch to master "normal" mode */
 	return mt9v032_set_chip_control(mt9v032, 0, mode);
@@ -420,24 +425,21 @@ static int mt9v032_set_crop(struct v4l2_subdev *subdev,
 	struct v4l2_rect *__crop;
 	struct v4l2_rect rect;
 
-	/* Clamp the crop rectangle boundaries and align them to a non multiple
-	 * of 2 pixels to ensure a GRBG Bayer pattern.
+	/* Clamp the crop rectangle boundaries and align them to a multiple of 2
+	 * pixels.
 	 */
-	rect.left = clamp(ALIGN(crop->rect.left + 1, 2) - 1,
+	rect.left = clamp(ALIGN(crop->rect.left, 2),
 			  MT9V032_COLUMN_START_MIN,
 			  MT9V032_COLUMN_START_MAX);
-	rect.top = clamp(ALIGN(crop->rect.top + 1, 2) - 1,
+	rect.top = clamp(ALIGN(crop->rect.top, 2),
 			 MT9V032_ROW_START_MIN,
 			 MT9V032_ROW_START_MAX);
 	rect.width = clamp(ALIGN(crop->rect.width, 2),
 			   MT9V032_WINDOW_WIDTH_MIN,
-			   MT9V032_WINDOW_WIDTH_MAX);
+			   MT9V032_WINDOW_WIDTH_MAX - rect.left);
 	rect.height = clamp(ALIGN(crop->rect.height, 2),
 			    MT9V032_WINDOW_HEIGHT_MIN,
-			    MT9V032_WINDOW_HEIGHT_MAX);
-
-	rect.width = min(rect.width, MT9V032_PIXEL_ARRAY_WIDTH - rect.left);
-	rect.height = min(rect.height, MT9V032_PIXEL_ARRAY_HEIGHT - rect.top);
+			    MT9V032_WINDOW_HEIGHT_MAX - rect.top);
 
 	__crop = __mt9v032_get_pad_crop(mt9v032, fh, crop->pad, crop->which);
 
@@ -465,10 +467,13 @@ static int mt9v032_set_crop(struct v4l2_subdev *subdev,
 
 static int mt9v032_s_ctrl(struct v4l2_ctrl *ctrl)
 {
-	struct mt9v032 *mt9v032 =
+        struct mt9v032 *mt9v032 =
 			container_of(ctrl->handler, struct mt9v032, ctrls);
 	struct i2c_client *client = v4l2_get_subdevdata(&mt9v032->subdev);
 	u16 data;
+
+	if (!mt9v032->power)
+		return 0;
 
 	switch (ctrl->id) {
 	case V4L2_CID_AUTOGAIN:
@@ -480,7 +485,7 @@ static int mt9v032_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_EXPOSURE_AUTO:
 		return mt9v032_update_aec_agc(mt9v032, MT9V032_AEC_ENABLE,
-					      ctrl->val);
+					      !ctrl->val);
 
 	case V4L2_CID_EXPOSURE:
 		return mt9v032_write(client, MT9V032_TOTAL_SHUTTER_WIDTH,
@@ -539,36 +544,28 @@ static const struct v4l2_ctrl_config mt9v032_ctrls[] = {
  * V4L2 subdev core operations
  */
 
-static int mt9v032_set_power(struct v4l2_subdev *subdev, int on)
+static int mt9v032_open(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
 {
-	struct mt9v032 *mt9v032 = to_mt9v032(subdev);
-	int ret = 0;
+	struct v4l2_mbus_framefmt *format;
+	struct v4l2_rect *crop;
 
-	mutex_lock(&mt9v032->power_lock);
+	crop = v4l2_subdev_get_try_crop(fh, 0);
+	crop->left = MT9V032_COLUMN_START_DEF;
+	crop->top = MT9V032_ROW_START_DEF;
+	crop->width = MT9V032_WINDOW_WIDTH_DEF;
+	crop->height = MT9V032_WINDOW_HEIGHT_DEF;
 
-	/* If the power count is modified from 0 to != 0 or from != 0 to 0,
-	 * update the power state.
-	 */
-	if (mt9v032->power_count == !on) {
-		ret = __mt9v032_set_power(mt9v032, !!on);
-		if (ret < 0)
-			goto done;
-	}
+	format = v4l2_subdev_get_try_format(fh, 0);
+	format->code = V4L2_MBUS_FMT_SGRBG10_1X10;
+	format->width = MT9V032_WINDOW_WIDTH_DEF;
+	format->height = MT9V032_WINDOW_HEIGHT_DEF;
+	format->field = V4L2_FIELD_NONE;
+	format->colorspace = V4L2_COLORSPACE_SRGB;
 
-	/* Update the power count. */
-	mt9v032->power_count += on ? 1 : -1;
-	WARN_ON(mt9v032->power_count < 0);
-
-done:
-	mutex_unlock(&mt9v032->power_lock);
-	return ret;
+	return 0;
 }
 
-/* -----------------------------------------------------------------------------
- * V4L2 subdev internal operations
- */
-
-static int mt9v032_registered(struct v4l2_subdev *subdev)
+static int mt9v032_set_config(struct v4l2_subdev *subdev, int irq, void *pdata)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(subdev);
 	struct mt9v032 *mt9v032 = to_mt9v032(subdev);
@@ -600,34 +597,12 @@ static int mt9v032_registered(struct v4l2_subdev *subdev)
 	return ret;
 }
 
-static int mt9v032_open(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
-{
-	struct v4l2_mbus_framefmt *format;
-	struct v4l2_rect *crop;
-
-	crop = v4l2_subdev_get_try_crop(fh, 0);
-	crop->left = MT9V032_COLUMN_START_DEF;
-	crop->top = MT9V032_ROW_START_DEF;
-	crop->width = MT9V032_WINDOW_WIDTH_DEF;
-	crop->height = MT9V032_WINDOW_HEIGHT_DEF;
-
-	format = v4l2_subdev_get_try_format(fh, 0);
-	format->code = V4L2_MBUS_FMT_SGRBG10_1X10;
-	format->width = MT9V032_WINDOW_WIDTH_DEF;
-	format->height = MT9V032_WINDOW_HEIGHT_DEF;
-	format->field = V4L2_FIELD_NONE;
-	format->colorspace = V4L2_COLORSPACE_SRGB;
-
-	return mt9v032_set_power(subdev, 1);
-}
-
-static int mt9v032_close(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
-{
-	return mt9v032_set_power(subdev, 0);
-}
-
 static struct v4l2_subdev_core_ops mt9v032_subdev_core_ops = {
-	.s_power	= mt9v032_set_power,
+	.s_config	= mt9v032_set_config,
+};
+
+static struct v4l2_subdev_file_ops mt9v032_subdev_file_ops = {
+	.open		= mt9v032_open,
 };
 
 static struct v4l2_subdev_video_ops mt9v032_subdev_video_ops = {
@@ -645,14 +620,9 @@ static struct v4l2_subdev_pad_ops mt9v032_subdev_pad_ops = {
 
 static struct v4l2_subdev_ops mt9v032_subdev_ops = {
 	.core	= &mt9v032_subdev_core_ops,
+	.file	= &mt9v032_subdev_file_ops,
 	.video	= &mt9v032_subdev_video_ops,
 	.pad	= &mt9v032_subdev_pad_ops,
-};
-
-static const struct v4l2_subdev_internal_ops mt9v032_subdev_internal_ops = {
-	.registered = mt9v032_registered,
-	.open = mt9v032_open,
-	.close = mt9v032_close,
 };
 
 /* -----------------------------------------------------------------------------
@@ -666,8 +636,7 @@ static int mt9v032_probe(struct i2c_client *client,
 	unsigned int i;
 	int ret;
 
-	if (!i2c_check_functionality(client->adapter,
-				     I2C_FUNC_SMBUS_WORD_DATA)) {
+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_WORD_DATA)) {
 		dev_warn(&client->adapter->dev,
 			 "I2C-Adapter doesn't support I2C_FUNC_SMBUS_WORD\n");
 		return -EIO;
@@ -677,7 +646,6 @@ static int mt9v032_probe(struct i2c_client *client,
 	if (!mt9v032)
 		return -ENOMEM;
 
-	mutex_init(&mt9v032->power_lock);
 	mt9v032->pdata = client->dev.platform_data;
 
 	v4l2_ctrl_handler_init(&mt9v032->ctrls, ARRAY_SIZE(mt9v032_ctrls) + 4);
@@ -718,10 +686,9 @@ static int mt9v032_probe(struct i2c_client *client,
 	mt9v032->aec_agc = MT9V032_AEC_ENABLE | MT9V032_AGC_ENABLE;
 
 	v4l2_i2c_subdev_init(&mt9v032->subdev, client, &mt9v032_subdev_ops);
-	mt9v032->subdev.internal_ops = &mt9v032_subdev_internal_ops;
 	mt9v032->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 
-	mt9v032->pad.flags = MEDIA_PAD_FL_SOURCE;
+	mt9v032->pad.flags = MEDIA_PAD_FLAG_OUTPUT;
 	ret = media_entity_init(&mt9v032->subdev.entity, 1, &mt9v032->pad, 0);
 	if (ret < 0)
 		kfree(mt9v032);

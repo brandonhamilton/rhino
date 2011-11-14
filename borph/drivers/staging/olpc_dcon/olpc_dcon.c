@@ -4,7 +4,7 @@
  * Copyright © 2006-2007  Red Hat, Inc.
  * Copyright © 2006-2007  Advanced Micro Devices, Inc.
  * Copyright © 2009       VIA Technology, Inc.
- * Copyright (c) 2010-2011  Andres Salomon <dilinger@queued.net>
+ * Copyright (c) 2010  Andres Salomon <dilinger@queued.net>
  *
  * This program is free software.  You can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -23,9 +23,11 @@
 #include <linux/delay.h>
 #include <linux/backlight.h>
 #include <linux/device.h>
-#include <linux/uaccess.h>
+#include <linux/notifier.h>
+#include <asm/uaccess.h>
 #include <linux/ctype.h>
 #include <linux/reboot.h>
+#include <linux/gpio.h>
 #include <asm/tsc.h>
 #include <asm/olpc.h>
 
@@ -43,32 +45,65 @@ module_param(noinit, int, 0444);
 static int useaa = 1;
 module_param(useaa, int, 0444);
 
+struct dcon_platform_data {
+	int (*init)(void);
+	void (*bus_stabilize_wiggle)(void);
+	void (*set_dconload)(int);
+	int (*read_status)(void);
+};
+
 static struct dcon_platform_data *pdata;
 
 /* I2C structures */
 
+static struct i2c_driver dcon_driver;
+static struct i2c_client *dcon_client;
+
 /* Platform devices */
 static struct platform_device *dcon_device;
+
+/* Backlight device */
+static struct backlight_device *dcon_bl_dev;
+
+static struct fb_info *fbinfo;
+
+/* set this to 1 while controlling fb blank state from this driver */
+static int ignore_fb_events = 0;
+
+/* Current source, initialized at probe time */
+static int dcon_source;
+
+/* Desired source */
+static int dcon_pending;
+
+/* Current output type */
+static int dcon_output = DCON_OUTPUT_COLOR;
+
+/* Current sleep status (not yet implemented) */
+static int dcon_sleep_val = DCON_ACTIVE;
+
+/* Shadow register for the DCON_REG_MODE register */
+static unsigned short dcon_disp_mode;
+
+/* Variables used during switches */
+static int dcon_switched;
+static struct timespec dcon_irq_time;
+static struct timespec dcon_load_time; 
 
 static DECLARE_WAIT_QUEUE_HEAD(dcon_wait_queue);
 
 static unsigned short normal_i2c[] = { 0x0d, I2C_CLIENT_END };
 
-static s32 dcon_write(struct dcon_priv *dcon, u8 reg, u16 val)
-{
-	return i2c_smbus_write_word_data(dcon->client, reg, val);
-}
+#define dcon_write(reg,val) i2c_smbus_write_word_data(dcon_client,reg,val)
+#define dcon_read(reg) i2c_smbus_read_word_data(dcon_client,reg)
 
-static s32 dcon_read(struct dcon_priv *dcon, u8 reg)
-{
-	return i2c_smbus_read_word_data(dcon->client, reg);
-}
+/* The current backlight value - this saves us some smbus traffic */
+static int bl_val = -1;
 
 /* ===== API functions - these are called by a variety of users ==== */
 
-static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
+static int dcon_hw_init(struct i2c_client *client, int is_init)
 {
-	struct i2c_client *client = dcon->client;
 	uint16_t ver;
 	int rc = 0;
 
@@ -83,8 +118,7 @@ static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
 	if (is_init) {
 		printk(KERN_INFO "olpc-dcon:  Discovered DCON version %x\n",
 				ver & 0xFF);
-		rc = pdata->init(dcon);
-		if (rc != 0) {
+		if ((rc = pdata->init()) != 0) {
 			printk(KERN_ERR "olpc-dcon:  Unable to init.\n");
 			goto err;
 		}
@@ -100,13 +134,14 @@ static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
 		i2c_smbus_write_word_data(client, 0x0b, 0x007a);
 		i2c_smbus_write_word_data(client, 0x36, 0x025c);
 		i2c_smbus_write_word_data(client, 0x37, 0x025e);
-
+		
 		/* Initialise SDRAM */
 
 		i2c_smbus_write_word_data(client, 0x3b, 0x002b);
 		i2c_smbus_write_word_data(client, 0x41, 0x0101);
 		i2c_smbus_write_word_data(client, 0x42, 0x0101);
-	} else if (!noinit) {
+	}
+	else if (!noinit) {
 		/* SDRAM setup/hold time */
 		i2c_smbus_write_word_data(client, 0x3a, 0xc040);
 		i2c_smbus_write_word_data(client, 0x41, 0x0000);
@@ -116,12 +151,11 @@ static int dcon_hw_init(struct dcon_priv *dcon, int is_init)
 
 	/* Colour swizzle, AA, no passthrough, backlight */
 	if (is_init) {
-		dcon->disp_mode = MODE_PASSTHRU | MODE_BL_ENABLE |
-				MODE_CSWIZZLE;
+		dcon_disp_mode = MODE_PASSTHRU | MODE_BL_ENABLE | MODE_CSWIZZLE;
 		if (useaa)
-			dcon->disp_mode |= MODE_COL_AA;
+			dcon_disp_mode |= MODE_COL_AA;
 	}
-	i2c_smbus_write_word_data(client, DCON_REG_MODE, dcon->disp_mode);
+	i2c_smbus_write_word_data(client, DCON_REG_MODE, dcon_disp_mode);
 
 
 	/* Set the scanline to interrupt on during resume */
@@ -140,7 +174,7 @@ err:
  * smbus.  For newer models, we simply BUG(); we want to know if this
  * still happens despite the power fixes that have been made!
  */
-static int dcon_bus_stabilize(struct dcon_priv *dcon, int is_powered_down)
+static int dcon_bus_stabilize(struct i2c_client *client, int is_powered_down)
 {
 	unsigned long timeout;
 	int x;
@@ -148,20 +182,19 @@ static int dcon_bus_stabilize(struct dcon_priv *dcon, int is_powered_down)
 power_up:
 	if (is_powered_down) {
 		x = 1;
-		x = olpc_ec_cmd(0x26, (unsigned char *) &x, 1, NULL, 0);
-		if (x) {
+		if ((x = olpc_ec_cmd(0x26, (unsigned char *) &x, 1, NULL, 0))) {
 			printk(KERN_WARNING "olpc-dcon:  unable to force dcon "
 					"to power up: %d!\n", x);
 			return x;
 		}
 		msleep(10); /* we'll be conservative */
 	}
-
+	
 	pdata->bus_stabilize_wiggle();
 
 	for (x = -1, timeout = 50; timeout && x < 0; timeout--) {
 		msleep(1);
-		x = dcon_read(dcon, DCON_REG_ID);
+		x = dcon_read(DCON_REG_ID);
 	}
 	if (x < 0) {
 		printk(KERN_ERR "olpc-dcon:  unable to stabilize dcon's "
@@ -175,44 +208,69 @@ power_up:
 	}
 
 	if (is_powered_down)
-		return dcon_hw_init(dcon, 0);
+		return dcon_hw_init(client, 0);
 	return 0;
 }
 
-static void dcon_set_backlight(struct dcon_priv *dcon, u8 level)
+static int dcon_get_backlight(void)
 {
-	dcon->bl_val = level;
-	dcon_write(dcon, DCON_REG_BRIGHT, dcon->bl_val);
+	if (dcon_client == NULL)
+		return 0;
+
+	if (bl_val == -1)
+		bl_val = dcon_read(DCON_REG_BRIGHT) & 0x0F;
+
+	return bl_val;
+}
+
+
+static void dcon_set_backlight_hw(int level)
+{
+	bl_val = level & 0x0F;
+	dcon_write(DCON_REG_BRIGHT, bl_val);
 
 	/* Purposely turn off the backlight when we go to level 0 */
-	if (dcon->bl_val == 0) {
-		dcon->disp_mode &= ~MODE_BL_ENABLE;
-		dcon_write(dcon, DCON_REG_MODE, dcon->disp_mode);
-	} else if (!(dcon->disp_mode & MODE_BL_ENABLE)) {
-		dcon->disp_mode |= MODE_BL_ENABLE;
-		dcon_write(dcon, DCON_REG_MODE, dcon->disp_mode);
+	if (bl_val == 0) {
+		dcon_disp_mode &= ~MODE_BL_ENABLE;
+		dcon_write(DCON_REG_MODE, dcon_disp_mode);
+	} else if (!(dcon_disp_mode & MODE_BL_ENABLE)) {
+		dcon_disp_mode |= MODE_BL_ENABLE;
+		dcon_write(DCON_REG_MODE, dcon_disp_mode);
 	}
 }
 
-/* Set the output type to either color or mono */
-static int dcon_set_mono_mode(struct dcon_priv *dcon, bool enable_mono)
+static void dcon_set_backlight(int level)
 {
-	if (dcon->mono == enable_mono)
+	if (dcon_client == NULL)
+		return;
+
+	if (bl_val == (level & 0x0F))
+		return;
+
+	dcon_set_backlight_hw(level);
+}
+
+/* Set the output type to either color or mono */
+
+static int dcon_set_output(int arg)
+{
+	if (dcon_output == arg)
 		return 0;
 
-	dcon->mono = enable_mono;
+	dcon_output = arg;
 
-	if (enable_mono) {
-		dcon->disp_mode &= ~(MODE_CSWIZZLE | MODE_COL_AA);
-		dcon->disp_mode |= MODE_MONO_LUMA;
-	} else {
-		dcon->disp_mode &= ~(MODE_MONO_LUMA);
-		dcon->disp_mode |= MODE_CSWIZZLE;
+	if (arg == DCON_OUTPUT_MONO) {
+		dcon_disp_mode &= ~(MODE_CSWIZZLE | MODE_COL_AA);
+		dcon_disp_mode |= MODE_MONO_LUMA;
+	}
+	else {
+		dcon_disp_mode &= ~(MODE_MONO_LUMA);
+		dcon_disp_mode |= MODE_CSWIZZLE;
 		if (useaa)
-			dcon->disp_mode |= MODE_COL_AA;
+			dcon_disp_mode |= MODE_COL_AA;
 	}
 
-	dcon_write(dcon, DCON_REG_MODE, dcon->disp_mode);
+	dcon_write(DCON_REG_MODE, dcon_disp_mode);
 	return 0;
 }
 
@@ -220,55 +278,55 @@ static int dcon_set_mono_mode(struct dcon_priv *dcon, bool enable_mono)
  * DCONLOAD works in a sleep and account for it accordingly
  */
 
-static void dcon_sleep(struct dcon_priv *dcon, bool sleep)
+static void dcon_sleep(int state)
 {
 	int x;
 
 	/* Turn off the backlight and put the DCON to sleep */
 
-	if (dcon->asleep == sleep)
+	if (state == dcon_sleep_val)
 		return;
 
 	if (!olpc_board_at_least(olpc_board(0xc2)))
 		return;
 
-	if (sleep) {
+	if (state == DCON_SLEEP) {
 		x = 0;
-		x = olpc_ec_cmd(0x26, (unsigned char *) &x, 1, NULL, 0);
-		if (x)
+		if ((x = olpc_ec_cmd(0x26, (unsigned char *) &x, 1, NULL, 0)))
 			printk(KERN_WARNING "olpc-dcon:  unable to force dcon "
 					"to power down: %d!\n", x);
 		else
-			dcon->asleep = sleep;
-	} else {
+			dcon_sleep_val = state;
+	}
+	else {
 		/* Only re-enable the backlight if the backlight value is set */
-		if (dcon->bl_val != 0)
-			dcon->disp_mode |= MODE_BL_ENABLE;
-		x = dcon_bus_stabilize(dcon, 1);
-		if (x)
+		if (bl_val != 0)
+			dcon_disp_mode |= MODE_BL_ENABLE;
+
+		if ((x=dcon_bus_stabilize(dcon_client, 1)))
 			printk(KERN_WARNING "olpc-dcon:  unable to reinit dcon"
 					" hardware: %d!\n", x);
 		else
-			dcon->asleep = sleep;
+			dcon_sleep_val = state;
 
 		/* Restore backlight */
-		dcon_set_backlight(dcon, dcon->bl_val);
+		dcon_set_backlight_hw(bl_val);
 	}
 
 	/* We should turn off some stuff in the framebuffer - but what? */
 }
 
 /* the DCON seems to get confused if we change DCONLOAD too
- * frequently -- i.e., approximately faster than frame time.
+ * frequently -- i.e., approximately faster than frame time. 
  * normally we don't change it this fast, so in general we won't
  * delay here.
  */
-static void dcon_load_holdoff(struct dcon_priv *dcon)
+void dcon_load_holdoff(void)
 {
 	struct timespec delta_t, now;
-	while (1) {
+	while(1) {
 		getnstimeofday(&now);
-		delta_t = timespec_sub(now, dcon->load_time);
+		delta_t = timespec_sub(now, dcon_load_time);
 		if (delta_t.tv_sec != 0 ||
 			delta_t.tv_nsec > NSEC_PER_MSEC * 20) {
 			break;
@@ -276,65 +334,36 @@ static void dcon_load_holdoff(struct dcon_priv *dcon)
 		mdelay(4);
 	}
 }
-
-static bool dcon_blank_fb(struct dcon_priv *dcon, bool blank)
-{
-	int err;
-
-	if (!lock_fb_info(dcon->fbinfo)) {
-		dev_err(&dcon->client->dev, "unable to lock framebuffer\n");
-		return false;
-	}
-	console_lock();
-	dcon->ignore_fb_events = true;
-	err = fb_blank(dcon->fbinfo,
-			blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK);
-	dcon->ignore_fb_events = false;
-	console_unlock();
-	unlock_fb_info(dcon->fbinfo);
-
-	if (err) {
-		dev_err(&dcon->client->dev, "couldn't %sblank framebuffer\n",
-				blank ? "" : "un");
-		return false;
-	}
-	return true;
-}
-
 /* Set the source of the display (CPU or DCON) */
+
 static void dcon_source_switch(struct work_struct *work)
 {
-	struct dcon_priv *dcon = container_of(work, struct dcon_priv,
-			switch_source);
 	DECLARE_WAITQUEUE(wait, current);
-	int source = dcon->pending_src;
+	int source = dcon_pending;
 
-	if (dcon->curr_src == source)
+	if (dcon_source == source)
 		return;
 
-	dcon_load_holdoff(dcon);
+	dcon_load_holdoff();
 
-	dcon->switched = false;
+	dcon_switched = 0;
 
 	switch (source) {
 	case DCON_SOURCE_CPU:
 		printk("dcon_source_switch to CPU\n");
 		/* Enable the scanline interrupt bit */
-		if (dcon_write(dcon, DCON_REG_MODE,
-				dcon->disp_mode | MODE_SCAN_INT))
-			printk(KERN_ERR
-			       "olpc-dcon:  couldn't enable scanline interrupt!\n");
+		if (dcon_write(DCON_REG_MODE, dcon_disp_mode | MODE_SCAN_INT))
+			printk(KERN_ERR "olpc-dcon:  couldn't enable scanline interrupt!\n");
 		else {
 			/* Wait up to one second for the scanline interrupt */
-			wait_event_timeout(dcon_wait_queue,
-					   dcon->switched == true, HZ);
+			wait_event_timeout(dcon_wait_queue, dcon_switched == 1, HZ);
 		}
 
-		if (!dcon->switched)
+		if (!dcon_switched)
 			printk(KERN_ERR "olpc-dcon:  Timeout entering CPU mode; expect a screen glitch.\n");
 
 		/* Turn off the scanline interrupt */
-		if (dcon_write(dcon, DCON_REG_MODE, dcon->disp_mode))
+		if (dcon_write(DCON_REG_MODE, dcon_disp_mode))
 			printk(KERN_ERR "olpc-dcon:  couldn't disable scanline interrupt!\n");
 
 		/*
@@ -345,15 +374,21 @@ static void dcon_source_switch(struct work_struct *work)
 		 *
 		 * For now, we just hope..
 		 */
-		if (!dcon_blank_fb(dcon, false)) {
+		acquire_console_sem();
+		ignore_fb_events = 1;
+		if (fb_blank(fbinfo, FB_BLANK_UNBLANK)) {
+			ignore_fb_events = 0;
+			release_console_sem();
 			printk(KERN_ERR "olpc-dcon:  Failed to enter CPU mode\n");
-			dcon->pending_src = DCON_SOURCE_DCON;
+			dcon_pending = DCON_SOURCE_DCON;
 			return;
 		}
+		ignore_fb_events = 0;
+		release_console_sem();
 
 		/* And turn off the DCON */
 		pdata->set_dconload(1);
-		getnstimeofday(&dcon->load_time);
+		getnstimeofday(&dcon_load_time);
 
 		printk(KERN_INFO "olpc-dcon: The CPU has control\n");
 		break;
@@ -362,20 +397,20 @@ static void dcon_source_switch(struct work_struct *work)
 		int t;
 		struct timespec delta_t;
 
-		printk(KERN_INFO "dcon_source_switch to DCON\n");
+		printk("dcon_source_switch to DCON\n");
 
 		add_wait_queue(&dcon_wait_queue, &wait);
 		set_current_state(TASK_UNINTERRUPTIBLE);
 
 		/* Clear DCONLOAD - this implies that the DCON is in control */
 		pdata->set_dconload(0);
-		getnstimeofday(&dcon->load_time);
+		getnstimeofday(&dcon_load_time);
 
 		t = schedule_timeout(HZ/2);
 		remove_wait_queue(&dcon_wait_queue, &wait);
 		set_current_state(TASK_RUNNING);
 
-		if (!dcon->switched) {
+		if (!dcon_switched) {
 			printk(KERN_ERR "olpc-dcon: Timeout entering DCON mode; expect a screen glitch.\n");
 		} else {
 			/* sometimes the DCON doesn't follow its own rules,
@@ -386,22 +421,28 @@ static void dcon_source_switch(struct work_struct *work)
 			 * the time between asserting DCONLOAD and the IRQ --
 			 * if it's less than 20msec, then the DCON couldn't
 			 * have seen two VSYNC pulses.  in that case we
-			 * deassert and reassert, and hope for the best.
+			 * deassert and reassert, and hope for the best. 
 			 * see http://dev.laptop.org/ticket/9664
 			 */
-			delta_t = timespec_sub(dcon->irq_time, dcon->load_time);
-			if (dcon->switched && delta_t.tv_sec == 0 &&
+			delta_t = timespec_sub(dcon_irq_time, dcon_load_time);
+			if (dcon_switched && delta_t.tv_sec == 0 &&
 					delta_t.tv_nsec < NSEC_PER_MSEC * 20) {
 				printk(KERN_ERR "olpc-dcon: missed loading, retrying\n");
 				pdata->set_dconload(1);
 				mdelay(41);
 				pdata->set_dconload(0);
-				getnstimeofday(&dcon->load_time);
+				getnstimeofday(&dcon_load_time);
 				mdelay(41);
 			}
 		}
 
-		dcon_blank_fb(dcon, true);
+		acquire_console_sem();
+		ignore_fb_events = 1;
+		if (fb_blank(fbinfo, FB_BLANK_POWERDOWN))
+			printk(KERN_ERR "olpc-dcon:  couldn't blank fb!\n");
+		ignore_fb_events = 0;
+		release_console_sem();
+
 		printk(KERN_INFO "olpc-dcon: The DCON has control\n");
 		break;
 	}
@@ -409,53 +450,66 @@ static void dcon_source_switch(struct work_struct *work)
 		BUG();
 	}
 
-	dcon->curr_src = source;
+	dcon_source = source;
 }
 
-static void dcon_set_source(struct dcon_priv *dcon, int arg)
+static DECLARE_WORK(dcon_work, dcon_source_switch);
+
+static void dcon_set_source(int arg)
 {
-	if (dcon->pending_src == arg)
+	if (dcon_pending == arg)
 		return;
 
-	dcon->pending_src = arg;
+	dcon_pending = arg;
 
-	if ((dcon->curr_src != arg) && !work_pending(&dcon->switch_source))
-		schedule_work(&dcon->switch_source);
+	if ((dcon_source != arg) && !work_pending(&dcon_work))
+		schedule_work(&dcon_work);
 }
 
-static void dcon_set_source_sync(struct dcon_priv *dcon, int arg)
+static void dcon_set_source_sync(int arg)
 {
-	dcon_set_source(dcon, arg);
+	dcon_set_source(arg);
 	flush_scheduled_work();
+}
+
+static int dconbl_set(struct backlight_device *dev) {
+
+	int level = dev->props.brightness;
+
+	if (dev->props.power != FB_BLANK_UNBLANK)
+		level = 0;
+
+	dcon_set_backlight(level);
+	return 0;
+}
+
+static int dconbl_get(struct backlight_device *dev) {
+	return dcon_get_backlight();
 }
 
 static ssize_t dcon_mode_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	struct dcon_priv *dcon = dev_get_drvdata(dev);
-	return sprintf(buf, "%4.4X\n", dcon->disp_mode);
+	return sprintf(buf, "%4.4X\n", dcon_disp_mode);
 }
 
 static ssize_t dcon_sleep_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 
-	struct dcon_priv *dcon = dev_get_drvdata(dev);
-	return sprintf(buf, "%d\n", dcon->asleep);
+	return sprintf(buf, "%d\n", dcon_sleep_val);
 }
 
 static ssize_t dcon_freeze_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	struct dcon_priv *dcon = dev_get_drvdata(dev);
-	return sprintf(buf, "%d\n", dcon->curr_src == DCON_SOURCE_DCON ? 1 : 0);
+	return sprintf(buf, "%d\n", dcon_source == DCON_SOURCE_DCON ? 1 : 0);
 }
 
-static ssize_t dcon_mono_show(struct device *dev,
+static ssize_t dcon_output_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	struct dcon_priv *dcon = dev_get_drvdata(dev);
-	return sprintf(buf, "%d\n", dcon->mono);
+	return sprintf(buf, "%d\n", dcon_output);
 }
 
 static ssize_t dcon_resumeline_show(struct device *dev,
@@ -464,43 +518,59 @@ static ssize_t dcon_resumeline_show(struct device *dev,
 	return sprintf(buf, "%d\n", resumeline);
 }
 
-static ssize_t dcon_mono_store(struct device *dev,
+static int _strtoul(const char *buf, int len, unsigned int *val)
+{
+
+	char *endp;
+	unsigned int output = simple_strtoul(buf, &endp, 0);
+	int size = endp - buf;
+
+	if (*endp && isspace(*endp))
+		size++;
+
+	if (size != len)
+		return -EINVAL;
+
+	*val = output;
+	return 0;
+}
+
+static ssize_t dcon_output_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	unsigned long enable_mono;
-	int rc;
+	int output;
+	int rc = -EINVAL;
 
-	rc = strict_strtoul(buf, 10, &enable_mono);
-	if (rc)
-		return rc;
+	if (_strtoul(buf, count, &output))
+		return -EINVAL;
 
-	dcon_set_mono_mode(dev_get_drvdata(dev), enable_mono ? true : false);
+	if (output == DCON_OUTPUT_COLOR || output == DCON_OUTPUT_MONO) {
+		dcon_set_output(output);
+		rc = count;
+	}
 
-	return count;
+	return rc;
 }
 
 static ssize_t dcon_freeze_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	struct dcon_priv *dcon = dev_get_drvdata(dev);
-	unsigned long output;
-	int ret;
+	int output;
 
-	ret = strict_strtoul(buf, 10, &output);
-	if (ret)
-		return ret;
+	if (_strtoul(buf, count, &output))
+		return -EINVAL;
 
-	printk(KERN_INFO "dcon_freeze_store: %lu\n", output);
+	printk("dcon_freeze_store: %d\n", output);
 
 	switch (output) {
 	case 0:
-		dcon_set_source(dcon, DCON_SOURCE_CPU);
+		dcon_set_source(DCON_SOURCE_CPU);
 		break;
 	case 1:
-		dcon_set_source_sync(dcon, DCON_SOURCE_DCON);
+		dcon_set_source_sync(DCON_SOURCE_DCON);
 		break;
-	case 2:  /* normally unused */
-		dcon_set_source(dcon, DCON_SOURCE_DCON);
+	case 2:  // normally unused
+		dcon_set_source(DCON_SOURCE_DCON);
 		break;
 	default:
 		return -EINVAL;
@@ -512,30 +582,28 @@ static ssize_t dcon_freeze_store(struct device *dev,
 static ssize_t dcon_resumeline_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	unsigned long rl;
-	int rc;
+	int rl;
+	int rc = -EINVAL;
 
-	rc = strict_strtoul(buf, 10, &rl);
-	if (rc)
+	if (_strtoul(buf, count, &rl))
 		return rc;
 
 	resumeline = rl;
-	dcon_write(dev_get_drvdata(dev), DCON_REG_SCAN_INT, resumeline);
+	dcon_write(DCON_REG_SCAN_INT, resumeline);
+	rc = count;
 
-	return count;
+	return rc;
 }
 
 static ssize_t dcon_sleep_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	unsigned long output;
-	int ret;
+	int output;
 
-	ret = strict_strtoul(buf, 10, &output);
-	if (ret)
-		return ret;
+	if (_strtoul(buf, count, &output))
+		return -EINVAL;
 
-	dcon_sleep(dev_get_drvdata(dev), output ? true : false);
+	dcon_sleep(output ? DCON_SLEEP : DCON_ACTIVE);
 	return count;
 }
 
@@ -543,57 +611,33 @@ static struct device_attribute dcon_device_files[] = {
 	__ATTR(mode, 0444, dcon_mode_show, NULL),
 	__ATTR(sleep, 0644, dcon_sleep_show, dcon_sleep_store),
 	__ATTR(freeze, 0644, dcon_freeze_show, dcon_freeze_store),
-	__ATTR(monochrome, 0644, dcon_mono_show, dcon_mono_store),
+	__ATTR(output, 0644, dcon_output_show, dcon_output_store),
 	__ATTR(resumeline, 0644, dcon_resumeline_show, dcon_resumeline_store),
 };
 
-static int dcon_bl_update(struct backlight_device *dev)
-{
-	struct dcon_priv *dcon = bl_get_data(dev);
-	u8 level = dev->props.brightness & 0x0F;
-
-	if (dev->props.power != FB_BLANK_UNBLANK)
-		level = 0;
-
-	if (level != dcon->bl_val)
-		dcon_set_backlight(dcon, level);
-
-	return 0;
-}
-
-static int dcon_bl_get(struct backlight_device *dev)
-{
-	struct dcon_priv *dcon = bl_get_data(dev);
-	return dcon->bl_val;
-}
-
-static const struct backlight_ops dcon_bl_ops = {
-	.update_status = dcon_bl_update,
-	.get_brightness = dcon_bl_get,
+static struct backlight_ops dcon_bl_ops = {
+	.get_brightness = dconbl_get,
+	.update_status = dconbl_set
 };
 
-static struct backlight_properties dcon_bl_props = {
-	.max_brightness = 15,
-	.type = BACKLIGHT_RAW,
-	.power = FB_BLANK_UNBLANK,
-};
 
-static int dcon_reboot_notify(struct notifier_block *nb,
-			      unsigned long foo, void *bar)
+static int dcon_reboot_notify(struct notifier_block *nb, unsigned long foo, void *bar)
 {
-	struct dcon_priv *dcon = container_of(nb, struct dcon_priv, reboot_nb);
-
-	if (!dcon || !dcon->client)
+	if (dcon_client == NULL)
 		return 0;
 
 	/* Turn off the DCON. Entirely. */
-	dcon_write(dcon, DCON_REG_MODE, 0x39);
-	dcon_write(dcon, DCON_REG_MODE, 0x32);
+	dcon_write(DCON_REG_MODE, 0x39);
+	dcon_write(DCON_REG_MODE, 0x32);
 	return 0;
 }
 
-static int unfreeze_on_panic(struct notifier_block *nb,
-			     unsigned long e, void *p)
+static struct notifier_block dcon_nb = {
+	.notifier_call = dcon_reboot_notify,
+	.priority = -1,
+};
+
+static int unfreeze_on_panic(struct notifier_block *nb, unsigned long e, void *p)
 {
 	pdata->set_dconload(1);
 	return NOTIFY_DONE;
@@ -607,19 +651,20 @@ static struct notifier_block dcon_panic_nb = {
  * When the framebuffer sleeps due to external sources (e.g. user idle), power
  * down the DCON as well.  Power it back up when the fb comes back to life.
  */
-static int dcon_fb_notifier(struct notifier_block *self,
-				unsigned long event, void *data)
+static int fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
 	struct fb_event *evdata = data;
-	struct dcon_priv *dcon = container_of(self, struct dcon_priv,
-			fbevent_nb);
 	int *blank = (int *) evdata->data;
 	if (((event != FB_EVENT_BLANK) && (event != FB_EVENT_CONBLANK)) ||
-			dcon->ignore_fb_events)
+			ignore_fb_events)
 		return 0;
-	dcon_sleep(dcon, *blank ? true : false);
+	dcon_sleep((*blank) ? DCON_SLEEP : DCON_ACTIVE);
 	return 0;
 }
+
+static struct notifier_block fb_nb = {
+	.notifier_call = fb_notifier_callback,
+};
 
 static int dcon_detect(struct i2c_client *client, struct i2c_board_info *info)
 {
@@ -630,32 +675,12 @@ static int dcon_detect(struct i2c_client *client, struct i2c_board_info *info)
 
 static int dcon_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
-	struct dcon_priv *dcon;
-	int rc, i, j;
+	int rc, i;
 
-	if (!pdata)
-		return -ENXIO;
+	if (num_registered_fb >= 1)
+		fbinfo = registered_fb[0];
 
-	dcon = kzalloc(sizeof(*dcon), GFP_KERNEL);
-	if (!dcon)
-		return -ENOMEM;
-
-	dcon->client = client;
-	INIT_WORK(&dcon->switch_source, dcon_source_switch);
-	dcon->reboot_nb.notifier_call = dcon_reboot_notify;
-	dcon->reboot_nb.priority = -1;
-	dcon->fbevent_nb.notifier_call = dcon_fb_notifier;
-
-	i2c_set_clientdata(client, dcon);
-
-	if (num_registered_fb < 1) {
-		dev_err(&client->dev, "DCON driver requires a registered fb\n");
-		rc = -EIO;
-		goto einit;
-	}
-	dcon->fbinfo = registered_fb[0];
-
-	rc = dcon_hw_init(dcon, 1);
+	rc = dcon_hw_init(client, 1);
 	if (rc)
 		goto einit;
 
@@ -664,79 +689,71 @@ static int dcon_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	dcon_device = platform_device_alloc("dcon", -1);
 
 	if (dcon_device == NULL) {
-		printk(KERN_ERR "dcon:  Unable to create the DCON device\n");
+		printk("dcon:  Unable to create the DCON device\n");
 		rc = -ENOMEM;
 		goto eirq;
 	}
-	rc = platform_device_add(dcon_device);
-	platform_set_drvdata(dcon_device, dcon);
+	/* Place holder...*/
+	i2c_set_clientdata(client, dcon_device);
 
-	if (rc) {
-		printk(KERN_ERR "dcon:  Unable to add the DCON device\n");
+	if ((rc = platform_device_add(dcon_device))) {
+		printk("dcon:  Unable to add the DCON device\n");
 		goto edev;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(dcon_device_files); i++) {
-		rc = device_create_file(&dcon_device->dev,
-					&dcon_device_files[i]);
-		if (rc) {
-			dev_err(&dcon_device->dev, "Cannot create sysfs file\n");
-			goto ecreate;
-		}
-	}
-
-	dcon->bl_val = dcon_read(dcon, DCON_REG_BRIGHT) & 0x0F;
+	for(i = 0; i < ARRAY_SIZE(dcon_device_files); i++)
+		device_create_file(&dcon_device->dev, &dcon_device_files[i]);
 
 	/* Add the backlight device for the DCON */
-	dcon_bl_props.brightness = dcon->bl_val;
-	dcon->bl_dev = backlight_device_register("dcon-bl", &dcon_device->dev,
-		dcon, &dcon_bl_ops, &dcon_bl_props);
-	if (IS_ERR(dcon->bl_dev)) {
-		dev_err(&client->dev, "cannot register backlight dev (%ld)\n",
-				PTR_ERR(dcon->bl_dev));
-		dcon->bl_dev = NULL;
+
+	dcon_client = client;
+
+	dcon_bl_dev = backlight_device_register("dcon-bl", &dcon_device->dev,
+		NULL, &dcon_bl_ops, NULL);
+
+	if (IS_ERR(dcon_bl_dev)) {
+		printk("Could not register the backlight device for the DCON (%ld)\n", PTR_ERR(dcon_bl_dev));
+		dcon_bl_dev = NULL;
+	}
+	else {
+		dcon_bl_dev->props.max_brightness = 15;
+		dcon_bl_dev->props.power = FB_BLANK_UNBLANK;
+		dcon_bl_dev->props.brightness = dcon_get_backlight();
+
+		backlight_update_status(dcon_bl_dev);
 	}
 
-	register_reboot_notifier(&dcon->reboot_nb);
+	register_reboot_notifier(&dcon_nb);
 	atomic_notifier_chain_register(&panic_notifier_list, &dcon_panic_nb);
-	fb_register_client(&dcon->fbevent_nb);
+	fb_register_client(&fb_nb);
 
 	return 0;
 
- ecreate:
-	for (j = 0; j < i; j++)
-		device_remove_file(&dcon_device->dev, &dcon_device_files[j]);
  edev:
 	platform_device_unregister(dcon_device);
 	dcon_device = NULL;
  eirq:
-	free_irq(DCON_IRQ, dcon);
+	free_irq(DCON_IRQ, &dcon_driver);
  einit:
-	i2c_set_clientdata(client, NULL);
-	kfree(dcon);
 	return rc;
 }
 
 static int dcon_remove(struct i2c_client *client)
 {
-	struct dcon_priv *dcon = i2c_get_clientdata(client);
+	dcon_client = NULL;
 
-	i2c_set_clientdata(client, NULL);
-
-	fb_unregister_client(&dcon->fbevent_nb);
-	unregister_reboot_notifier(&dcon->reboot_nb);
+	fb_unregister_client(&fb_nb);
+	unregister_reboot_notifier(&dcon_nb);
 	atomic_notifier_chain_unregister(&panic_notifier_list, &dcon_panic_nb);
 
-	free_irq(DCON_IRQ, dcon);
+	free_irq(DCON_IRQ, &dcon_driver);
 
-	if (dcon->bl_dev)
-		backlight_device_unregister(dcon->bl_dev);
+	if (dcon_bl_dev != NULL)
+		backlight_device_unregister(dcon_bl_dev);
 
 	if (dcon_device != NULL)
 		platform_device_unregister(dcon_device);
-	cancel_work_sync(&dcon->switch_source);
-
-	kfree(dcon);
+	cancel_work_sync(&dcon_work);
 
 	return 0;
 }
@@ -744,11 +761,9 @@ static int dcon_remove(struct i2c_client *client)
 #ifdef CONFIG_PM
 static int dcon_suspend(struct i2c_client *client, pm_message_t state)
 {
-	struct dcon_priv *dcon = i2c_get_clientdata(client);
-
-	if (!dcon->asleep) {
+	if (dcon_sleep_val == DCON_ACTIVE) {
 		/* Set up the DCON to have the source */
-		dcon_set_source_sync(dcon, DCON_SOURCE_DCON);
+		dcon_set_source_sync(DCON_SOURCE_DCON);
 	}
 
 	return 0;
@@ -756,11 +771,9 @@ static int dcon_suspend(struct i2c_client *client, pm_message_t state)
 
 static int dcon_resume(struct i2c_client *client)
 {
-	struct dcon_priv *dcon = i2c_get_clientdata(client);
-
-	if (!dcon->asleep) {
-		dcon_bus_stabilize(dcon, 0);
-		dcon_set_source(dcon, DCON_SOURCE_CPU);
+	if (dcon_sleep_val == DCON_ACTIVE) {
+		dcon_bus_stabilize(client, 0);
+		dcon_set_source(DCON_SOURCE_CPU);
 	}
 
 	return 0;
@@ -769,9 +782,8 @@ static int dcon_resume(struct i2c_client *client)
 #endif
 
 
-irqreturn_t dcon_interrupt(int irq, void *id)
+static irqreturn_t dcon_interrupt(int irq, void *id)
 {
-	struct dcon_priv *dcon = id;
 	int status = pdata->read_status();
 
 	if (status == -1)
@@ -784,8 +796,8 @@ irqreturn_t dcon_interrupt(int irq, void *id)
 
 	case 2:	/* switch to DCON mode */
 	case 1: /* switch to CPU mode */
-		dcon->switched = true;
-		getnstimeofday(&dcon->irq_time);
+		dcon_switched = 1;
+		getnstimeofday(&dcon_irq_time);
 		wake_up(&dcon_wait_queue);
 		break;
 
@@ -797,9 +809,9 @@ irqreturn_t dcon_interrupt(int irq, void *id)
 		 * of the DCON happened long before this point.
 		 * see http://dev.laptop.org/ticket/9869
 		 */
-		if (dcon->curr_src != dcon->pending_src && !dcon->switched) {
-			dcon->switched = true;
-			getnstimeofday(&dcon->irq_time);
+		if (dcon_source != dcon_pending && !dcon_switched) {
+			dcon_switched = 1;
+			getnstimeofday(&dcon_irq_time);
 			wake_up(&dcon_wait_queue);
 			printk(KERN_DEBUG "olpc-dcon: switching w/ status 0/0\n");
 		} else {
@@ -810,14 +822,14 @@ irqreturn_t dcon_interrupt(int irq, void *id)
 	return IRQ_HANDLED;
 }
 
-static const struct i2c_device_id dcon_idtable[] = {
+static struct i2c_device_id dcon_idtable[] = {
 	{ "olpc_dcon",  0 },
 	{ }
 };
 
 MODULE_DEVICE_TABLE(i2c, dcon_idtable);
 
-struct i2c_driver dcon_driver = {
+static struct i2c_driver dcon_driver = {
 	.driver = {
 		.name	= "olpc_dcon",
 	},
@@ -833,19 +845,14 @@ struct i2c_driver dcon_driver = {
 #endif
 };
 
+#include "olpc_dcon_xo_1.c"
+
 static int __init olpc_dcon_init(void)
 {
-#ifdef CONFIG_FB_OLPC_DCON_1_5
-	/* XO-1.5 */
-	if (olpc_board_at_least(olpc_board(0xd0)))
-		pdata = &dcon_pdata_xo_1_5;
-#endif
-#ifdef CONFIG_FB_OLPC_DCON_1
-	if (!pdata)
-		pdata = &dcon_pdata_xo_1;
-#endif
+	pdata = &dcon_pdata_xo_1;
 
-	return i2c_add_driver(&dcon_driver);
+	i2c_add_driver(&dcon_driver);
+	return 0;
 }
 
 static void __exit olpc_dcon_exit(void)

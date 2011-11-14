@@ -14,8 +14,7 @@
 /****************************************************************************/
 
 #if defined(CONFIG_M523x) || defined(CONFIG_M527x) || defined(CONFIG_M528x) || \
-    defined(CONFIG_M520x) || defined(CONFIG_M532x) || \
-    defined(CONFIG_ARCH_MXC) || defined(CONFIG_SOC_IMX28)
+    defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_ARCH_MXC)
 /*
  *	Just figures, Motorola would have to change the offsets for
  *	registers in the same peripheral device on different models
@@ -79,7 +78,7 @@
 /*
  *	Define the buffer descriptor structure.
  */
-#if defined(CONFIG_ARCH_MXC) || defined(CONFIG_SOC_IMX28)
+#ifdef CONFIG_ARCH_MXC
 struct bufdesc {
 	unsigned short cbd_datlen;	/* Data length */
 	unsigned short cbd_sc;	/* Control and status info */
@@ -97,11 +96,11 @@ struct bufdesc {
  *	The following definitions courtesy of commproc.h, which where
  *	Copyright (c) 1997 Dan Malek (dmalek@jlc.net).
  */
-#define BD_SC_EMPTY     ((ushort)0x8000)        /* Receive is empty */
+#define BD_SC_EMPTY     ((ushort)0x8000)        /* Recieve is empty */
 #define BD_SC_READY     ((ushort)0x8000)        /* Transmit is ready */
 #define BD_SC_WRAP      ((ushort)0x2000)        /* Last buffer descriptor */
 #define BD_SC_INTRPT    ((ushort)0x1000)        /* Interrupt on change */
-#define BD_SC_CM        ((ushort)0x0200)        /* Continuous mode */
+#define BD_SC_CM        ((ushort)0x0200)        /* Continous mode */
 #define BD_SC_ID        ((ushort)0x0100)        /* Rec'd too many idles */
 #define BD_SC_P         ((ushort)0x0100)        /* xmt preamble */
 #define BD_SC_BR        ((ushort)0x0020)        /* Break received */

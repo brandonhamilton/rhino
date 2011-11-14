@@ -5,6 +5,7 @@
  */
 #include <linux/ring_buffer.h>
 #include <linux/trace_clock.h>
+#include <linux/ftrace_irq.h>
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
@@ -668,7 +669,7 @@ static struct list_head *rb_list_head(struct list_head *list)
  * the reader page). But if the next page is a header page,
  * its flags will be non zero.
  */
-static inline int
+static int inline
 rb_is_head_page(struct ring_buffer_per_cpu *cpu_buffer,
 		struct buffer_page *page, struct list_head *list)
 {
@@ -997,21 +998,15 @@ static int rb_allocate_pages(struct ring_buffer_per_cpu *cpu_buffer,
 			     unsigned nr_pages)
 {
 	struct buffer_page *bpage, *tmp;
+	unsigned long addr;
 	LIST_HEAD(pages);
 	unsigned i;
 
 	WARN_ON(!nr_pages);
 
 	for (i = 0; i < nr_pages; i++) {
-		struct page *page;
-		/*
-		 * __GFP_NORETRY flag makes sure that the allocation fails
-		 * gracefully without invoking oom-killer and the system is
-		 * not destabilized.
-		 */
 		bpage = kzalloc_node(ALIGN(sizeof(*bpage), cache_line_size()),
-				    GFP_KERNEL | __GFP_NORETRY,
-				    cpu_to_node(cpu_buffer->cpu));
+				    GFP_KERNEL, cpu_to_node(cpu_buffer->cpu));
 		if (!bpage)
 			goto free_pages;
 
@@ -1019,11 +1014,10 @@ static int rb_allocate_pages(struct ring_buffer_per_cpu *cpu_buffer,
 
 		list_add(&bpage->list, &pages);
 
-		page = alloc_pages_node(cpu_to_node(cpu_buffer->cpu),
-					GFP_KERNEL | __GFP_NORETRY, 0);
-		if (!page)
+		addr = __get_free_page(GFP_KERNEL);
+		if (!addr)
 			goto free_pages;
-		bpage->page = page_address(page);
+		bpage->page = (void *)addr;
 		rb_init_page(bpage->page);
 	}
 
@@ -1052,7 +1046,7 @@ rb_allocate_cpu_buffer(struct ring_buffer *buffer, int cpu)
 {
 	struct ring_buffer_per_cpu *cpu_buffer;
 	struct buffer_page *bpage;
-	struct page *page;
+	unsigned long addr;
 	int ret;
 
 	cpu_buffer = kzalloc_node(ALIGN(sizeof(*cpu_buffer), cache_line_size()),
@@ -1074,10 +1068,10 @@ rb_allocate_cpu_buffer(struct ring_buffer *buffer, int cpu)
 	rb_check_bpage(cpu_buffer, bpage);
 
 	cpu_buffer->reader_page = bpage;
-	page = alloc_pages_node(cpu_to_node(cpu), GFP_KERNEL, 0);
-	if (!page)
+	addr = __get_free_page(GFP_KERNEL);
+	if (!addr)
 		goto fail_free_reader;
-	bpage->page = page_address(page);
+	bpage->page = (void *)addr;
 	rb_init_page(bpage->page);
 
 	INIT_LIST_HEAD(&cpu_buffer->reader_page->list);
@@ -1321,6 +1315,7 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size)
 	unsigned nr_pages, rm_pages, new_pages;
 	struct buffer_page *bpage, *tmp;
 	unsigned long buffer_size;
+	unsigned long addr;
 	LIST_HEAD(pages);
 	int i, cpu;
 
@@ -1381,24 +1376,16 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size)
 
 	for_each_buffer_cpu(buffer, cpu) {
 		for (i = 0; i < new_pages; i++) {
-			struct page *page;
-			/*
-			 * __GFP_NORETRY flag makes sure that the allocation
-			 * fails gracefully without invoking oom-killer and
-			 * the system is not destabilized.
-			 */
 			bpage = kzalloc_node(ALIGN(sizeof(*bpage),
 						  cache_line_size()),
-					    GFP_KERNEL | __GFP_NORETRY,
-					    cpu_to_node(cpu));
+					    GFP_KERNEL, cpu_to_node(cpu));
 			if (!bpage)
 				goto free_pages;
 			list_add(&bpage->list, &pages);
-			page = alloc_pages_node(cpu_to_node(cpu),
-						GFP_KERNEL | __GFP_NORETRY, 0);
-			if (!page)
+			addr = __get_free_page(GFP_KERNEL);
+			if (!addr)
 				goto free_pages;
-			bpage->page = page_address(page);
+			bpage->page = (void *)addr;
 			rb_init_page(bpage->page);
 		}
 	}
@@ -1442,17 +1429,6 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size)
 }
 EXPORT_SYMBOL_GPL(ring_buffer_resize);
 
-void ring_buffer_change_overwrite(struct ring_buffer *buffer, int val)
-{
-	mutex_lock(&buffer->mutex);
-	if (val)
-		buffer->flags |= RB_FL_OVERWRITE;
-	else
-		buffer->flags &= ~RB_FL_OVERWRITE;
-	mutex_unlock(&buffer->mutex);
-}
-EXPORT_SYMBOL_GPL(ring_buffer_change_overwrite);
-
 static inline void *
 __rb_data_page_index(struct buffer_data_page *bpage, unsigned index)
 {
@@ -1492,7 +1468,7 @@ static inline unsigned long rb_page_entries(struct buffer_page *bpage)
 	return local_read(&bpage->entries) & RB_WRITE_MASK;
 }
 
-/* Size is determined by what has been committed */
+/* Size is determined by what has been commited */
 static inline unsigned rb_page_size(struct buffer_page *bpage)
 {
 	return rb_page_commit(bpage);
@@ -2186,19 +2162,11 @@ rb_reserve_next_event(struct ring_buffer *buffer,
 	if (likely(ts >= cpu_buffer->write_stamp)) {
 		delta = diff;
 		if (unlikely(test_time_stamp(delta))) {
-			int local_clock_stable = 1;
-#ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
-			local_clock_stable = sched_clock_stable;
-#endif
 			WARN_ONCE(delta > (1ULL << 59),
-				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n%s",
+				  KERN_WARNING "Delta way too big! %llu ts=%llu write stamp = %llu\n",
 				  (unsigned long long)delta,
 				  (unsigned long long)ts,
-				  (unsigned long long)cpu_buffer->write_stamp,
-				  local_clock_stable ? "" :
-				  "If you just came from a suspend/resume,\n"
-				  "please switch to the trace global clock:\n"
-				  "  echo global > /sys/kernel/debug/tracing/trace_clock\n");
+				  (unsigned long long)cpu_buffer->write_stamp);
 			add_timestamp = 1;
 		}
 	}
@@ -2230,7 +2198,7 @@ static noinline void trace_recursive_fail(void)
 
 	printk_once(KERN_WARNING "Tracing recursion: depth[%ld]:"
 		    "HC[%lu]:SC[%lu]:NMI[%lu]\n",
-		    trace_recursion_buffer(),
+		    current->trace_recursion,
 		    hardirq_count() >> HARDIRQ_SHIFT,
 		    softirq_count() >> SOFTIRQ_SHIFT,
 		    in_nmi());
@@ -2240,9 +2208,9 @@ static noinline void trace_recursive_fail(void)
 
 static inline int trace_recursive_lock(void)
 {
-	trace_recursion_inc();
+	current->trace_recursion++;
 
-	if (likely(trace_recursion_buffer() < TRACE_RECURSIVE_DEPTH))
+	if (likely(current->trace_recursion < TRACE_RECURSIVE_DEPTH))
 		return 0;
 
 	trace_recursive_fail();
@@ -2252,9 +2220,9 @@ static inline int trace_recursive_lock(void)
 
 static inline void trace_recursive_unlock(void)
 {
-	WARN_ON_ONCE(!trace_recursion_buffer());
+	WARN_ON_ONCE(!current->trace_recursion);
 
-	trace_recursion_dec();
+	current->trace_recursion--;
 }
 
 #else
@@ -2946,7 +2914,7 @@ rb_get_reader_page(struct ring_buffer_per_cpu *cpu_buffer)
 	/*
 	 * cpu_buffer->pages just needs to point to the buffer, it
 	 *  has no specific buffer page to point to. Lets move it out
-	 *  of our way so we don't accidentally swap it.
+	 *  of our way so we don't accidently swap it.
 	 */
 	cpu_buffer->pages = reader->list.prev;
 
@@ -3744,17 +3712,16 @@ EXPORT_SYMBOL_GPL(ring_buffer_swap_cpu);
  * Returns:
  *  The page allocated, or NULL on error.
  */
-void *ring_buffer_alloc_read_page(struct ring_buffer *buffer, int cpu)
+void *ring_buffer_alloc_read_page(struct ring_buffer *buffer)
 {
 	struct buffer_data_page *bpage;
-	struct page *page;
+	unsigned long addr;
 
-	page = alloc_pages_node(cpu_to_node(cpu),
-				GFP_KERNEL | __GFP_NORETRY, 0);
-	if (!page)
+	addr = __get_free_page(GFP_KERNEL);
+	if (!addr)
 		return NULL;
 
-	bpage = page_address(page);
+	bpage = (void *)addr;
 
 	rb_init_page(bpage);
 
@@ -3993,11 +3960,20 @@ rb_simple_write(struct file *filp, const char __user *ubuf,
 		size_t cnt, loff_t *ppos)
 {
 	unsigned long *p = filp->private_data;
+	char buf[64];
 	unsigned long val;
 	int ret;
 
-	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
-	if (ret)
+	if (cnt >= sizeof(buf))
+		return -EINVAL;
+
+	if (copy_from_user(&buf, ubuf, cnt))
+		return -EFAULT;
+
+	buf[cnt] = 0;
+
+	ret = strict_strtoul(buf, 10, &val);
+	if (ret < 0)
 		return ret;
 
 	if (val)

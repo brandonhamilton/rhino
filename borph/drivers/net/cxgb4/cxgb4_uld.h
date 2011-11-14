@@ -38,7 +38,7 @@
 #include <linux/cache.h>
 #include <linux/spinlock.h>
 #include <linux/skbuff.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /* CPL message priority levels */
 enum {

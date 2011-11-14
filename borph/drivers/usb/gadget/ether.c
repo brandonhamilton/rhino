@@ -102,6 +102,10 @@ static inline bool has_rndis(void)
 #endif
 }
 
+static char manufacturer[50];
+
+static u16 vendorID;
+
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -209,8 +213,6 @@ static const struct usb_descriptor_header *otg_desc[] = {
 
 #define STRING_MANUFACTURER_IDX		0
 #define STRING_PRODUCT_IDX		1
-
-static char manufacturer[50];
 
 static struct usb_string strings_dev[] = {
 	[STRING_MANUFACTURER_IDX].s = manufacturer,
@@ -332,6 +334,8 @@ static int __init eth_bind(struct usb_composite_dev *cdev)
 		device_desc.bNumConfigurations = 2;
 	}
 
+	vendorID = device_desc.idVendor;
+
 	gcnum = usb_gadget_controller_number(gadget);
 	if (gcnum >= 0)
 		device_desc.bcdDevice = cpu_to_le16(0x0300 | gcnum);
@@ -401,7 +405,6 @@ static struct usb_composite_driver eth_driver = {
 	.name		= "g_ether",
 	.dev		= &device_desc,
 	.strings	= dev_strings,
-	.max_speed	= USB_SPEED_SUPER,
 	.unbind		= __exit_p(eth_unbind),
 };
 

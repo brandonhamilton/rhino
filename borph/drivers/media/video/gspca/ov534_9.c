@@ -945,6 +945,7 @@ static void setautogain(struct gspca_dev *gspca_dev)
 	u8 val;
 
 /*fixme: should adjust agc/awb/aec by different controls */
+	val = sd->autogain;
 	val = sccb_read(gspca_dev, 0x13);		/* com8 */
 	sccb_write(gspca_dev, 0xff, 0x00);
 	if (sd->autogain)
@@ -1429,7 +1430,7 @@ static const struct sd_desc sd_desc = {
 };
 
 /* -- module initialisation -- */
-static const struct usb_device_id device_table[] = {
+static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x06f8, 0x3003)},
 	{}
 };

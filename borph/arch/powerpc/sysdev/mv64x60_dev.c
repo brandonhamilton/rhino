@@ -16,7 +16,6 @@
 #include <linux/mv643xx.h>
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
-#include <linux/of_net.h>
 #include <linux/dma-mapping.h>
 
 #include <asm/prom.h>
@@ -346,7 +345,7 @@ static int __init mv64x60_i2c_device_setup(struct device_node *np, int id)
 	if (prop)
 		pdata.freq_m = *prop;
 
-	pdata.freq_n = 3;	/* default */
+	pdata.freq_m = 3;	/* default */
 	prop = of_get_property(np, "freq_n", NULL);
 	if (prop)
 		pdata.freq_n = *prop;

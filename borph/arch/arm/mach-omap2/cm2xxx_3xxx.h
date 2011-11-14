@@ -122,13 +122,12 @@ extern void omap3xxx_cm_clkdm_disable_hwsup(s16 module, u32 mask);
 extern void omap3xxx_cm_clkdm_force_sleep(s16 module, u32 mask);
 extern void omap3xxx_cm_clkdm_force_wakeup(s16 module, u32 mask);
 
-extern void omap2xxx_cm_set_dpll_disable_autoidle(void);
-extern void omap2xxx_cm_set_dpll_auto_low_power_stop(void);
+extern int ti81xx_cm_wait_module_ready(void __iomem *clkctrl_reg);
 
-extern void omap2xxx_cm_set_apll54_disable_autoidle(void);
-extern void omap2xxx_cm_set_apll54_auto_low_power_stop(void);
-extern void omap2xxx_cm_set_apll96_disable_autoidle(void);
-extern void omap2xxx_cm_set_apll96_auto_low_power_stop(void);
+extern void ti81xx_cm_clkdm_enable_hwsup(s16 inst, u16 clkdm, u32 mask);
+extern void ti81xx_cm_clkdm_disable_hwsup(s16 inst, u16 clkdm, u32 mask);
+extern void ti81xx_cm_clkdm_force_sleep(s16 inst, u16 clkdm, u32 mask);
+extern void ti81xx_cm_clkdm_force_wakeup(s16 inst, u16 clkdm, u32 mask);
 
 #endif
 

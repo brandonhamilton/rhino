@@ -96,14 +96,17 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/kobject.h>
-#include <linux/prefetch.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 
 #include "musb_core.h"
 
-#define TA_WAIT_BCON(m) max_t(int, (m)->a_wait_bcon, OTG_TIME_A_WAIT_BCON)
 
+
+unsigned musb_debug;
+EXPORT_SYMBOL_GPL(musb_debug);
+module_param_named(debug, musb_debug, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(debug, "Debug message level. Default = 0");
 
 #define DRIVER_AUTHOR "Mentor Graphics, Texas Instruments, Nokia"
 #define DRIVER_DESC "Inventra Dual-Role USB Controller Driver"
@@ -120,6 +123,10 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:" MUSB_DRIVER_NAME);
 
+u8 (*musb_readb)(const void __iomem *addr, unsigned offset);
+EXPORT_SYMBOL_GPL(musb_readb);
+void (*musb_writeb)(void __iomem *addr, unsigned offset, u8 data);
+EXPORT_SYMBOL_GPL(musb_writeb);
 
 /*-------------------------------------------------------------------------*/
 
@@ -131,6 +138,43 @@ static inline struct musb *dev_to_musb(struct device *dev)
 /*-------------------------------------------------------------------------*/
 
 #ifndef CONFIG_BLACKFIN
+
+/*
+ * TUSB6010 doesn't allow 8-bit access; 16-bit access is the minimum.
+ */
+static inline u8 __tusb_musb_readb(const void __iomem *addr, unsigned offset)
+{
+	u16 tmp;
+	u8 val;
+
+	tmp = __raw_readw(addr + (offset & ~1));
+	if (offset & 1)
+		val = (tmp >> 8);
+	else
+		val = tmp & 0xff;
+
+	return val;
+}
+
+static inline void __tusb_musb_writeb(void __iomem *addr, unsigned offset, u8 data)
+{
+	u16 tmp;
+
+	tmp = __raw_readw(addr + (offset & ~1));
+	if (offset & 1)
+		tmp = (data << 8) | (tmp & 0xff);
+	else
+		tmp = (tmp & 0xff00) | data;
+
+	__raw_writew(tmp, addr + (offset & ~1));
+}
+
+static inline u8 __musb_readb(const void __iomem *addr, unsigned offset)
+	{ return __raw_readb(addr + offset); }
+
+static inline void __musb_writeb(void __iomem *addr, unsigned offset, u8 data)
+	{ __raw_writeb(data, addr + offset); }
+
 static int musb_ulpi_read(struct otg_transceiver *otg, u32 offset)
 {
 	void __iomem *addr = otg->io_priv;
@@ -154,8 +198,10 @@ static int musb_ulpi_read(struct otg_transceiver *otg, u32 offset)
 	while (!(musb_readb(addr, MUSB_ULPI_REG_CONTROL)
 				& MUSB_ULPI_REG_CMPLT)) {
 		i++;
-		if (i == 10000)
+		if (i == 10000) {
+			DBG(3, "ULPI read timed out\n");
 			return -ETIMEDOUT;
+		}
 
 	}
 	r = musb_readb(addr, MUSB_ULPI_REG_CONTROL);
@@ -185,8 +231,10 @@ static int musb_ulpi_write(struct otg_transceiver *otg,
 	while (!(musb_readb(addr, MUSB_ULPI_REG_CONTROL)
 				& MUSB_ULPI_REG_CMPLT)) {
 		i++;
-		if (i == 10000)
+		if (i == 10000) {
+			DBG(3, "ULPI write timed out\n");
 			return -ETIMEDOUT;
+		}
 	}
 
 	r = musb_readb(addr, MUSB_ULPI_REG_CONTROL);
@@ -196,6 +244,12 @@ static int musb_ulpi_write(struct otg_transceiver *otg,
 	return 0;
 }
 #else
+static inline u8 __musb_readb(const void __iomem *addr, unsigned offset)
+	{ return (u8) (bfin_read16(addr + offset)); }
+
+static inline void __musb_writeb(void __iomem *addr, unsigned offset, u8 data)
+	{ bfin_write16(addr + offset, (u16) data); }
+
 #define musb_ulpi_read		NULL
 #define musb_ulpi_write		NULL
 #endif
@@ -205,21 +259,16 @@ static struct otg_io_access_ops musb_ulpi_access = {
 	.write = musb_ulpi_write,
 };
 
-/*-------------------------------------------------------------------------*/
-
-#if !defined(CONFIG_USB_MUSB_TUSB6010) && !defined(CONFIG_USB_MUSB_BLACKFIN)
-
 /*
  * Load an endpoint's FIFO
  */
 void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 {
-	struct musb *musb = hw_ep->musb;
 	void __iomem *fifo = hw_ep->fifo;
 
 	prefetch((u8 *)src);
 
-	dev_dbg(musb->controller, "%cX ep%d fifo %p count %d buf %p\n",
+	DBG(4, "%cX ep%d fifo %p count %d buf %p\n",
 			'T', hw_ep->epnum, fifo, len, src);
 
 	/* we can't assume unaligned reads work */
@@ -249,17 +298,16 @@ void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 		writesb(fifo, src, len);
 	}
 }
+EXPORT_SYMBOL_GPL(musb_write_fifo);
 
-#if !defined(CONFIG_USB_MUSB_AM35X)
 /*
  * Unload an endpoint's FIFO
  */
 void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
 {
-	struct musb *musb = hw_ep->musb;
 	void __iomem *fifo = hw_ep->fifo;
 
-	dev_dbg(musb->controller, "%cX ep%d fifo %p count %d buf %p\n",
+	DBG(4, "%cX ep%d fifo %p count %d buf %p\n",
 			'R', hw_ep->epnum, fifo, len, dst);
 
 	/* we can't assume unaligned writes work */
@@ -289,10 +337,7 @@ void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
 		readsb(fifo, dst, len);
 	}
 }
-#endif
-
-#endif	/* normal PIO */
-
+EXPORT_SYMBOL_GPL(musb_read_fifo);
 
 /*-------------------------------------------------------------------------*/
 
@@ -320,13 +365,42 @@ void musb_load_testpacket(struct musb *musb)
 {
 	void __iomem	*regs = musb->endpoints[0].regs;
 
-	musb_ep_select(musb->mregs, 0);
-	musb_write_fifo(musb->control_ep,
+	musb_ep_select(musb, musb->mregs, 0);
+	musb->ops->write_fifo(musb->control_ep,
 			sizeof(musb_test_packet), musb_test_packet);
 	musb_writew(regs, MUSB_CSR0, MUSB_CSR0_TXPKTRDY);
 }
 
 /*-------------------------------------------------------------------------*/
+
+const char *otg_state_string(struct musb *musb)
+{
+	switch (musb->xceiv->state) {
+	case OTG_STATE_A_IDLE:		return "a_idle";
+	case OTG_STATE_A_WAIT_VRISE:	return "a_wait_vrise";
+	case OTG_STATE_A_WAIT_BCON:	return "a_wait_bcon";
+	case OTG_STATE_A_HOST:		return "a_host";
+	case OTG_STATE_A_SUSPEND:	return "a_suspend";
+	case OTG_STATE_A_PERIPHERAL:	return "a_peripheral";
+	case OTG_STATE_A_WAIT_VFALL:	return "a_wait_vfall";
+	case OTG_STATE_A_VBUS_ERR:	return "a_vbus_err";
+	case OTG_STATE_B_IDLE:		return "b_idle";
+	case OTG_STATE_B_SRP_INIT:	return "b_srp_init";
+	case OTG_STATE_B_PERIPHERAL:	return "b_peripheral";
+	case OTG_STATE_B_WAIT_ACON:	return "b_wait_acon";
+	case OTG_STATE_B_HOST:		return "b_host";
+	default:			return "UNDEFINED";
+	}
+}
+EXPORT_SYMBOL_GPL(otg_state_string);
+
+#ifdef	CONFIG_USB_MUSB_OTG
+
+/*
+ * See also USB_OTG_1-3.pdf 6.6.5 Timers
+ * REVISIT: Are the other timers done in the hardware?
+ */
+#define TB_ASE0_BRST		100	/* Min 3.125 ms */
 
 /*
  * Handles OTG hnp timeouts, such as b_ase0_brst
@@ -339,28 +413,26 @@ void musb_otg_timer_func(unsigned long data)
 	spin_lock_irqsave(&musb->lock, flags);
 	switch (musb->xceiv->state) {
 	case OTG_STATE_B_WAIT_ACON:
-		dev_dbg(musb->controller, "HNP: b_wait_acon timeout; back to b_peripheral\n");
+		DBG(1, "HNP: b_wait_acon timeout; back to b_peripheral\n");
 		musb_g_disconnect(musb);
 		musb->xceiv->state = OTG_STATE_B_PERIPHERAL;
 		musb->is_active = 0;
 		break;
-	case OTG_STATE_A_SUSPEND:
 	case OTG_STATE_A_WAIT_BCON:
-		dev_dbg(musb->controller, "HNP: %s timeout\n",
-			otg_state_string(musb->xceiv->state));
-		musb_platform_set_vbus(musb, 0);
-		musb->xceiv->state = OTG_STATE_A_WAIT_VFALL;
+		DBG(1, "HNP: a_wait_bcon timeout; back to a_host\n");
+		musb_hnp_stop(musb);
 		break;
 	default:
-		dev_dbg(musb->controller, "HNP: Unhandled mode %s\n",
-			otg_state_string(musb->xceiv->state));
+		DBG(1, "HNP: Unhandled mode %s\n", otg_state_string(musb));
 	}
 	musb->ignore_disconnect = 0;
 	spin_unlock_irqrestore(&musb->lock, flags);
 }
 
+static DEFINE_TIMER(musb_otg_timer, musb_otg_timer_func, 0, 0);
+
 /*
- * Stops the HNP transition. Caller must take care of locking.
+ * Stops the B-device HNP state. Caller must take care of locking.
  */
 void musb_hnp_stop(struct musb *musb)
 {
@@ -368,16 +440,18 @@ void musb_hnp_stop(struct musb *musb)
 	void __iomem	*mbase = musb->mregs;
 	u8	reg;
 
-	dev_dbg(musb->controller, "HNP: stop from %s\n", otg_state_string(musb->xceiv->state));
-
 	switch (musb->xceiv->state) {
 	case OTG_STATE_A_PERIPHERAL:
+	case OTG_STATE_A_WAIT_VFALL:
+	case OTG_STATE_A_WAIT_BCON:
+		DBG(1, "HNP: Switching back to A-host\n");
 		musb_g_disconnect(musb);
-		dev_dbg(musb->controller, "HNP: back to %s\n",
-			otg_state_string(musb->xceiv->state));
+		musb->xceiv->state = OTG_STATE_A_IDLE;
+		MUSB_HST_MODE(musb);
+		musb->is_active = 0;
 		break;
 	case OTG_STATE_B_HOST:
-		dev_dbg(musb->controller, "HNP: Disabling HR\n");
+		DBG(1, "HNP: Disabling HR\n");
 		hcd->self.is_b_host = 0;
 		musb->xceiv->state = OTG_STATE_B_PERIPHERAL;
 		MUSB_DEV_MODE(musb);
@@ -387,8 +461,8 @@ void musb_hnp_stop(struct musb *musb)
 		/* REVISIT: Start SESSION_REQUEST here? */
 		break;
 	default:
-		dev_dbg(musb->controller, "HNP: Stopping in unknown state %s\n",
-			otg_state_string(musb->xceiv->state));
+		DBG(1, "HNP: Stopping in unknown state %s\n",
+			otg_state_string(musb));
 	}
 
 	/*
@@ -398,6 +472,8 @@ void musb_hnp_stop(struct musb *musb)
 	 */
 	musb->port1_status &= ~(USB_PORT_STAT_C_CONNECTION << 16);
 }
+
+#endif
 
 /*
  * Interrupt Service Routine to record USB "global" interrupts.
@@ -416,7 +492,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 {
 	irqreturn_t handled = IRQ_NONE;
 
-	dev_dbg(musb->controller, "<== Power=%02x, DevCtl=%02x, int_usb=0x%x\n", power, devctl,
+	DBG(3, "<== Power=%02x, DevCtl=%02x, int_usb=0x%x\n", power, devctl,
 		int_usb);
 
 	/* in host mode, the peripheral may issue remote wakeup.
@@ -425,9 +501,10 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 	 */
 	if (int_usb & MUSB_INTR_RESUME) {
 		handled = IRQ_HANDLED;
-		dev_dbg(musb->controller, "RESUME (%s)\n", otg_state_string(musb->xceiv->state));
+		DBG(3, "RESUME (%s)\n", otg_state_string(musb));
 
 		if (devctl & MUSB_DEVCTL_HM) {
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 			void __iomem *mbase = musb->mregs;
 
 			switch (musb->xceiv->state) {
@@ -439,7 +516,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 				if (power & MUSB_POWER_SUSPENDM) {
 					/* spurious */
 					musb->int_usb &= ~MUSB_INTR_SUSPEND;
-					dev_dbg(musb->controller, "Spurious SUSPENDM\n");
+					DBG(2, "Spurious SUSPENDM\n");
 					break;
 				}
 
@@ -465,15 +542,19 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 			default:
 				WARNING("bogus %s RESUME (%s)\n",
 					"host",
-					otg_state_string(musb->xceiv->state));
+					otg_state_string(musb));
 			}
+#endif
 		} else {
 			switch (musb->xceiv->state) {
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 			case OTG_STATE_A_SUSPEND:
 				/* possibly DISCONNECT is upcoming */
 				musb->xceiv->state = OTG_STATE_A_HOST;
 				usb_hcd_resume_root_hub(musb_to_hcd(musb));
 				break;
+#endif
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 			case OTG_STATE_B_WAIT_ACON:
 			case OTG_STATE_B_PERIPHERAL:
 				/* disconnect while suspended?  we may
@@ -491,26 +572,27 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 			case OTG_STATE_B_IDLE:
 				musb->int_usb &= ~MUSB_INTR_SUSPEND;
 				break;
+#endif
 			default:
 				WARNING("bogus %s RESUME (%s)\n",
 					"peripheral",
-					otg_state_string(musb->xceiv->state));
+					otg_state_string(musb));
 			}
 		}
 	}
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	/* see manual for the order of the tests */
 	if (int_usb & MUSB_INTR_SESSREQ) {
 		void __iomem *mbase = musb->mregs;
 
 		if ((devctl & MUSB_DEVCTL_VBUS) == MUSB_DEVCTL_VBUS
 				&& (devctl & MUSB_DEVCTL_BDEVICE)) {
-			dev_dbg(musb->controller, "SessReq while on B state\n");
+			DBG(3, "SessReq while on B state\n");
 			return IRQ_HANDLED;
 		}
 
-		dev_dbg(musb->controller, "SESSION_REQUEST (%s)\n",
-			otg_state_string(musb->xceiv->state));
+		DBG(1, "SESSION_REQUEST (%s)\n", otg_state_string(musb));
 
 		/* IRQ arrives from ID pin sense or (later, if VBUS power
 		 * is removed) SRP.  responses are time critical:
@@ -574,8 +656,8 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 			break;
 		}
 
-		dev_dbg(musb->controller, "VBUS_ERROR in %s (%02x, %s), retry #%d, port1 %08x\n",
-				otg_state_string(musb->xceiv->state),
+		DBG(1, "VBUS_ERROR in %s (%02x, %s), retry #%d, port1 %08x\n",
+				otg_state_string(musb),
 				devctl,
 				({ char *s;
 				switch (devctl & MUSB_DEVCTL_VBUS) {
@@ -598,28 +680,21 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 		handled = IRQ_HANDLED;
 	}
 
+#endif
 	if (int_usb & MUSB_INTR_SUSPEND) {
-		dev_dbg(musb->controller, "SUSPEND (%s) devctl %02x power %02x\n",
-			otg_state_string(musb->xceiv->state), devctl, power);
+		DBG(1, "SUSPEND (%s) devctl %02x power %02x\n",
+				otg_state_string(musb), devctl, power);
 		handled = IRQ_HANDLED;
 
 		switch (musb->xceiv->state) {
+#ifdef	CONFIG_USB_MUSB_OTG
 		case OTG_STATE_A_PERIPHERAL:
-			/* We also come here if the cable is removed, since
-			 * this silicon doesn't report ID-no-longer-grounded.
-			 *
-			 * We depend on T(a_wait_bcon) to shut us down, and
-			 * hope users don't do anything dicey during this
-			 * undesired detour through A_WAIT_BCON.
+			/*
+			 * We cannot stop HNP here, devctl BDEVICE might be
+			 * still set.
 			 */
-			musb_hnp_stop(musb);
-			usb_hcd_resume_root_hub(musb_to_hcd(musb));
-			musb_root_disconnect(musb);
-			musb_platform_try_idle(musb, jiffies
-					+ msecs_to_jiffies(musb->a_wait_bcon
-						? : OTG_TIME_A_WAIT_BCON));
-
 			break;
+#endif
 		case OTG_STATE_B_IDLE:
 			if (!musb->is_active)
 				break;
@@ -628,11 +703,13 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 			musb->is_active = is_otg_enabled(musb)
 					&& musb->xceiv->gadget->b_hnp_enable;
 			if (musb->is_active) {
+#ifdef	CONFIG_USB_MUSB_OTG
 				musb->xceiv->state = OTG_STATE_B_WAIT_ACON;
-				dev_dbg(musb->controller, "HNP: Setting timer for b_ase0_brst\n");
-				mod_timer(&musb->otg_timer, jiffies
-					+ msecs_to_jiffies(
-							OTG_TIME_B_ASE0_BRST));
+				DBG(1, "HNP: Setting timer for b_ase0_brst\n");
+				musb_otg_timer.data = (unsigned long)musb;
+				mod_timer(&musb_otg_timer, jiffies
+					+ msecs_to_jiffies(TB_ASE0_BRST));
+#endif
 			}
 			break;
 		case OTG_STATE_A_WAIT_BCON:
@@ -647,7 +724,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 			break;
 		case OTG_STATE_B_HOST:
 			/* Transition to B_PERIPHERAL, see 6.8.2.6 p 44 */
-			dev_dbg(musb->controller, "REVISIT: SUSPEND as B_HOST\n");
+			DBG(1, "REVISIT: SUSPEND as B_HOST\n");
 			break;
 		default:
 			/* "should not happen" */
@@ -656,6 +733,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 		}
 	}
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	if (int_usb & MUSB_INTR_CONNECT) {
 		struct usb_hcd *hcd = musb_to_hcd(musb);
 
@@ -665,6 +743,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 
 		musb->ep0_stage = MUSB_EP0_START;
 
+#ifdef CONFIG_USB_MUSB_OTG
 		/* flush endpoints when transitioning from Device Mode */
 		if (is_peripheral_active(musb)) {
 			/* REVISIT HNP; just force disconnect */
@@ -672,6 +751,7 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 		musb_writew(musb->mregs, MUSB_INTRTXE, musb->epmask);
 		musb_writew(musb->mregs, MUSB_INTRRXE, musb->epmask & 0xfffe);
 		musb_writeb(musb->mregs, MUSB_INTRUSBE, 0xf7);
+#endif
 		musb->port1_status &= ~(USB_PORT_STAT_LOW_SPEED
 					|USB_PORT_STAT_HIGH_SPEED
 					|USB_PORT_STAT_ENABLE
@@ -683,23 +763,28 @@ static irqreturn_t musb_stage0_irq(struct musb *musb, u8 int_usb,
 		if (devctl & MUSB_DEVCTL_LSDEV)
 			musb->port1_status |= USB_PORT_STAT_LOW_SPEED;
 
+		if (hcd->status_urb)
+			usb_hcd_poll_rh_status(hcd);
+		else
+			usb_hcd_resume_root_hub(hcd);
+
+		MUSB_HST_MODE(musb);
+
 		/* indicate new connection to OTG machine */
 		switch (musb->xceiv->state) {
 		case OTG_STATE_B_PERIPHERAL:
 			if (int_usb & MUSB_INTR_SUSPEND) {
-				dev_dbg(musb->controller, "HNP: SUSPEND+CONNECT, now b_host\n");
+				DBG(1, "HNP: SUSPEND+CONNECT, now b_host\n");
+				musb->xceiv->state = OTG_STATE_B_HOST;
+				hcd->self.is_b_host = 1;
 				int_usb &= ~MUSB_INTR_SUSPEND;
-				goto b_host;
 			} else
-				dev_dbg(musb->controller, "CONNECT as b_peripheral???\n");
+				DBG(1, "CONNECT as b_peripheral???\n");
 			break;
 		case OTG_STATE_B_WAIT_ACON:
-			dev_dbg(musb->controller, "HNP: CONNECT, now b_host\n");
-b_host:
+			DBG(1, "HNP: Waiting to switch to b_host state\n");
 			musb->xceiv->state = OTG_STATE_B_HOST;
 			hcd->self.is_b_host = 1;
-			musb->ignore_disconnect = 0;
-			del_timer(&musb->otg_timer);
 			break;
 		default:
 			if ((devctl & MUSB_DEVCTL_VBUS)
@@ -709,25 +794,19 @@ b_host:
 			}
 			break;
 		}
-
-		/* poke the root hub */
-		MUSB_HST_MODE(musb);
-		if (hcd->status_urb)
-			usb_hcd_poll_rh_status(hcd);
-		else
-			usb_hcd_resume_root_hub(hcd);
-
-		dev_dbg(musb->controller, "CONNECT (%s) devctl %02x\n",
-				otg_state_string(musb->xceiv->state), devctl);
+		DBG(1, "CONNECT (%s) devctl %02x\n",
+				otg_state_string(musb), devctl);
 	}
+#endif	/* CONFIG_USB_MUSB_HDRC_HCD */
 
 	if ((int_usb & MUSB_INTR_DISCONNECT) && !musb->ignore_disconnect) {
-		dev_dbg(musb->controller, "DISCONNECT (%s) as %s, devctl %02x\n",
-				otg_state_string(musb->xceiv->state),
+		DBG(1, "DISCONNECT (%s) as %s, devctl %02x\n",
+				otg_state_string(musb),
 				MUSB_MODE(musb), devctl);
 		handled = IRQ_HANDLED;
 
 		switch (musb->xceiv->state) {
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 		case OTG_STATE_A_HOST:
 		case OTG_STATE_A_SUSPEND:
 			usb_hcd_resume_root_hub(musb_to_hcd(musb));
@@ -736,17 +815,10 @@ b_host:
 				musb_platform_try_idle(musb, jiffies
 					+ msecs_to_jiffies(musb->a_wait_bcon));
 			break;
+#endif	/* HOST */
+#ifdef CONFIG_USB_MUSB_OTG
 		case OTG_STATE_B_HOST:
-			/* REVISIT this behaves for "real disconnect"
-			 * cases; make sure the other transitions from
-			 * from B_HOST act right too.  The B_HOST code
-			 * in hnp_stop() is currently not used...
-			 */
-			musb_root_disconnect(musb);
-			musb_to_hcd(musb)->self.is_b_host = 0;
-			musb->xceiv->state = OTG_STATE_B_PERIPHERAL;
-			MUSB_DEV_MODE(musb);
-			musb_g_disconnect(musb);
+			musb_hnp_stop(musb);
 			break;
 		case OTG_STATE_A_PERIPHERAL:
 			musb_hnp_stop(musb);
@@ -754,13 +826,20 @@ b_host:
 			/* FALLTHROUGH */
 		case OTG_STATE_B_WAIT_ACON:
 			/* FALLTHROUGH */
+#endif	/* OTG */
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 		case OTG_STATE_B_PERIPHERAL:
 		case OTG_STATE_B_IDLE:
+			printk(KERN_INFO "musb %s gadget disconnected.\n",
+				musb->gadget_driver
+				? musb->gadget_driver->driver.name
+				: "");
 			musb_g_disconnect(musb);
 			break;
+#endif	/* GADGET */
 		default:
 			WARNING("unhandled DISCONNECT transition (%s)\n",
-				otg_state_string(musb->xceiv->state));
+				otg_state_string(musb));
 			break;
 		}
 	}
@@ -779,15 +858,15 @@ b_host:
 			 * stop the session.
 			 */
 			if (devctl & (MUSB_DEVCTL_FSDEV | MUSB_DEVCTL_LSDEV))
-				dev_dbg(musb->controller, "BABBLE devctl: %02x\n", devctl);
+				DBG(1, "BABBLE devctl: %02x\n", devctl);
 			else {
 				ERR("Stopping host session -- babble\n");
 				musb_writeb(musb->mregs, MUSB_DEVCTL, 0);
 			}
 		} else if (is_peripheral_capable()) {
-			dev_dbg(musb->controller, "BUS RESET as %s\n",
-				otg_state_string(musb->xceiv->state));
+			DBG(1, "BUS RESET as %s\n", otg_state_string(musb));
 			switch (musb->xceiv->state) {
+#ifdef CONFIG_USB_OTG
 			case OTG_STATE_A_SUSPEND:
 				/* We need to ignore disconnect on suspend
 				 * otherwise tusb 2.0 won't reconnect after a
@@ -797,24 +876,22 @@ b_host:
 				musb_g_reset(musb);
 				/* FALLTHROUGH */
 			case OTG_STATE_A_WAIT_BCON:	/* OPT TD.4.7-900ms */
-				/* never use invalid T(a_wait_bcon) */
-				dev_dbg(musb->controller, "HNP: in %s, %d msec timeout\n",
-					otg_state_string(musb->xceiv->state),
-					TA_WAIT_BCON(musb));
-				mod_timer(&musb->otg_timer, jiffies
-					+ msecs_to_jiffies(TA_WAIT_BCON(musb)));
+				DBG(1, "HNP: Setting timer as %s\n",
+						otg_state_string(musb));
+				musb_otg_timer.data = (unsigned long)musb;
+				mod_timer(&musb_otg_timer, jiffies
+					+ msecs_to_jiffies(100));
 				break;
 			case OTG_STATE_A_PERIPHERAL:
-				musb->ignore_disconnect = 0;
-				del_timer(&musb->otg_timer);
-				musb_g_reset(musb);
+				musb_hnp_stop(musb);
 				break;
 			case OTG_STATE_B_WAIT_ACON:
-				dev_dbg(musb->controller, "HNP: RESET (%s), to b_peripheral\n",
-					otg_state_string(musb->xceiv->state));
+				DBG(1, "HNP: RESET (%s), to b_peripheral\n",
+					otg_state_string(musb));
 				musb->xceiv->state = OTG_STATE_B_PERIPHERAL;
 				musb_g_reset(musb);
 				break;
+#endif
 			case OTG_STATE_B_IDLE:
 				musb->xceiv->state = OTG_STATE_B_PERIPHERAL;
 				/* FALLTHROUGH */
@@ -822,8 +899,8 @@ b_host:
 				musb_g_reset(musb);
 				break;
 			default:
-				dev_dbg(musb->controller, "Unhandled BUS RESET as %s\n",
-					otg_state_string(musb->xceiv->state));
+				DBG(1, "Unhandled BUS RESET as %s\n",
+					otg_state_string(musb));
 			}
 		}
 	}
@@ -846,7 +923,7 @@ b_host:
 		u8 epnum;
 		u16 frame;
 
-		dev_dbg(musb->controller, "START_OF_FRAME\n");
+		DBG(6, "START_OF_FRAME\n");
 		handled = IRQ_HANDLED;
 
 		/* start any periodic Tx transfers waiting for current frame */
@@ -888,7 +965,7 @@ void musb_start(struct musb *musb)
 	void __iomem	*regs = musb->mregs;
 	u8		devctl = musb_readb(regs, MUSB_DEVCTL);
 
-	dev_dbg(musb->controller, "<== devctl %02x\n", devctl);
+	DBG(2, "<== devctl %02x\n", devctl);
 
 	/*  Set INT enable registers, enable interrupts */
 	musb_writew(regs, MUSB_INTRTXE, musb->epmask);
@@ -899,6 +976,7 @@ void musb_start(struct musb *musb)
 
 	/* put into basic highspeed mode and start session */
 	musb_writeb(regs, MUSB_POWER, MUSB_POWER_ISOUPDATE
+						| MUSB_POWER_SOFTCONN
 						| MUSB_POWER_HSENAB
 						/* ENSUSPEND wedges tusb */
 						/* | MUSB_POWER_ENSUSPEND */
@@ -964,7 +1042,7 @@ void musb_stop(struct musb *musb)
 	/* stop IRQs, timers, ... */
 	musb_platform_disable(musb);
 	musb_generic_disable(musb);
-	dev_dbg(musb->controller, "HDRC disabled\n");
+	DBG(3, "HDRC disabled\n");
 
 	/* FIXME
 	 *  - mark host and/or peripheral drivers unusable/inactive
@@ -981,7 +1059,6 @@ static void musb_shutdown(struct platform_device *pdev)
 	struct musb	*musb = dev_to_musb(&pdev->dev);
 	unsigned long	flags;
 
-	pm_runtime_get_sync(musb->controller);
 	spin_lock_irqsave(&musb->lock, flags);
 	musb_platform_disable(musb);
 	musb_generic_disable(musb);
@@ -992,7 +1069,6 @@ static void musb_shutdown(struct platform_device *pdev)
 	musb_writeb(musb->mregs, MUSB_DEVCTL, 0);
 	musb_platform_exit(musb);
 
-	pm_runtime_put(musb->controller);
 	/* FIXME power down */
 }
 
@@ -1009,22 +1085,10 @@ static void musb_shutdown(struct platform_device *pdev)
  * We don't currently use dynamic fifo setup capability to do anything
  * more than selecting one of a bunch of predefined configurations.
  */
-#if defined(CONFIG_USB_MUSB_TUSB6010)			\
-	|| defined(CONFIG_USB_MUSB_TUSB6010_MODULE)	\
-	|| defined(CONFIG_USB_MUSB_OMAP2PLUS)		\
-	|| defined(CONFIG_USB_MUSB_OMAP2PLUS_MODULE)	\
-	|| defined(CONFIG_USB_MUSB_AM35X)		\
-	|| defined(CONFIG_USB_MUSB_AM35X_MODULE)
-static ushort __initdata fifo_mode = 4;
-#elif defined(CONFIG_USB_MUSB_UX500)			\
-	|| defined(CONFIG_USB_MUSB_UX500_MODULE)
-static ushort __initdata fifo_mode = 5;
-#else
-static ushort __initdata fifo_mode = 2;
-#endif
+static short __devinitdata fifo_mode = -1;
 
 /* "modprobe ... fifo_mode=1" etc */
-module_param(fifo_mode, ushort, 0);
+module_param(fifo_mode, short, 0);
 MODULE_PARM_DESC(fifo_mode, "initial endpoint configuration");
 
 /*
@@ -1033,7 +1097,7 @@ MODULE_PARM_DESC(fifo_mode, "initial endpoint configuration");
  */
 
 /* mode 0 - fits in 2KB */
-static struct musb_fifo_cfg __initdata mode_0_cfg[] = {
+static struct musb_fifo_cfg __devinitdata mode_0_cfg[] = {
 { .hw_ep_num = 1, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num = 1, .style = FIFO_RX,   .maxpacket = 512, },
 { .hw_ep_num = 2, .style = FIFO_RXTX, .maxpacket = 512, },
@@ -1042,7 +1106,7 @@ static struct musb_fifo_cfg __initdata mode_0_cfg[] = {
 };
 
 /* mode 1 - fits in 4KB */
-static struct musb_fifo_cfg __initdata mode_1_cfg[] = {
+static struct musb_fifo_cfg __devinitdata mode_1_cfg[] = {
 { .hw_ep_num = 1, .style = FIFO_TX,   .maxpacket = 512, .mode = BUF_DOUBLE, },
 { .hw_ep_num = 1, .style = FIFO_RX,   .maxpacket = 512, .mode = BUF_DOUBLE, },
 { .hw_ep_num = 2, .style = FIFO_RXTX, .maxpacket = 512, .mode = BUF_DOUBLE, },
@@ -1051,7 +1115,7 @@ static struct musb_fifo_cfg __initdata mode_1_cfg[] = {
 };
 
 /* mode 2 - fits in 4KB */
-static struct musb_fifo_cfg __initdata mode_2_cfg[] = {
+static struct musb_fifo_cfg __devinitdata mode_2_cfg[] = {
 { .hw_ep_num = 1, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num = 1, .style = FIFO_RX,   .maxpacket = 512, },
 { .hw_ep_num = 2, .style = FIFO_TX,   .maxpacket = 512, },
@@ -1061,7 +1125,7 @@ static struct musb_fifo_cfg __initdata mode_2_cfg[] = {
 };
 
 /* mode 3 - fits in 4KB */
-static struct musb_fifo_cfg __initdata mode_3_cfg[] = {
+static struct musb_fifo_cfg __devinitdata mode_3_cfg[] = {
 { .hw_ep_num = 1, .style = FIFO_TX,   .maxpacket = 512, .mode = BUF_DOUBLE, },
 { .hw_ep_num = 1, .style = FIFO_RX,   .maxpacket = 512, .mode = BUF_DOUBLE, },
 { .hw_ep_num = 2, .style = FIFO_TX,   .maxpacket = 512, },
@@ -1070,14 +1134,46 @@ static struct musb_fifo_cfg __initdata mode_3_cfg[] = {
 { .hw_ep_num = 4, .style = FIFO_RXTX, .maxpacket = 256, },
 };
 
+#if defined(CONFIG_USB_GADGET_MUSB_HDRC) && defined(CONFIG_USB_MUSB_TI81XX)
 /* mode 4 - fits in 16KB */
-static struct musb_fifo_cfg __initdata mode_4_cfg[] = {
-{ .hw_ep_num =  1, .style = FIFO_TX,   .maxpacket = 512, },
-{ .hw_ep_num =  1, .style = FIFO_RX,   .maxpacket = 512, },
-{ .hw_ep_num =  2, .style = FIFO_TX,   .maxpacket = 512, },
-{ .hw_ep_num =  2, .style = FIFO_RX,   .maxpacket = 512, },
-{ .hw_ep_num =  3, .style = FIFO_TX,   .maxpacket = 512, },
-{ .hw_ep_num =  3, .style = FIFO_RX,   .maxpacket = 512, },
+static struct musb_fifo_cfg __devinitdata mode_4_cfg[] = {
+{ .hw_ep_num =  1, .style = FIFO_TX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  1, .style = FIFO_RX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  2, .style = FIFO_TX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  2, .style = FIFO_RX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  3, .style = FIFO_TX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  3, .style = FIFO_RX,   .maxpacket = 512, .mode = BUF_DOUBLE,},
+{ .hw_ep_num =  4, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  4, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num =  5, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  5, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num =  6, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  6, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num =  7, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  7, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num =  8, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  8, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num =  9, .style = FIFO_TX,   .maxpacket = 64, },
+{ .hw_ep_num =  9, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num = 10, .style = FIFO_TX,   .maxpacket = 256, },
+{ .hw_ep_num = 10, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num = 11, .style = FIFO_TX,   .maxpacket = 256, },
+{ .hw_ep_num = 11, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num = 12, .style = FIFO_TX,   .maxpacket = 256, },
+{ .hw_ep_num = 12, .style = FIFO_RX,   .maxpacket = 64, },
+{ .hw_ep_num = 13, .style = FIFO_RXTX, .maxpacket = 4096, },
+{ .hw_ep_num = 14, .style = FIFO_RXTX, .maxpacket = 1024, },
+{ .hw_ep_num = 15, .style = FIFO_RXTX, .maxpacket = 1024, },
+};
+#else
+/* mode 4 - fits in 16KB */
+static struct musb_fifo_cfg __devinitdata mode_4_cfg[] = {
+{ .hw_ep_num =  1, .style = FIFO_TX,   .maxpacket = 512,},
+{ .hw_ep_num =  1, .style = FIFO_RX,   .maxpacket = 512,},
+{ .hw_ep_num =  2, .style = FIFO_TX,   .maxpacket = 512,},
+{ .hw_ep_num =  2, .style = FIFO_RX,   .maxpacket = 512,},
+{ .hw_ep_num =  3, .style = FIFO_TX,   .maxpacket = 512,},
+{ .hw_ep_num =  3, .style = FIFO_RX,   .maxpacket = 512,},
 { .hw_ep_num =  4, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num =  4, .style = FIFO_RX,   .maxpacket = 512, },
 { .hw_ep_num =  5, .style = FIFO_TX,   .maxpacket = 512, },
@@ -1100,19 +1196,20 @@ static struct musb_fifo_cfg __initdata mode_4_cfg[] = {
 { .hw_ep_num = 14, .style = FIFO_RXTX, .maxpacket = 1024, },
 { .hw_ep_num = 15, .style = FIFO_RXTX, .maxpacket = 1024, },
 };
+#endif
 
 /* mode 5 - fits in 8KB */
-static struct musb_fifo_cfg __initdata mode_5_cfg[] = {
+static struct musb_fifo_cfg __devinitdata mode_5_cfg[] = {
 { .hw_ep_num =  1, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num =  1, .style = FIFO_RX,   .maxpacket = 512, },
 { .hw_ep_num =  2, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num =  2, .style = FIFO_RX,   .maxpacket = 512, },
 { .hw_ep_num =  3, .style = FIFO_TX,   .maxpacket = 512, },
 { .hw_ep_num =  3, .style = FIFO_RX,   .maxpacket = 512, },
-{ .hw_ep_num =  4, .style = FIFO_TX,   .maxpacket = 512, },
-{ .hw_ep_num =  4, .style = FIFO_RX,   .maxpacket = 512, },
-{ .hw_ep_num =  5, .style = FIFO_TX,   .maxpacket = 512, },
-{ .hw_ep_num =  5, .style = FIFO_RX,   .maxpacket = 512, },
+{ .hw_ep_num =  4, .style = FIFO_TX,   .maxpacket = 32, },
+{ .hw_ep_num =  4, .style = FIFO_RX,   .maxpacket = 32, },
+{ .hw_ep_num =  5, .style = FIFO_TX,   .maxpacket = 32, },
+{ .hw_ep_num =  5, .style = FIFO_RX,   .maxpacket = 32, },
 { .hw_ep_num =  6, .style = FIFO_TX,   .maxpacket = 32, },
 { .hw_ep_num =  6, .style = FIFO_RX,   .maxpacket = 32, },
 { .hw_ep_num =  7, .style = FIFO_TX,   .maxpacket = 32, },
@@ -1127,9 +1224,9 @@ static struct musb_fifo_cfg __initdata mode_5_cfg[] = {
 { .hw_ep_num = 11, .style = FIFO_RX,   .maxpacket = 32, },
 { .hw_ep_num = 12, .style = FIFO_TX,   .maxpacket = 32, },
 { .hw_ep_num = 12, .style = FIFO_RX,   .maxpacket = 32, },
-{ .hw_ep_num = 13, .style = FIFO_RXTX, .maxpacket = 512, },
-{ .hw_ep_num = 14, .style = FIFO_RXTX, .maxpacket = 1024, },
-{ .hw_ep_num = 15, .style = FIFO_RXTX, .maxpacket = 1024, },
+{ .hw_ep_num = 13, .style = FIFO_RXTX, .maxpacket = 128, },
+{ .hw_ep_num = 14, .style = FIFO_RXTX, .maxpacket = 256, },
+{ .hw_ep_num = 15, .style = FIFO_RXTX, .maxpacket = 4096, },
 };
 
 /*
@@ -1138,7 +1235,7 @@ static struct musb_fifo_cfg __initdata mode_5_cfg[] = {
  *
  * returns negative errno or offset for next fifo.
  */
-static int __init
+static int __devinit
 fifo_setup(struct musb *musb, struct musb_hw_ep  *hw_ep,
 		const struct musb_fifo_cfg *cfg, u16 offset)
 {
@@ -1167,12 +1264,14 @@ fifo_setup(struct musb *musb, struct musb_hw_ep  *hw_ep,
 	/* configure the FIFO */
 	musb_writeb(mbase, MUSB_INDEX, hw_ep->epnum);
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	/* EP0 reserved endpoint for control, bidirectional;
 	 * EP1 reserved for bulk, two unidirection halves.
 	 */
 	if (hw_ep->epnum == 1)
 		musb->bulk_ep = hw_ep;
 	/* REVISIT error check:  be sure ep0 can both rx and tx ... */
+#endif
 	switch (cfg->style) {
 	case FIFO_TX:
 		musb_write_txfifosz(mbase, c_size);
@@ -1209,18 +1308,20 @@ fifo_setup(struct musb *musb, struct musb_hw_ep  *hw_ep,
 	return offset + (maxpacket << ((c_size & MUSB_FIFOSZ_DPB) ? 1 : 0));
 }
 
-static struct musb_fifo_cfg __initdata ep0_cfg = {
+static struct musb_fifo_cfg __devinitdata ep0_cfg = {
 	.style = FIFO_RXTX, .maxpacket = 64,
 };
 
-static int __init ep_config_from_table(struct musb *musb)
+static int __devinit ep_config_from_table(struct musb *musb)
 {
 	const struct musb_fifo_cfg	*cfg;
 	unsigned		i, n;
 	int			offset;
 	struct musb_hw_ep	*hw_ep = musb->endpoints;
 
-	if (musb->config->fifo_cfg) {
+	if (musb->config->fifo_mode) {
+		fifo_mode = musb->config->fifo_mode;
+	} else if (musb->config->fifo_cfg) {
 		cfg = musb->config->fifo_cfg;
 		n = musb->config->fifo_cfg_size;
 		goto done;
@@ -1291,10 +1392,12 @@ done:
 			n + 1, musb->config->num_eps * 2 - 1,
 			offset, (1 << (musb->config->ram_bits + 2)));
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	if (!musb->bulk_ep) {
 		pr_debug("%s: missing bulk\n", musb_driver_name);
 		return -EINVAL;
 	}
+#endif
 
 	return 0;
 }
@@ -1304,19 +1407,19 @@ done:
  * ep_config_from_hw - when MUSB_C_DYNFIFO_DEF is false
  * @param musb the controller
  */
-static int __init ep_config_from_hw(struct musb *musb)
+static int __devinit ep_config_from_hw(struct musb *musb)
 {
 	u8 epnum = 0;
 	struct musb_hw_ep *hw_ep;
 	void *mbase = musb->mregs;
 	int ret = 0;
 
-	dev_dbg(musb->controller, "<== static silicon ep config\n");
+	DBG(2, "<== static silicon ep config\n");
 
 	/* FIXME pick up ep0 maxpacket size */
 
 	for (epnum = 1; epnum < musb->config->num_eps; epnum++) {
-		musb_ep_select(mbase, epnum);
+		musb_ep_select(musb, mbase, epnum);
 		hw_ep = musb->endpoints + epnum;
 
 		ret = musb_read_fifosize(musb, hw_ep, epnum);
@@ -1325,6 +1428,7 @@ static int __init ep_config_from_hw(struct musb *musb)
 
 		/* FIXME set up hw_ep->{rx,tx}_double_buffered */
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 		/* pick an RX/TX endpoint for bulk */
 		if (hw_ep->max_packet_sz_tx < 512
 				|| hw_ep->max_packet_sz_rx < 512)
@@ -1336,12 +1440,15 @@ static int __init ep_config_from_hw(struct musb *musb)
 		if (musb->bulk_ep)
 			continue;
 		musb->bulk_ep = hw_ep;
+#endif
 	}
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	if (!musb->bulk_ep) {
 		pr_debug("%s: missing bulk\n", musb_driver_name);
 		return -EINVAL;
 	}
+#endif
 
 	return 0;
 }
@@ -1351,7 +1458,7 @@ enum { MUSB_CONTROLLER_MHDRC, MUSB_CONTROLLER_HDRC, };
 /* Initialize MUSB (M)HDRC part of the USB hardware subsystem;
  * configure endpoints, or take their config from silicon
  */
-static int __init musb_core_init(u16 musb_type, struct musb *musb)
+static int __devinit musb_core_init(u16 musb_type, struct musb *musb)
 {
 	u8 reg;
 	char *type;
@@ -1397,10 +1504,12 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 	} else {
 		musb->is_multipoint = 0;
 		type = "";
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 #ifndef	CONFIG_USB_OTG_BLACKLIST_HUB
 		printk(KERN_ERR
 			"%s: kernel must blacklist external hubs\n",
 			musb_driver_name);
+#endif
 #endif
 	}
 
@@ -1431,26 +1540,30 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 	for (i = 0; i < musb->nr_endpoints; i++) {
 		struct musb_hw_ep	*hw_ep = musb->endpoints + i;
 
-		hw_ep->fifo = MUSB_FIFO_OFFSET(i) + mbase;
-#ifdef CONFIG_USB_MUSB_TUSB6010
-		hw_ep->fifo_async = musb->async + 0x400 + MUSB_FIFO_OFFSET(i);
-		hw_ep->fifo_sync = musb->sync + 0x400 + MUSB_FIFO_OFFSET(i);
-		hw_ep->fifo_sync_va =
-			musb->sync_va + 0x400 + MUSB_FIFO_OFFSET(i);
+		if (musb->ops->flags & MUSB_GLUE_TUSB_STYLE) {
+			hw_ep->fifo = MUSB_TUSB_FIFO_OFFSET(i) + mbase;
+			hw_ep->fifo_async = musb->async + 0x400 + MUSB_TUSB_FIFO_OFFSET(i);
+			hw_ep->fifo_sync = musb->sync + 0x400 + MUSB_TUSB_FIFO_OFFSET(i);
+			hw_ep->fifo_sync_va =
+				musb->sync_va + 0x400 + MUSB_TUSB_FIFO_OFFSET(i);
 
-		if (i == 0)
-			hw_ep->conf = mbase - 0x400 + TUSB_EP0_CONF;
-		else
-			hw_ep->conf = mbase + 0x400 + (((i - 1) & 0xf) << 2);
-#endif
+			if (i == 0)
+				hw_ep->conf = mbase - 0x400 + TUSB_EP0_CONF;
+			else
+				hw_ep->conf = mbase + 0x400 + (((i - 1) & 0xf) << 2);
+		} else {
+			hw_ep->fifo = MUSB_FIFO_OFFSET(i) + mbase;
+		}
 
-		hw_ep->regs = MUSB_EP_OFFSET(i, 0) + mbase;
+		hw_ep->regs = MUSB_EP_OFFSET(musb, i, 0) + mbase;
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 		hw_ep->target_regs = musb_read_target_reg_base(i, mbase);
 		hw_ep->rx_reinit = 1;
 		hw_ep->tx_reinit = 1;
+#endif
 
 		if (hw_ep->max_packet_sz_tx) {
-			dev_dbg(musb->controller,
+			DBG(1,
 				"%s: hw_ep %d%s, %smax %d\n",
 				musb_driver_name, i,
 				hw_ep->is_shared_fifo ? "shared" : "tx",
@@ -1459,7 +1572,7 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 				hw_ep->max_packet_sz_tx);
 		}
 		if (hw_ep->max_packet_sz_rx && !hw_ep->is_shared_fifo) {
-			dev_dbg(musb->controller,
+			DBG(1,
 				"%s: hw_ep %d%s, %smax %d\n",
 				musb_driver_name, i,
 				"rx",
@@ -1468,7 +1581,7 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 				hw_ep->max_packet_sz_rx);
 		}
 		if (!(hw_ep->max_packet_sz_tx || hw_ep->max_packet_sz_rx))
-			dev_dbg(musb->controller, "hw_ep %d not configured\n", i);
+			DBG(1, "hw_ep %d not configured\n", i);
 	}
 
 	return 0;
@@ -1476,7 +1589,7 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 
 /*-------------------------------------------------------------------------*/
 
-#if defined(CONFIG_SOC_OMAP2430) || defined(CONFIG_SOC_OMAP3430) || \
+#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3430) || \
 	defined(CONFIG_ARCH_OMAP4) || defined(CONFIG_ARCH_U8500) || \
 	defined(CONFIG_ARCH_U5500)
 
@@ -1521,9 +1634,17 @@ irqreturn_t musb_interrupt(struct musb *musb)
 	devctl = musb_readb(musb->mregs, MUSB_DEVCTL);
 	power = musb_readb(musb->mregs, MUSB_POWER);
 
-	dev_dbg(musb->controller, "** IRQ %s usb%04x tx%04x rx%04x\n",
+	DBG(4, "** IRQ %s usb%04x tx%04x rx%04x\n",
 		(devctl & MUSB_DEVCTL_HM) ? "host" : "peripheral",
 		musb->int_usb, musb->int_tx, musb->int_rx);
+
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
+	if (is_otg_enabled(musb) || is_peripheral_enabled(musb))
+		if (!musb->gadget_driver) {
+			DBG(5, "No gadget driver loaded\n");
+			return IRQ_HANDLED;
+		}
+#endif
 
 	/* the core can interrupt us for multiple reasons; docs have
 	 * a generic interrupt flowchart to follow
@@ -1547,7 +1668,7 @@ irqreturn_t musb_interrupt(struct musb *musb)
 	ep_num = 1;
 	while (reg) {
 		if (reg & 1) {
-			/* musb_ep_select(musb->mregs, ep_num); */
+			/* musb_ep_select(musb, musb->mregs, ep_num); */
 			/* REVISIT just retval = ep->rx_irq(...) */
 			retval = IRQ_HANDLED;
 			if (devctl & MUSB_DEVCTL_HM) {
@@ -1568,7 +1689,7 @@ irqreturn_t musb_interrupt(struct musb *musb)
 	ep_num = 1;
 	while (reg) {
 		if (reg & 1) {
-			/* musb_ep_select(musb->mregs, ep_num); */
+			/* musb_ep_select(musb, musb->mregs, ep_num); */
 			/* REVISIT just retval |= ep->tx_irq(...) */
 			retval = IRQ_HANDLED;
 			if (devctl & MUSB_DEVCTL_HM) {
@@ -1588,7 +1709,7 @@ irqreturn_t musb_interrupt(struct musb *musb)
 EXPORT_SYMBOL_GPL(musb_interrupt);
 
 #ifndef CONFIG_MUSB_PIO_ONLY
-static int __initdata use_dma = 1;
+static int __devinitdata use_dma = 1;
 
 /* "modprobe ... use_dma=0" etc */
 module_param(use_dma, bool, 0);
@@ -1601,15 +1722,14 @@ void musb_dma_completion(struct musb *musb, u8 epnum, u8 transmit)
 	/* called with controller lock already held */
 
 	if (!epnum) {
-#ifndef CONFIG_USB_TUSB_OMAP_DMA
-		if (!is_cppi_enabled()) {
+		if (!tusb_dma_omap(musb) && !is_cppi_enabled(musb)
+				&& !is_cppi41_enabled(musb)) {
 			/* endpoint 0 */
 			if (devctl & MUSB_DEVCTL_HM)
 				musb_h_ep0_irq(musb);
 			else
 				musb_g_ep0_irq(musb);
 		}
-#endif
 	} else {
 		/* endpoints 1..15 */
 		if (transmit) {
@@ -1632,6 +1752,7 @@ void musb_dma_completion(struct musb *musb, u8 epnum, u8 transmit)
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(musb_dma_completion);
 
 #else
 #define use_dma			0
@@ -1649,7 +1770,7 @@ musb_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
 	int ret = -EINVAL;
 
 	spin_lock_irqsave(&musb->lock, flags);
-	ret = sprintf(buf, "%s\n", otg_state_string(musb->xceiv->state));
+	ret = sprintf(buf, "%s\n", otg_state_string(musb));
 	spin_unlock_irqrestore(&musb->lock, flags);
 
 	return ret;
@@ -1692,8 +1813,7 @@ musb_vbus_store(struct device *dev, struct device_attribute *attr,
 	}
 
 	spin_lock_irqsave(&musb->lock, flags);
-	/* force T(a_wait_bcon) to be zero/unlimited *OR* valid */
-	musb->a_wait_bcon = val ? max_t(int, val, OTG_TIME_A_WAIT_BCON) : 0 ;
+	musb->a_wait_bcon = val;
 	if (musb->xceiv->state == OTG_STATE_A_WAIT_BCON)
 		musb->is_active = 0;
 	musb_platform_try_idle(musb, jiffies + msecs_to_jiffies(val));
@@ -1712,16 +1832,15 @@ musb_vbus_show(struct device *dev, struct device_attribute *attr, char *buf)
 
 	spin_lock_irqsave(&musb->lock, flags);
 	val = musb->a_wait_bcon;
-	/* FIXME get_vbus_status() is normally #defined as false...
-	 * and is effectively TUSB-specific.
-	 */
 	vbus = musb_platform_get_vbus_status(musb);
 	spin_unlock_irqrestore(&musb->lock, flags);
 
-	return sprintf(buf, "Vbus %s, timeout %lu msec\n",
+	return sprintf(buf, "Vbus %s, timeout %lu\n",
 			vbus ? "on" : "off", val);
 }
 static DEVICE_ATTR(vbus, 0644, musb_vbus_show, musb_vbus_store);
+
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 
 /* Gadget drivers can't know that a host is connected so they might want
  * to start SRP, but users can.  This allows userspace to trigger SRP.
@@ -1746,10 +1865,14 @@ musb_srp_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(srp, 0644, NULL, musb_srp_store);
 
+#endif /* CONFIG_USB_GADGET_MUSB_HDRC */
+
 static struct attribute *musb_attributes[] = {
 	&dev_attr_mode.attr,
 	&dev_attr_vbus.attr,
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 	&dev_attr_srp.attr,
+#endif
 	NULL
 };
 
@@ -1775,13 +1898,14 @@ static void musb_irq_work(struct work_struct *data)
  * Init support
  */
 
-static struct musb *__init
+static struct musb *__devinit
 allocate_instance(struct device *dev,
 		struct musb_hdrc_config *config, void __iomem *mbase)
 {
 	struct musb		*musb;
 	struct musb_hw_ep	*ep;
 	int			epnum;
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	struct usb_hcd	*hcd;
 
 	hcd = usb_create_hcd(&musb_hc_driver, dev, dev_name(dev));
@@ -1793,12 +1917,17 @@ allocate_instance(struct device *dev,
 	INIT_LIST_HEAD(&musb->control);
 	INIT_LIST_HEAD(&musb->in_bulk);
 	INIT_LIST_HEAD(&musb->out_bulk);
+	INIT_LIST_HEAD(&musb->gb_list);
 
 	hcd->uses_new_polling = 1;
-	hcd->has_tt = 1;
 
 	musb->vbuserr_retry = VBUSERR_RETRY_COUNT;
-	musb->a_wait_bcon = OTG_TIME_A_WAIT_BCON;
+#else
+	musb = kzalloc(sizeof *musb, GFP_KERNEL);
+	if (!musb)
+		return NULL;
+
+#endif
 	dev_set_drvdata(dev, musb);
 	musb->mregs = mbase;
 	musb->ctrl_base = mbase;
@@ -1828,7 +1957,9 @@ static void musb_free(struct musb *musb)
 	sysfs_remove_group(&musb->controller->kobj, &musb_attr_group);
 #endif
 
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
 	musb_gadget_cleanup(musb);
+#endif
 
 	if (musb->nIrq >= 0) {
 		if (musb->irq_wake)
@@ -1839,10 +1970,16 @@ static void musb_free(struct musb *musb)
 		struct dma_controller	*c = musb->dma_controller;
 
 		(void) c->stop(c);
-		dma_controller_destroy(c);
+		musb->ops->dma_controller_destroy(c);
 	}
 
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+	if (musb->gb_queue)
+		destroy_workqueue(musb->gb_queue);
+	usb_put_hcd(musb_to_hcd(musb));
+#else
 	kfree(musb);
+#endif
 }
 
 /*
@@ -1853,12 +1990,14 @@ static void musb_free(struct musb *musb)
  * @mregs: virtual address of controller registers,
  *	not yet corrected for platform-specific offsets
  */
-static int __init
-musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
+static int __devinit
+musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl,
+			phys_addr_t ctrl_phys_addr)
 {
 	int			status;
 	struct musb		*musb;
 	struct musb_hdrc_platform_data *plat = dev->platform_data;
+	struct platform_device *pdev = to_platform_device(dev);
 
 	/* The driver might handle more features than the board; OK.
 	 * Fail when the board needs a feature that's not enabled.
@@ -1869,22 +2008,72 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 		goto fail0;
 	}
 
+	switch (plat->mode) {
+	case MUSB_HOST:
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+		break;
+#else
+		goto bad_config;
+#endif
+	case MUSB_PERIPHERAL:
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
+		break;
+#else
+		goto bad_config;
+#endif
+	case MUSB_OTG:
+#ifdef CONFIG_USB_MUSB_OTG
+		break;
+#else
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+		plat->mode = MUSB_HOST;
+#endif
+
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
+		plat->mode = MUSB_PERIPHERAL;
+#endif
+	dev_info(dev, "degrade from otg to %s-only mode\n",
+		(plat->mode == MUSB_HOST) ? "host" : "peripheral");
+	break;
+#endif
+#ifndef CONFIG_USB_MUSB_OTG
+bad_config:
+#endif
+	default:
+		dev_err(dev, "incompatible Kconfig role setting\n");
+		status = -EINVAL;
+		goto fail0;
+	}
+
 	/* allocate */
 	musb = allocate_instance(dev, plat->config, ctrl);
 	if (!musb) {
 		status = -ENOMEM;
 		goto fail0;
 	}
-
-	pm_runtime_use_autosuspend(musb->controller);
-	pm_runtime_set_autosuspend_delay(musb->controller, 200);
-	pm_runtime_enable(musb->controller);
-
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+	spin_lock_init(&musb->gb_lock);
+#endif
 	spin_lock_init(&musb->lock);
+	musb->ctrl_phys_base = ctrl_phys_addr;
 	musb->board_mode = plat->mode;
 	musb->board_set_power = plat->set_power;
 	musb->min_power = plat->min_power;
 	musb->ops = plat->platform_ops;
+	musb->id = pdev->id;
+
+	if (fifo_mode == -1)
+		fifo_mode = musb->ops->fifo_mode;
+
+	if (musb->ops->flags & MUSB_GLUE_TUSB_STYLE) {
+		musb_readb = __tusb_musb_readb;
+		musb_writeb = __tusb_musb_writeb;
+	} else {
+		musb_readb = __musb_readb;
+		musb_writeb = __musb_writeb;
+	}
+
+	dev_info(dev, "dma type: %s\n", get_dma_name(musb));
 
 	/* The musb_platform_init() call:
 	 *   - adjusts musb->mregs and musb->isr if needed,
@@ -1892,7 +2081,7 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	 *   - initializes musb->xceiv, usually by otg_get_transceiver()
 	 *   - stops powering VBUS
 	 *
-	 * There are various transceiver configurations.  Blackfin,
+	 * There are various transciever configurations.  Blackfin,
 	 * DaVinci, TUSB60x0, and others integrate them.  OMAP3 uses
 	 * external/discrete ones in various flavors (twl4030 family,
 	 * isp1504, non-OTG, etc) mostly hooking up through ULPI.
@@ -1916,7 +2105,12 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	if (use_dma && dev->dma_mask) {
 		struct dma_controller	*c;
 
-		c = dma_controller_create(musb, musb->mregs);
+		if (!musb->ops->dma_controller_create) {
+			dev_err(dev, "no dma_controller_create for non-PIO mode!\n");
+			status = -ENODEV;
+			goto fail3;
+		}
+		c = musb->ops->dma_controller_create(musb, musb->mregs);
 		musb->dma_controller = c;
 		if (c)
 			(void) c->start(c);
@@ -1936,8 +2130,6 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 			: MUSB_CONTROLLER_HDRC, musb);
 	if (status < 0)
 		goto fail3;
-
-	setup_timer(&musb->otg_timer, musb_otg_timer_func, (unsigned long) musb);
 
 	/* Init IRQ workqueue before request_irq */
 	INIT_WORK(&musb->irq_work, musb_irq_work);
@@ -1990,7 +2182,7 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 		status = usb_add_hcd(musb_to_hcd(musb), -1, 0);
 
 		hcd->self.uses_pio_for_control = 1;
-		dev_dbg(musb->controller, "%s mode, status %d, devctl %02x %c\n",
+		DBG(1, "%s mode, status %d, devctl %02x %c\n",
 			"HOST", status,
 			musb_readb(musb->mregs, MUSB_DEVCTL),
 			(musb_readb(musb->mregs, MUSB_DEVCTL)
@@ -2004,7 +2196,7 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 
 		status = musb_gadget_setup(musb);
 
-		dev_dbg(musb->controller, "%s mode, status %d, dev%02x\n",
+		DBG(1, "%s mode, status %d, dev%02x\n",
 			is_otg_enabled(musb) ? "OTG" : "PERIPHERAL",
 			status,
 			musb_readb(musb->mregs, MUSB_DEVCTL));
@@ -2012,8 +2204,6 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	}
 	if (status < 0)
 		goto fail3;
-
-	pm_runtime_put(musb->controller);
 
 	status = musb_init_debugfs(musb);
 	if (status < 0)
@@ -2037,7 +2227,27 @@ musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 			? "DMA" : "PIO",
 			musb->nIrq);
 
+	if (status == 0) {
+		u8 drvbuf[19];
+		sprintf(drvbuf, "driver/musb_hdrc.%d", musb->id);
+		musb_debug_create(drvbuf, musb);
+	}
+
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+	musb->gb_queue = create_singlethread_workqueue(dev_name(dev));
+	if (musb->gb_queue == NULL)
+		goto fail6;
+	/* Init giveback workqueue */
+	INIT_WORK(&musb->gb_work, musb_gb_work);
+
+#endif
+
 	return 0;
+
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
+fail6:
+	destroy_workqueue(musb->gb_queue);
+#endif
 
 fail5:
 	musb_exit_debugfs(musb);
@@ -2075,7 +2285,7 @@ fail0:
 static u64	*orig_dma_mask;
 #endif
 
-static int __init musb_probe(struct platform_device *pdev)
+static int __devinit musb_probe(struct platform_device *pdev)
 {
 	struct device	*dev = &pdev->dev;
 	int		irq = platform_get_irq_byname(pdev, "mc");
@@ -2097,7 +2307,7 @@ static int __init musb_probe(struct platform_device *pdev)
 	/* clobbered by use_dma=n */
 	orig_dma_mask = dev->dma_mask;
 #endif
-	status = musb_init_controller(dev, irq, base);
+	status = musb_init_controller(dev, irq, base, iomem->start);
 	if (status < 0)
 		iounmap(base);
 
@@ -2108,17 +2318,18 @@ static int __exit musb_remove(struct platform_device *pdev)
 {
 	struct musb	*musb = dev_to_musb(&pdev->dev);
 	void __iomem	*ctrl_base = musb->ctrl_base;
+	u8 drvbuf[19];
 
 	/* this gets called on rmmod.
 	 *  - Host mode: host may still be active
 	 *  - Peripheral mode: peripheral is deactivated (or never-activated)
 	 *  - OTG mode: both roles are deactivated (or never-activated)
 	 */
-	pm_runtime_get_sync(musb->controller);
 	musb_exit_debugfs(musb);
 	musb_shutdown(pdev);
+	sprintf(drvbuf, "driver/musb_hdrc.%d", musb->id);
+	musb_debug_delete(drvbuf, musb);
 
-	pm_runtime_put(musb->controller);
 	musb_free(musb);
 	iounmap(ctrl_base);
 	device_init_wakeup(&pdev->dev, 0);
@@ -2130,7 +2341,7 @@ static int __exit musb_remove(struct platform_device *pdev)
 
 #ifdef	CONFIG_PM
 
-static void musb_save_context(struct musb *musb)
+void musb_save_context(struct musb *musb)
 {
 	int i;
 	void __iomem *musb_base = musb->mregs;
@@ -2149,16 +2360,7 @@ static void musb_save_context(struct musb *musb)
 	musb->context.devctl = musb_readb(musb_base, MUSB_DEVCTL);
 
 	for (i = 0; i < musb->config->num_eps; ++i) {
-		struct musb_hw_ep	*hw_ep;
-
-		hw_ep = &musb->endpoints[i];
-		if (!hw_ep)
-			continue;
-
-		epio = hw_ep->regs;
-		if (!epio)
-			continue;
-
+		epio = musb->endpoints[i].regs;
 		musb->context.index_regs[i].txmaxp =
 			musb_readw(epio, MUSB_TXMAXP);
 		musb->context.index_regs[i].txcsr =
@@ -2203,9 +2405,11 @@ static void musb_save_context(struct musb *musb)
 				musb_read_rxhubport(musb_base, i);
 		}
 	}
+	musb_writeb(musb_base, MUSB_INDEX, musb->context.index);
 }
+EXPORT_SYMBOL_GPL(musb_save_context);
 
-static void musb_restore_context(struct musb *musb)
+void musb_restore_context(struct musb *musb)
 {
 	int i;
 	void __iomem *musb_base = musb->mregs;
@@ -2224,16 +2428,7 @@ static void musb_restore_context(struct musb *musb)
 	musb_writeb(musb_base, MUSB_DEVCTL, musb->context.devctl);
 
 	for (i = 0; i < musb->config->num_eps; ++i) {
-		struct musb_hw_ep	*hw_ep;
-
-		hw_ep = &musb->endpoints[i];
-		if (!hw_ep)
-			continue;
-
-		epio = hw_ep->regs;
-		if (!epio)
-			continue;
-
+		epio = musb->endpoints[i].regs;
 		musb_writew(epio, MUSB_TXMAXP,
 			musb->context.index_regs[i].txmaxp);
 		musb_writew(epio, MUSB_TXCSR,
@@ -2284,25 +2479,33 @@ static void musb_restore_context(struct musb *musb)
 	}
 	musb_writeb(musb_base, MUSB_INDEX, musb->context.index);
 }
+EXPORT_SYMBOL_GPL(musb_restore_context);
 
 static int musb_suspend(struct device *dev)
 {
-	struct musb	*musb = dev_to_musb(dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	unsigned long	flags;
+	struct musb	*musb = dev_to_musb(&pdev->dev);
+	u8 reg;
 
 	spin_lock_irqsave(&musb->lock, flags);
 
 	if (is_peripheral_active(musb)) {
-		/* FIXME force disconnect unless we know USB will wake
-		 * the system up quickly enough to respond ...
+		/* System is entering into suspend where gadget would not be
+		 * able to respond to host and thus it will be in an unknown
+		 * state for host.Re-enumemation of gadget is required after
+		 * resume to make the gadget functional thus doing a force
+		 * disconnect.
 		 */
+		reg = musb_readb(musb->mregs, MUSB_POWER);
+		reg &= ~MUSB_POWER_SOFTCONN;
+		musb_writeb(musb->mregs, MUSB_POWER, reg);
+
 	} else if (is_host_active(musb)) {
 		/* we know all the children are suspended; sometimes
 		 * they will even be wakeup-enabled.
 		 */
 	}
-
-	musb_save_context(musb);
 
 	spin_unlock_irqrestore(&musb->lock, flags);
 	return 0;
@@ -2310,52 +2513,19 @@ static int musb_suspend(struct device *dev)
 
 static int musb_resume_noirq(struct device *dev)
 {
-	struct musb	*musb = dev_to_musb(dev);
 
-	musb_restore_context(musb);
-
-	/* for static cmos like DaVinci, register values were preserved
+	/* clocks are getting enabled in glue layer and thus restore
+	 * would get called from glue layers.
+	 * for static cmos like DaVinci, register values were preserved
 	 * unless for some reason the whole soc powered down or the USB
 	 * module got reset through the PSC (vs just being disabled).
 	 */
 	return 0;
 }
 
-static int musb_runtime_suspend(struct device *dev)
-{
-	struct musb	*musb = dev_to_musb(dev);
-
-	musb_save_context(musb);
-
-	return 0;
-}
-
-static int musb_runtime_resume(struct device *dev)
-{
-	struct musb	*musb = dev_to_musb(dev);
-	static int	first = 1;
-
-	/*
-	 * When pm_runtime_get_sync called for the first time in driver
-	 * init,  some of the structure is still not initialized which is
-	 * used in restore function. But clock needs to be
-	 * enabled before any register access, so
-	 * pm_runtime_get_sync has to be called.
-	 * Also context restore without save does not make
-	 * any sense
-	 */
-	if (!first)
-		musb_restore_context(musb);
-	first = 0;
-
-	return 0;
-}
-
 static const struct dev_pm_ops musb_dev_pm_ops = {
 	.suspend	= musb_suspend,
 	.resume_noirq	= musb_resume_noirq,
-	.runtime_suspend = musb_runtime_suspend,
-	.runtime_resume = musb_runtime_resume,
 };
 
 #define MUSB_DEV_PM_OPS (&musb_dev_pm_ops)
@@ -2370,6 +2540,7 @@ static struct platform_driver musb_driver = {
 		.owner		= THIS_MODULE,
 		.pm		= MUSB_DEV_PM_OPS,
 	},
+	.probe      = musb_probe,
 	.remove		= __exit_p(musb_remove),
 	.shutdown	= musb_shutdown,
 };
@@ -2378,15 +2549,22 @@ static struct platform_driver musb_driver = {
 
 static int __init musb_init(void)
 {
+#ifdef CONFIG_USB_MUSB_HDRC_HCD
 	if (usb_disabled())
 		return 0;
+#endif
 
 	pr_info("%s: version " MUSB_VERSION ", "
-		"?dma?"
-		", "
-		"otg (peripheral+host)",
-		musb_driver_name);
-	return platform_driver_probe(&musb_driver, musb_probe);
+#ifdef CONFIG_USB_MUSB_OTG
+		"otg (peripheral+host)"
+#elif defined(CONFIG_USB_GADGET_MUSB_HDRC)
+		"peripheral"
+#elif defined(CONFIG_USB_MUSB_HDRC_HCD)
+		"host"
+#endif
+		", debug=%d\n",
+		musb_driver_name, musb_debug);
+	return platform_driver_register(&musb_driver);
 }
 
 /* make us init after usbcore and i2c (transceivers, regulators, etc)

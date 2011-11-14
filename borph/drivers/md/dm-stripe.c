@@ -39,10 +39,12 @@ struct stripe_c {
 	struct dm_target *ti;
 
 	/* Work struct used for triggering events*/
-	struct work_struct trigger_event;
+	struct work_struct kstriped_ws;
 
 	struct stripe stripe[0];
 };
+
+static struct workqueue_struct *kstriped;
 
 /*
  * An event is triggered whenever a drive
@@ -50,9 +52,10 @@ struct stripe_c {
  */
 static void trigger_event(struct work_struct *work)
 {
-	struct stripe_c *sc = container_of(work, struct stripe_c,
-					   trigger_event);
+	struct stripe_c *sc = container_of(work, struct stripe_c, kstriped_ws);
+
 	dm_table_event(sc->ti->table);
+
 }
 
 static inline struct stripe_c *alloc_context(unsigned int stripes)
@@ -157,7 +160,7 @@ static int stripe_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		return -ENOMEM;
 	}
 
-	INIT_WORK(&sc->trigger_event, trigger_event);
+	INIT_WORK(&sc->kstriped_ws, trigger_event);
 
 	/* Set pointer to dm target; used in trigger_event */
 	sc->ti = ti;
@@ -208,7 +211,7 @@ static void stripe_dtr(struct dm_target *ti)
 	for (i = 0; i < sc->stripes; i++)
 		dm_put_device(ti, sc->stripe[i].dev);
 
-	flush_work_sync(&sc->trigger_event);
+	flush_workqueue(kstriped);
 	kfree(sc);
 }
 
@@ -364,7 +367,7 @@ static int stripe_end_io(struct dm_target *ti, struct bio *bio,
 			atomic_inc(&(sc->stripe[i].error_count));
 			if (atomic_read(&(sc->stripe[i].error_count)) <
 			    DM_IO_ERROR_THRESHOLD)
-				schedule_work(&sc->trigger_event);
+				queue_work(kstriped, &sc->kstriped_ws);
 		}
 
 	return error;
@@ -396,29 +399,9 @@ static void stripe_io_hints(struct dm_target *ti,
 	blk_limits_io_opt(limits, chunk_size * sc->stripes);
 }
 
-static int stripe_merge(struct dm_target *ti, struct bvec_merge_data *bvm,
-			struct bio_vec *biovec, int max_size)
-{
-	struct stripe_c *sc = ti->private;
-	sector_t bvm_sector = bvm->bi_sector;
-	uint32_t stripe;
-	struct request_queue *q;
-
-	stripe_map_sector(sc, bvm_sector, &stripe, &bvm_sector);
-
-	q = bdev_get_queue(sc->stripe[stripe].dev->bdev);
-	if (!q->merge_bvec_fn)
-		return max_size;
-
-	bvm->bi_bdev = sc->stripe[stripe].dev->bdev;
-	bvm->bi_sector = sc->stripe[stripe].physical_start + bvm_sector;
-
-	return min(max_size, q->merge_bvec_fn(q, bvm, biovec));
-}
-
 static struct target_type stripe_target = {
 	.name   = "striped",
-	.version = {1, 4, 0},
+	.version = {1, 3, 0},
 	.module = THIS_MODULE,
 	.ctr    = stripe_ctr,
 	.dtr    = stripe_dtr,
@@ -427,7 +410,6 @@ static struct target_type stripe_target = {
 	.status = stripe_status,
 	.iterate_devices = stripe_iterate_devices,
 	.io_hints = stripe_io_hints,
-	.merge  = stripe_merge,
 };
 
 int __init dm_stripe_init(void)
@@ -440,10 +422,20 @@ int __init dm_stripe_init(void)
 		return r;
 	}
 
+	kstriped = create_singlethread_workqueue("kstriped");
+	if (!kstriped) {
+		DMERR("failed to create workqueue kstriped");
+		dm_unregister_target(&stripe_target);
+		return -ENOMEM;
+	}
+
 	return r;
 }
 
 void dm_stripe_exit(void)
 {
 	dm_unregister_target(&stripe_target);
+	destroy_workqueue(kstriped);
+
+	return;
 }

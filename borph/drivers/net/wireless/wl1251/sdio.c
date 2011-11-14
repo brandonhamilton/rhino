@@ -19,7 +19,6 @@
  * Copyright (C) 2008 Google Inc
  * Copyright (C) 2009 Bob Copeland (me@bobcopeland.com)
  */
-#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mmc/sdio_func.h>
@@ -27,7 +26,6 @@
 #include <linux/platform_device.h>
 #include <linux/wl12xx.h>
 #include <linux/irq.h>
-#include <linux/pm_runtime.h>
 
 #include "wl1251.h"
 
@@ -43,6 +41,8 @@ struct wl1251_sdio {
 	struct sdio_func *func;
 	u32 elp_val;
 };
+
+static struct wl12xx_platform_data *wl12xx_board_data;
 
 static struct sdio_func *wl_to_func(struct wl1251 *wl)
 {
@@ -171,42 +171,8 @@ static void wl1251_disable_line_irq(struct wl1251 *wl)
 	return disable_irq(wl->irq);
 }
 
-static int wl1251_sdio_set_power(struct wl1251 *wl, bool enable)
+static void wl1251_sdio_set_power(bool enable)
 {
-	struct sdio_func *func = wl_to_func(wl);
-	int ret;
-
-	if (enable) {
-		/*
-		 * Power is controlled by runtime PM, but we still call board
-		 * callback in case it wants to do any additional setup,
-		 * for example enabling clock buffer for the module.
-		 */
-		if (wl->set_power)
-			wl->set_power(true);
-
-		ret = pm_runtime_get_sync(&func->dev);
-		if (ret < 0)
-			goto out;
-
-		sdio_claim_host(func);
-		sdio_enable_func(func);
-		sdio_release_host(func);
-	} else {
-		sdio_claim_host(func);
-		sdio_disable_func(func);
-		sdio_release_host(func);
-
-		ret = pm_runtime_put_sync(&func->dev);
-		if (ret < 0)
-			goto out;
-
-		if (wl->set_power)
-			wl->set_power(false);
-	}
-
-out:
-	return ret;
 }
 
 static struct wl1251_if_operations wl1251_sdio_ops = {
@@ -215,7 +181,30 @@ static struct wl1251_if_operations wl1251_sdio_ops = {
 	.write_elp = wl1251_sdio_write_elp,
 	.read_elp = wl1251_sdio_read_elp,
 	.reset = wl1251_sdio_reset,
-	.power = wl1251_sdio_set_power,
+};
+
+static int wl1251_platform_probe(struct platform_device *pdev)
+{
+	if (pdev->id != -1) {
+		wl1251_error("can only handle single device");
+		return -ENODEV;
+	}
+
+	wl12xx_board_data = pdev->dev.platform_data;
+	return 0;
+}
+
+/*
+ * Dummy platform_driver for passing platform_data to this driver,
+ * until we have a way to pass this through SDIO subsystem or
+ * some other way.
+ */
+static struct platform_driver wl1251_platform_driver = {
+	.driver = {
+		.name	= "wl1251_data",
+		.owner	= THIS_MODULE,
+	},
+	.probe	= wl1251_platform_probe,
 };
 
 static int wl1251_sdio_probe(struct sdio_func *func,
@@ -225,7 +214,6 @@ static int wl1251_sdio_probe(struct sdio_func *func,
 	struct wl1251 *wl;
 	struct ieee80211_hw *hw;
 	struct wl1251_sdio *wl_sdio;
-	const struct wl12xx_platform_data *wl12xx_board_data;
 
 	hw = wl1251_alloc_hw();
 	if (IS_ERR(hw))
@@ -251,9 +239,9 @@ static int wl1251_sdio_probe(struct sdio_func *func,
 	wl_sdio->func = func;
 	wl->if_priv = wl_sdio;
 	wl->if_ops = &wl1251_sdio_ops;
+	wl->set_power = wl1251_sdio_set_power;
 
-	wl12xx_board_data = wl12xx_get_platform_data();
-	if (!IS_ERR(wl12xx_board_data)) {
+	if (wl12xx_board_data != NULL) {
 		wl->set_power = wl12xx_board_data->set_power;
 		wl->irq = wl12xx_board_data->irq;
 		wl->use_eeprom = wl12xx_board_data->use_eeprom;
@@ -266,7 +254,7 @@ static int wl1251_sdio_probe(struct sdio_func *func,
 			goto disable;
 		}
 
-		irq_set_irq_type(wl->irq, IRQ_TYPE_EDGE_RISING);
+		set_irq_type(wl->irq, IRQ_TYPE_EDGE_RISING);
 		disable_irq(wl->irq);
 
 		wl1251_sdio_ops.enable_irq = wl1251_enable_line_irq;
@@ -285,10 +273,6 @@ static int wl1251_sdio_probe(struct sdio_func *func,
 		goto out_free_irq;
 
 	sdio_set_drvdata(func, wl);
-
-	/* Tell PM core that we don't need the card to be powered now */
-	pm_runtime_put_noidle(&func->dev);
-
 	return ret;
 
 out_free_irq:
@@ -310,9 +294,6 @@ static void __devexit wl1251_sdio_remove(struct sdio_func *func)
 	struct wl1251 *wl = sdio_get_drvdata(func);
 	struct wl1251_sdio *wl_sdio = wl->if_priv;
 
-	/* Undo decrement done above in wl1251_probe */
-	pm_runtime_get_noresume(&func->dev);
-
 	if (wl->irq)
 		free_irq(wl->irq, wl);
 	kfree(wl_sdio);
@@ -324,36 +305,22 @@ static void __devexit wl1251_sdio_remove(struct sdio_func *func)
 	sdio_release_host(func);
 }
 
-static int wl1251_suspend(struct device *dev)
-{
-	/*
-	 * Tell MMC/SDIO core it's OK to power down the card
-	 * (if it isn't already), but not to remove it completely.
-	 */
-	return 0;
-}
-
-static int wl1251_resume(struct device *dev)
-{
-	return 0;
-}
-
-static const struct dev_pm_ops wl1251_sdio_pm_ops = {
-	.suspend        = wl1251_suspend,
-	.resume         = wl1251_resume,
-};
-
 static struct sdio_driver wl1251_sdio_driver = {
 	.name		= "wl1251_sdio",
 	.id_table	= wl1251_devices,
 	.probe		= wl1251_sdio_probe,
 	.remove		= __devexit_p(wl1251_sdio_remove),
-	.drv.pm		= &wl1251_sdio_pm_ops,
 };
 
 static int __init wl1251_sdio_init(void)
 {
 	int err;
+
+	err = platform_driver_register(&wl1251_platform_driver);
+	if (err) {
+		wl1251_error("failed to register platform driver: %d", err);
+		return err;
+	}
 
 	err = sdio_register_driver(&wl1251_sdio_driver);
 	if (err)
@@ -364,6 +331,7 @@ static int __init wl1251_sdio_init(void)
 static void __exit wl1251_sdio_exit(void)
 {
 	sdio_unregister_driver(&wl1251_sdio_driver);
+	platform_driver_unregister(&wl1251_platform_driver);
 	wl1251_notice("unloaded");
 }
 

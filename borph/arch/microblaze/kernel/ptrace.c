@@ -39,7 +39,6 @@
 #include <linux/uaccess.h>
 #include <asm/asm-offsets.h>
 #include <asm/cacheflush.h>
-#include <asm/syscall.h>
 #include <asm/io.h>
 
 /* Returns the address where the register at REG_OFFS in P is stashed away. */
@@ -124,7 +123,7 @@ long arch_ptrace(struct task_struct *child, long request,
 			rval = -EIO;
 
 		if (rval == 0 && request == PTRACE_PEEKUSR)
-			rval = put_user(val, (unsigned long __user *)data);
+			rval = put_user(val, (unsigned long *)data);
 		break;
 	default:
 		rval = ptrace_request(child, request, addr, data);

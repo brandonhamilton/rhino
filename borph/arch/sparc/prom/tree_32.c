@@ -20,7 +20,7 @@ extern void restore_current(void);
 static char promlib_buf[128];
 
 /* Internal version of prom_getchild that does not alter return values. */
-static phandle __prom_getchild(phandle node)
+phandle __prom_getchild(phandle node)
 {
 	unsigned long flags;
 	phandle cnode;
@@ -40,11 +40,11 @@ phandle prom_getchild(phandle node)
 {
 	phandle cnode;
 
-	if ((s32)node == -1)
+	if (node == -1)
 		return 0;
 
 	cnode = __prom_getchild(node);
-	if (cnode == 0 || (s32)cnode == -1)
+	if (cnode == 0 || cnode == -1)
 		return 0;
 
 	return cnode;
@@ -52,7 +52,7 @@ phandle prom_getchild(phandle node)
 EXPORT_SYMBOL(prom_getchild);
 
 /* Internal version of prom_getsibling that does not alter return values. */
-static phandle __prom_getsibling(phandle node)
+phandle __prom_getsibling(phandle node)
 {
 	unsigned long flags;
 	phandle cnode;
@@ -72,11 +72,11 @@ phandle prom_getsibling(phandle node)
 {
 	phandle sibnode;
 
-	if ((s32)node == -1)
+	if (node == -1)
 		return 0;
 
 	sibnode = __prom_getsibling(node);
-	if (sibnode == 0 || (s32)sibnode == -1)
+	if (sibnode == 0 || sibnode == -1)
 		return 0;
 
 	return sibnode;
@@ -177,6 +177,20 @@ void prom_getstring(phandle node, char *prop, char *user_buf, int ubuf_size)
 EXPORT_SYMBOL(prom_getstring);
 
 
+/* Does the device at node 'node' have name 'name'?
+ * YES = 1   NO = 0
+ */
+int prom_nodematch(phandle node, char *name)
+{
+	int error;
+
+	static char namebuf[128];
+	error = prom_getproperty(node, "name", namebuf, sizeof(namebuf));
+	if (error == -1) return 0;
+	if(strcmp(namebuf, name) == 0) return 1;
+	return 0;
+}
+
 /* Search siblings at 'node_start' for a node with name
  * 'nodename'.  Return node if successful, zero if not.
  */
@@ -200,7 +214,7 @@ phandle prom_searchsiblings(phandle node_start, char *nodename)
 EXPORT_SYMBOL(prom_searchsiblings);
 
 /* Interal version of nextprop that does not alter return values. */
-static char *__prom_nextprop(phandle node, char * oprop)
+char *__prom_nextprop(phandle node, char * oprop)
 {
 	unsigned long flags;
 	char *prop;
@@ -213,13 +227,24 @@ static char *__prom_nextprop(phandle node, char * oprop)
 	return prop;
 }
 
+/* Return the first property name for node 'node'. */
+/* buffer is unused argument, but as v9 uses it, we need to have the same interface */
+char *prom_firstprop(phandle node, char *bufer)
+{
+	if (node == 0 || node == -1)
+		return "";
+
+	return __prom_nextprop(node, "");
+}
+EXPORT_SYMBOL(prom_firstprop);
+
 /* Return the property type string after property type 'oprop'
  * at node 'node' .  Returns empty string if no more
  * property types for this node.
  */
 char *prom_nextprop(phandle node, char *oprop, char *buffer)
 {
-	if (node == 0 || (s32)node == -1)
+	if (node == 0 || node == -1)
 		return "";
 
 	return __prom_nextprop(node, oprop);
@@ -253,7 +278,7 @@ phandle prom_finddevice(char *name)
 				if (d != s + 3 && (!*d || *d == '/')
 				    && d <= s + 3 + 8) {
 					node2 = node;
-					while (node2 && (s32)node2 != -1) {
+					while (node2 && node2 != -1) {
 						if (prom_getproperty (node2, "reg", (char *)reg, sizeof (reg)) > 0) {
 							if (which_io == reg[0].which_io && phys_addr == reg[0].phys_addr) {
 								node = node2;
@@ -261,7 +286,7 @@ phandle prom_finddevice(char *name)
 							}
 						}
 						node2 = prom_getsibling(node2);
-						if (!node2 || (s32)node2 == -1)
+						if (!node2 || node2 == -1)
 							break;
 						node2 = prom_searchsiblings(prom_getsibling(node2), nbuf);
 					}
@@ -274,6 +299,19 @@ phandle prom_finddevice(char *name)
 }
 EXPORT_SYMBOL(prom_finddevice);
 
+int prom_node_has_property(phandle node, char *prop)
+{
+	char *current_property = "";
+
+	do {
+		current_property = prom_nextprop(node, current_property, NULL);
+		if(!strcmp(current_property, prop))
+		   return 1;
+	} while (*current_property);
+	return 0;
+}
+EXPORT_SYMBOL(prom_node_has_property);
+
 /* Set property 'pname' at node 'node' to value 'value' which has a length
  * of 'size' bytes.  Return the number of bytes the prom accepted.
  */
@@ -282,10 +320,8 @@ int prom_setprop(phandle node, const char *pname, char *value, int size)
 	unsigned long flags;
 	int ret;
 
-	if (size == 0)
-		return 0;
-	if ((pname == NULL) || (value == NULL))
-		return 0;
+	if(size == 0) return 0;
+	if((pname == 0) || (value == 0)) return 0;
 	spin_lock_irqsave(&prom_lock, flags);
 	ret = prom_nodeops->no_setprop(node, pname, value, size);
 	restore_current();
@@ -303,7 +339,6 @@ phandle prom_inst2pkg(int inst)
 	node = (*romvec->pv_v2devops.v2_inst2pkg)(inst);
 	restore_current();
 	spin_unlock_irqrestore(&prom_lock, flags);
-	if ((s32)node == -1)
-		return 0;
+	if (node == -1) return 0;
 	return node;
 }

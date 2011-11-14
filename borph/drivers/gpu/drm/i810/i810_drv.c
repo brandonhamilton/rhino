@@ -57,11 +57,16 @@ static struct drm_driver driver = {
 		 .owner = THIS_MODULE,
 		 .open = drm_open,
 		 .release = drm_release,
-		 .unlocked_ioctl = drm_ioctl,
+		 .unlocked_ioctl = i810_ioctl,
 		 .mmap = drm_mmap,
 		 .poll = drm_poll,
 		 .fasync = drm_fasync,
 		 .llseek = noop_llseek,
+	},
+
+	.pci_driver = {
+		 .name = DRIVER_NAME,
+		 .id_table = pciidlist,
 	},
 
 	.name = DRIVER_NAME,
@@ -72,24 +77,15 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-static struct pci_driver i810_pci_driver = {
-	.name = DRIVER_NAME,
-	.id_table = pciidlist,
-};
-
 static int __init i810_init(void)
 {
-	if (num_possible_cpus() > 1) {
-		pr_err("drm/i810 does not support SMP\n");
-		return -EINVAL;
-	}
 	driver.num_ioctls = i810_max_ioctl;
-	return drm_pci_init(&driver, &i810_pci_driver);
+	return drm_init(&driver);
 }
 
 static void __exit i810_exit(void)
 {
-	drm_pci_exit(&driver, &i810_pci_driver);
+	drm_exit(&driver);
 }
 
 module_init(i810_init);

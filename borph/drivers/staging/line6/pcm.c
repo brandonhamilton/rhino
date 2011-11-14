@@ -189,7 +189,8 @@ int line6_pcm_stop(struct snd_line6_pcm *line6pcm, int channels)
 		line6pcm->buffer_out = NULL;
 	}
 #if LINE6_BACKUP_MONITOR_SIGNAL
-	kfree(line6pcm->prev_fbuf);
+	if (line6pcm->prev_fbuf != NULL)
+		kfree(line6pcm->prev_fbuf);
 #endif
 
 	return 0;

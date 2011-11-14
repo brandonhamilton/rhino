@@ -6,7 +6,7 @@
  *          Title:  MPI IOC, Port, Event, FW Download, and FW Upload messages
  *  Creation Date:  October 11, 2006
  *
- *  mpi2_ioc.h Version:  02.00.16
+ *  mpi2_ioc.h Version:  02.00.14
  *
  *  Version History
  *  ---------------
@@ -101,9 +101,6 @@
  *  02-10-10  02.00.14  Added SAS Quiesce Event structure and defines.
  *                      Added PowerManagementControl Request structures and
  *                      defines.
- *  05-12-10  02.00.15  Marked Task Set Full Event as obsolete.
- *                      Added MPI2_EVENT_SAS_TOPO_LR_UNSUPPORTED_PHY define.
- *  11-10-10  02.00.16  Added MPI2_FW_DOWNLOAD_ITYPE_MIN_PRODUCT_SPECIFIC.
  *  --------------------------------------------------------------------------
  */
 
@@ -459,7 +456,7 @@ typedef struct _MPI2_EVENT_NOTIFICATION_REPLY
 #define MPI2_EVENT_STATE_CHANGE                     (0x0002)
 #define MPI2_EVENT_HARD_RESET_RECEIVED              (0x0005)
 #define MPI2_EVENT_EVENT_CHANGE                     (0x000A)
-#define MPI2_EVENT_TASK_SET_FULL                    (0x000E) /* obsolete */
+#define MPI2_EVENT_TASK_SET_FULL                    (0x000E)
 #define MPI2_EVENT_SAS_DEVICE_STATUS_CHANGE         (0x000F)
 #define MPI2_EVENT_IR_OPERATION_STATUS              (0x0014)
 #define MPI2_EVENT_SAS_DISCOVERY                    (0x0016)
@@ -520,7 +517,6 @@ typedef struct _MPI2_EVENT_DATA_HARD_RESET_RECEIVED
   MPI2_POINTER pMpi2EventDataHardResetReceived_t;
 
 /* Task Set Full Event data */
-/*   this event is obsolete */
 
 typedef struct _MPI2_EVENT_DATA_TASK_SET_FULL
 {
@@ -835,7 +831,6 @@ typedef struct _MPI2_EVENT_DATA_SAS_TOPOLOGY_CHANGE_LIST
 #define MPI2_EVENT_SAS_TOPO_LR_SATA_OOB_COMPLETE            (0x03)
 #define MPI2_EVENT_SAS_TOPO_LR_PORT_SELECTOR                (0x04)
 #define MPI2_EVENT_SAS_TOPO_LR_SMP_RESET_IN_PROGRESS        (0x05)
-#define MPI2_EVENT_SAS_TOPO_LR_UNSUPPORTED_PHY              (0x06)
 #define MPI2_EVENT_SAS_TOPO_LR_RATE_1_5                     (0x08)
 #define MPI2_EVENT_SAS_TOPO_LR_RATE_3_0                     (0x09)
 #define MPI2_EVENT_SAS_TOPO_LR_RATE_6_0                     (0x0A)
@@ -1033,7 +1028,6 @@ typedef struct _MPI2_FW_DOWNLOAD_REQUEST
 #define MPI2_FW_DOWNLOAD_ITYPE_MEGARAID             (0x09)
 #define MPI2_FW_DOWNLOAD_ITYPE_COMPLETE             (0x0A)
 #define MPI2_FW_DOWNLOAD_ITYPE_COMMON_BOOT_BLOCK    (0x0B)
-#define MPI2_FW_DOWNLOAD_ITYPE_MIN_PRODUCT_SPECIFIC (0xF0)
 
 /* FWDownload TransactionContext Element */
 typedef struct _MPI2_FW_DOWNLOAD_TCSGE

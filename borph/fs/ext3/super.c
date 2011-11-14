@@ -36,16 +36,12 @@
 #include <linux/quotaops.h>
 #include <linux/seq_file.h>
 #include <linux/log2.h>
-#include <linux/cleancache.h>
 
 #include <asm/uaccess.h>
 
 #include "xattr.h"
 #include "acl.h"
 #include "namei.h"
-
-#define CREATE_TRACE_POINTS
-#include <trace/events/ext3.h>
 
 #ifdef CONFIG_EXT3_DEFAULTS_TO_ORDERED
   #define EXT3_MOUNT_DEFAULT_DATA_MODE EXT3_MOUNT_ORDERED_DATA
@@ -147,16 +143,12 @@ void ext3_journal_abort_handle(const char *caller, const char *err_fn,
 void ext3_msg(struct super_block *sb, const char *prefix,
 		const char *fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk("%sEXT3-fs (%s): %pV\n", prefix, sb->s_id, &vaf);
-
+	printk("%sEXT3-fs (%s): ", prefix, sb->s_id);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 }
 
@@ -203,20 +195,15 @@ static void ext3_handle_error(struct super_block *sb)
 			sb->s_id);
 }
 
-void ext3_error(struct super_block *sb, const char *function,
-		const char *fmt, ...)
+void ext3_error (struct super_block * sb, const char * function,
+		 const char * fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_CRIT "EXT3-fs error (device %s): %s: %pV\n",
-	       sb->s_id, function, &vaf);
-
+	printk(KERN_CRIT "EXT3-fs error (device %s): %s: ",sb->s_id, function);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 
 	ext3_handle_error(sb);
@@ -287,20 +274,15 @@ void __ext3_std_error (struct super_block * sb, const char * function,
  * case we take the easy way out and panic immediately.
  */
 
-void ext3_abort(struct super_block *sb, const char *function,
-		 const char *fmt, ...)
+void ext3_abort (struct super_block * sb, const char * function,
+		 const char * fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_CRIT "EXT3-fs (%s): error: %s: %pV\n",
-	       sb->s_id, function, &vaf);
-
+	printk(KERN_CRIT "EXT3-fs (%s): error: %s: ", sb->s_id, function);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 
 	if (test_opt(sb, ERRORS_PANIC))
@@ -318,20 +300,16 @@ void ext3_abort(struct super_block *sb, const char *function,
 		journal_abort(EXT3_SB(sb)->s_journal, -EIO);
 }
 
-void ext3_warning(struct super_block *sb, const char *function,
-		  const char *fmt, ...)
+void ext3_warning (struct super_block * sb, const char * function,
+		   const char * fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_WARNING "EXT3-fs (%s): warning: %s: %pV\n",
-	       sb->s_id, function, &vaf);
-
+	printk(KERN_WARNING "EXT3-fs (%s): warning: %s: ",
+	       sb->s_id, function);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 }
 
@@ -368,7 +346,7 @@ static struct block_device *ext3_blkdev_get(dev_t dev, struct super_block *sb)
 	struct block_device *bdev;
 	char b[BDEVNAME_SIZE];
 
-	bdev = blkdev_get_by_dev(dev, FMODE_READ|FMODE_WRITE|FMODE_EXCL, sb);
+	bdev = open_by_devnum(dev, FMODE_READ|FMODE_WRITE);
 	if (IS_ERR(bdev))
 		goto fail;
 	return bdev;
@@ -385,7 +363,8 @@ fail:
  */
 static int ext3_blkdev_put(struct block_device *bdev)
 {
-	return blkdev_put(bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+	bd_release(bdev);
+	return blkdev_put(bdev, FMODE_READ|FMODE_WRITE);
 }
 
 static int ext3_blkdev_remove(struct ext3_sb_info *sbi)
@@ -500,21 +479,6 @@ static struct inode *ext3_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static int ext3_drop_inode(struct inode *inode)
-{
-	int drop = generic_drop_inode(inode);
-
-	trace_ext3_drop_inode(inode, drop);
-	return drop;
-}
-
-static void ext3_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(ext3_inode_cachep, EXT3_I(inode));
-}
-
 static void ext3_destroy_inode(struct inode *inode)
 {
 	if (!list_empty(&(EXT3_I(inode)->i_orphan))) {
@@ -525,7 +489,7 @@ static void ext3_destroy_inode(struct inode *inode)
 				false);
 		dump_stack();
 	}
-	call_rcu(&inode->i_rcu, ext3_i_callback);
+	kmem_cache_free(ext3_inode_cachep, EXT3_I(inode));
 }
 
 static void init_once(void *foo)
@@ -766,7 +730,7 @@ static int ext3_release_dquot(struct dquot *dquot);
 static int ext3_mark_dquot_dirty(struct dquot *dquot);
 static int ext3_write_info(struct super_block *sb, int type);
 static int ext3_quota_on(struct super_block *sb, int type, int format_id,
-			 struct path *path);
+				char *path);
 static int ext3_quota_on_mount(struct super_block *sb, int type);
 static ssize_t ext3_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off);
@@ -799,7 +763,6 @@ static const struct super_operations ext3_sops = {
 	.destroy_inode	= ext3_destroy_inode,
 	.write_inode	= ext3_write_inode,
 	.dirty_inode	= ext3_dirty_inode,
-	.drop_inode	= ext3_drop_inode,
 	.evict_inode	= ext3_evict_inode,
 	.put_super	= ext3_put_super,
 	.sync_fs	= ext3_sync_fs,
@@ -1380,7 +1343,6 @@ static int ext3_setup_super(struct super_block *sb, struct ext3_super_block *es,
 	} else {
 		ext3_msg(sb, KERN_INFO, "using internal journal");
 	}
-	cleancache_init_fs(sb);
 	return res;
 }
 
@@ -1475,13 +1437,6 @@ static void ext3_orphan_cleanup (struct super_block * sb,
 	if (bdev_read_only(sb->s_bdev)) {
 		ext3_msg(sb, KERN_ERR, "error: write access "
 			"unavailable, skipping orphan cleanup.");
-		return;
-	}
-
-	/* Check if feature set allows readwrite operations */
-	if (EXT3_HAS_RO_COMPAT_FEATURE(sb, ~EXT3_FEATURE_RO_COMPAT_SUPP)) {
-		ext3_msg(sb, KERN_INFO, "Skipping orphan cleanup due to "
-			 "unknown ROCOMPAT features");
 		return;
 	}
 
@@ -1730,8 +1685,6 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 	sbi->s_resuid = le16_to_cpu(es->s_def_resuid);
 	sbi->s_resgid = le16_to_cpu(es->s_def_resgid);
 
-	/* enable barriers by default */
-	set_opt(sbi->s_mount_opt, BARRIER);
 	set_opt(sbi->s_mount_opt, RESERVATION);
 
 	if (!parse_options ((char *) data, sb, &journal_inum, &journal_devnum,
@@ -1888,15 +1841,13 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 		goto failed_mount;
 	}
 
-	err = generic_check_addressable(sb->s_blocksize_bits,
-					le32_to_cpu(es->s_blocks_count));
-	if (err) {
+	if (generic_check_addressable(sb->s_blocksize_bits,
+				      le32_to_cpu(es->s_blocks_count))) {
 		ext3_msg(sb, KERN_ERR,
 			"error: filesystem is too large to mount safely");
 		if (sizeof(sector_t) < 8)
 			ext3_msg(sb, KERN_ERR,
 				"error: CONFIG_LBDAF not enabled");
-		ret = err;
 		goto failed_mount;
 	}
 
@@ -1959,7 +1910,6 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 	sb->s_qcop = &ext3_qctl_operations;
 	sb->dq_op = &ext3_quota_operations;
 #endif
-	memcpy(sb->s_uuid, es->s_uuid, sizeof(es->s_uuid));
 	INIT_LIST_HEAD(&sbi->s_orphan); /* unlinked but open files */
 	mutex_init(&sbi->s_orphan_lock);
 	mutex_init(&sbi->s_resize_lock);
@@ -2185,6 +2135,13 @@ static journal_t *ext3_get_dev_journal(struct super_block *sb,
 	if (bdev == NULL)
 		return NULL;
 
+	if (bd_claim(bdev, sb)) {
+		ext3_msg(sb, KERN_ERR,
+			"error: failed to claim external journal device");
+		blkdev_put(bdev, FMODE_READ|FMODE_WRITE);
+		return NULL;
+	}
+
 	blocksize = sb->s_blocksize;
 	hblock = bdev_logical_block_size(bdev);
 	if (blocksize < hblock) {
@@ -2333,7 +2290,7 @@ static int ext3_load_journal(struct super_block *sb,
 	EXT3_SB(sb)->s_journal = journal;
 	ext3_clear_journal_err(sb, es);
 
-	if (!really_read_only && journal_devnum &&
+	if (journal_devnum &&
 	    journal_devnum != le32_to_cpu(es->s_journal_dev)) {
 		es->s_journal_dev = cpu_to_le32(journal_devnum);
 
@@ -2521,7 +2478,6 @@ static int ext3_sync_fs(struct super_block *sb, int wait)
 {
 	tid_t target;
 
-	trace_ext3_sync_fs(sb, wait);
 	if (journal_start_commit(EXT3_SB(sb)->s_journal, &target)) {
 		if (wait)
 			log_wait_commit(EXT3_SB(sb)->s_journal, target);
@@ -2902,20 +2858,27 @@ static int ext3_quota_on_mount(struct super_block *sb, int type)
  * Standard function to be called on quota_on
  */
 static int ext3_quota_on(struct super_block *sb, int type, int format_id,
-			 struct path *path)
+			 char *name)
 {
 	int err;
+	struct path path;
 
 	if (!test_opt(sb, QUOTA))
 		return -EINVAL;
 
+	err = kern_path(name, LOOKUP_FOLLOW, &path);
+	if (err)
+		return err;
+
 	/* Quotafile not on the same filesystem? */
-	if (path->mnt->mnt_sb != sb)
+	if (path.mnt->mnt_sb != sb) {
+		path_put(&path);
 		return -EXDEV;
+	}
 	/* Journaling quota? */
 	if (EXT3_SB(sb)->s_qf_names[type]) {
 		/* Quotafile not of fs root? */
-		if (path->dentry->d_parent != sb->s_root)
+		if (path.dentry->d_parent != sb->s_root)
 			ext3_msg(sb, KERN_WARNING,
 				"warning: Quota file not on filesystem root. "
 				"Journaled quota will not work.");
@@ -2925,7 +2888,7 @@ static int ext3_quota_on(struct super_block *sb, int type, int format_id,
 	 * When we journal data on quota file, we have to flush journal to see
 	 * all updates to the file when we bypass pagecache...
 	 */
-	if (ext3_should_journal_data(path->dentry->d_inode)) {
+	if (ext3_should_journal_data(path.dentry->d_inode)) {
 		/*
 		 * We don't need to lock updates but journal_flush() could
 		 * otherwise be livelocked...
@@ -2933,16 +2896,20 @@ static int ext3_quota_on(struct super_block *sb, int type, int format_id,
 		journal_lock_updates(EXT3_SB(sb)->s_journal);
 		err = journal_flush(EXT3_SB(sb)->s_journal);
 		journal_unlock_updates(EXT3_SB(sb)->s_journal);
-		if (err)
+		if (err) {
+			path_put(&path);
 			return err;
+		}
 	}
 
-	return dquot_quota_on(sb, type, format_id, path);
+	err = dquot_quota_on_path(sb, type, format_id, &path);
+	path_put(&path);
+	return err;
 }
 
 /* Read data from quotafile - avoid pagecache and such because we cannot afford
  * acquiring the locks... As quota files are never truncated and quota code
- * itself serializes the operations (and no one else should touch the files)
+ * itself serializes the operations (and noone else should touch the files)
  * we don't have to be afraid of races */
 static ssize_t ext3_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off)

@@ -308,7 +308,7 @@ static inline uint32_t cfi_build_cmd_addr(uint32_t cmd_ofs,
 	
 	addr = (cmd_ofs * type) * interleave;
 
-	/* Modify the unlock address if we are in compatibility mode.
+	/* Modify the unlock address if we are in compatiblity mode.
 	 * For 16bit devices on 8 bit busses
 	 * and 32bit devices on 16 bit busses
 	 * set the low bit of the alternating bit sequence of the address.
@@ -527,7 +527,8 @@ struct cfi_extquery *cfi_read_pri(struct map_info *map, uint16_t adr, uint16_t s
 struct cfi_fixup {
 	uint16_t mfr;
 	uint16_t id;
-	void (*fixup)(struct mtd_info *mtd);
+	void (*fixup)(struct mtd_info *mtd, void* param);
+	void* param;
 };
 
 #define CFI_MFR_ANY		0xFFFF
@@ -535,7 +536,6 @@ struct cfi_fixup {
 #define CFI_MFR_CONTINUATION	0x007F
 
 #define CFI_MFR_AMD		0x0001
-#define CFI_MFR_AMIC		0x0037
 #define CFI_MFR_ATMEL		0x001F
 #define CFI_MFR_EON		0x001C
 #define CFI_MFR_FUJITSU		0x0004

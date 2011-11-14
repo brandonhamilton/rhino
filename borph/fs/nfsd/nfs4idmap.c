@@ -33,11 +33,10 @@
  */
 
 #include <linux/module.h>
+#include <linux/nfsd_idmap.h>
 #include <linux/seq_file.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include "idmap.h"
-#include "nfsd.h"
 
 /*
  * Cache entry
@@ -63,6 +62,7 @@ struct ent {
 
 #define ENT_HASHBITS          8
 #define ENT_HASHMAX           (1 << ENT_HASHBITS)
+#define ENT_HASHMASK          (ENT_HASHMAX - 1)
 
 static void
 ent_init(struct cache_head *cnew, struct cache_head *citm)
@@ -514,7 +514,7 @@ rqst_authname(struct svc_rqst *rqstp)
 	return clp->name;
 }
 
-static __be32
+static int
 idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen,
 		uid_t *id)
 {
@@ -524,15 +524,15 @@ idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen
 	int ret;
 
 	if (namelen + 1 > sizeof(key.name))
-		return nfserr_badowner;
+		return -EINVAL;
 	memcpy(key.name, name, namelen);
 	key.name[namelen] = '\0';
 	strlcpy(key.authname, rqst_authname(rqstp), sizeof(key.authname));
 	ret = idmap_lookup(rqstp, nametoid_lookup, &key, &nametoid_cache, &item);
 	if (ret == -ENOENT)
-		return nfserr_badowner;
+		ret = -ESRCH; /* nfserr_badname */
 	if (ret)
-		return nfserrno(ret);
+		return ret;
 	*id = item->id;
 	cache_put(&item->h, &nametoid_cache);
 	return 0;
@@ -560,14 +560,14 @@ idmap_id_to_name(struct svc_rqst *rqstp, int type, uid_t id, char *name)
 	return ret;
 }
 
-__be32
+int
 nfsd_map_name_to_uid(struct svc_rqst *rqstp, const char *name, size_t namelen,
 		__u32 *id)
 {
 	return idmap_name_to_id(rqstp, IDMAP_TYPE_USER, name, namelen, id);
 }
 
-__be32
+int
 nfsd_map_name_to_gid(struct svc_rqst *rqstp, const char *name, size_t namelen,
 		__u32 *id)
 {

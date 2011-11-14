@@ -15,11 +15,8 @@
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/init.h>
-#include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/stddef.h>
-#include <linux/platform_device.h>
-#include <linux/platform_data/cbus.h>
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
 #include <linux/usb/musb.h>
@@ -36,6 +33,7 @@
 #include <plat/onenand.h>
 #include <plat/mmc.h>
 #include <plat/serial.h>
+#include <plat/gpmc.h>
 
 #include "mux.h"
 
@@ -109,13 +107,14 @@ static void __init n8x0_usb_init(void)
 	static char	announce[] __initdata = KERN_INFO "TUSB 6010\n";
 
 	/* PM companion chip power control pin */
-	ret = gpio_request_one(TUSB6010_GPIO_ENABLE, GPIOF_OUT_INIT_LOW,
-			       "TUSB6010 enable");
+	ret = gpio_request(TUSB6010_GPIO_ENABLE, "TUSB6010 enable");
 	if (ret != 0) {
 		printk(KERN_ERR "Could not get TUSB power GPIO%i\n",
 		       TUSB6010_GPIO_ENABLE);
 		return;
 	}
+	gpio_direction_output(TUSB6010_GPIO_ENABLE, 0);
+
 	tusb_set_power(0);
 
 	ret = tusb6010_setup_interface(&tusb_data, TUSB6010_REFCLK_19, 2,
@@ -194,116 +193,6 @@ static struct omap_onenand_platform_data board_onenand_data[] = {
 		.flags		= ONENAND_SYNC_READ,
 	}
 };
-#endif
-
-#if defined(CONFIG_CBUS) || defined(CONFIG_CBUS_MODULE)
-
-static struct cbus_host_platform_data n8x0_cbus_data = {
-	.clk_gpio	= 66,
-	.dat_gpio	= 65,
-	.sel_gpio	= 64,
-};
-
-static struct platform_device n8x0_cbus_device = {
-	.name		= "cbus",
-	.id		= -1,
-	.dev		= {
-		.platform_data = &n8x0_cbus_data,
-	},
-};
-
-static struct resource retu_resource[] = {
-	{
-		.start	= -EINVAL, /* set later */
-		.flags	= IORESOURCE_IRQ,
-	},
-};
-
-static struct cbus_retu_platform_data n8x0_retu_data = {
-	.devid		= CBUS_RETU_DEVICE_ID,
-};
-
-static struct platform_device retu_device = {
-	.name		= "retu",
-	.id		= -1,
-	.resource	= retu_resource,
-	.num_resources	= ARRAY_SIZE(retu_resource),
-	.dev		= {
-		.platform_data = &n8x0_retu_data,
-		.parent	= &n8x0_cbus_device.dev,
-	},
-};
-
-static struct resource tahvo_resource[] = {
-	{
-		.start	= -EINVAL, /* set later */
-		.flags	= IORESOURCE_IRQ,
-	}
-};
-
-static struct platform_device tahvo_device = {
-	.name		= "tahvo",
-	.id		= -1,
-	.resource	= tahvo_resource,
-	.num_resources	= ARRAY_SIZE(tahvo_resource),
-	.dev		= {
-		.parent	= &n8x0_cbus_device.dev,
-	},
-};
-
-static struct platform_device tahvo_usb_device = {
-	.name		= "tahvo-usb",
-	.id		= -1,
-};
-
-static void __init n8x0_cbus_init(void)
-{
-	int		ret;
-
-	platform_device_register(&n8x0_cbus_device);
-
-	ret = gpio_request(108, "RETU irq");
-	if (ret < 0) {
-		pr_err("retu: Unable to reserve IRQ GPIO\n");
-		return;
-	}
-
-	ret = gpio_direction_input(108);
-	if (ret < 0) {
-		pr_err("retu: Unable to change gpio direction\n");
-		gpio_free(108);
-		return;
-	}
-
-	irq_set_irq_type(gpio_to_irq(108), IRQ_TYPE_EDGE_RISING);
-	retu_resource[0].start = gpio_to_irq(108);
-	platform_device_register(&retu_device);
-
-	ret = gpio_request(111, "TAHVO irq");
-	if (ret) {
-		pr_err("tahvo: Unable to reserve IRQ GPIO\n");
-		gpio_free(108);
-		return;
-	}
-
-	/* Set the pin as input */
-	ret = gpio_direction_input(111);
-	if (ret) {
-		pr_err("tahvo: Unable to change direction\n");
-		gpio_free(108);
-		gpio_free(111);
-		return;
-	}
-
-	tahvo_resource[0].start = gpio_to_irq(111);
-	platform_device_register(&tahvo_device);
-	platform_device_register(&tahvo_usb_device);
-}
-
-#else
-static inline void __init n8x0_cbus_init(void)
-{
-}
 #endif
 
 #if defined(CONFIG_MENELAUS) &&						\
@@ -606,12 +495,8 @@ static struct omap_mmc_platform_data mmc1_data = {
 
 static struct omap_mmc_platform_data *mmc_data[OMAP24XX_NR_MMC];
 
-static struct gpio n810_emmc_gpios[] __initdata = {
-	{ N810_EMMC_VSD_GPIO, GPIOF_OUT_INIT_LOW,  "MMC slot 2 Vddf" },
-	{ N810_EMMC_VIO_GPIO, GPIOF_OUT_INIT_LOW,  "MMC slot 2 Vdd"  },
-};
-
 static void __init n8x0_mmc_init(void)
+
 {
 	int err;
 
@@ -628,22 +513,31 @@ static void __init n8x0_mmc_init(void)
 		mmc1_data.slots[1].ban_openended = 1;
 	}
 
-	err = gpio_request_one(N8X0_SLOT_SWITCH_GPIO, GPIOF_OUT_INIT_LOW,
-			       "MMC slot switch");
+	err = gpio_request(N8X0_SLOT_SWITCH_GPIO, "MMC slot switch");
 	if (err)
 		return;
 
+	gpio_direction_output(N8X0_SLOT_SWITCH_GPIO, 0);
+
 	if (machine_is_nokia_n810()) {
-		err = gpio_request_array(n810_emmc_gpios,
-					 ARRAY_SIZE(n810_emmc_gpios));
+		err = gpio_request(N810_EMMC_VSD_GPIO, "MMC slot 2 Vddf");
 		if (err) {
 			gpio_free(N8X0_SLOT_SWITCH_GPIO);
 			return;
 		}
+		gpio_direction_output(N810_EMMC_VSD_GPIO, 0);
+
+		err = gpio_request(N810_EMMC_VIO_GPIO, "MMC slot 2 Vdd");
+		if (err) {
+			gpio_free(N8X0_SLOT_SWITCH_GPIO);
+			gpio_free(N810_EMMC_VSD_GPIO);
+			return;
+		}
+		gpio_direction_output(N810_EMMC_VIO_GPIO, 0);
 	}
 
 	mmc_data[0] = &mmc1_data;
-	omap242x_init_mmc(mmc_data);
+	omap2_init_mmc(mmc_data, OMAP24XX_NR_MMC);
 }
 #else
 
@@ -735,10 +629,12 @@ static void __init n8x0_map_io(void)
 	omap242x_map_common_io();
 }
 
-static void __init n8x0_init_early(void)
+static void __init n8x0_init_irq(void)
 {
 	omap2_init_common_infrastructure();
 	omap2_init_common_devices(NULL, NULL);
+	omap_init_irq();
+	gpmc_init();
 }
 
 #ifdef CONFIG_OMAP_MUX
@@ -792,8 +688,6 @@ static inline void board_serial_init(void)
 static void __init n8x0_init_machine(void)
 {
 	omap2420_mux_init(board_mux, OMAP_PACKAGE_ZAC);
-	n8x0_cbus_init();
-
 	/* FIXME: add n810 spi devices */
 	spi_register_board_info(n800_spi_board_info,
 				ARRAY_SIZE(n800_spi_board_info));
@@ -811,30 +705,27 @@ static void __init n8x0_init_machine(void)
 
 MACHINE_START(NOKIA_N800, "Nokia N800")
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= n8x0_map_io,
-	.init_early	= n8x0_init_early,
-	.init_irq	= omap2_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= n8x0_init_irq,
 	.init_machine	= n8x0_init_machine,
-	.timer		= &omap2_timer,
+	.timer		= &omap_timer,
 MACHINE_END
 
 MACHINE_START(NOKIA_N810, "Nokia N810")
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= n8x0_map_io,
-	.init_early	= n8x0_init_early,
-	.init_irq	= omap2_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= n8x0_init_irq,
 	.init_machine	= n8x0_init_machine,
-	.timer		= &omap2_timer,
+	.timer		= &omap_timer,
 MACHINE_END
 
 MACHINE_START(NOKIA_N810_WIMAX, "Nokia N810 WiMAX")
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= n8x0_map_io,
-	.init_early	= n8x0_init_early,
-	.init_irq	= omap2_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= n8x0_init_irq,
 	.init_machine	= n8x0_init_machine,
-	.timer		= &omap2_timer,
+	.timer		= &omap_timer,
 MACHINE_END

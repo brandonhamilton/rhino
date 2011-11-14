@@ -9,7 +9,6 @@
 
 #include "util/util.h"
 
-#include "util/annotate.h"
 #include "util/color.h"
 #include <linux/list.h>
 #include "util/cache.h"
@@ -21,8 +20,6 @@
 
 #include "perf.h"
 #include "util/debug.h"
-#include "util/evlist.h"
-#include "util/evsel.h"
 #include "util/header.h"
 #include "util/session.h"
 
@@ -32,8 +29,6 @@
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
-
-#include <linux/bitmap.h>
 
 static char		const *input_name = "perf.data";
 
@@ -47,73 +42,121 @@ static struct perf_read_values	show_threads_values;
 static const char	default_pretty_printing_style[] = "normal";
 static const char	*pretty_printing_style = default_pretty_printing_style;
 
-static char		callchain_default_opt[] = "fractal,0.5,callee";
-static bool		inverted_callchain;
-static symbol_filter_t	annotate_init;
+static char		callchain_default_opt[] = "fractal,0.5";
 
-static const char	*cpu_list;
-static DECLARE_BITMAP(cpu_bitmap, MAX_NR_CPUS);
-
-static int perf_session__add_hist_entry(struct perf_session *session,
-					struct addr_location *al,
-					struct perf_sample *sample,
-					struct perf_evsel *evsel)
+static struct hists *perf_session__hists_findnew(struct perf_session *self,
+						 u64 event_stream, u32 type,
+						 u64 config)
 {
-	struct symbol *parent = NULL;
-	int err = 0;
-	struct hist_entry *he;
+	struct rb_node **p = &self->hists_tree.rb_node;
+	struct rb_node *parent = NULL;
+	struct hists *iter, *new;
 
-	if ((sort__has_parent || symbol_conf.use_callchain) && sample->callchain) {
-		err = perf_session__resolve_callchain(session, al->thread,
-						      sample->callchain, &parent);
-		if (err)
-			return err;
+	while (*p != NULL) {
+		parent = *p;
+		iter = rb_entry(parent, struct hists, rb_node);
+		if (iter->config == config)
+			return iter;
+
+
+		if (config > iter->config)
+			p = &(*p)->rb_right;
+		else
+			p = &(*p)->rb_left;
 	}
 
-	he = __hists__add_entry(&evsel->hists, al, parent, sample->period);
-	if (he == NULL)
-		return -ENOMEM;
+	new = malloc(sizeof(struct hists));
+	if (new == NULL)
+		return NULL;
+	memset(new, 0, sizeof(struct hists));
+	new->event_stream = event_stream;
+	new->config = config;
+	new->type = type;
+	rb_link_node(&new->rb_node, parent, p);
+	rb_insert_color(&new->rb_node, &self->hists_tree);
+	return new;
+}
 
+static int perf_session__add_hist_entry(struct perf_session *self,
+					struct addr_location *al,
+					struct sample_data *data)
+{
+	struct map_symbol *syms = NULL;
+	struct symbol *parent = NULL;
+	int err = -ENOMEM;
+	struct hist_entry *he;
+	struct hists *hists;
+	struct perf_event_attr *attr;
+
+	if ((sort__has_parent || symbol_conf.use_callchain) && data->callchain) {
+		syms = perf_session__resolve_callchain(self, al->thread,
+						       data->callchain, &parent);
+		if (syms == NULL)
+			return -ENOMEM;
+	}
+
+	attr = perf_header__find_attr(data->id, &self->header);
+	if (attr)
+		hists = perf_session__hists_findnew(self, data->id, attr->type, attr->config);
+	else
+		hists = perf_session__hists_findnew(self, data->id, 0, 0);
+	if (hists == NULL)
+		goto out_free_syms;
+	he = __hists__add_entry(hists, al, parent, data->period);
+	if (he == NULL)
+		goto out_free_syms;
+	err = 0;
 	if (symbol_conf.use_callchain) {
-		err = callchain_append(he->callchain, &session->callchain_cursor,
-				       sample->period);
+		err = callchain_append(he->callchain, data->callchain, syms,
+				       data->period);
 		if (err)
-			return err;
+			goto out_free_syms;
 	}
 	/*
 	 * Only in the newt browser we are doing integrated annotation,
 	 * so we don't allocated the extra space needed because the stdio
 	 * code will not use it.
 	 */
-	if (al->sym != NULL && use_browser > 0) {
-		struct annotation *notes = symbol__annotation(he->ms.sym);
-
-		assert(evsel != NULL);
-
-		err = -ENOMEM;
-		if (notes->src == NULL &&
-		    symbol__alloc_hist(he->ms.sym, session->evlist->nr_entries) < 0)
-			goto out;
-
-		err = hist_entry__inc_addr_samples(he, evsel->idx, al->addr);
-	}
-
-	evsel->hists.stats.total_period += sample->period;
-	hists__inc_nr_events(&evsel->hists, PERF_RECORD_SAMPLE);
-out:
+	if (use_browser > 0)
+		err = hist_entry__inc_addr_samples(he, al->addr);
+out_free_syms:
+	free(syms);
 	return err;
 }
 
-
-static int process_sample_event(union perf_event *event,
-				struct perf_sample *sample,
-				struct perf_evsel *evsel,
-				struct perf_session *session)
+static int add_event_total(struct perf_session *session,
+			   struct sample_data *data,
+			   struct perf_event_attr *attr)
 {
-	struct addr_location al;
+	struct hists *hists;
 
-	if (perf_event__preprocess_sample(event, session, &al, sample,
-					  annotate_init) < 0) {
+	if (attr)
+		hists = perf_session__hists_findnew(session, data->id,
+						    attr->type, attr->config);
+	else
+		hists = perf_session__hists_findnew(session, data->id, 0, 0);
+
+	if (!hists)
+		return -ENOMEM;
+
+	hists->stats.total_period += data->period;
+	/*
+	 * FIXME: add_event_total should be moved from here to
+	 * perf_session__process_event so that the proper hist is passed to
+	 * the event_op methods.
+	 */
+	hists__inc_nr_events(hists, PERF_RECORD_SAMPLE);
+	session->hists.stats.total_period += data->period;
+	return 0;
+}
+
+static int process_sample_event(event_t *event, struct perf_session *session)
+{
+	struct sample_data data = { .period = 1, };
+	struct addr_location al;
+	struct perf_event_attr *attr;
+
+	if (event__preprocess_sample(event, session, &al, &data, NULL) < 0) {
 		fprintf(stderr, "problem processing %d event, skipping it.\n",
 			event->header.type);
 		return -1;
@@ -122,28 +165,30 @@ static int process_sample_event(union perf_event *event,
 	if (al.filtered || (hide_unresolved && al.sym == NULL))
 		return 0;
 
-	if (cpu_list && !test_bit(sample->cpu, cpu_bitmap))
-		return 0;
-
-	if (al.map != NULL)
-		al.map->dso->hit = 1;
-
-	if (perf_session__add_hist_entry(session, &al, sample, evsel)) {
+	if (perf_session__add_hist_entry(session, &al, &data)) {
 		pr_debug("problem incrementing symbol period, skipping event\n");
+		return -1;
+	}
+
+	attr = perf_header__find_attr(data.id, &session->header);
+
+	if (add_event_total(session, &data, attr)) {
+		pr_debug("problem adding event period\n");
 		return -1;
 	}
 
 	return 0;
 }
 
-static int process_read_event(union perf_event *event,
-			      struct perf_sample *sample __used,
-			      struct perf_session *session)
+static int process_read_event(event_t *event, struct perf_session *session __used)
 {
-	struct perf_evsel *evsel = perf_evlist__id2evsel(session->evlist,
-							 event->read.id);
+	struct perf_event_attr *attr;
+
+	attr = perf_header__find_attr(event->read.id, &session->header);
+
 	if (show_threads) {
-		const char *name = evsel ? event_name(evsel) : "unknown";
+		const char *name = attr ? __event_name(attr->type, attr->config)
+				   : "unknown";
 		perf_read_values_add_value(&show_threads_values,
 					   event->read.pid, event->read.tid,
 					   event->read.id,
@@ -151,8 +196,8 @@ static int process_read_event(union perf_event *event,
 					   event->read.value);
 	}
 
-	dump_printf(": %d %d %s %" PRIu64 "\n", event->read.pid, event->read.tid,
-		    evsel ? event_name(evsel) : "FAIL",
+	dump_printf(": %d %d %s %Lu\n", event->read.pid, event->read.tid,
+		    attr ? __event_name(attr->type, attr->config) : "FAIL",
 		    event->read.value);
 
 	return 0;
@@ -176,7 +221,7 @@ static int perf_session__setup_sample_type(struct perf_session *self)
 	} else if (!dont_use_callchains && callchain_param.mode != CHAIN_NONE &&
 		   !symbol_conf.use_callchain) {
 			symbol_conf.use_callchain = true;
-			if (callchain_register_param(&callchain_param) < 0) {
+			if (register_callchain_param(&callchain_param) < 0) {
 				fprintf(stderr, "Can't register callchain"
 						" params\n");
 				return -EINVAL;
@@ -187,19 +232,17 @@ static int perf_session__setup_sample_type(struct perf_session *self)
 }
 
 static struct perf_event_ops event_ops = {
-	.sample		 = process_sample_event,
-	.mmap		 = perf_event__process_mmap,
-	.comm		 = perf_event__process_comm,
-	.exit		 = perf_event__process_task,
-	.fork		 = perf_event__process_task,
-	.lost		 = perf_event__process_lost,
-	.read		 = process_read_event,
-	.attr		 = perf_event__process_attr,
-	.event_type	 = perf_event__process_event_type,
-	.tracing_data	 = perf_event__process_tracing_data,
-	.build_id	 = perf_event__process_build_id,
-	.ordered_samples = true,
-	.ordering_requires_timestamps = true,
+	.sample	= process_sample_event,
+	.mmap	= event__process_mmap,
+	.comm	= event__process_comm,
+	.exit	= event__process_task,
+	.fork	= event__process_task,
+	.lost	= event__process_lost,
+	.read	= process_read_event,
+	.attr	= event__process_attr,
+	.event_type = event__process_event_type,
+	.tracing_data = event__process_tracing_data,
+	.build_id = event__process_build_id,
 };
 
 extern volatile int session_done;
@@ -223,21 +266,21 @@ static size_t hists__fprintf_nr_sample_events(struct hists *self,
 	return ret + fprintf(fp, "\n#\n");
 }
 
-static int perf_evlist__tty_browse_hists(struct perf_evlist *evlist,
-					 const char *help)
+static int hists__tty_browse_tree(struct rb_root *tree, const char *help)
 {
-	struct perf_evsel *pos;
+	struct rb_node *next = rb_first(tree);
 
-	list_for_each_entry(pos, &evlist->entries, node) {
-		struct hists *hists = &pos->hists;
+	while (next) {
+		struct hists *hists = rb_entry(next, struct hists, rb_node);
 		const char *evname = NULL;
 
 		if (rb_first(&hists->entries) != rb_last(&hists->entries))
-			evname = event_name(pos);
+			evname = __event_name(hists->type, hists->config);
 
 		hists__fprintf_nr_sample_events(hists, evname, stdout);
 		hists__fprintf(hists, NULL, false, stdout);
 		fprintf(stdout, "\n\n");
+		next = rb_next(&hists->rb_node);
 	}
 
 	if (sort_order == default_sort_order &&
@@ -258,24 +301,15 @@ static int perf_evlist__tty_browse_hists(struct perf_evlist *evlist,
 static int __cmd_report(void)
 {
 	int ret = -EINVAL;
-	u64 nr_samples;
 	struct perf_session *session;
-	struct perf_evsel *pos;
-	struct map *kernel_map;
-	struct kmap *kernel_kmap;
+	struct rb_node *next;
 	const char *help = "For a higher level overview, try: perf report --sort comm,dso";
 
 	signal(SIGINT, sig_handler);
 
-	session = perf_session__new(input_name, O_RDONLY, force, false, &event_ops);
+	session = perf_session__new(input_name, O_RDONLY, force, false);
 	if (session == NULL)
 		return -ENOMEM;
-
-	if (cpu_list) {
-		ret = perf_session__cpu_bitmap(session, cpu_list, cpu_bitmap);
-		if (ret)
-			goto out_delete;
-	}
 
 	if (show_threads)
 		perf_read_values_init(&show_threads_values);
@@ -288,24 +322,6 @@ static int __cmd_report(void)
 	if (ret)
 		goto out_delete;
 
-	kernel_map = session->host_machine.vmlinux_maps[MAP__FUNCTION];
-	kernel_kmap = map__kmap(kernel_map);
-	if (kernel_map == NULL ||
-	    (kernel_map->dso->hit &&
-	     (kernel_kmap->ref_reloc_sym == NULL ||
-	      kernel_kmap->ref_reloc_sym->addr == 0))) {
-		const struct dso *kdso = kernel_map->dso;
-
-		ui__warning(
-"Kernel address maps (/proc/{kallsyms,modules}) were restricted.\n\n"
-"Check /proc/sys/kernel/kptr_restrict before running 'perf record'.\n\n%s\n\n"
-"Samples in kernel modules can't be resolved as well.\n\n",
-			    RB_EMPTY_ROOT(&kdso->symbols[MAP__FUNCTION]) ?
-"As no suitable kallsyms nor vmlinux was found, kernel samples\n"
-"can't be resolved." :
-"If some relocation was applied (e.g. kexec) symbols may be misresolved.");
-	}
-
 	if (dump_trace) {
 		perf_session__fprintf_nr_events(session, stdout);
 		goto out_delete;
@@ -317,24 +333,20 @@ static int __cmd_report(void)
 	if (verbose > 2)
 		perf_session__fprintf_dsos(session, stdout);
 
-	nr_samples = 0;
-	list_for_each_entry(pos, &session->evlist->entries, node) {
-		struct hists *hists = &pos->hists;
+	next = rb_first(&session->hists_tree);
+	while (next) {
+		struct hists *hists;
 
+		hists = rb_entry(next, struct hists, rb_node);
 		hists__collapse_resort(hists);
 		hists__output_resort(hists);
-		nr_samples += hists->stats.nr_events[PERF_RECORD_SAMPLE];
-	}
-
-	if (nr_samples == 0) {
-		ui__warning("The %s file has no samples!\n", input_name);
-		goto out_delete;
+		next = rb_next(&hists->rb_node);
 	}
 
 	if (use_browser > 0)
-		perf_evlist__tui_browse_hists(session->evlist, help);
+		hists__tui_browse_tree(&session->hists_tree, help);
 	else
-		perf_evlist__tty_browse_hists(session->evlist, help);
+		hists__tty_browse_tree(&session->hists_tree, help);
 
 out_delete:
 	/*
@@ -401,31 +413,15 @@ parse_callchain_opt(const struct option *opt __used, const char *arg,
 	if (!tok)
 		goto setup;
 
+	tok2 = strtok(NULL, ",");
 	callchain_param.min_percent = strtod(tok, &endptr);
 	if (tok == endptr)
 		return -1;
 
-	/* get the print limit */
-	tok2 = strtok(NULL, ",");
-	if (!tok2)
-		goto setup;
-
-	if (tok2[0] != 'c') {
+	if (tok2)
 		callchain_param.print_limit = strtod(tok2, &endptr);
-		tok2 = strtok(NULL, ",");
-		if (!tok2)
-			goto setup;
-	}
-
-	/* get the call chain order */
-	if (!strcmp(tok2, "caller"))
-		callchain_param.order = ORDER_CALLER;
-	else if (!strcmp(tok2, "callee"))
-		callchain_param.order = ORDER_CALLEE;
-	else
-		return -1;
 setup:
-	if (callchain_register_param(&callchain_param) < 0) {
+	if (register_callchain_param(&callchain_param) < 0) {
 		fprintf(stderr, "Can't register callchain params\n");
 		return -1;
 	}
@@ -446,8 +442,6 @@ static const struct option options[] = {
 		    "dump raw trace in ASCII"),
 	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
 		   "file", "vmlinux pathname"),
-	OPT_STRING(0, "kallsyms", &symbol_conf.kallsyms_name,
-		   "file", "kallsyms pathname"),
 	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
 	OPT_BOOLEAN('m', "modules", &symbol_conf.use_modules,
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
@@ -467,10 +461,9 @@ static const struct option options[] = {
 		   "regex filter to identify parent, see: '--sort parent'"),
 	OPT_BOOLEAN('x', "exclude-other", &symbol_conf.exclude_other,
 		    "Only display entries with parent-match"),
-	OPT_CALLBACK_DEFAULT('g', "call-graph", NULL, "output_type,min_percent, call_order",
-		     "Display callchains using output_type (graph, flat, fractal, or none) , min percent threshold and callchain order. "
-		     "Default: fractal,0.5,callee", &parse_callchain_opt, callchain_default_opt),
-	OPT_BOOLEAN('G', "inverted", &inverted_callchain, "alias for inverted call graph"),
+	OPT_CALLBACK_DEFAULT('g', "call-graph", NULL, "output_type,min_percent",
+		     "Display callchains using output_type (graph, flat, fractal, or none) and min percent threshold. "
+		     "Default: fractal,0.5", &parse_callchain_opt, callchain_default_opt),
 	OPT_STRING('d', "dsos", &symbol_conf.dso_list_str, "dso[,dso...]",
 		   "only consider symbols in these dsos"),
 	OPT_STRING('C', "comms", &symbol_conf.comm_list_str, "comm[,comm...]",
@@ -485,9 +478,6 @@ static const struct option options[] = {
 		   "columns '.' is reserved."),
 	OPT_BOOLEAN('U', "hide-unresolved", &hide_unresolved,
 		    "Only display entries resolved to a symbol"),
-	OPT_STRING(0, "symfs", &symbol_conf.symfs, "directory",
-		    "Look for files with symbols relative to this directory"),
-	OPT_STRING('c', "cpu", &cpu_list, "cpu", "list of cpus to profile"),
 	OPT_END()
 };
 
@@ -500,11 +490,8 @@ int cmd_report(int argc, const char **argv, const char *prefix __used)
 	else if (use_tui)
 		use_browser = 1;
 
-	if (inverted_callchain)
-		callchain_param.order = ORDER_CALLER;
-
 	if (strcmp(input_name, "-") != 0)
-		setup_browser(true);
+		setup_browser();
 	else
 		use_browser = 0;
 	/*
@@ -513,8 +500,7 @@ int cmd_report(int argc, const char **argv, const char *prefix __used)
 	 * implementation.
 	 */
 	if (use_browser > 0) {
-		symbol_conf.priv_size = sizeof(struct annotation);
-		annotate_init	      = symbol__annotate_init;
+		symbol_conf.priv_size = sizeof(struct sym_priv);
 		/*
  		 * For searching by name on the "Browse map details".
  		 * providing it only in verbose mode not to bloat too
@@ -540,14 +526,7 @@ int cmd_report(int argc, const char **argv, const char *prefix __used)
 	if (parent_pattern != default_parent_pattern) {
 		if (sort_dimension__add("parent") < 0)
 			return -1;
-
-		/*
-		 * Only show the parent fields if we explicitly
-		 * sort that way. If we only use parent machinery
-		 * for filtering, we don't want it.
-		 */
-		if (!strstr(sort_order, "parent"))
-			sort_parent.elide = 1;
+		sort_parent.elide = 1;
 	} else
 		symbol_conf.exclude_other = false;
 

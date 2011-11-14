@@ -19,7 +19,13 @@
 #define DAVINCI_MCASP_H
 
 #include <linux/io.h>
+
+#ifndef CONFIG_ARCH_TI81XX
 #include <mach/asp.h>
+#else
+#include <plat/asp.h>
+#endif
+
 #include "davinci-pcm.h"
 
 #define DAVINCI_MCASP_RATES	SNDRV_PCM_RATE_8000_96000

@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel 82599 Virtual Function driver
-  Copyright(c) 1999 - 2010 Intel Corporation.
+  Copyright(c) 1999 - 2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -29,11 +29,9 @@
 #define _IXGBEVF_H_
 
 #include <linux/types.h>
-#include <linux/bitops.h>
 #include <linux/timer.h>
 #include <linux/io.h>
 #include <linux/netdevice.h>
-#include <linux/if_vlan.h>
 
 #include "vf.h"
 
@@ -187,7 +185,9 @@ struct ixgbevf_q_vector {
 /* board specific private data structure */
 struct ixgbevf_adapter {
 	struct timer_list watchdog_timer;
-	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+#ifdef NETIF_F_HW_VLAN_TX
+	struct vlan_group *vlgrp;
+#endif
 	u16 bd_number;
 	struct work_struct reset_task;
 	struct ixgbevf_q_vector *q_vector[MAX_MSIX_Q_VECTORS];
@@ -207,6 +207,7 @@ struct ixgbevf_adapter {
 	u64 hw_tso_ctxt;
 	u64 hw_tso6_ctxt;
 	u32 tx_timeout_count;
+	bool detect_tx_hung;
 
 	/* RX */
 	struct ixgbevf_ring *rx_ring;	/* One per active queue */
@@ -274,12 +275,10 @@ enum ixbgevf_state_t {
 
 enum ixgbevf_boards {
 	board_82599_vf,
-	board_X540_vf,
 };
 
-extern struct ixgbevf_info ixgbevf_82599_vf_info;
-extern struct ixgbevf_info ixgbevf_X540_vf_info;
-extern struct ixgbe_mbx_operations ixgbevf_mbx_ops;
+extern struct ixgbevf_info ixgbevf_vf_info;
+extern struct ixgbe_mac_operations ixgbevf_mbx_ops;
 
 /* needed by ethtool.c */
 extern char ixgbevf_driver_name[];

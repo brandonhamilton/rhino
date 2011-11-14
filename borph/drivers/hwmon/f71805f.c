@@ -28,8 +28,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -1311,7 +1309,7 @@ static int __devinit f71805f_probe(struct platform_device *pdev)
 
 	if (!(data = kzalloc(sizeof(struct f71805f_data), GFP_KERNEL))) {
 		err = -ENOMEM;
-		pr_err("Out of memory\n");
+		printk(KERN_ERR DRVNAME ": Out of memory\n");
 		goto exit;
 	}
 
@@ -1453,7 +1451,7 @@ static int __init f71805f_device_add(unsigned short address,
 	pdev = platform_device_alloc(DRVNAME, address);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Device allocation failed\n");
 		goto exit;
 	}
 
@@ -1464,20 +1462,22 @@ static int __init f71805f_device_add(unsigned short address,
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device resource addition failed "
+		       "(%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add_data(pdev, sio_data,
 				       sizeof(struct f71805f_sio_data));
 	if (err) {
-		pr_err("Platform data allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto exit_device_put;
 	}
 
@@ -1516,27 +1516,30 @@ static int __init f71805f_find(int sioaddr, unsigned short *address,
 		sio_data->fnsel1 = superio_inb(sioaddr, SIO_REG_FNSEL1);
 		break;
 	default:
-		pr_info("Unsupported Fintek device, skipping\n");
+		printk(KERN_INFO DRVNAME ": Unsupported Fintek device, "
+		       "skipping\n");
 		goto exit;
 	}
 
 	superio_select(sioaddr, F71805F_LD_HWM);
 	if (!(superio_inb(sioaddr, SIO_REG_ENABLE) & 0x01)) {
-		pr_warn("Device not activated, skipping\n");
+		printk(KERN_WARNING DRVNAME ": Device not activated, "
+		       "skipping\n");
 		goto exit;
 	}
 
 	*address = superio_inw(sioaddr, SIO_REG_ADDR);
 	if (*address == 0) {
-		pr_warn("Base address not set, skipping\n");
+		printk(KERN_WARNING DRVNAME ": Base address not set, "
+		       "skipping\n");
 		goto exit;
 	}
 	*address &= ~(REGION_LENGTH - 1);	/* Ignore 3 LSB */
 
 	err = 0;
-	pr_info("Found %s chip at %#x, revision %u\n",
-		names[sio_data->kind], *address,
-		superio_inb(sioaddr, SIO_REG_DEVREV));
+	printk(KERN_INFO DRVNAME ": Found %s chip at %#x, revision %u\n",
+	       names[sio_data->kind], *address,
+	       superio_inb(sioaddr, SIO_REG_DEVREV));
 
 exit:
 	superio_exit(sioaddr);

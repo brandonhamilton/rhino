@@ -203,10 +203,9 @@ static void __init palmt5_init(void)
 
 MACHINE_START(PALMT5, "Palm Tungsten|T5")
 	.boot_params	= 0xa0000100,
-	.map_io		= pxa27x_map_io,
+	.map_io		= pxa_map_io,
 	.reserve	= palmt5_reserve,
 	.init_irq	= pxa27x_init_irq,
-	.handle_irq	= pxa27x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= palmt5_init
 MACHINE_END

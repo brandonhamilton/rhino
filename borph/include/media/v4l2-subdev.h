@@ -113,7 +113,10 @@ struct v4l2_subdev_io_pin_config {
 	u8 strength;	/* Pin drive strength */
 };
 
-/*
+/* s_config: if set, then it is always called by the v4l2_i2c_new_subdev*
+	functions after the v4l2_subdev was registered. It is used to pass
+	platform data to the subdev which can be used during initialization.
+
    s_io_pin_config: configure one or more chip I/O pins for chips that
 	multiplex different internal signal pads out to IO pins.  This function
 	takes a pointer to an array of 'n' pin configuration entries, one for
@@ -145,6 +148,7 @@ struct v4l2_subdev_io_pin_config {
 struct v4l2_subdev_core_ops {
 	int (*g_chip_ident)(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip);
 	int (*log_status)(struct v4l2_subdev *sd);
+	int (*s_config)(struct v4l2_subdev *sd, int irq, void *platform_data);
 	int (*s_io_pin_config)(struct v4l2_subdev *sd, size_t n,
 				      struct v4l2_subdev_io_pin_config *pincfg);
 	int (*init)(struct v4l2_subdev *sd, u32 val);
@@ -173,20 +177,25 @@ struct v4l2_subdev_core_ops {
 				 struct v4l2_event_subscription *sub);
 };
 
-/* s_radio: v4l device was opened in radio mode.
+/* open: called when the subdev device node is opened by an application.
 
-   g_frequency: freq->type must be filled in. Normally done by video_ioctl2
-	or the bridge driver.
+   close: called when the subdev device node is close.
+ */
+struct v4l2_subdev_file_ops {
+	int (*open)(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
+	int (*close)(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
+};
 
-   g_tuner:
-   s_tuner: vt->type must be filled in. Normally done by video_ioctl2 or the
-	bridge driver.
+/* s_mode: switch the tuner to a specific tuner mode. Replacement of s_radio.
+
+   s_radio: v4l device was opened in Radio mode, to be replaced by s_mode.
 
    s_type_addr: sets tuner type and its I2C addr.
 
    s_config: sets tda9887 specific stuff, like port1, port2 and qss
  */
 struct v4l2_subdev_tuner_ops {
+	int (*s_mode)(struct v4l2_subdev *sd, enum v4l2_tuner_type);
 	int (*s_radio)(struct v4l2_subdev *sd);
 	int (*s_frequency)(struct v4l2_subdev *sd, struct v4l2_frequency *freq);
 	int (*g_frequency)(struct v4l2_subdev *sd, struct v4l2_frequency *freq);
@@ -229,12 +238,6 @@ struct v4l2_subdev_audio_ops {
    s_std_output: set v4l2_std_id for video OUTPUT devices. This is ignored by
 	video input devices.
 
-   g_std_output: get current standard for video OUTPUT devices. This is ignored
-	by video input devices.
-
-   g_tvnorms_output: get v4l2_std_id with all standards supported by video
-	OUTPUT device. This is ignored by video input devices.
-
    s_crystal_freq: sets the frequency of the crystal used to generate the
 	clocks in Hz. An extra flags field allows device specific configuration
 	regarding clock frequency dividers, etc. If not used, then set flags
@@ -248,8 +251,6 @@ struct v4l2_subdev_audio_ops {
 
    s_dv_preset: set dv (Digital Video) preset in the sub device. Similar to
 	s_std()
-
-   g_dv_preset: get current dv (Digital Video) preset in the sub device.
 
    query_dv_preset: query dv preset in the sub device. This is similar to
 	querystd()
@@ -267,20 +268,12 @@ struct v4l2_subdev_audio_ops {
    try_mbus_fmt: try to set a pixel format on a video data source
 
    s_mbus_fmt: set a pixel format on a video data source
-
-   g_mbus_config: get supported mediabus configurations
-
-   s_mbus_config: set a certain mediabus configuration. This operation is added
-	for compatibility with soc-camera drivers and should not be used by new
-	software.
  */
 struct v4l2_subdev_video_ops {
 	int (*s_routing)(struct v4l2_subdev *sd, u32 input, u32 output, u32 config);
 	int (*s_crystal_freq)(struct v4l2_subdev *sd, u32 freq, u32 flags);
 	int (*s_std_output)(struct v4l2_subdev *sd, v4l2_std_id std);
-	int (*g_std_output)(struct v4l2_subdev *sd, v4l2_std_id *std);
 	int (*querystd)(struct v4l2_subdev *sd, v4l2_std_id *std);
-	int (*g_tvnorms_output)(struct v4l2_subdev *sd, v4l2_std_id *std);
 	int (*g_input_status)(struct v4l2_subdev *sd, u32 *status);
 	int (*s_stream)(struct v4l2_subdev *sd, int enable);
 	int (*cropcap)(struct v4l2_subdev *sd, struct v4l2_cropcap *cc);
@@ -298,8 +291,6 @@ struct v4l2_subdev_video_ops {
 			struct v4l2_dv_enum_preset *preset);
 	int (*s_dv_preset)(struct v4l2_subdev *sd,
 			struct v4l2_dv_preset *preset);
-	int (*g_dv_preset)(struct v4l2_subdev *sd,
-			struct v4l2_dv_preset *preset);
 	int (*query_dv_preset)(struct v4l2_subdev *sd,
 			struct v4l2_dv_preset *preset);
 	int (*s_dv_timings)(struct v4l2_subdev *sd,
@@ -308,18 +299,12 @@ struct v4l2_subdev_video_ops {
 			struct v4l2_dv_timings *timings);
 	int (*enum_mbus_fmt)(struct v4l2_subdev *sd, unsigned int index,
 			     enum v4l2_mbus_pixelcode *code);
-	int (*enum_mbus_fsizes)(struct v4l2_subdev *sd,
-			     struct v4l2_frmsizeenum *fsize);
 	int (*g_mbus_fmt)(struct v4l2_subdev *sd,
 			  struct v4l2_mbus_framefmt *fmt);
 	int (*try_mbus_fmt)(struct v4l2_subdev *sd,
 			    struct v4l2_mbus_framefmt *fmt);
 	int (*s_mbus_fmt)(struct v4l2_subdev *sd,
 			  struct v4l2_mbus_framefmt *fmt);
-	int (*g_mbus_config)(struct v4l2_subdev *sd,
-			     struct v4l2_mbus_config *cfg);
-	int (*s_mbus_config)(struct v4l2_subdev *sd,
-			     const struct v4l2_mbus_config *cfg);
 };
 
 /*
@@ -469,6 +454,7 @@ struct v4l2_subdev_pad_ops {
 
 struct v4l2_subdev_ops {
 	const struct v4l2_subdev_core_ops	*core;
+	const struct v4l2_subdev_file_ops	*file;
 	const struct v4l2_subdev_tuner_ops	*tuner;
 	const struct v4l2_subdev_audio_ops	*audio;
 	const struct v4l2_subdev_video_ops	*video;
@@ -476,27 +462,6 @@ struct v4l2_subdev_ops {
 	const struct v4l2_subdev_ir_ops		*ir;
 	const struct v4l2_subdev_sensor_ops	*sensor;
 	const struct v4l2_subdev_pad_ops	*pad;
-};
-
-/*
- * Internal ops. Never call this from drivers, only the v4l2 framework can call
- * these ops.
- *
- * registered: called when this subdev is registered. When called the v4l2_dev
- *	field is set to the correct v4l2_device.
- *
- * unregistered: called when this subdev is unregistered. When called the
- *	v4l2_dev field is still set to the correct v4l2_device.
- *
- * open: called when the subdev device node is opened by an application.
- *
- * close: called when the subdev device node is closed.
- */
-struct v4l2_subdev_internal_ops {
-	int (*registered)(struct v4l2_subdev *sd);
-	void (*unregistered)(struct v4l2_subdev *sd);
-	int (*open)(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
-	int (*close)(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
 };
 
 #define V4L2_SUBDEV_NAME_SIZE 32
@@ -514,16 +479,13 @@ struct v4l2_subdev_internal_ops {
    stand-alone or embedded in a larger struct.
  */
 struct v4l2_subdev {
-#if defined(CONFIG_MEDIA_CONTROLLER)
 	struct media_entity entity;
-#endif
+
 	struct list_head list;
 	struct module *owner;
 	u32 flags;
 	struct v4l2_device *v4l2_dev;
 	const struct v4l2_subdev_ops *ops;
-	/* Never call these internal ops from within a driver! */
-	const struct v4l2_subdev_internal_ops *internal_ops;
 	/* The control handler of this subdev. May be NULL. */
 	struct v4l2_ctrl_handler *ctrl_handler;
 	/* name must be unique */
@@ -535,6 +497,9 @@ struct v4l2_subdev {
 	void *host_priv;
 	/* subdev device node */
 	struct video_device devnode;
+	unsigned int initialized;
+	/* number of events to be allocated on open */
+	unsigned int nevents;
 };
 
 #define media_entity_to_v4l2_subdev(ent) \
@@ -547,16 +512,13 @@ struct v4l2_subdev {
  */
 struct v4l2_subdev_fh {
 	struct v4l2_fh vfh;
-#if defined(CONFIG_VIDEO_V4L2_SUBDEV_API)
 	struct v4l2_mbus_framefmt *try_fmt;
 	struct v4l2_rect *try_crop;
-#endif
 };
 
 #define to_v4l2_subdev_fh(fh)	\
 	container_of(fh, struct v4l2_subdev_fh, vfh)
 
-#if defined(CONFIG_VIDEO_V4L2_SUBDEV_API)
 static inline struct v4l2_mbus_framefmt *
 v4l2_subdev_get_try_format(struct v4l2_subdev_fh *fh, unsigned int pad)
 {
@@ -568,7 +530,6 @@ v4l2_subdev_get_try_crop(struct v4l2_subdev_fh *fh, unsigned int pad)
 {
 	return &fh->try_crop[pad];
 }
-#endif
 
 extern const struct v4l2_file_operations v4l2_subdev_fops;
 
@@ -594,6 +555,10 @@ static inline void *v4l2_get_subdev_hostdata(const struct v4l2_subdev *sd)
 
 void v4l2_subdev_init(struct v4l2_subdev *sd,
 		      const struct v4l2_subdev_ops *ops);
+
+#if defined(CONFIG_MEDIA_CONTROLLER)
+int v4l2_subdev_set_power(struct media_entity *entity, int power);
+#endif
 
 /* Call an ops of a v4l2_subdev, doing the right checks against
    NULL pointers.

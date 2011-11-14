@@ -58,9 +58,7 @@ out:
 	return data;
 }
 
-static int isl6271a_set_voltage(struct regulator_dev *dev,
-				int minuV, int maxuV,
-				unsigned *selector)
+static int isl6271a_set_voltage(struct regulator_dev *dev, int minuV, int maxuV)
 {
 	struct isl_pmic *pmic = rdev_get_drvdata(dev);
 	int vsel, err, data;
@@ -79,8 +77,6 @@ static int isl6271a_set_voltage(struct regulator_dev *dev,
 
 	/* Convert the microvolts to data for the chip */
 	data = (vsel - ISL6271A_VOLTAGE_MIN) / ISL6271A_VOLTAGE_STEP;
-
-	*selector = data;
 
 	mutex_lock(&pmic->mtx);
 
@@ -173,7 +169,7 @@ static int __devinit isl6271a_probe(struct i2c_client *i2c,
 						init_data, pmic);
 		if (IS_ERR(pmic->rdev[i])) {
 			dev_err(&i2c->dev, "failed to register %s\n", id->name);
-			err = PTR_ERR(pmic->rdev[i]);
+			err = PTR_ERR(pmic->rdev);
 			goto error;
 		}
 	}

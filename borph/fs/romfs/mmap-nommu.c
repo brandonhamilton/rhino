@@ -27,18 +27,14 @@ static unsigned long romfs_get_unmapped_area(struct file *file,
 {
 	struct inode *inode = file->f_mapping->host;
 	struct mtd_info *mtd = inode->i_sb->s_mtd;
-	unsigned long isize, offset, maxpages, lpages;
+	unsigned long isize, offset;
 
 	if (!mtd)
 		goto cant_map_directly;
 
-	/* the mapping mustn't extend beyond the EOF */
-	lpages = (len + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	isize = i_size_read(inode);
 	offset = pgoff << PAGE_SHIFT;
-
-	maxpages = (isize + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	if ((pgoff >= maxpages) || (maxpages - pgoff < lpages))
+	if (offset > isize || len > isize || offset > isize - len)
 		return (unsigned long) -EINVAL;
 
 	/* we need to call down to the MTD layer to do the actual mapping */

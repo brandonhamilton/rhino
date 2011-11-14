@@ -7,10 +7,11 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ":" fmt
 
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
-#include <mach/mbox-db5500.h>
+#include <mach/mbox.h>
 #include <net/caif/caif_shm.h>
 
 MODULE_LICENSE("GPL");

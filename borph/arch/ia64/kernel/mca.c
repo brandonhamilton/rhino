@@ -582,8 +582,6 @@ out:
 	/* Get the CPE error record and log it */
 	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CPE);
 
-	local_irq_disable();
-
 	return IRQ_HANDLED;
 }
 
@@ -1861,8 +1859,7 @@ ia64_mca_cpu_init(void *cpu_data)
 			data = mca_bootmem();
 			first_time = 0;
 		} else
-			data = (void *)__get_free_pages(GFP_KERNEL,
-							get_order(sz));
+			data = __get_free_pages(GFP_KERNEL, get_order(sz));
 		if (!data)
 			panic("Could not allocate MCA memory for cpu %d\n",
 					cpu);
@@ -2125,6 +2122,7 @@ ia64_mca_late_init(void)
 	cpe_poll_timer.function = ia64_mca_cpe_poll;
 
 	{
+		struct irq_desc *desc;
 		unsigned int irq;
 
 		if (cpe_vector >= 0) {
@@ -2132,7 +2130,8 @@ ia64_mca_late_init(void)
 			irq = local_vector_to_irq(cpe_vector);
 			if (irq > 0) {
 				cpe_poll_enabled = 0;
-				irq_set_status_flags(irq, IRQ_PER_CPU);
+				desc = irq_desc + irq;
+				desc->status |= IRQ_PER_CPU;
 				setup_irq(irq, &mca_cpe_irqaction);
 				ia64_cpe_irq = irq;
 				ia64_mca_register_cpev(cpe_vector);

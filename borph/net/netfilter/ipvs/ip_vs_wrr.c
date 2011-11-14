@@ -147,9 +147,8 @@ ip_vs_wrr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 
 			if (mark->cl == mark->cl->next) {
 				/* no dest entry */
-				ip_vs_scheduler_err(svc,
-					"no destination available: "
-					"no destinations present");
+				IP_VS_ERR_RL("WRR: no destination available: "
+					     "no destinations present\n");
 				dest = NULL;
 				goto out;
 			}
@@ -163,8 +162,8 @@ ip_vs_wrr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 				 */
 				if (mark->cw == 0) {
 					mark->cl = &svc->destinations;
-					ip_vs_scheduler_err(svc,
-						"no destination available");
+					IP_VS_ERR_RL("WRR: no destination "
+						     "available\n");
 					dest = NULL;
 					goto out;
 				}
@@ -186,9 +185,8 @@ ip_vs_wrr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb)
 			/* back to the start, and no dest is found.
 			   It is only possible when all dests are OVERLOADED */
 			dest = NULL;
-			ip_vs_scheduler_err(svc,
-				"no destination available: "
-				"all destinations are overloaded");
+			IP_VS_ERR_RL("WRR: no destination available: "
+				     "all destinations are overloaded\n");
 			goto out;
 		}
 	}

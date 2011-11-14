@@ -45,8 +45,7 @@
 #define PORT_OCTEON	17	/* Cavium OCTEON internal UART */
 #define PORT_AR7	18	/* Texas Instruments AR7 internal UART */
 #define PORT_U6_16550A	19	/* ST-Ericsson U6xxx internal UART */
-#define PORT_TEGRA	20	/* NVIDIA Tegra internal UART */
-#define PORT_MAX_8250	20	/* max port ID */
+#define PORT_MAX_8250	19	/* max port ID */
 
 /*
  * ARM specific type numbers.  These are not currently guaranteed
@@ -96,7 +95,7 @@
 /* PPC CPM type number */
 #define PORT_CPM        58
 
-/* MPC52xx (and MPC512x) type numbers */
+/* MPC52xx type numbers */
 #define PORT_MPC52xx	59
 
 /* IBM icom */
@@ -200,12 +199,6 @@
 /* TI OMAP-UART */
 #define PORT_OMAP	96
 
-/* VIA VT8500 SoC */
-#define PORT_VT8500	97
-
-/* Xilinx PSS UART */
-#define PORT_XUARTPS	98
-
 #ifdef __KERNEL__
 
 #include <linux/compiler.h>
@@ -216,7 +209,6 @@
 #include <linux/tty.h>
 #include <linux/mutex.h>
 #include <linux/sysrq.h>
-#include <linux/pps_kernel.h>
 
 struct uart_port;
 struct serial_struct;
@@ -319,7 +311,6 @@ struct uart_port {
 #define UPIO_TSI		(5)			/* Tsi108/109 type IO */
 #define UPIO_DWAPB		(6)			/* DesignWare APB UART */
 #define UPIO_RM9000		(7)			/* RM9000 type IO */
-#define UPIO_DWAPB32		(8)			/* DesignWare APB UART (32 bit accesses) */
 
 	unsigned int		read_status_mask;	/* driver specific */
 	unsigned int		ignore_status_mask;	/* driver specific */
@@ -533,10 +524,10 @@ uart_handle_dcd_change(struct uart_port *uport, unsigned int status)
 	struct uart_state *state = uport->state;
 	struct tty_port *port = &state->port;
 	struct tty_ldisc *ld = tty_ldisc_ref(port->tty);
-	struct pps_event_time ts;
+	struct timespec ts;
 
 	if (ld && ld->ops->dcd_change)
-		pps_get_ts(&ts);
+		getnstimeofday(&ts);
 
 	uport->icount.dcd++;
 #ifdef CONFIG_HARD_PPS

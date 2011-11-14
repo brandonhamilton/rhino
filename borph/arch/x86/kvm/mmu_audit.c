@@ -19,9 +19,11 @@
 
 #include <linux/ratelimit.h>
 
-#define audit_printk(kvm, fmt, args...)		\
+static int audit_point;
+
+#define audit_printk(fmt, args...)		\
 	printk(KERN_ERR "audit: (%s) error: "	\
-		fmt, audit_point_name[kvm->arch.audit_point], ##args)
+		fmt, audit_point_name[audit_point], ##args)
 
 typedef void (*inspect_spte_fn) (struct kvm_vcpu *vcpu, u64 *sptep, int level);
 
@@ -95,10 +97,19 @@ static void audit_mappings(struct kvm_vcpu *vcpu, u64 *sptep, int level)
 
 	if (sp->unsync) {
 		if (level != PT_PAGE_TABLE_LEVEL) {
-			audit_printk(vcpu->kvm, "unsync sp: %p "
-				     "level = %d\n", sp, level);
+			audit_printk("unsync sp: %p level = %d\n", sp, level);
 			return;
 		}
+
+		if (*sptep == shadow_notrap_nonpresent_pte) {
+			audit_printk("notrap spte in unsync sp: %p\n", sp);
+			return;
+		}
+	}
+
+	if (sp->role.direct && *sptep == shadow_notrap_nonpresent_pte) {
+		audit_printk("notrap spte in direct sp: %p\n", sp);
+		return;
 	}
 
 	if (!is_shadow_present_pte(*sptep) || !is_last_spte(*sptep, level))
@@ -114,9 +125,8 @@ static void audit_mappings(struct kvm_vcpu *vcpu, u64 *sptep, int level)
 
 	hpa =  pfn << PAGE_SHIFT;
 	if ((*sptep & PT64_BASE_ADDR_MASK) != hpa)
-		audit_printk(vcpu->kvm, "levels %d pfn %llx hpa %llx "
-			     "ent %llxn", vcpu->arch.mmu.root_level, pfn,
-			     hpa, *sptep);
+		audit_printk("levels %d pfn %llx hpa %llx ent %llxn",
+				   vcpu->arch.mmu.root_level, pfn, hpa, *sptep);
 }
 
 static void inspect_spte_has_rmap(struct kvm *kvm, u64 *sptep)
@@ -132,8 +142,8 @@ static void inspect_spte_has_rmap(struct kvm *kvm, u64 *sptep)
 	if (!gfn_to_memslot(kvm, gfn)) {
 		if (!printk_ratelimit())
 			return;
-		audit_printk(kvm, "no memslot for gfn %llx\n", gfn);
-		audit_printk(kvm, "index %ld of sp (gfn=%llx)\n",
+		audit_printk("no memslot for gfn %llx\n", gfn);
+		audit_printk("index %ld of sp (gfn=%llx)\n",
 		       (long int)(sptep - rev_sp->spt), rev_sp->gfn);
 		dump_stack();
 		return;
@@ -143,8 +153,7 @@ static void inspect_spte_has_rmap(struct kvm *kvm, u64 *sptep)
 	if (!*rmapp) {
 		if (!printk_ratelimit())
 			return;
-		audit_printk(kvm, "no rmap for writable spte %llx\n",
-			     *sptep);
+		audit_printk("no rmap for writable spte %llx\n", *sptep);
 		dump_stack();
 	}
 }
@@ -159,9 +168,8 @@ static void audit_spte_after_sync(struct kvm_vcpu *vcpu, u64 *sptep, int level)
 {
 	struct kvm_mmu_page *sp = page_header(__pa(sptep));
 
-	if (vcpu->kvm->arch.audit_point == AUDIT_POST_SYNC && sp->unsync)
-		audit_printk(vcpu->kvm, "meet unsync sp(%p) after sync "
-			     "root.\n", sp);
+	if (audit_point == AUDIT_POST_SYNC && sp->unsync)
+		audit_printk("meet unsync sp(%p) after sync root.\n", sp);
 }
 
 static void check_mappings_rmap(struct kvm *kvm, struct kvm_mmu_page *sp)
@@ -194,9 +202,8 @@ static void audit_write_protection(struct kvm *kvm, struct kvm_mmu_page *sp)
 	spte = rmap_next(kvm, rmapp, NULL);
 	while (spte) {
 		if (is_writable_pte(*spte))
-			audit_printk(kvm, "shadow page has writable "
-				     "mappings: gfn %llx role %x\n",
-				     sp->gfn, sp->role.word);
+			audit_printk("shadow page has writable mappings: gfn "
+				     "%llx role %x\n", sp->gfn, sp->role.word);
 		spte = rmap_next(kvm, rmapp, spte);
 	}
 }
@@ -231,7 +238,7 @@ static void kvm_mmu_audit(void *ignore, struct kvm_vcpu *vcpu, int point)
 	if (!__ratelimit(&ratelimit_state))
 		return;
 
-	vcpu->kvm->arch.audit_point = point;
+	audit_point = point;
 	audit_all_active_sps(vcpu->kvm);
 	audit_vcpu_spte(vcpu);
 }

@@ -4,24 +4,21 @@
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
 #include <asm/processor-flags.h>
+#include <asm/pgtable.h>
 
 /*G:020
-
- * Our story starts with the bzImage: booting starts at startup_32 in
- * arch/x86/boot/compressed/head_32.S.  This merely uncompresses the real
- * kernel in place and then jumps into it: startup_32 in
- * arch/x86/kernel/head_32.S.  Both routines expects a boot header in the %esi
- * register, which is created by the bootloader (the Launcher in our case).
+ * Our story starts with the kernel booting into startup_32 in
+ * arch/x86/kernel/head_32.S.  It expects a boot header, which is created by
+ * the bootloader (the Launcher in our case).
  *
  * The startup_32 function does very little: it clears the uninitialized global
  * C variables which we expect to be zero (ie. BSS) and then copies the boot
- * header and kernel command line somewhere safe, and populates some initial
- * page tables.  Finally it checks the 'hardware_subarch' field.  This was
- * introduced in 2.6.24 for lguest and Xen: if it's set to '1' (lguest's
- * assigned number), then it calls us here.
+ * header and kernel command line somewhere safe.  Finally it checks the
+ * 'hardware_subarch' field.  This was introduced in 2.6.24 for lguest and Xen:
+ * if it's set to '1' (lguest's assigned number), then it calls us here.
  *
  * WARNING: be very careful here!  We're running at addresses equal to physical
- * addresses (around 0), not above PAGE_OFFSET as most code expects
+ * addesses (around 0), not above PAGE_OFFSET as most code expectes
  * (eg. 0xC0000000).  Jumps are relative, so they're OK, but we can't touch any
  * data without remembering to subtract __PAGE_OFFSET!
  *
@@ -31,23 +28,122 @@
 .section .init.text, "ax", @progbits
 ENTRY(lguest_entry)
 	/*
-	 * We make the "initialization" hypercall now to tell the Host where
-	 * our lguest_data struct is.
+	 * We make the "initialization" hypercall now to tell the Host about
+	 * us, and also find out where it put our page tables.
 	 */
 	movl $LHCALL_LGUEST_INIT, %eax
 	movl $lguest_data - __PAGE_OFFSET, %ebx
 	int $LGUEST_TRAP_ENTRY
 
-	/* Now turn our pagetables on; setup by arch/x86/kernel/head_32.S. */
-	movl $LHCALL_NEW_PGTABLE, %eax
-	movl $(initial_page_table - __PAGE_OFFSET), %ebx
-	int $LGUEST_TRAP_ENTRY
-
 	/* Set up the initial stack so we can run C code. */
 	movl $(init_thread_union+THREAD_SIZE),%esp
 
+	call init_pagetables
+
 	/* Jumps are relative: we're running __PAGE_OFFSET too low. */
 	jmp lguest_init+__PAGE_OFFSET
+
+/*
+ * Initialize page tables.  This creates a PDE and a set of page
+ * tables, which are located immediately beyond __brk_base.  The variable
+ * _brk_end is set up to point to the first "safe" location.
+ * Mappings are created both at virtual address 0 (identity mapping)
+ * and PAGE_OFFSET for up to _end.
+ *
+ * FIXME: This code is taken verbatim from arch/x86/kernel/head_32.S: they
+ * don't have a stack at this point, so we can't just use call and ret.
+ */
+init_pagetables:
+#if PTRS_PER_PMD > 1
+#define PAGE_TABLE_SIZE(pages) (((pages) / PTRS_PER_PMD) + PTRS_PER_PGD)
+#else
+#define PAGE_TABLE_SIZE(pages) ((pages) / PTRS_PER_PGD)
+#endif
+#define pa(X) ((X) - __PAGE_OFFSET)
+
+/* Enough space to fit pagetables for the low memory linear map */
+MAPPING_BEYOND_END = \
+	PAGE_TABLE_SIZE(((1<<32) - __PAGE_OFFSET) >> PAGE_SHIFT) << PAGE_SHIFT
+#ifdef CONFIG_X86_PAE
+
+	/*
+	 * In PAE mode initial_page_table is statically defined to contain
+	 * enough entries to cover the VMSPLIT option (that is the top 1, 2 or 3
+	 * entries). The identity mapping is handled by pointing two PGD entries
+	 * to the first kernel PMD.
+	 *
+	 * Note the upper half of each PMD or PTE are always zero at this stage.
+	 */
+
+#define KPMDS (((-__PAGE_OFFSET) >> 30) & 3) /* Number of kernel PMDs */
+
+	xorl %ebx,%ebx				/* %ebx is kept at zero */
+
+	movl $pa(__brk_base), %edi
+	movl $pa(initial_pg_pmd), %edx
+	movl $PTE_IDENT_ATTR, %eax
+10:
+	leal PDE_IDENT_ATTR(%edi),%ecx		/* Create PMD entry */
+	movl %ecx,(%edx)			/* Store PMD entry */
+						/* Upper half already zero */
+	addl $8,%edx
+	movl $512,%ecx
+11:
+	stosl
+	xchgl %eax,%ebx
+	stosl
+	xchgl %eax,%ebx
+	addl $0x1000,%eax
+	loop 11b
+
+	/*
+	 * End condition: we must map up to the end + MAPPING_BEYOND_END.
+	 */
+	movl $pa(_end) + MAPPING_BEYOND_END + PTE_IDENT_ATTR, %ebp
+	cmpl %ebp,%eax
+	jb 10b
+1:
+	addl $__PAGE_OFFSET, %edi
+	movl %edi, pa(_brk_end)
+	shrl $12, %eax
+	movl %eax, pa(max_pfn_mapped)
+
+	/* Do early initialization of the fixmap area */
+	movl $pa(initial_pg_fixmap)+PDE_IDENT_ATTR,%eax
+	movl %eax,pa(initial_pg_pmd+0x1000*KPMDS-8)
+#else	/* Not PAE */
+
+page_pde_offset = (__PAGE_OFFSET >> 20);
+
+	movl $pa(__brk_base), %edi
+	movl $pa(initial_page_table), %edx
+	movl $PTE_IDENT_ATTR, %eax
+10:
+	leal PDE_IDENT_ATTR(%edi),%ecx		/* Create PDE entry */
+	movl %ecx,(%edx)			/* Store identity PDE entry */
+	movl %ecx,page_pde_offset(%edx)		/* Store kernel PDE entry */
+	addl $4,%edx
+	movl $1024, %ecx
+11:
+	stosl
+	addl $0x1000,%eax
+	loop 11b
+	/*
+	 * End condition: we must map up to the end + MAPPING_BEYOND_END.
+	 */
+	movl $pa(_end) + MAPPING_BEYOND_END + PTE_IDENT_ATTR, %ebp
+	cmpl %ebp,%eax
+	jb 10b
+	addl $__PAGE_OFFSET, %edi
+	movl %edi, pa(_brk_end)
+	shrl $12, %eax
+	movl %eax, pa(max_pfn_mapped)
+
+	/* Do early initialization of the fixmap area */
+	movl $pa(initial_pg_fixmap)+PDE_IDENT_ATTR,%eax
+	movl %eax,pa(initial_page_table+0xffc)
+#endif
+	ret
 
 /*G:055
  * We create a macro which puts the assembler code between lgstart_ and lgend_
@@ -105,8 +201,12 @@ send_interrupts:
 	 */
 	pushl %eax
 	movl $LHCALL_SEND_INTERRUPTS, %eax
-	/* This is the actual hypercall trap. */
-	int  $LGUEST_TRAP_ENTRY
+	/*
+	 * This is a vmcall instruction (same thing that KVM uses).  Older
+	 * assembler versions might not know the "vmcall" instruction, so we
+	 * create one manually here.
+	 */
+	.byte 0x0f,0x01,0xc1 /* KVM_HYPERCALL */
 	/* Put eax back the way we found it. */
 	popl %eax
 	ret

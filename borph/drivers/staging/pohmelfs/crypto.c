@@ -17,7 +17,6 @@
 #include <linux/highmem.h>
 #include <linux/kthread.h>
 #include <linux/pagemap.h>
-#include <linux/scatterlist.h>
 #include <linux/slab.h>
 
 #include "netfs.h"
@@ -131,8 +130,10 @@ err_out_exit:
 
 void pohmelfs_crypto_engine_exit(struct pohmelfs_crypto_engine *e)
 {
-	crypto_free_hash(e->hash);
-	crypto_free_ablkcipher(e->cipher);
+	if (e->hash)
+		crypto_free_hash(e->hash);
+	if (e->cipher)
+		crypto_free_ablkcipher(e->cipher);
 	kfree(e->data);
 }
 
@@ -746,7 +747,7 @@ static int pohmelfs_crypto_init_handshake(struct pohmelfs_sb *psb)
 
 	/*
 	 * At this point NETFS_CAPABILITIES response command
-	 * should setup superblock in a way, which is acceptable
+	 * should setup superblock in a way, which is acceptible
 	 * for both client and server, so if server refuses connection,
 	 * it will send error in transaction response.
 	 */

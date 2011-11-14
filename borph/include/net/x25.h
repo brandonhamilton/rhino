@@ -315,8 +315,6 @@ extern struct list_head x25_route_list;
 extern rwlock_t x25_route_list_lock;
 extern struct list_head x25_forward_list;
 extern rwlock_t x25_forward_list_lock;
-extern struct list_head x25_neigh_list;
-extern rwlock_t x25_neigh_list_lock;
 
 extern int x25_proc_init(void);
 extern void x25_proc_exit(void);

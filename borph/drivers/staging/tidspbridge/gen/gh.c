@@ -17,6 +17,9 @@
 #include <linux/types.h>
 
 #include <dspbridge/host_os.h>
+
+#include <dspbridge/gs.h>
+
 #include <dspbridge/gh.h>
 
 struct element {
@@ -34,6 +37,8 @@ struct gh_t_hash_tab {
 };
 
 static void noop(void *p);
+static s32 cur_init;
+static void myfree(void *ptr, s32 size);
 
 /*
  *  ======== gh_create ========
@@ -46,7 +51,8 @@ struct gh_t_hash_tab *gh_create(u16 max_bucket, u16 val_size,
 {
 	struct gh_t_hash_tab *hash_tab;
 	u16 i;
-	hash_tab = kzalloc(sizeof(struct gh_t_hash_tab), GFP_KERNEL);
+	hash_tab =
+	    (struct gh_t_hash_tab *)gs_alloc(sizeof(struct gh_t_hash_tab));
 	if (hash_tab == NULL)
 		return NULL;
 	hash_tab->max_bucket = max_bucket;
@@ -56,7 +62,7 @@ struct gh_t_hash_tab *gh_create(u16 max_bucket, u16 val_size,
 	hash_tab->delete = delete == NULL ? noop : delete;
 
 	hash_tab->buckets = (struct element **)
-	    kzalloc(sizeof(struct element *) * max_bucket, GFP_KERNEL);
+	    gs_alloc(sizeof(struct element *) * max_bucket);
 	if (hash_tab->buckets == NULL) {
 		gh_delete(hash_tab);
 		return NULL;
@@ -83,14 +89,17 @@ void gh_delete(struct gh_t_hash_tab *hash_tab)
 				     elem = next) {
 					next = elem->next;
 					(*hash_tab->delete) (elem->data);
-					kfree(elem);
+					myfree(elem,
+					       sizeof(struct element) - 1 +
+					       hash_tab->val_size);
 				}
 			}
 
-			kfree(hash_tab->buckets);
+			myfree(hash_tab->buckets, sizeof(struct element *)
+			       * hash_tab->max_bucket);
 		}
 
-		kfree(hash_tab);
+		myfree(hash_tab, sizeof(struct gh_t_hash_tab));
 	}
 }
 
@@ -100,7 +109,9 @@ void gh_delete(struct gh_t_hash_tab *hash_tab)
 
 void gh_exit(void)
 {
-	/* Do nothing */
+	if (cur_init-- == 1)
+		gs_exit();
+
 }
 
 /*
@@ -127,7 +138,8 @@ void *gh_find(struct gh_t_hash_tab *hash_tab, void *key)
 
 void gh_init(void)
 {
-	/* Do nothing */
+	if (cur_init++ == 0)
+		gs_init();
 }
 
 /*
@@ -140,8 +152,8 @@ void *gh_insert(struct gh_t_hash_tab *hash_tab, void *key, void *value)
 	u16 i;
 	char *src, *dst;
 
-	elem = kzalloc(sizeof(struct element) - 1 + hash_tab->val_size,
-			GFP_KERNEL);
+	elem = (struct element *)gs_alloc(sizeof(struct element) - 1 +
+					  hash_tab->val_size);
 	if (elem != NULL) {
 
 		dst = (char *)elem->data;
@@ -166,6 +178,14 @@ void *gh_insert(struct gh_t_hash_tab *hash_tab, void *key, void *value)
 static void noop(void *p)
 {
 	p = p;			/* stifle compiler warning */
+}
+
+/*
+ *  ======== myfree ========
+ */
+static void myfree(void *ptr, s32 size)
+{
+	gs_free(ptr);
 }
 
 #ifdef CONFIG_TIDSPBRIDGE_BACKTRACE

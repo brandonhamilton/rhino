@@ -14,17 +14,12 @@
  */
 #include <net/mac80211.h>
 #include "ieee80211_i.h"
-#include "driver-trace.h"
 
 /*
- * Tell our hardware to disable PS.
- * Optionally inform AP that we will go to sleep so that it will buffer
- * the frames while we are doing off-channel work.  This is optional
- * because we *may* be doing work on-operating channel, and want our
- * hardware unconditionally awake, but still let the AP send us normal frames.
+ * inform AP that we will go to sleep so that it will buffer the frames
+ * while we scan
  */
-static void ieee80211_offchannel_ps_enable(struct ieee80211_sub_if_data *sdata,
-					   bool tell_ap)
+static void ieee80211_offchannel_ps_enable(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
@@ -45,8 +40,8 @@ static void ieee80211_offchannel_ps_enable(struct ieee80211_sub_if_data *sdata,
 		ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_PS);
 	}
 
-	if (tell_ap && (!local->offchannel_ps_enabled ||
-			!(local->hw.flags & IEEE80211_HW_PS_NULLFUNC_STACK)))
+	if (!(local->offchannel_ps_enabled) ||
+	    !(local->hw.flags & IEEE80211_HW_PS_NULLFUNC_STACK))
 		/*
 		 * If power save was enabled, no need to send a nullfunc
 		 * frame because AP knows that we are sleeping. But if the
@@ -81,9 +76,6 @@ static void ieee80211_offchannel_ps_disable(struct ieee80211_sub_if_data *sdata)
 		 * we are sleeping, let's just enable power save mode in
 		 * hardware.
 		 */
-		/* TODO:  Only set hardware if CONF_PS changed?
-		 * TODO:  Should we set offchannel_ps_enabled to false?
-		 */
 		local->hw.conf.flags |= IEEE80211_CONF_PS;
 		ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_PS);
 	} else if (local->hw.conf.dynamic_ps_timeout > 0) {
@@ -102,61 +94,63 @@ static void ieee80211_offchannel_ps_disable(struct ieee80211_sub_if_data *sdata)
 	ieee80211_sta_reset_conn_monitor(sdata);
 }
 
-void ieee80211_offchannel_stop_vifs(struct ieee80211_local *local,
-				    bool offchannel_ps_enable)
+void ieee80211_offchannel_stop_beaconing(struct ieee80211_local *local)
 {
 	struct ieee80211_sub_if_data *sdata;
 
-	/*
-	 * notify the AP about us leaving the channel and stop all
-	 * STA interfaces.
-	 */
 	mutex_lock(&local->iflist_mtx);
 	list_for_each_entry(sdata, &local->interfaces, list) {
 		if (!ieee80211_sdata_running(sdata))
 			continue;
 
-		if (sdata->vif.type != NL80211_IFTYPE_MONITOR)
-			set_bit(SDATA_STATE_OFFCHANNEL, &sdata->state);
-
-		/* Check to see if we should disable beaconing. */
+		/* disable beaconing */
 		if (sdata->vif.type == NL80211_IFTYPE_AP ||
 		    sdata->vif.type == NL80211_IFTYPE_ADHOC ||
 		    sdata->vif.type == NL80211_IFTYPE_MESH_POINT)
 			ieee80211_bss_info_change_notify(
 				sdata, BSS_CHANGED_BEACON_ENABLED);
 
-		if (sdata->vif.type != NL80211_IFTYPE_MONITOR) {
+		/*
+		 * only handle non-STA interfaces here, STA interfaces
+		 * are handled in ieee80211_offchannel_stop_station(),
+		 * e.g., from the background scan state machine.
+		 *
+		 * In addition, do not stop monitor interface to allow it to be
+		 * used from user space controlled off-channel operations.
+		 */
+		if (sdata->vif.type != NL80211_IFTYPE_STATION &&
+		    sdata->vif.type != NL80211_IFTYPE_MONITOR) {
+			set_bit(SDATA_STATE_OFFCHANNEL, &sdata->state);
 			netif_tx_stop_all_queues(sdata->dev);
-			if (offchannel_ps_enable &&
-			    (sdata->vif.type == NL80211_IFTYPE_STATION) &&
-			    sdata->u.mgd.associated)
-				ieee80211_offchannel_ps_enable(sdata, true);
 		}
 	}
 	mutex_unlock(&local->iflist_mtx);
 }
 
-void ieee80211_offchannel_enable_all_ps(struct ieee80211_local *local,
-					bool tell_ap)
+void ieee80211_offchannel_stop_station(struct ieee80211_local *local)
 {
 	struct ieee80211_sub_if_data *sdata;
 
+	/*
+	 * notify the AP about us leaving the channel and stop all STA interfaces
+	 */
 	mutex_lock(&local->iflist_mtx);
 	list_for_each_entry(sdata, &local->interfaces, list) {
 		if (!ieee80211_sdata_running(sdata))
 			continue;
 
-		if (sdata->vif.type == NL80211_IFTYPE_STATION &&
-		    sdata->u.mgd.associated)
-			ieee80211_offchannel_ps_enable(sdata, tell_ap);
+		if (sdata->vif.type == NL80211_IFTYPE_STATION) {
+			set_bit(SDATA_STATE_OFFCHANNEL, &sdata->state);
+			netif_tx_stop_all_queues(sdata->dev);
+			if (sdata->u.mgd.associated)
+				ieee80211_offchannel_ps_enable(sdata);
+		}
 	}
 	mutex_unlock(&local->iflist_mtx);
 }
 
 void ieee80211_offchannel_return(struct ieee80211_local *local,
-				 bool enable_beaconing,
-				 bool offchannel_ps_disable)
+				 bool enable_beaconing)
 {
 	struct ieee80211_sub_if_data *sdata;
 
@@ -166,8 +160,7 @@ void ieee80211_offchannel_return(struct ieee80211_local *local,
 			continue;
 
 		/* Tell AP we're back */
-		if (offchannel_ps_disable &&
-		    sdata->vif.type == NL80211_IFTYPE_STATION) {
+		if (sdata->vif.type == NL80211_IFTYPE_STATION) {
 			if (sdata->u.mgd.associated)
 				ieee80211_offchannel_ps_disable(sdata);
 		}
@@ -187,7 +180,7 @@ void ieee80211_offchannel_return(struct ieee80211_local *local,
 			netif_tx_wake_all_queues(sdata->dev);
 		}
 
-		/* Check to see if we should re-enable beaconing */
+		/* re-enable beaconing */
 		if (enable_beaconing &&
 		    (sdata->vif.type == NL80211_IFTYPE_AP ||
 		     sdata->vif.type == NL80211_IFTYPE_ADHOC ||
@@ -196,88 +189,4 @@ void ieee80211_offchannel_return(struct ieee80211_local *local,
 				sdata, BSS_CHANGED_BEACON_ENABLED);
 	}
 	mutex_unlock(&local->iflist_mtx);
-}
-
-static void ieee80211_hw_roc_start(struct work_struct *work)
-{
-	struct ieee80211_local *local =
-		container_of(work, struct ieee80211_local, hw_roc_start);
-	struct ieee80211_sub_if_data *sdata;
-
-	mutex_lock(&local->mtx);
-
-	if (!local->hw_roc_channel) {
-		mutex_unlock(&local->mtx);
-		return;
-	}
-
-	ieee80211_recalc_idle(local);
-
-	if (local->hw_roc_skb) {
-		sdata = IEEE80211_DEV_TO_SUB_IF(local->hw_roc_dev);
-		ieee80211_tx_skb(sdata, local->hw_roc_skb);
-		local->hw_roc_skb = NULL;
-	} else {
-		cfg80211_ready_on_channel(local->hw_roc_dev,
-					  local->hw_roc_cookie,
-					  local->hw_roc_channel,
-					  local->hw_roc_channel_type,
-					  local->hw_roc_duration,
-					  GFP_KERNEL);
-	}
-
-	mutex_unlock(&local->mtx);
-}
-
-void ieee80211_ready_on_channel(struct ieee80211_hw *hw)
-{
-	struct ieee80211_local *local = hw_to_local(hw);
-
-	trace_api_ready_on_channel(local);
-
-	ieee80211_queue_work(hw, &local->hw_roc_start);
-}
-EXPORT_SYMBOL_GPL(ieee80211_ready_on_channel);
-
-static void ieee80211_hw_roc_done(struct work_struct *work)
-{
-	struct ieee80211_local *local =
-		container_of(work, struct ieee80211_local, hw_roc_done);
-
-	mutex_lock(&local->mtx);
-
-	if (!local->hw_roc_channel) {
-		mutex_unlock(&local->mtx);
-		return;
-	}
-
-	if (!local->hw_roc_for_tx)
-		cfg80211_remain_on_channel_expired(local->hw_roc_dev,
-						   local->hw_roc_cookie,
-						   local->hw_roc_channel,
-						   local->hw_roc_channel_type,
-						   GFP_KERNEL);
-
-	local->hw_roc_channel = NULL;
-	local->hw_roc_cookie = 0;
-
-	ieee80211_recalc_idle(local);
-
-	mutex_unlock(&local->mtx);
-}
-
-void ieee80211_remain_on_channel_expired(struct ieee80211_hw *hw)
-{
-	struct ieee80211_local *local = hw_to_local(hw);
-
-	trace_api_remain_on_channel_expired(local);
-
-	ieee80211_queue_work(hw, &local->hw_roc_done);
-}
-EXPORT_SYMBOL_GPL(ieee80211_remain_on_channel_expired);
-
-void ieee80211_hw_roc_setup(struct ieee80211_local *local)
-{
-	INIT_WORK(&local->hw_roc_start, ieee80211_hw_roc_start);
-	INIT_WORK(&local->hw_roc_done, ieee80211_hw_roc_done);
 }

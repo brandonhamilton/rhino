@@ -175,6 +175,7 @@ nouveau_dp_link_train_adjust(struct drm_encoder *encoder, uint8_t *config)
 {
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 	struct drm_device *dev = encoder->dev;
+	struct bit_displayport_encoder_table_entry *dpse;
 	struct bit_displayport_encoder_table *dpe;
 	int ret, i, dpe_headerlen, vs = 0, pre = 0;
 	uint8_t request[2];
@@ -182,6 +183,7 @@ nouveau_dp_link_train_adjust(struct drm_encoder *encoder, uint8_t *config)
 	dpe = nouveau_bios_dp_table(dev, nv_encoder->dcb, &dpe_headerlen);
 	if (!dpe)
 		return false;
+	dpse = (void *)((char *)dpe + dpe_headerlen);
 
 	ret = auxch_rd(encoder, DP_ADJUST_REQUEST_LANE0_1, request, 2);
 	if (ret)
@@ -277,7 +279,7 @@ nouveau_dp_link_train(struct drm_encoder *encoder)
 	struct bit_displayport_encoder_table *dpe;
 	int dpe_headerlen;
 	uint8_t config[4], status[3];
-	bool cr_done, cr_max_vs, eq_done, hpd_state;
+	bool cr_done, cr_max_vs, eq_done;
 	int ret = 0, i, tries, voltage;
 
 	NV_DEBUG_KMS(dev, "link training!!\n");
@@ -295,7 +297,7 @@ nouveau_dp_link_train(struct drm_encoder *encoder)
 	/* disable hotplug detect, this flips around on some panels during
 	 * link training.
 	 */
-	hpd_state = pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, false);
+	pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, false);
 
 	if (dpe->script0) {
 		NV_DEBUG_KMS(dev, "SOR-%d: running DP script 0\n", nv_encoder->or);
@@ -437,7 +439,7 @@ stop:
 	}
 
 	/* re-enable hotplug detect */
-	pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, hpd_state);
+	pgpio->irq_enable(dev, nv_connector->dcb->gpio_tag, true);
 
 	return eq_done;
 }

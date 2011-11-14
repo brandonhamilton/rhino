@@ -26,7 +26,7 @@
 #include <linux/fsnotify_backend.h>
 #include "fsnotify.h"
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * Final freeing of a group

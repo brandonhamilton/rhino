@@ -2,6 +2,7 @@
 #define __WINBOND_WB35TX_F_H
 
 #include "core.h"
+#include "wbhal_f.h"
 
 /*
  * ====================================

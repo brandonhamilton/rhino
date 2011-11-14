@@ -29,7 +29,8 @@
 #define ULONG_SIZE 		8
 #define FUNC(name) 		GLUE(.,name)
 
-#define GET_SHADOW_VCPU_R13
+#define GET_SHADOW_VCPU(reg)    \
+        addi    reg, r13, PACA_KVM_SVCPU
 
 #define DISABLE_INTERRUPTS	\
 	mfmsr   r0;		\
@@ -42,8 +43,8 @@
 #define ULONG_SIZE              4
 #define FUNC(name)		name
 
-#define GET_SHADOW_VCPU_R13	\
-	lwz	r13, (THREAD + THREAD_KVM_SVCPU)(r2)
+#define GET_SHADOW_VCPU(reg)    \
+        lwz     reg, (THREAD + THREAD_KVM_SVCPU)(r2)
 
 #define DISABLE_INTERRUPTS	\
 	mfmsr   r0;		\
@@ -84,7 +85,7 @@
  *  r3: kvm_run pointer
  *  r4: vcpu pointer
  */
-_GLOBAL(__kvmppc_vcpu_run)
+_GLOBAL(__kvmppc_vcpu_entry)
 
 kvm_start_entry:
 	/* Write correct stack frame */
@@ -106,11 +107,17 @@ kvm_start_entry:
 	/* Load non-volatile guest state from the vcpu */
 	VCPU_LOAD_NVGPRS(r4)
 
-kvm_start_lightweight:
+	GET_SHADOW_VCPU(r5)
 
-	GET_SHADOW_VCPU_R13
+	/* Save R1/R2 in the PACA */
+	PPC_STL	r1, SVCPU_HOST_R1(r5)
+	PPC_STL	r2, SVCPU_HOST_R2(r5)
+
+	/* XXX swap in/out on load? */
 	PPC_LL	r3, VCPU_HIGHMEM_HANDLER(r4)
-	PPC_STL	r3, HSTATE_VMHANDLER(r13)
+	PPC_STL	r3, SVCPU_VMHANDLER(r5)
+
+kvm_start_lightweight:
 
 	PPC_LL	r10, VCPU_SHADOW_MSR(r4)	/* r10 = vcpu->arch.shadow_msr */
 

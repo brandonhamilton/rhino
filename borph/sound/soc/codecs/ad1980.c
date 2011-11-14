@@ -29,6 +29,7 @@
 #include <sound/ac97_codec.h>
 #include <sound/initval.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include "ad1980.h"
 
@@ -266,7 +267,7 @@ static int __devexit ad1980_remove(struct platform_device *pdev)
 
 static struct platform_driver ad1980_codec_driver = {
 	.driver = {
-			.name = "ad1980",
+			.name = "ad1980-codec",
 			.owner = THIS_MODULE,
 	},
 

@@ -50,43 +50,42 @@ build_path_from_dentry(struct dentry *direntry)
 {
 	struct dentry *temp;
 	int namelen;
+	int pplen;
 	int dfsplen;
 	char *full_path;
 	char dirsep;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(direntry->d_sb);
-	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
-	unsigned seq;
+	struct cifsTconInfo *tcon = cifs_sb_master_tcon(cifs_sb);
+
+	if (direntry == NULL)
+		return NULL;  /* not much we can do if dentry is freed and
+		we need to reopen the file after it was closed implicitly
+		when the server crashed */
 
 	dirsep = CIFS_DIR_SEP(cifs_sb);
+	pplen = cifs_sb->prepathlen;
 	if (tcon->Flags & SMB_SHARE_IS_IN_DFS)
 		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
 	else
 		dfsplen = 0;
 cifs_bp_rename_retry:
-	namelen = dfsplen;
-	seq = read_seqbegin(&rename_lock);
-	rcu_read_lock();
+	namelen = pplen + dfsplen;
 	for (temp = direntry; !IS_ROOT(temp);) {
 		namelen += (1 + temp->d_name.len);
 		temp = temp->d_parent;
 		if (temp == NULL) {
 			cERROR(1, "corrupt dentry");
-			rcu_read_unlock();
 			return NULL;
 		}
 	}
-	rcu_read_unlock();
 
 	full_path = kmalloc(namelen+1, GFP_KERNEL);
 	if (full_path == NULL)
 		return full_path;
 	full_path[namelen] = 0;	/* trailing null */
-	rcu_read_lock();
 	for (temp = direntry; !IS_ROOT(temp);) {
-		spin_lock(&temp->d_lock);
 		namelen -= 1 + temp->d_name.len;
 		if (namelen < 0) {
-			spin_unlock(&temp->d_lock);
 			break;
 		} else {
 			full_path[namelen] = dirsep;
@@ -94,17 +93,14 @@ cifs_bp_rename_retry:
 				temp->d_name.len);
 			cFYI(0, "name: %s", full_path + namelen);
 		}
-		spin_unlock(&temp->d_lock);
 		temp = temp->d_parent;
 		if (temp == NULL) {
 			cERROR(1, "corrupt dentry");
-			rcu_read_unlock();
 			kfree(full_path);
 			return NULL;
 		}
 	}
-	rcu_read_unlock();
-	if (namelen != dfsplen || read_seqretry(&rename_lock, seq)) {
+	if (namelen != pplen + dfsplen) {
 		cERROR(1, "did not end path lookup where expected namelen is %d",
 			namelen);
 		/* presumably this is only possible if racing with a rename
@@ -130,7 +126,19 @@ cifs_bp_rename_retry:
 			}
 		}
 	}
+	strncpy(full_path + dfsplen, CIFS_SB(direntry->d_sb)->prepath, pplen);
 	return full_path;
+}
+
+static void setup_cifs_dentry(struct cifsTconInfo *tcon,
+			      struct dentry *direntry,
+			      struct inode *newinode)
+{
+	if (tcon->nocase)
+		direntry->d_op = &cifs_ci_dentry_ops;
+	else
+		direntry->d_op = &cifs_dentry_ops;
+	d_instantiate(direntry, newinode);
 }
 
 /* Inode operations in similar order to how they appear in Linux file fs.h */
@@ -155,7 +163,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
 	__u16 fileHandle;
 	struct cifs_sb_info *cifs_sb;
 	struct tcon_link *tlink;
-	struct cifs_tcon *tcon;
+	struct cifsTconInfo *tcon;
 	char *full_path = NULL;
 	FILE_ALL_INFO *buf = NULL;
 	struct inode *newinode = NULL;
@@ -174,7 +182,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
 	if (oplockEnabled)
 		oplock = REQ_OPLOCK;
 
-	if (nd)
+	if (nd && (nd->flags & LOOKUP_OPEN))
 		oflags = nd->intent.open.file->f_flags;
 	else
 		oflags = O_RDONLY | O_CREAT;
@@ -192,7 +200,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
 			inode->i_sb, mode, oflags, &oplock, &fileHandle, xid);
 		/* EIO could indicate that (posix open) operation is not
 		   supported, despite what server claimed in capability
-		   negotiation.  EREMOTE indicates DFS junction, which is not
+		   negotation.  EREMOTE indicates DFS junction, which is not
 		   handled in posix open */
 
 		if (rc == 0) {
@@ -209,7 +217,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
 		   which should be rare for path not covered on files) */
 	}
 
-	if (nd) {
+	if (nd && (nd->flags & LOOKUP_OPEN)) {
 		/* if the file is going to stay open, then we
 		   need to set the desired access properly */
 		desiredAccess = 0;
@@ -285,8 +293,10 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
 			args.uid = NO_CHANGE_64;
 			args.gid = NO_CHANGE_64;
 		}
-		CIFSSMBUnixSetFileInfo(xid, tcon, &args, fileHandle,
-					current->tgid);
+		CIFSSMBUnixSetPathInfo(xid, tcon, full_path, &args,
+					cifs_sb->local_nls,
+					cifs_sb->mnt_cifs_flags &
+						CIFS_MOUNT_MAP_SPECIAL_CHR);
 	} else {
 		/* BB implement mode setting via Windows security
 		   descriptors e.g. */
@@ -319,11 +329,11 @@ cifs_create_get_file_info:
 
 cifs_create_set_dentry:
 	if (rc == 0)
-		d_instantiate(direntry, newinode);
+		setup_cifs_dentry(tcon, direntry, newinode);
 	else
 		cFYI(1, "Create worked, get_inode_info failed rc = %d", rc);
 
-	if (newinode && nd) {
+	if (newinode && nd && (nd->flags & LOOKUP_OPEN)) {
 		struct cifsFileInfo *pfile_info;
 		struct file *filp;
 
@@ -359,8 +369,7 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
 	int xid;
 	struct cifs_sb_info *cifs_sb;
 	struct tcon_link *tlink;
-	struct cifs_tcon *pTcon;
-	struct cifs_io_parms io_parms;
+	struct cifsTconInfo *pTcon;
 	char *full_path = NULL;
 	struct inode *newinode = NULL;
 	int oplock = 0;
@@ -411,6 +420,10 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
 
 		rc = cifs_get_inode_info_unix(&newinode, full_path,
 						inode->i_sb, xid);
+		if (pTcon->nocase)
+			direntry->d_op = &cifs_ci_dentry_ops;
+		else
+			direntry->d_op = &cifs_dentry_ops;
 
 		if (rc == 0)
 			d_instantiate(direntry, newinode);
@@ -443,19 +456,16 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
 	 * timestamps in, but we can reuse it safely */
 
 	pdev = (struct win_dev *)buf;
-	io_parms.netfid = fileHandle;
-	io_parms.pid = current->tgid;
-	io_parms.tcon = pTcon;
-	io_parms.offset = 0;
-	io_parms.length = sizeof(struct win_dev);
 	if (S_ISCHR(mode)) {
 		memcpy(pdev->type, "IntxCHR", 8);
 		pdev->major =
 		      cpu_to_le64(MAJOR(device_number));
 		pdev->minor =
 		      cpu_to_le64(MINOR(device_number));
-		rc = CIFSSMBWrite(xid, &io_parms,
-			&bytes_written, (char *)pdev,
+		rc = CIFSSMBWrite(xid, pTcon,
+			fileHandle,
+			sizeof(struct win_dev),
+			0, &bytes_written, (char *)pdev,
 			NULL, 0);
 	} else if (S_ISBLK(mode)) {
 		memcpy(pdev->type, "IntxBLK", 8);
@@ -463,8 +473,10 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
 		      cpu_to_le64(MAJOR(device_number));
 		pdev->minor =
 		      cpu_to_le64(MINOR(device_number));
-		rc = CIFSSMBWrite(xid, &io_parms,
-			&bytes_written, (char *)pdev,
+		rc = CIFSSMBWrite(xid, pTcon,
+			fileHandle,
+			sizeof(struct win_dev),
+			0, &bytes_written, (char *)pdev,
 			NULL, 0);
 	} /* else if (S_ISFIFO) */
 	CIFSSMBClose(xid, pTcon, fileHandle);
@@ -491,7 +503,7 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	bool posix_open = false;
 	struct cifs_sb_info *cifs_sb;
 	struct tcon_link *tlink;
-	struct cifs_tcon *pTcon;
+	struct cifsTconInfo *pTcon;
 	struct cifsFileInfo *cfile;
 	struct inode *newInode = NULL;
 	char *full_path = NULL;
@@ -563,7 +575,7 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	 * reduction in network traffic in the other paths.
 	 */
 	if (pTcon->unix_ext) {
-		if (nd && !(nd->flags & LOOKUP_DIRECTORY) &&
+		if (nd && !(nd->flags & (LOOKUP_PARENT | LOOKUP_DIRECTORY)) &&
 		     (nd->flags & LOOKUP_OPEN) && !pTcon->broken_posix_open &&
 		     (nd->intent.open.file->f_flags & O_CREAT)) {
 			rc = cifs_posix_open(full_path, &newInode,
@@ -591,6 +603,10 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 				parent_dir_inode->i_sb, xid, NULL);
 
 	if ((rc == 0) && (newInode != NULL)) {
+		if (pTcon->nocase)
+			direntry->d_op = &cifs_ci_dentry_ops;
+		else
+			direntry->d_op = &cifs_dentry_ops;
 		d_add(direntry, newInode);
 		if (posix_open) {
 			filp = lookup_instantiate_filp(nd, direntry,
@@ -617,6 +633,10 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	} else if (rc == -ENOENT) {
 		rc = 0;
 		direntry->d_time = jiffies;
+		if (pTcon->nocase)
+			direntry->d_op = &cifs_ci_dentry_ops;
+		else
+			direntry->d_op = &cifs_dentry_ops;
 		d_add(direntry, NULL);
 	/*	if it was once a directory (but how can we tell?) we could do
 		shrink_dcache_parent(direntry); */
@@ -636,35 +656,22 @@ lookup_out:
 static int
 cifs_d_revalidate(struct dentry *direntry, struct nameidata *nd)
 {
-	if (nd && (nd->flags & LOOKUP_RCU))
-		return -ECHILD;
+	int isValid = 1;
 
 	if (direntry->d_inode) {
 		if (cifs_revalidate_dentry(direntry))
 			return 0;
-		else
-			return 1;
+	} else {
+		cFYI(1, "neg dentry 0x%p name = %s",
+			 direntry, direntry->d_name.name);
+		if (time_after(jiffies, direntry->d_time + HZ) ||
+			!lookupCacheEnabled) {
+			d_drop(direntry);
+			isValid = 0;
+		}
 	}
 
-	/*
-	 * This may be nfsd (or something), anyway, we can't see the
-	 * intent of this. So, since this can be for creation, drop it.
-	 */
-	if (!nd)
-		return 0;
-
-	/*
-	 * Drop the negative dentry, in order to make sure to use the
-	 * case sensitive name which is specified by user if this is
-	 * for creation.
-	 */
-	if (nd->flags & (LOOKUP_CREATE | LOOKUP_RENAME_TARGET))
-		return 0;
-
-	if (time_after(jiffies, direntry->d_time + HZ) || !lookupCacheEnabled)
-		return 0;
-
-	return 1;
+	return isValid;
 }
 
 /* static int cifs_d_delete(struct dentry *direntry)
@@ -678,14 +685,12 @@ cifs_d_revalidate(struct dentry *direntry, struct nameidata *nd)
 
 const struct dentry_operations cifs_dentry_ops = {
 	.d_revalidate = cifs_d_revalidate,
-	.d_automount = cifs_dfs_d_automount,
 /* d_delete:       cifs_d_delete,      */ /* not needed except for debugging */
 };
 
-static int cifs_ci_hash(const struct dentry *dentry, const struct inode *inode,
-		struct qstr *q)
+static int cifs_ci_hash(struct dentry *dentry, struct qstr *q)
 {
-	struct nls_table *codepage = CIFS_SB(dentry->d_sb)->local_nls;
+	struct nls_table *codepage = CIFS_SB(dentry->d_inode->i_sb)->local_nls;
 	unsigned long hash;
 	int i;
 
@@ -698,16 +703,21 @@ static int cifs_ci_hash(const struct dentry *dentry, const struct inode *inode,
 	return 0;
 }
 
-static int cifs_ci_compare(const struct dentry *parent,
-		const struct inode *pinode,
-		const struct dentry *dentry, const struct inode *inode,
-		unsigned int len, const char *str, const struct qstr *name)
+static int cifs_ci_compare(struct dentry *dentry, struct qstr *a,
+			   struct qstr *b)
 {
-	struct nls_table *codepage = CIFS_SB(pinode->i_sb)->local_nls;
+	struct nls_table *codepage = CIFS_SB(dentry->d_inode->i_sb)->local_nls;
 
-	if ((name->len == len) &&
-	    (nls_strnicmp(codepage, name->name, str, len) == 0))
+	if ((a->len == b->len) &&
+	    (nls_strnicmp(codepage, a->name, b->name, a->len) == 0)) {
+		/*
+		 * To preserve case, don't let an existing negative dentry's
+		 * case take precedence.  If a is not a negative dentry, this
+		 * should have no side effects
+		 */
+		memcpy((void *)a->name, b->name, a->len);
 		return 0;
+	}
 	return 1;
 }
 
@@ -715,5 +725,4 @@ const struct dentry_operations cifs_ci_dentry_ops = {
 	.d_revalidate = cifs_d_revalidate,
 	.d_hash = cifs_ci_hash,
 	.d_compare = cifs_ci_compare,
-	.d_automount = cifs_dfs_d_automount,
 };

@@ -81,6 +81,11 @@ static struct map_desc s5pv210_iodesc[] __initdata = {
 		.length		= SZ_512K,
 		.type		= MT_DEVICE,
 	}, {
+		.virtual	= (unsigned long)S5P_VA_SROMC,
+		.pfn		= __phys_to_pfn(S5PV210_PA_SROMC),
+		.length		= SZ_4K,
+		.type		= MT_DEVICE,
+	}, {
 		.virtual	= (unsigned long)S5P_VA_DMC0,
 		.pfn		= __phys_to_pfn(S5PV210_PA_DMC0),
 		.length		= SZ_4K,
@@ -126,7 +131,7 @@ void __init s5pv210_map_io(void)
 	s5pv210_default_sdhci2();
 	s5pv210_default_sdhci3();
 
-	s3c_adc_setname("samsung-adc-v3");
+	s3c_adc_setname("s3c64xx-adc");
 
 	s3c_cfcon_setname("s5pv210-pata");
 

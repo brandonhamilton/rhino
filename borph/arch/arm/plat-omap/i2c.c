@@ -89,6 +89,10 @@ static int __init omap_i2c_nr_ports(void)
 		ports = 3;
 	else if (cpu_is_omap44xx())
 		ports = 4;
+	else if (cpu_is_ti816x())
+		ports = 2;
+	else if (cpu_is_ti814x())
+		ports = 4;
 
 	return ports;
 }
@@ -112,7 +116,6 @@ static inline int omap1_i2c_add_bus(int bus_id)
 }
 
 
-#ifdef CONFIG_ARCH_OMAP2PLUS
 /*
  * XXX This function is a temporary compatibility wrapper - only
  * needed until the I2C driver can be converted to call
@@ -131,6 +134,7 @@ static struct omap_device_pm_latency omap_i2c_latency[] = {
 	},
 };
 
+#ifdef CONFIG_ARCH_OMAP2PLUS
 static inline int omap2_i2c_add_bus(int bus_id)
 {
 	int l;

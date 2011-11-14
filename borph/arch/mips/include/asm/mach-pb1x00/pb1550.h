@@ -1,5 +1,5 @@
 /*
- * AMD Alchemy Semi PB1550 Reference Board
+ * AMD Alchemy Semi PB1550 Referrence Board
  * Board Registers defines.
  *
  * Copyright 2004 Embedded Edge LLC.

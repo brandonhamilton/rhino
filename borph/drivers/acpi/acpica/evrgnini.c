@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2010, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -590,9 +590,9 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 				 * See acpi_ns_exec_module_code
 				 */
 				if (obj_desc->method.
-				    info_flags & ACPI_METHOD_MODULE_LEVEL) {
+				    flags & AOPOBJ_MODULE_LEVEL) {
 					handler_obj =
-					    obj_desc->method.dispatch.handler;
+					    obj_desc->method.extra.handler;
 				}
 				break;
 
@@ -637,7 +637,7 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 
 					status =
 					    acpi_ev_execute_reg_method
-					    (region_obj, ACPI_REG_CONNECT);
+					    (region_obj, 1);
 
 					if (acpi_ns_locked) {
 						status =

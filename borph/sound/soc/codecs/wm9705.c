@@ -19,6 +19,7 @@
 #include <sound/ac97_codec.h>
 #include <sound/initval.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include "wm9705.h"
 
@@ -142,7 +143,7 @@ static const struct snd_soc_dapm_widget wm9705_dapm_widgets[] = {
  * constantly enabled, we use the mutes on those inputs to simulate such
  * controls.
  */
-static const struct snd_soc_dapm_route wm9705_audio_map[] = {
+static const struct snd_soc_dapm_route audio_map[] = {
 	/* HP mixer */
 	{"HP Mixer", "PCBeep Playback Switch", "PCBEEP PGA"},
 	{"HP Mixer", "CD Playback Switch", "CD PGA"},
@@ -199,6 +200,15 @@ static const struct snd_soc_dapm_route wm9705_audio_map[] = {
 	{"Left ADC",  NULL, "ADC PGA"},
 	{"Right ADC", NULL, "ADC PGA"},
 };
+
+static int wm9705_add_widgets(struct snd_soc_codec *codec)
+{
+	snd_soc_dapm_new_controls(codec, wm9705_dapm_widgets,
+					ARRAY_SIZE(wm9705_dapm_widgets));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+
+	return 0;
+}
 
 /* We use a register cache to enhance read performance. */
 static unsigned int ac97_read(struct snd_soc_codec *codec, unsigned int reg)
@@ -353,6 +363,7 @@ static int wm9705_soc_probe(struct snd_soc_codec *codec)
 
 	snd_soc_add_controls(codec, wm9705_snd_ac97_controls,
 				ARRAY_SIZE(wm9705_snd_ac97_controls));
+	wm9705_add_widgets(codec);
 
 	return 0;
 
@@ -378,10 +389,6 @@ static struct snd_soc_codec_driver soc_codec_dev_wm9705 = {
 	.reg_word_size = sizeof(u16),
 	.reg_cache_step = 2,
 	.reg_cache_default = wm9705_reg,
-	.dapm_widgets = wm9705_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(wm9705_dapm_widgets),
-	.dapm_routes = wm9705_audio_map,
-	.num_dapm_routes = ARRAY_SIZE(wm9705_audio_map),
 };
 
 static __devinit int wm9705_probe(struct platform_device *pdev)

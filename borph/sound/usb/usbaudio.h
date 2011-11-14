@@ -34,14 +34,9 @@ struct snd_usb_audio {
 	int index;
 	struct usb_device *dev;
 	struct snd_card *card;
-	struct usb_interface *pm_intf;
 	u32 usb_id;
-	struct mutex shutdown_mutex;
-	unsigned int shutdown:1;
-	unsigned int probing:1;
-	unsigned int autosuspended:1;	
+	int shutdown;
 	unsigned int txfr_quirk:1; /* Subframe boundaries on transfers */
-	
 	int num_interfaces;
 	int num_suspended_intf;
 
@@ -84,7 +79,6 @@ enum quirk_type {
 	QUIRK_AUDIO_FIXED_ENDPOINT,
 	QUIRK_AUDIO_EDIROL_UAXX,
 	QUIRK_AUDIO_ALIGN_TRANSFER,
-	QUIRK_AUDIO_STANDARD_MIXER,
 
 	QUIRK_TYPE_COUNT
 };

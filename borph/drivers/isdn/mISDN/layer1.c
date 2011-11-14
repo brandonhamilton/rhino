@@ -99,16 +99,12 @@ static void
 l1m_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	struct layer1 *l1 = fi->userdata;
-	struct va_format vaf;
 	va_list va;
 
 	va_start(va, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &va;
-
-	printk(KERN_DEBUG "%s: %pV\n", dev_name(&l1->dch->dev.dev), &vaf);
-
+	printk(KERN_DEBUG "%s: ", dev_name(&l1->dch->dev.dev));
+	vprintk(fmt, va);
+	printk("\n");
 	va_end(va);
 }
 

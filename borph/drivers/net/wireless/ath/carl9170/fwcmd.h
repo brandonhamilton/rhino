@@ -4,7 +4,7 @@
  * Firmware command interface definitions
  *
  * Copyright 2008, Johannes Berg <johannes@sipsolutions.net>
- * Copyright 2009-2011 Christian Lamparter <chunkeey@googlemail.com>
+ * Copyright 2009, 2010, Christian Lamparter <chunkeey@googlemail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,7 +54,6 @@ enum carl9170_cmd_oids {
 	CARL9170_CMD_BCN_CTRL		= 0x05,
 	CARL9170_CMD_READ_TSF		= 0x06,
 	CARL9170_CMD_RX_FILTER		= 0x07,
-	CARL9170_CMD_WOL		= 0x08,
 
 	/* CAM */
 	CARL9170_CMD_EKEY		= 0x10,
@@ -98,13 +97,13 @@ struct carl9170_set_key_cmd {
 	__le16		type;
 	u8		macAddr[6];
 	u32		key[4];
-} __packed __aligned(4);
+} __packed;
 #define CARL9170_SET_KEY_CMD_SIZE		28
 
 struct carl9170_disable_key_cmd {
 	__le16		user;
 	__le16		padding;
-} __packed __aligned(4);
+} __packed;
 #define CARL9170_DISABLE_KEY_CMD_SIZE		4
 
 struct carl9170_u32_list {
@@ -168,7 +167,6 @@ struct carl9170_rx_filter_cmd {
 #define CARL9170_RX_FILTER_CTL_BACKR	0x20
 #define CARL9170_RX_FILTER_MGMT		0x40
 #define CARL9170_RX_FILTER_DATA		0x80
-#define CARL9170_RX_FILTER_EVERYTHING	(~0)
 
 struct carl9170_bcn_ctrl_cmd {
 	__le32		vif_id;
@@ -180,21 +178,6 @@ struct carl9170_bcn_ctrl_cmd {
 
 #define CARL9170_BCN_CTRL_DRAIN	0
 #define CARL9170_BCN_CTRL_CAB_TRIGGER	1
-
-struct carl9170_wol_cmd {
-	__le32		flags;
-	u8		mac[6];
-	u8		bssid[6];
-	__le32		null_interval;
-	__le32		free_for_use2;
-	__le32		mask;
-	u8		pattern[32];
-} __packed;
-
-#define CARL9170_WOL_CMD_SIZE		60
-
-#define CARL9170_WOL_DISCONNECT		1
-#define CARL9170_WOL_MAGIC_PKT		2
 
 struct carl9170_cmd_head {
 	union {
@@ -219,12 +202,11 @@ struct carl9170_cmd {
 		struct carl9170_write_reg	wreg;
 		struct carl9170_rf_init		rf_init;
 		struct carl9170_psm		psm;
-		struct carl9170_wol_cmd		wol;
 		struct carl9170_bcn_ctrl_cmd	bcn_ctrl;
 		struct carl9170_rx_filter_cmd	rx_filter;
 		u8 data[CARL9170_MAX_CMD_PAYLOAD_LEN];
 	} __packed;
-} __packed __aligned(4);
+} __packed;
 
 #define	CARL9170_TX_STATUS_QUEUE	3
 #define	CARL9170_TX_STATUS_QUEUE_S	0
@@ -234,7 +216,6 @@ struct carl9170_cmd {
 #define	CARL9170_TX_STATUS_TRIES	(7 << CARL9170_TX_STATUS_TRIES_S)
 #define	CARL9170_TX_STATUS_SUCCESS	0x80
 
-#ifdef __CARL9170FW__
 /*
  * NOTE:
  * Both structs [carl9170_tx_status and _carl9170_tx_status]
@@ -251,8 +232,6 @@ struct carl9170_tx_status {
 	u8 tries:3;
 	u8 success:1;
 } __packed;
-#endif /* __CARL9170FW__ */
-
 struct _carl9170_tx_status {
 	/*
 	 * This version should be immune to all alignment bugs.
@@ -293,15 +272,13 @@ struct carl9170_rsp {
 		struct carl9170_rf_init_result	rf_init_res;
 		struct carl9170_u32_list	rreg_res;
 		struct carl9170_u32_list	echo;
-#ifdef __CARL9170FW__
 		struct carl9170_tx_status	tx_status[0];
-#endif /* __CARL9170FW__ */
 		struct _carl9170_tx_status	_tx_status[0];
 		struct carl9170_gpio		gpio;
 		struct carl9170_tsf_rsp		tsf;
 		struct carl9170_psm		psm;
 		u8 data[CARL9170_MAX_CMD_PAYLOAD_LEN];
 	} __packed;
-} __packed __aligned(4);
+} __packed;
 
 #endif /* __CARL9170_SHARED_FWCMD_H */

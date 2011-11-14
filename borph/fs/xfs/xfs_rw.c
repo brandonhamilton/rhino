@@ -49,9 +49,9 @@ xfs_do_force_shutdown(
 	logerror = flags & SHUTDOWN_LOG_IO_ERROR;
 
 	if (!(flags & SHUTDOWN_FORCE_UMOUNT)) {
-		xfs_notice(mp,
-	"%s(0x%x) called from line %d of file %s.  Return address = 0x%p",
-			__func__, flags, lnnum, fname, __return_address);
+		cmn_err(CE_NOTE, "xfs_force_shutdown(%s,0x%x) called from "
+				 "line %d of file %s.  Return address = 0x%p",
+			mp->m_fsname, flags, lnnum, fname, __return_address);
 	}
 	/*
 	 * No need to duplicate efforts.
@@ -69,25 +69,30 @@ xfs_do_force_shutdown(
 		return;
 
 	if (flags & SHUTDOWN_CORRUPT_INCORE) {
-		xfs_alert_tag(mp, XFS_PTAG_SHUTDOWN_CORRUPT,
-    "Corruption of in-memory data detected.  Shutting down filesystem");
-		if (XFS_ERRLEVEL_HIGH <= xfs_error_level)
+		xfs_cmn_err(XFS_PTAG_SHUTDOWN_CORRUPT, CE_ALERT, mp,
+    "Corruption of in-memory data detected.  Shutting down filesystem: %s",
+			mp->m_fsname);
+		if (XFS_ERRLEVEL_HIGH <= xfs_error_level) {
 			xfs_stack_trace();
+		}
 	} else if (!(flags & SHUTDOWN_FORCE_UMOUNT)) {
 		if (logerror) {
-			xfs_alert_tag(mp, XFS_PTAG_SHUTDOWN_LOGERROR,
-		"Log I/O Error Detected.  Shutting down filesystem");
+			xfs_cmn_err(XFS_PTAG_SHUTDOWN_LOGERROR, CE_ALERT, mp,
+		"Log I/O Error Detected.  Shutting down filesystem: %s",
+				mp->m_fsname);
 		} else if (flags & SHUTDOWN_DEVICE_REQ) {
-			xfs_alert_tag(mp, XFS_PTAG_SHUTDOWN_IOERROR,
-		"All device paths lost.  Shutting down filesystem");
+			xfs_cmn_err(XFS_PTAG_SHUTDOWN_IOERROR, CE_ALERT, mp,
+		"All device paths lost.  Shutting down filesystem: %s",
+				mp->m_fsname);
 		} else if (!(flags & SHUTDOWN_REMOTE_REQ)) {
-			xfs_alert_tag(mp, XFS_PTAG_SHUTDOWN_IOERROR,
-		"I/O Error Detected. Shutting down filesystem");
+			xfs_cmn_err(XFS_PTAG_SHUTDOWN_IOERROR, CE_ALERT, mp,
+		"I/O Error Detected.  Shutting down filesystem: %s",
+				mp->m_fsname);
 		}
 	}
 	if (!(flags & SHUTDOWN_FORCE_UMOUNT)) {
-		xfs_alert(mp,
-	"Please umount the filesystem and rectify the problem(s)");
+		cmn_err(CE_ALERT, "Please umount the filesystem, "
+				  "and rectify the problem(s)");
 	}
 }
 
@@ -101,9 +106,10 @@ xfs_ioerror_alert(
 	xfs_buf_t		*bp,
 	xfs_daddr_t		blkno)
 {
-	xfs_alert(mp,
-		 "I/O error occurred: meta-data dev %s block 0x%llx"
-		 "       (\"%s\") error %d buf count %zd",
+	cmn_err(CE_ALERT,
+ "I/O error in filesystem (\"%s\") meta-data dev %s block 0x%llx"
+ "       (\"%s\") error %d buf count %zd",
+		(!mp || !mp->m_fsname) ? "(fs name not set)" : mp->m_fsname,
 		XFS_BUFTARG_NAME(XFS_BUF_TARGET(bp)),
 		(__uint64_t)blkno, func,
 		XFS_BUF_GETERROR(bp), XFS_BUF_COUNT(bp));
@@ -167,9 +173,17 @@ xfs_extlen_t
 xfs_get_extsz_hint(
 	struct xfs_inode	*ip)
 {
-	if ((ip->i_d.di_flags & XFS_DIFLAG_EXTSIZE) && ip->i_d.di_extsize)
-		return ip->i_d.di_extsize;
-	if (XFS_IS_REALTIME_INODE(ip))
-		return ip->i_mount->m_sb.sb_rextsize;
-	return 0;
+	xfs_extlen_t		extsz;
+
+	if (unlikely(XFS_IS_REALTIME_INODE(ip))) {
+		extsz = (ip->i_d.di_flags & XFS_DIFLAG_EXTSIZE)
+				? ip->i_d.di_extsize
+				: ip->i_mount->m_sb.sb_rextsize;
+		ASSERT(extsz);
+	} else {
+		extsz = (ip->i_d.di_flags & XFS_DIFLAG_EXTSIZE)
+				? ip->i_d.di_extsize : 0;
+	}
+
+	return extsz;
 }

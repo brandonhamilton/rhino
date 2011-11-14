@@ -312,6 +312,7 @@ static struct scsi_host_template rdc_sht = {
 static int __devinit rdc_init_one(struct pci_dev *pdev,
 				   const struct pci_device_id *ent)
 {
+	static int printed_version;
 	struct device *dev = &pdev->dev;
 	struct ata_port_info port_info[2];
 	const struct ata_port_info *ppi[] = { &port_info[0], &port_info[1] };
@@ -320,7 +321,9 @@ static int __devinit rdc_init_one(struct pci_dev *pdev,
 	struct rdc_host_priv *hpriv;
 	int rc;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev,
+			   "version " DRV_VERSION "\n");
 
 	port_info[0] = rdc_port_info;
 	port_info[1] = rdc_port_info;

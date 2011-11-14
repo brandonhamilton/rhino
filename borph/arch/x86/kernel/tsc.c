@@ -5,6 +5,7 @@
 #include <linux/timer.h>
 #include <linux/acpi_pmtmr.h>
 #include <linux/cpufreq.h>
+#include <linux/dmi.h>
 #include <linux/delay.h>
 #include <linux/clocksource.h>
 #include <linux/percpu.h>
@@ -426,7 +427,7 @@ unsigned long native_calibrate_tsc(void)
 	 * the delta to the previous read. We keep track of the min
 	 * and max values of that delta. The delta is mostly defined
 	 * by the IO time of the PIT access, so we can detect when a
-	 * SMI/SMM disturbance happened between the two reads. If the
+	 * SMI/SMM disturbance happend between the two reads. If the
 	 * maximum time is significantly larger than the minimum time,
 	 * then we discard the result and have another try.
 	 *
@@ -463,7 +464,7 @@ unsigned long native_calibrate_tsc(void)
 		tsc_pit_min = min(tsc_pit_min, tsc_pit_khz);
 
 		/* hpet or pmtimer available ? */
-		if (ref1 == ref2)
+		if (!hpet && !ref1 && !ref2)
 			continue;
 
 		/* Check, whether the sampling was disturbed by an SMI */
@@ -658,7 +659,7 @@ void restore_sched_clock_state(void)
 
 	local_irq_save(flags);
 
-	__this_cpu_write(cyc2ns_offset, 0);
+	__get_cpu_var(cyc2ns_offset) = 0;
 	offset = cyc2ns_suspend - sched_clock();
 
 	for_each_possible_cpu(cpu)
@@ -762,6 +763,25 @@ static cycle_t read_tsc(struct clocksource *cs)
 		ret : clocksource_tsc.cycle_last;
 }
 
+#ifdef CONFIG_X86_64
+static cycle_t __vsyscall_fn vread_tsc(void)
+{
+	cycle_t ret;
+
+	/*
+	 * Surround the RDTSC by barriers, to make sure it's not
+	 * speculated to outside the seqlock critical section and
+	 * does not cause time warps:
+	 */
+	rdtsc_barrier();
+	ret = (cycle_t)vget_cycles();
+	rdtsc_barrier();
+
+	return ret >= __vsyscall_gtod_data.clock.cycle_last ?
+		ret : __vsyscall_gtod_data.clock.cycle_last;
+}
+#endif
+
 static void resume_tsc(struct clocksource *cs)
 {
 	clocksource_tsc.cycle_last = 0;
@@ -776,7 +796,7 @@ static struct clocksource clocksource_tsc = {
 	.flags                  = CLOCK_SOURCE_IS_CONTINUOUS |
 				  CLOCK_SOURCE_MUST_VERIFY,
 #ifdef CONFIG_X86_64
-	.archdata               = { .vclock_mode = VCLOCK_TSC },
+	.vread                  = vread_tsc,
 #endif
 };
 
@@ -798,6 +818,27 @@ void mark_tsc_unstable(char *reason)
 }
 
 EXPORT_SYMBOL_GPL(mark_tsc_unstable);
+
+static int __init dmi_mark_tsc_unstable(const struct dmi_system_id *d)
+{
+	printk(KERN_NOTICE "%s detected: marking TSC unstable.\n",
+			d->ident);
+	tsc_unstable = 1;
+	return 0;
+}
+
+/* List of systems that have known TSC problems */
+static struct dmi_system_id __initdata bad_tsc_dmi_table[] = {
+	{
+		.callback = dmi_mark_tsc_unstable,
+		.ident = "IBM Thinkpad 380XD",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
+			DMI_MATCH(DMI_BOARD_NAME, "2635FA0"),
+		},
+	},
+	{}
+};
 
 static void __init check_system_tsc_reliable(void)
 {
@@ -831,9 +872,6 @@ __cpuinit int unsynchronized_tsc(void)
 
 	if (boot_cpu_has(X86_FEATURE_CONSTANT_TSC))
 		return 0;
-
-	if (tsc_clocksource_reliable)
-		return 0;
 	/*
 	 * Intel systems are normally all synchronized.
 	 * Exceptions must mark TSC as unstable:
@@ -841,92 +879,14 @@ __cpuinit int unsynchronized_tsc(void)
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL) {
 		/* assume multi socket systems are not synchronized: */
 		if (num_possible_cpus() > 1)
-			return 1;
+			tsc_unstable = 1;
 	}
 
-	return 0;
+	return tsc_unstable;
 }
 
-
-static void tsc_refine_calibration_work(struct work_struct *work);
-static DECLARE_DELAYED_WORK(tsc_irqwork, tsc_refine_calibration_work);
-/**
- * tsc_refine_calibration_work - Further refine tsc freq calibration
- * @work - ignored.
- *
- * This functions uses delayed work over a period of a
- * second to further refine the TSC freq value. Since this is
- * timer based, instead of loop based, we don't block the boot
- * process while this longer calibration is done.
- *
- * If there are any calibration anomalies (too many SMIs, etc),
- * or the refined calibration is off by 1% of the fast early
- * calibration, we throw out the new calibration and use the
- * early calibration.
- */
-static void tsc_refine_calibration_work(struct work_struct *work)
+static void __init init_tsc_clocksource(void)
 {
-	static u64 tsc_start = -1, ref_start;
-	static int hpet;
-	u64 tsc_stop, ref_stop, delta;
-	unsigned long freq;
-
-	/* Don't bother refining TSC on unstable systems */
-	if (check_tsc_unstable())
-		goto out;
-
-	/*
-	 * Since the work is started early in boot, we may be
-	 * delayed the first time we expire. So set the workqueue
-	 * again once we know timers are working.
-	 */
-	if (tsc_start == -1) {
-		/*
-		 * Only set hpet once, to avoid mixing hardware
-		 * if the hpet becomes enabled later.
-		 */
-		hpet = is_hpet_enabled();
-		schedule_delayed_work(&tsc_irqwork, HZ);
-		tsc_start = tsc_read_refs(&ref_start, hpet);
-		return;
-	}
-
-	tsc_stop = tsc_read_refs(&ref_stop, hpet);
-
-	/* hpet or pmtimer available ? */
-	if (ref_start == ref_stop)
-		goto out;
-
-	/* Check, whether the sampling was disturbed by an SMI */
-	if (tsc_start == ULLONG_MAX || tsc_stop == ULLONG_MAX)
-		goto out;
-
-	delta = tsc_stop - tsc_start;
-	delta *= 1000000LL;
-	if (hpet)
-		freq = calc_hpet_ref(delta, ref_start, ref_stop);
-	else
-		freq = calc_pmtimer_ref(delta, ref_start, ref_stop);
-
-	/* Make sure we're within 1% */
-	if (abs(tsc_khz - freq) > tsc_khz/100)
-		goto out;
-
-	tsc_khz = freq;
-	printk(KERN_INFO "Refined TSC clocksource calibration: "
-		"%lu.%03lu MHz.\n", (unsigned long)tsc_khz / 1000,
-					(unsigned long)tsc_khz % 1000);
-
-out:
-	clocksource_register_khz(&clocksource_tsc, tsc_khz);
-}
-
-
-static int __init init_tsc_clocksource(void)
-{
-	if (!cpu_has_tsc || tsc_disabled > 0 || !tsc_khz)
-		return 0;
-
 	if (tsc_clocksource_reliable)
 		clocksource_tsc.flags &= ~CLOCK_SOURCE_MUST_VERIFY;
 	/* lower the rating if we already know its unstable: */
@@ -934,14 +894,8 @@ static int __init init_tsc_clocksource(void)
 		clocksource_tsc.rating = 0;
 		clocksource_tsc.flags &= ~CLOCK_SOURCE_IS_CONTINUOUS;
 	}
-	schedule_delayed_work(&tsc_irqwork, 0);
-	return 0;
+	clocksource_register_khz(&clocksource_tsc, tsc_khz);
 }
-/*
- * We use device_initcall here, to ensure we run after the hpet
- * is fully initialized, which may occur at fs_initcall time.
- */
-device_initcall(init_tsc_clocksource);
 
 void __init tsc_init(void)
 {
@@ -988,10 +942,13 @@ void __init tsc_init(void)
 	lpj_fine = lpj;
 
 	use_tsc_delay();
+	/* Check and install the TSC clocksource */
+	dmi_check_system(bad_tsc_dmi_table);
 
 	if (unsynchronized_tsc())
 		mark_tsc_unstable("TSCs unsynchronized");
 
 	check_system_tsc_reliable();
+	init_tsc_clocksource();
 }
 

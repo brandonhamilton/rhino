@@ -322,9 +322,14 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 		kfree(evt);
 	}
 
-	blk_put_queue(sdev->request_queue);
-	/* NULL queue means the device can't be used */
-	sdev->request_queue = NULL;
+	if (sdev->request_queue) {
+		sdev->request_queue->queuedata = NULL;
+		/* user context needed to free queue */
+		scsi_free_queue(sdev->request_queue);
+		/* temporary expedient, try to catch use of queue lock
+		 * after free of sdev */
+		sdev->request_queue = NULL;
+	}
 
 	scsi_target_reap(scsi_target(sdev));
 
@@ -378,7 +383,7 @@ struct bus_type scsi_bus_type = {
         .name		= "scsi",
         .match		= scsi_bus_match,
 	.uevent		= scsi_bus_uevent,
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_OPS
 	.pm		= &scsi_bus_pm_ops,
 #endif
 };
@@ -859,15 +864,13 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 
 	error = device_add(&sdev->sdev_gendev);
 	if (error) {
-		sdev_printk(KERN_INFO, sdev,
-				"failed to add device: %d\n", error);
+		printk(KERN_INFO "error 1\n");
 		return error;
 	}
 	device_enable_async_suspend(&sdev->sdev_dev);
 	error = device_add(&sdev->sdev_dev);
 	if (error) {
-		sdev_printk(KERN_INFO, sdev,
-				"failed to add class device: %d\n", error);
+		printk(KERN_INFO "error 2\n");
 		device_del(&sdev->sdev_gendev);
 		return error;
 	}
@@ -932,12 +935,6 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	if (sdev->host->hostt->slave_destroy)
 		sdev->host->hostt->slave_destroy(sdev);
 	transport_destroy_device(dev);
-
-	/* cause the request function to reject all I/O requests */
-	sdev->request_queue->queuedata = NULL;
-
-	/* Freeing the queue signals to block that we're done */
-	scsi_free_queue(sdev->request_queue);
 	put_device(dev);
 }
 
@@ -996,14 +993,16 @@ static int __remove_child (struct device * dev, void * data)
  */
 void scsi_remove_target(struct device *dev)
 {
+	struct device *rdev;
+
 	if (scsi_is_target_device(dev)) {
 		__scsi_remove_target(to_scsi_target(dev));
 		return;
 	}
 
-	get_device(dev);
+	rdev = get_device(dev);
 	device_for_each_child(dev, NULL, __remove_child);
-	put_device(dev);
+	put_device(rdev);
 }
 EXPORT_SYMBOL(scsi_remove_target);
 

@@ -1,3 +1,4 @@
+#ifdef ENABLE_DOT11D
 //-----------------------------------------------------------------------------
 //	File:
 //		Dot11d.c
@@ -219,3 +220,4 @@ EXPORT_SYMBOL(DOT11D_ScanComplete);
 EXPORT_SYMBOL(IsLegalChannel);
 EXPORT_SYMBOL(ToLegalChannel);
 
+#endif

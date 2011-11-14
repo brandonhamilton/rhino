@@ -16,14 +16,13 @@
     along with this program; if not, write to the Free Software
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-Extended Message Function With Response Caching
+Extended Message Function With Response Cacheing
 
 (C) Copyright AudioScience Inc. 2002
 *****************************************************************************/
 #define SOURCEFILE_NAME "hpimsgx.c"
 #include "hpi_internal.h"
 #include "hpimsginit.h"
-#include "hpicmn.h"
 #include "hpimsgx.h"
 #include "hpidebug.h"
 
@@ -43,24 +42,22 @@ static hpi_handler_func *hpi_lookup_entry_point_function(const struct hpi_pci
 
 	for (i = 0; asihpi_pci_tbl[i].vendor != 0; i++) {
 		if (asihpi_pci_tbl[i].vendor != PCI_ANY_ID
-			&& asihpi_pci_tbl[i].vendor !=
-			pci_info->pci_dev->vendor)
+			&& asihpi_pci_tbl[i].vendor != pci_info->vendor_id)
 			continue;
 		if (asihpi_pci_tbl[i].device != PCI_ANY_ID
-			&& asihpi_pci_tbl[i].device !=
-			pci_info->pci_dev->device)
+			&& asihpi_pci_tbl[i].device != pci_info->device_id)
 			continue;
 		if (asihpi_pci_tbl[i].subvendor != PCI_ANY_ID
 			&& asihpi_pci_tbl[i].subvendor !=
-			pci_info->pci_dev->subsystem_vendor)
+			pci_info->subsys_vendor_id)
 			continue;
 		if (asihpi_pci_tbl[i].subdevice != PCI_ANY_ID
 			&& asihpi_pci_tbl[i].subdevice !=
-			pci_info->pci_dev->subsystem_device)
+			pci_info->subsys_device_id)
 			continue;
 
-		/* HPI_DEBUG_LOG(DEBUG, " %x,%lx\n", i,
-		   asihpi_pci_tbl[i].driver_data); */
+		HPI_DEBUG_LOG(DEBUG, " %x,%lu\n", i,
+			asihpi_pci_tbl[i].driver_data);
 		return (hpi_handler_func *) asihpi_pci_tbl[i].driver_data;
 	}
 
@@ -70,12 +67,21 @@ static hpi_handler_func *hpi_lookup_entry_point_function(const struct hpi_pci
 static inline void hw_entry_point(struct hpi_message *phm,
 	struct hpi_response *phr)
 {
-	if ((phm->adapter_index < HPI_MAX_ADAPTERS)
-		&& hpi_entry_points[phm->adapter_index])
-		hpi_entry_points[phm->adapter_index] (phm, phr);
-	else
-		hpi_init_response(phr, phm->object, phm->function,
-			HPI_ERROR_PROCESSING_MESSAGE);
+
+	hpi_handler_func *ep;
+
+	if (phm->adapter_index < HPI_MAX_ADAPTERS) {
+		ep = (hpi_handler_func *) hpi_entry_points[phm->
+			adapter_index];
+		if (ep) {
+			HPI_DEBUG_MESSAGE(DEBUG, phm);
+			ep(phm, phr);
+			HPI_DEBUG_RESPONSE(phr);
+			return;
+		}
+	}
+	hpi_init_response(phr, phm->object, phm->function,
+		HPI_ERROR_PROCESSING_MESSAGE);
 }
 
 static void adapter_open(struct hpi_message *phm, struct hpi_response *phr);
@@ -94,7 +100,6 @@ static void instream_close(struct hpi_message *phm, struct hpi_response *phr,
 	void *h_owner);
 
 static void HPIMSGX__reset(u16 adapter_index);
-
 static u16 HPIMSGX__init(struct hpi_message *phm, struct hpi_response *phr);
 static void HPIMSGX__cleanup(u16 adapter_index, void *h_owner);
 
@@ -148,6 +153,8 @@ static struct hpi_stream_response
 
 static struct hpi_mixer_response rESP_HPI_MIXER_OPEN[HPI_MAX_ADAPTERS];
 
+static struct hpi_subsys_response gRESP_HPI_SUBSYS_FIND_ADAPTERS;
+
 static struct adapter_info aDAPTER_INFO[HPI_MAX_ADAPTERS];
 
 /* use these to keep track of opens from user mode apps/DLLs */
@@ -160,11 +167,6 @@ static struct asi_open_state
 static void subsys_message(struct hpi_message *phm, struct hpi_response *phr,
 	void *h_owner)
 {
-	if (phm->adapter_index != HPI_ADAPTER_INDEX_INVALID)
-		HPI_DEBUG_LOG(WARNING,
-			"suspicious adapter index %d in subsys message 0x%x.\n",
-			phm->adapter_index, phm->function);
-
 	switch (phm->function) {
 	case HPI_SUBSYS_GET_VERSION:
 		hpi_init_response(phr, HPI_OBJ_SUBSYSTEM,
@@ -186,6 +188,7 @@ static void subsys_message(struct hpi_message *phm, struct hpi_response *phr,
 		/* Initialize this module's internal state */
 		hpios_msgxlock_init(&msgx_lock);
 		memset(&hpi_entry_points, 0, sizeof(hpi_entry_points));
+		hpios_locked_mem_init();
 		/* Init subsys_findadapters response to no-adapters */
 		HPIMSGX__reset(HPIMSGX_ALLADAPTERS);
 		hpi_init_response(phr, HPI_OBJ_SUBSYSTEM,
@@ -196,23 +199,90 @@ static void subsys_message(struct hpi_message *phm, struct hpi_response *phr,
 	case HPI_SUBSYS_DRIVER_UNLOAD:
 		HPI_COMMON(phm, phr);
 		HPIMSGX__cleanup(HPIMSGX_ALLADAPTERS, h_owner);
+		hpios_locked_mem_free_all();
 		hpi_init_response(phr, HPI_OBJ_SUBSYSTEM,
 			HPI_SUBSYS_DRIVER_UNLOAD, 0);
 		return;
 
-	case HPI_SUBSYS_GET_NUM_ADAPTERS:
-	case HPI_SUBSYS_GET_ADAPTER:
+	case HPI_SUBSYS_GET_INFO:
 		HPI_COMMON(phm, phr);
 		break;
 
+	case HPI_SUBSYS_FIND_ADAPTERS:
+		memcpy(phr, &gRESP_HPI_SUBSYS_FIND_ADAPTERS,
+			sizeof(gRESP_HPI_SUBSYS_FIND_ADAPTERS));
+		break;
+	case HPI_SUBSYS_GET_NUM_ADAPTERS:
+		memcpy(phr, &gRESP_HPI_SUBSYS_FIND_ADAPTERS,
+			sizeof(gRESP_HPI_SUBSYS_FIND_ADAPTERS));
+		phr->function = HPI_SUBSYS_GET_NUM_ADAPTERS;
+		break;
+	case HPI_SUBSYS_GET_ADAPTER:
+		{
+			int count = phm->adapter_index;
+			int index = 0;
+			hpi_init_response(phr, HPI_OBJ_SUBSYSTEM,
+				HPI_SUBSYS_GET_ADAPTER, 0);
+
+			/* This is complicated by the fact that we want to
+			 * "skip" 0's in the adapter list.
+			 * First, make sure we are pointing to a
+			 * non-zero adapter type.
+			 */
+			while (gRESP_HPI_SUBSYS_FIND_ADAPTERS.
+				s.aw_adapter_list[index] == 0) {
+				index++;
+				if (index >= HPI_MAX_ADAPTERS)
+					break;
+			}
+			while (count) {
+				/* move on to the next adapter */
+				index++;
+				if (index >= HPI_MAX_ADAPTERS)
+					break;
+				while (gRESP_HPI_SUBSYS_FIND_ADAPTERS.
+					s.aw_adapter_list[index] == 0) {
+					index++;
+					if (index >= HPI_MAX_ADAPTERS)
+						break;
+				}
+				count--;
+			}
+
+			if (index < HPI_MAX_ADAPTERS) {
+				phr->u.s.adapter_index = (u16)index;
+				phr->u.s.aw_adapter_list[0] =
+					gRESP_HPI_SUBSYS_FIND_ADAPTERS.
+					s.aw_adapter_list[index];
+			} else {
+				phr->u.s.adapter_index = 0;
+				phr->u.s.aw_adapter_list[0] = 0;
+				phr->error = HPI_ERROR_BAD_ADAPTER_NUMBER;
+			}
+			break;
+		}
 	case HPI_SUBSYS_CREATE_ADAPTER:
 		HPIMSGX__init(phm, phr);
 		break;
-
+	case HPI_SUBSYS_DELETE_ADAPTER:
+		HPIMSGX__cleanup(phm->adapter_index, h_owner);
+		{
+			struct hpi_message hm;
+			struct hpi_response hr;
+			/* call to HPI_ADAPTER_CLOSE */
+			hpi_init_message_response(&hm, &hr, HPI_OBJ_ADAPTER,
+				HPI_ADAPTER_CLOSE);
+			hm.adapter_index = phm->adapter_index;
+			hw_entry_point(&hm, &hr);
+		}
+		hw_entry_point(phm, phr);
+		gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.
+			aw_adapter_list[phm->adapter_index]
+			= 0;
+		hpi_entry_points[phm->adapter_index] = NULL;
+		break;
 	default:
-		/* Must explicitly handle every subsys message in this switch */
-		hpi_init_response(phr, HPI_OBJ_SUBSYSTEM, phm->function,
-			HPI_ERROR_INVALID_FUNC);
+		hw_entry_point(phm, phr);
 		break;
 	}
 }
@@ -227,19 +297,6 @@ static void adapter_message(struct hpi_message *phm, struct hpi_response *phr,
 	case HPI_ADAPTER_CLOSE:
 		adapter_close(phm, phr);
 		break;
-	case HPI_ADAPTER_DELETE:
-		HPIMSGX__cleanup(phm->adapter_index, h_owner);
-		{
-			struct hpi_message hm;
-			struct hpi_response hr;
-			hpi_init_message_response(&hm, &hr, HPI_OBJ_ADAPTER,
-				HPI_ADAPTER_CLOSE);
-			hm.adapter_index = phm->adapter_index;
-			hw_entry_point(&hm, &hr);
-		}
-		hw_entry_point(phm, phr);
-		break;
-
 	default:
 		hw_entry_point(phm, phr);
 		break;
@@ -313,7 +370,7 @@ void hpi_send_recv_ex(struct hpi_message *phm, struct hpi_response *phr,
 {
 	HPI_DEBUG_MESSAGE(DEBUG, phm);
 
-	if (phm->type != HPI_TYPE_REQUEST) {
+	if (phm->type != HPI_TYPE_MESSAGE) {
 		hpi_init_response(phr, phm->object, phm->function,
 			HPI_ERROR_INVALID_TYPE);
 		return;
@@ -352,7 +409,33 @@ void hpi_send_recv_ex(struct hpi_message *phm, struct hpi_response *phr,
 		break;
 	}
 	HPI_DEBUG_RESPONSE(phr);
+#if 1
+	if (phr->error >= HPI_ERROR_BACKEND_BASE) {
+		void *ep = NULL;
+		char *ep_name;
 
+		HPI_DEBUG_MESSAGE(ERROR, phm);
+
+		if (phm->adapter_index < HPI_MAX_ADAPTERS)
+			ep = hpi_entry_points[phm->adapter_index];
+
+		/* Don't need this? Have adapter index in debug info
+		   Know at driver load time index->backend mapping */
+		if (ep == HPI_6000)
+			ep_name = "HPI_6000";
+		else if (ep == HPI_6205)
+			ep_name = "HPI_6205";
+		else
+			ep_name = "unknown";
+
+		HPI_DEBUG_LOG(ERROR, "HPI %s response - error# %d\n", ep_name,
+			phr->error);
+
+		if (hpi_debug_level >= HPI_DEBUG_LEVEL_VERBOSE)
+			hpi_debug_data((u16 *)phm,
+				sizeof(*phm) / sizeof(u16));
+	}
+#endif
 }
 
 static void adapter_open(struct hpi_message *phm, struct hpi_response *phr)
@@ -401,7 +484,7 @@ static void instream_open(struct hpi_message *phm, struct hpi_response *phr,
 	else {
 		instream_user_open[phm->adapter_index][phm->
 			obj_index].open_flag = 1;
-		hpios_msgxlock_unlock(&msgx_lock);
+		hpios_msgxlock_un_lock(&msgx_lock);
 
 		/* issue a reset */
 		hpi_init_message_response(&hm, &hr, HPI_OBJ_ISTREAM,
@@ -426,7 +509,7 @@ static void instream_open(struct hpi_message *phm, struct hpi_response *phr,
 				sizeof(rESP_HPI_ISTREAM_OPEN[0][0]));
 		}
 	}
-	hpios_msgxlock_unlock(&msgx_lock);
+	hpios_msgxlock_un_lock(&msgx_lock);
 }
 
 static void instream_close(struct hpi_message *phm, struct hpi_response *phr,
@@ -447,7 +530,7 @@ static void instream_close(struct hpi_message *phm, struct hpi_response *phr,
 		   phm->wAdapterIndex, phm->wObjIndex, hOwner); */
 		instream_user_open[phm->adapter_index][phm->
 			obj_index].h_owner = NULL;
-		hpios_msgxlock_unlock(&msgx_lock);
+		hpios_msgxlock_un_lock(&msgx_lock);
 		/* issue a reset */
 		hpi_init_message_response(&hm, &hr, HPI_OBJ_ISTREAM,
 			HPI_ISTREAM_RESET);
@@ -473,7 +556,7 @@ static void instream_close(struct hpi_message *phm, struct hpi_response *phr,
 				obj_index].h_owner);
 		phr->error = HPI_ERROR_OBJ_NOT_OPEN;
 	}
-	hpios_msgxlock_unlock(&msgx_lock);
+	hpios_msgxlock_un_lock(&msgx_lock);
 }
 
 static void outstream_open(struct hpi_message *phm, struct hpi_response *phr,
@@ -498,7 +581,7 @@ static void outstream_open(struct hpi_message *phm, struct hpi_response *phr,
 	else {
 		outstream_user_open[phm->adapter_index][phm->
 			obj_index].open_flag = 1;
-		hpios_msgxlock_unlock(&msgx_lock);
+		hpios_msgxlock_un_lock(&msgx_lock);
 
 		/* issue a reset */
 		hpi_init_message_response(&hm, &hr, HPI_OBJ_OSTREAM,
@@ -523,7 +606,7 @@ static void outstream_open(struct hpi_message *phm, struct hpi_response *phr,
 				sizeof(rESP_HPI_OSTREAM_OPEN[0][0]));
 		}
 	}
-	hpios_msgxlock_unlock(&msgx_lock);
+	hpios_msgxlock_un_lock(&msgx_lock);
 }
 
 static void outstream_close(struct hpi_message *phm, struct hpi_response *phr,
@@ -545,7 +628,7 @@ static void outstream_close(struct hpi_message *phm, struct hpi_response *phr,
 		   phm->wAdapterIndex, phm->wObjIndex, hOwner); */
 		outstream_user_open[phm->adapter_index][phm->
 			obj_index].h_owner = NULL;
-		hpios_msgxlock_unlock(&msgx_lock);
+		hpios_msgxlock_un_lock(&msgx_lock);
 		/* issue a reset */
 		hpi_init_message_response(&hm, &hr, HPI_OBJ_OSTREAM,
 			HPI_OSTREAM_RESET);
@@ -571,7 +654,7 @@ static void outstream_close(struct hpi_message *phm, struct hpi_response *phr,
 				obj_index].h_owner);
 		phr->error = HPI_ERROR_OBJ_NOT_OPEN;
 	}
-	hpios_msgxlock_unlock(&msgx_lock);
+	hpios_msgxlock_un_lock(&msgx_lock);
 }
 
 static u16 adapter_prepare(u16 adapter)
@@ -600,9 +683,16 @@ static u16 adapter_prepare(u16 adapter)
 	if (hr.error)
 		return hr.error;
 
-	aDAPTER_INFO[adapter].num_outstreams = hr.u.ax.info.num_outstreams;
-	aDAPTER_INFO[adapter].num_instreams = hr.u.ax.info.num_instreams;
-	aDAPTER_INFO[adapter].type = hr.u.ax.info.adapter_type;
+	aDAPTER_INFO[adapter].num_outstreams = hr.u.a.num_outstreams;
+	aDAPTER_INFO[adapter].num_instreams = hr.u.a.num_instreams;
+	aDAPTER_INFO[adapter].type = hr.u.a.adapter_type;
+
+	gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.aw_adapter_list[adapter] =
+		hr.u.a.adapter_type;
+	gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.num_adapters++;
+	if (gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.num_adapters > HPI_MAX_ADAPTERS)
+		gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.num_adapters =
+			HPI_MAX_ADAPTERS;
 
 	/* call to HPI_OSTREAM_OPEN */
 	for (i = 0; i < aDAPTER_INFO[adapter].num_outstreams; i++) {
@@ -637,7 +727,7 @@ static u16 adapter_prepare(u16 adapter)
 	memcpy(&rESP_HPI_MIXER_OPEN[adapter], &hr,
 		sizeof(rESP_HPI_MIXER_OPEN[0]));
 
-	return 0;
+	return gRESP_HPI_SUBSYS_FIND_ADAPTERS.h.error;
 }
 
 static void HPIMSGX__reset(u16 adapter_index)
@@ -647,6 +737,12 @@ static void HPIMSGX__reset(u16 adapter_index)
 	struct hpi_response hr;
 
 	if (adapter_index == HPIMSGX_ALLADAPTERS) {
+		/* reset all responses to contain errors */
+		hpi_init_response(&hr, HPI_OBJ_SUBSYSTEM,
+			HPI_SUBSYS_FIND_ADAPTERS, 0);
+		memcpy(&gRESP_HPI_SUBSYS_FIND_ADAPTERS, &hr,
+			sizeof(gRESP_HPI_SUBSYS_FIND_ADAPTERS));
+
 		for (adapter = 0; adapter < HPI_MAX_ADAPTERS; adapter++) {
 
 			hpi_init_response(&hr, HPI_OBJ_ADAPTER,
@@ -687,6 +783,12 @@ static void HPIMSGX__reset(u16 adapter_index)
 			rESP_HPI_ISTREAM_OPEN[adapter_index][i].h.error =
 				HPI_ERROR_INVALID_OBJ;
 		}
+		if (gRESP_HPI_SUBSYS_FIND_ADAPTERS.
+			s.aw_adapter_list[adapter_index]) {
+			gRESP_HPI_SUBSYS_FIND_ADAPTERS.
+				s.aw_adapter_list[adapter_index] = 0;
+			gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.num_adapters--;
+		}
 	}
 }
 
@@ -700,9 +802,15 @@ static u16 HPIMSGX__init(struct hpi_message *phm,
 	hpi_handler_func *entry_point_func;
 	struct hpi_response hr;
 
+	if (gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.num_adapters >= HPI_MAX_ADAPTERS)
+		return HPI_ERROR_BAD_ADAPTER_NUMBER;
+
 	/* Init response here so we can pass in previous adapter list */
 	hpi_init_response(&hr, phm->object, phm->function,
 		HPI_ERROR_INVALID_OBJ);
+	memcpy(hr.u.s.aw_adapter_list,
+		gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.aw_adapter_list,
+		sizeof(gRESP_HPI_SUBSYS_FIND_ADAPTERS.s.aw_adapter_list));
 
 	entry_point_func =
 		hpi_lookup_entry_point_function(phm->u.s.resource.r.pci);
@@ -715,7 +823,7 @@ static u16 HPIMSGX__init(struct hpi_message *phm,
 		return phr->error;
 	}
 	if (hr.error == 0) {
-		/* the adapter was created successfully
+		/* the adapter was created succesfully
 		   save the mapping for future use */
 		hpi_entry_points[hr.u.s.adapter_index] = entry_point_func;
 		/* prepare adapter (pre-open streams etc.) */
@@ -752,7 +860,7 @@ static void HPIMSGX__cleanup(u16 adapter_index, void *h_owner)
 				struct hpi_response hr;
 
 				HPI_DEBUG_LOG(DEBUG,
-					"Close adapter %d ostream %d\n",
+					"close adapter %d ostream %d\n",
 					adapter, i);
 
 				hpi_init_message_response(&hm, &hr,
@@ -776,7 +884,7 @@ static void HPIMSGX__cleanup(u16 adapter_index, void *h_owner)
 				struct hpi_response hr;
 
 				HPI_DEBUG_LOG(DEBUG,
-					"Close adapter %d istream %d\n",
+					"close adapter %d istream %d\n",
 					adapter, i);
 
 				hpi_init_message_response(&hm, &hr,

@@ -34,7 +34,6 @@
 #include <linux/ip.h>
 #include <linux/string.h>
 #include <linux/prefetch.h>
-#include <linux/ratelimit.h>
 #include <linux/smp.h>
 #include <net/dst.h>
 #ifdef CONFIG_XFRM
@@ -42,7 +41,7 @@
 #include <net/xfrm.h>
 #endif /* CONFIG_XFRM */
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <asm/octeon/octeon.h>
 
@@ -187,13 +186,13 @@ static inline int cvm_oct_check_rcv_error(cvmx_wqe_t *work)
 
 			if (*ptr == 0xd5) {
 				/*
-				  printk_ratelimited("Port %d received 0xd5 preamble\n", work->ipprt);
+				   DEBUGPRINT("Port %d received 0xd5 preamble\n", work->ipprt);
 				 */
 				work->packet_ptr.s.addr += i + 1;
 				work->len -= i + 5;
 			} else if ((*ptr & 0xf) == 0xd) {
 				/*
-				  printk_ratelimited("Port %d received 0x?d preamble\n", work->ipprt);
+				   DEBUGPRINT("Port %d received 0x?d preamble\n", work->ipprt);
 				 */
 				work->packet_ptr.s.addr += i;
 				work->len -= i + 4;
@@ -204,9 +203,9 @@ static inline int cvm_oct_check_rcv_error(cvmx_wqe_t *work)
 					ptr++;
 				}
 			} else {
-				printk_ratelimited("Port %d unknown preamble, packet "
-						   "dropped\n",
-						   work->ipprt);
+				DEBUGPRINT("Port %d unknown preamble, packet "
+					   "dropped\n",
+				     work->ipprt);
 				/*
 				   cvmx_helper_dump_packet(work);
 				 */
@@ -215,8 +214,8 @@ static inline int cvm_oct_check_rcv_error(cvmx_wqe_t *work)
 			}
 		}
 	} else {
-		printk_ratelimited("Port %d receive error code %d, packet dropped\n",
-				   work->ipprt, work->word2.snoip.err_code);
+		DEBUGPRINT("Port %d receive error code %d, packet dropped\n",
+			   work->ipprt, work->word2.snoip.err_code);
 		cvm_oct_free_work(work);
 		return 1;
 	}
@@ -335,9 +334,8 @@ static int cvm_oct_napi_poll(struct napi_struct *napi, int budget)
 			 */
 			skb = dev_alloc_skb(work->len);
 			if (!skb) {
-				printk_ratelimited("Port %d failed to allocate "
-						   "skbuff, packet dropped\n",
-						   work->ipprt);
+				DEBUGPRINT("Port %d failed to allocate skbuff, packet dropped\n",
+					   work->ipprt);
 				cvm_oct_free_work(work);
 				continue;
 			}
@@ -431,7 +429,7 @@ static int cvm_oct_napi_poll(struct napi_struct *napi, int budget)
 			} else {
 				/* Drop any packet received for a device that isn't up */
 				/*
-				  printk_ratelimited("%s: Device not up, packet dropped\n",
+				DEBUGPRINT("%s: Device not up, packet dropped\n",
 					   dev->name);
 				*/
 #ifdef CONFIG_64BIT
@@ -446,7 +444,7 @@ static int cvm_oct_napi_poll(struct napi_struct *napi, int budget)
 			 * Drop any packet received for a device that
 			 * doesn't exist.
 			 */
-			printk_ratelimited("Port %d not controlled by Linux, packet dropped\n",
+			DEBUGPRINT("Port %d not controlled by Linux, packet dropped\n",
 				   work->ipprt);
 			dev_kfree_skb_irq(skb);
 		}

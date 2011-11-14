@@ -40,10 +40,11 @@
 #include <asm/system.h>
 
 #define user_mode(regs)			(((regs)->sr & 0x40000000)==0)
-#define kernel_stack_pointer(_regs)	((unsigned long)(_regs)->regs[15])
+#define user_stack_pointer(regs)	((unsigned long)(regs)->regs[15])
+#define kernel_stack_pointer(regs)	((unsigned long)(regs)->regs[15])
+#define instruction_pointer(regs)	((unsigned long)(regs)->pc)
 
-#define GET_FP(regs)	((regs)->regs[14])
-#define GET_USP(regs)	((regs)->regs[15])
+extern void show_regs(struct pt_regs *);
 
 #define arch_has_single_step()	(1)
 
@@ -131,16 +132,13 @@ extern void ptrace_triggered(struct perf_event *bp, int nmi,
 
 static inline unsigned long profile_pc(struct pt_regs *regs)
 {
-	unsigned long pc = regs->pc;
+	unsigned long pc = instruction_pointer(regs);
 
 	if (virt_addr_uncached(pc))
 		return CAC_ADDR(pc);
 
 	return pc;
 }
-#define profile_pc profile_pc
-
-#include <asm-generic/ptrace.h>
 #endif /* __KERNEL__ */
 
 #endif /* __ASM_SH_PTRACE_H */

@@ -21,7 +21,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <linux/usb.h>
@@ -329,13 +328,13 @@ int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	static const char ifname[] = "usbpn%d";
 	const struct usb_cdc_union_desc *union_header = NULL;
+	const struct usb_cdc_header_desc *phonet_header = NULL;
 	const struct usb_host_interface *data_desc;
 	struct usb_interface *data_intf;
 	struct usb_device *usbdev = interface_to_usbdev(intf);
 	struct net_device *dev;
 	struct usbpn_dev *pnd;
 	u8 *data;
-	int phonet = 0;
 	int len, err;
 
 	data = intf->altsetting->extra;
@@ -356,7 +355,10 @@ int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
 					(struct usb_cdc_union_desc *)data;
 				break;
 			case 0xAB:
-				phonet = 1;
+				if (phonet_header || dlen < 5)
+					break;
+				phonet_header =
+					(struct usb_cdc_header_desc *)data;
 				break;
 			}
 		}
@@ -364,7 +366,7 @@ int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		len -= dlen;
 	}
 
-	if (!union_header || !phonet)
+	if (!union_header || !phonet_header)
 		return -EINVAL;
 
 	data_intf = usb_ifnum_to_if(usbdev, union_header->bSlaveInterface0);
@@ -390,6 +392,7 @@ int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *id)
 
 	pnd = netdev_priv(dev);
 	SET_NETDEV_DEV(dev, &intf->dev);
+	netif_stop_queue(dev);
 
 	pnd->dev = dev;
 	pnd->usb = usb_get_dev(usbdev);

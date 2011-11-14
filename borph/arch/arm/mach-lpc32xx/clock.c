@@ -90,9 +90,10 @@
 #include <linux/clk.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
-#include <linux/clkdev.h>
 
 #include <mach/hardware.h>
+#include <asm/clkdev.h>
+#include <mach/clkdev.h>
 #include <mach/platform.h>
 #include "clock.h"
 #include "common.h"
@@ -1077,7 +1078,7 @@ static struct clk_lookup lookups[] = {
 	_REGISTER_CLOCK("lpc32xx-nand.0", "nand_ck", clk_nand)
 	_REGISTER_CLOCK("tbd", "i2s0_ck", clk_i2s0)
 	_REGISTER_CLOCK("tbd", "i2s1_ck", clk_i2s1)
-	_REGISTER_CLOCK("ts-lpc32xx", NULL, clk_tsc)
+	_REGISTER_CLOCK("lpc32xx-ts", NULL, clk_tsc)
 	_REGISTER_CLOCK("dev:mmc0", "MCLK", clk_mmc)
 	_REGISTER_CLOCK("lpc-net.0", NULL, clk_net)
 	_REGISTER_CLOCK("dev:clcd", NULL, clk_lcd)

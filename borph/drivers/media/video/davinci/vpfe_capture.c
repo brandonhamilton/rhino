@@ -1276,7 +1276,7 @@ static int vpfe_videobuf_prepare(struct videobuf_queue *vq,
 		vb->size = vpfe_dev->fmt.fmt.pix.sizeimage;
 		vb->field = field;
 
-		ret = videobuf_iolock(vq, vb, NULL);
+		ret = videobuf_iolock(vq, vb, NULL);;
 		if (ret < 0)
 			return ret;
 
@@ -1314,17 +1314,9 @@ static void vpfe_videobuf_release(struct videobuf_queue *vq,
 {
 	struct vpfe_fh *fh = vq->priv_data;
 	struct vpfe_device *vpfe_dev = fh->vpfe_dev;
-	unsigned long flags;
 
 	v4l2_dbg(1, debug, &vpfe_dev->v4l2_dev, "vpfe_videobuf_release\n");
 
-	/*
-	 * We need to flush the buffer from the dma queue since
-	 * they are de-allocated
-	 */
-	spin_lock_irqsave(&vpfe_dev->dma_queue_lock, flags);
-	INIT_LIST_HEAD(&vpfe_dev->dma_queue);
-	spin_unlock_irqrestore(&vpfe_dev->dma_queue_lock, flags);
 	videobuf_dma_contig_free(vq, vb);
 	vb->state = VIDEOBUF_NEEDS_INIT;
 }
@@ -1691,7 +1683,7 @@ static int vpfe_s_crop(struct file *file, void *priv,
 		goto unlock_out;
 	}
 
-	/* adjust the width to 16 pixel boundary */
+	/* adjust the width to 16 pixel boundry */
 	crop->c.width = ((crop->c.width + 15) & ~0xf);
 
 	/* make sure parameters are valid */
@@ -1719,7 +1711,7 @@ unlock_out:
 
 
 static long vpfe_param_handler(struct file *file, void *priv,
-		bool valid_prio, int cmd, void *param)
+		int cmd, void *param)
 {
 	struct vpfe_device *vpfe_dev = video_drvdata(file);
 	int ret = 0;
@@ -1987,7 +1979,7 @@ static __init int vpfe_probe(struct platform_device *pdev)
 			v4l2_i2c_new_subdev_board(&vpfe_dev->v4l2_dev,
 						  i2c_adap,
 						  &sdinfo->board_info,
-						  NULL);
+						  NULL, 0);
 		if (vpfe_dev->sd[i]) {
 			v4l2_info(&vpfe_dev->v4l2_dev,
 				  "v4l2 sub device %s registered\n",

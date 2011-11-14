@@ -16,8 +16,7 @@
 #define DEBUG_RANGE_CHECK 0
 
 #define DRBD_MINOR_COUNT_MIN 1
-#define DRBD_MINOR_COUNT_MAX 256
-#define DRBD_MINOR_COUNT_DEF 32
+#define DRBD_MINOR_COUNT_MAX 255
 
 #define DRBD_DIALOG_REFRESH_MIN 0
 #define DRBD_DIALOG_REFRESH_MAX 600
@@ -43,7 +42,7 @@
 
 /* net { */
   /* timeout, unit centi seconds
-   * more than one minute timeout is not useful */
+   * more than one minute timeout is not usefull */
 #define DRBD_TIMEOUT_MIN 1
 #define DRBD_TIMEOUT_MAX 600
 #define DRBD_TIMEOUT_DEF 60       /* 6 seconds */
@@ -68,7 +67,7 @@
 #define DRBD_MAX_EPOCH_SIZE_MAX 20000
 #define DRBD_MAX_EPOCH_SIZE_DEF 2048
 
-  /* I don't think that a tcp send buffer of more than 10M is useful */
+  /* I don't think that a tcp send buffer of more than 10M is usefull */
 #define DRBD_SNDBUF_SIZE_MIN  0
 #define DRBD_SNDBUF_SIZE_MAX  (10<<20)
 #define DRBD_SNDBUF_SIZE_DEF  0
@@ -101,7 +100,7 @@
 #define DRBD_RATE_MAX (4 << 20)
 #define DRBD_RATE_DEF 250  /* kb/second */
 
-  /* less than 7 would hit performance unnecessarily.
+  /* less than 7 would hit performance unneccessarily.
    * 3833 is the largest prime that still does fit
    * into 64 sectors of activity log */
 #define DRBD_AL_EXTENTS_MIN  7
@@ -117,10 +116,10 @@
 /* drbdsetup XY resize -d Z
  * you are free to reduce the device size to nothing, if you want to.
  * the upper limit with 64bit kernel, enough ram and flexible meta data
- * is 1 PiB, currently. */
+ * is 16 TB, currently. */
 /* DRBD_MAX_SECTORS */
 #define DRBD_DISK_SIZE_SECT_MIN  0
-#define DRBD_DISK_SIZE_SECT_MAX  (1 * (2LLU << 40))
+#define DRBD_DISK_SIZE_SECT_MAX  (16 * (2LLU << 30))
 #define DRBD_DISK_SIZE_SECT_DEF  0 /* = disabled = no user size... */
 
 #define DRBD_ON_IO_ERROR_DEF EP_PASS_ON
@@ -130,7 +129,6 @@
 #define DRBD_AFTER_SB_2P_DEF ASB_DISCONNECT
 #define DRBD_RR_CONFLICT_DEF ASB_DISCONNECT
 #define DRBD_ON_NO_DATA_DEF OND_IO_ERROR
-#define DRBD_ON_CONGESTION_DEF OC_BLOCK
 
 #define DRBD_MAX_BIO_BVECS_MIN 0
 #define DRBD_MAX_BIO_BVECS_MAX 128
@@ -155,14 +153,6 @@
 #define DRBD_C_MIN_RATE_MIN     0 /* kByte/sec */
 #define DRBD_C_MIN_RATE_MAX     (4 << 20)
 #define DRBD_C_MIN_RATE_DEF     4096
-
-#define DRBD_CONG_FILL_MIN	0
-#define DRBD_CONG_FILL_MAX	(10<<21) /* 10GByte in sectors */
-#define DRBD_CONG_FILL_DEF	0
-
-#define DRBD_CONG_EXTENTS_MIN	DRBD_AL_EXTENTS_MIN
-#define DRBD_CONG_EXTENTS_MAX	DRBD_AL_EXTENTS_MAX
-#define DRBD_CONG_EXTENTS_DEF	DRBD_AL_EXTENTS_DEF
 
 #undef RANGE
 #endif

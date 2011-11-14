@@ -16,6 +16,7 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 
+#include "pm.h"
 #include "powerdomain.h"
 #include <mach/omap4-common.h>
 
@@ -65,11 +66,13 @@ static void omap4_pm_end(void)
 	return;
 }
 
-static const struct platform_suspend_ops omap_pm_ops = {
-	.begin		= omap4_pm_begin,
-	.end		= omap4_pm_end,
-	.enter		= omap4_pm_enter,
-	.valid		= suspend_valid_only_mem,
+static const struct platform_suspend_ops omap_pm_ops[] = {
+	{
+		.begin		= omap4_pm_begin,
+		.end		= omap4_pm_end,
+		.enter		= omap4_pm_enter,
+		.valid		= suspend_valid_only_mem,
+	}
 };
 #endif /* CONFIG_SUSPEND */
 
@@ -105,15 +108,15 @@ static int __init omap4_pm_init(void)
 
 	pr_err("Power Management for TI OMAP4.\n");
 
+#ifdef CONFIG_PM
 	ret = pwrdm_for_each(pwrdms_setup, NULL);
 	if (ret) {
 		pr_err("Failed to setup powerdomains\n");
 		goto err2;
 	}
+#endif
 
-#ifdef CONFIG_SUSPEND
-	suspend_set_ops(&omap_pm_ops);
-#endif /* CONFIG_SUSPEND */
+	suspend_set_ops(omap_pm_ops);
 
 err2:
 	return ret;

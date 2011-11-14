@@ -1355,7 +1355,7 @@ static int __devinit snd_rme32_create(struct rme32 * rme32)
 	}
 
 	if (request_irq(pci->irq, snd_rme32_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, rme32)) {
+			"RME32", rme32)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		return -EBUSY;
 	}
@@ -1985,7 +1985,7 @@ static void __devexit snd_rme32_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name =		KBUILD_MODNAME,
+	.name =		"RME Digi32",
 	.id_table =	snd_rme32_ids,
 	.probe =	snd_rme32_probe,
 	.remove =	__devexit_p(snd_rme32_remove),

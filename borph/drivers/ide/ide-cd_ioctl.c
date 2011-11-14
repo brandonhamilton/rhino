@@ -79,14 +79,8 @@ int ide_cdrom_drive_status(struct cdrom_device_info *cdi, int slot_nr)
 	return CDS_DRIVE_NOT_READY;
 }
 
-/*
- * ide-cd always generates media changed event if media is missing, which
- * makes it impossible to use for proper event reporting, so disk->events
- * is cleared to 0 and the following function is used only to trigger
- * revalidation and never propagated to userland.
- */
-unsigned int ide_cdrom_check_events_real(struct cdrom_device_info *cdi,
-					 unsigned int clearing, int slot_nr)
+int ide_cdrom_check_media_change_real(struct cdrom_device_info *cdi,
+				       int slot_nr)
 {
 	ide_drive_t *drive = cdi->handle;
 	int retval;
@@ -95,9 +89,9 @@ unsigned int ide_cdrom_check_events_real(struct cdrom_device_info *cdi,
 		(void) cdrom_check_status(drive, NULL);
 		retval = (drive->dev_flags & IDE_DFLAG_MEDIA_CHANGED) ? 1 : 0;
 		drive->dev_flags &= ~IDE_DFLAG_MEDIA_CHANGED;
-		return retval ? DISK_EVENT_MEDIA_CHANGE : 0;
+		return retval;
 	} else {
-		return 0;
+		return -EINVAL;
 	}
 }
 

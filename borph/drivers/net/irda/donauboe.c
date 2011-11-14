@@ -56,7 +56,7 @@
 /* do_probe module parameter Enable this code */
 /* Probe code is very useful for understanding how the hardware works */
 /* Use it with various combinations of TT_LEN, RX_LEN */
-/* Strongly recommended, disable if the probe fails on your machine */
+/* Strongly recomended, disable if the probe fails on your machine */
 /* and send me <james@fishsoup.dhs.org> the output of dmesg */
 #define USE_PROBE 1
 #undef  USE_PROBE
@@ -152,7 +152,6 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/rtnetlink.h>
 
@@ -819,9 +818,9 @@ toshoboe_probe (struct toshoboe_cb *self)
 {
   int i, j, n;
 #ifdef USE_MIR
-  static const int bauds[] = { 9600, 115200, 4000000, 1152000 };
+  int bauds[] = { 9600, 115200, 4000000, 1152000 };
 #else
-  static const int bauds[] = { 9600, 115200, 4000000 };
+  int bauds[] = { 9600, 115200, 4000000 };
 #endif
   unsigned long flags;
 

@@ -5,6 +5,7 @@
  * License terms: GNU General Public License (GPL) version 2.
  */
 
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -396,7 +397,7 @@ int cfspi_xmitlen(struct cfspi *cfspi)
 	int pkts = 0;
 
 	/*
-	 * Decommit previously committed frames.
+	 * Decommit previously commited frames.
 	 * skb_queue_splice_tail(&cfspi->chead,&cfspi->qhead)
 	 */
 	while (skb_peek(&cfspi->chead)) {

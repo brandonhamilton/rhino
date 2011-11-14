@@ -104,7 +104,7 @@ static int ram_write(struct mtd_info *mtd, loff_t to, size_t len,
 static void __exit cleanup_mtdram(void)
 {
 	if (mtd_info) {
-		mtd_device_unregister(mtd_info);
+		del_mtd_device(mtd_info);
 		vfree(mtd_info->priv);
 		kfree(mtd_info);
 	}
@@ -121,7 +121,6 @@ int mtdram_init_device(struct mtd_info *mtd, void *mapped_address,
 	mtd->flags = MTD_CAP_RAM;
 	mtd->size = size;
 	mtd->writesize = 1;
-	mtd->writebufsize = 64; /* Mimic CFI NOR flashes */
 	mtd->erasesize = MTDRAM_ERASE_SIZE;
 	mtd->priv = mapped_address;
 
@@ -133,8 +132,9 @@ int mtdram_init_device(struct mtd_info *mtd, void *mapped_address,
 	mtd->read = ram_read;
 	mtd->write = ram_write;
 
-	if (mtd_device_register(mtd, NULL, 0))
+	if (add_mtd_device(mtd)) {
 		return -EIO;
+	}
 
 	return 0;
 }

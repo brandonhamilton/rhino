@@ -37,6 +37,8 @@ struct nilfs_btnode_chkey_ctxt {
 	struct buffer_head *newbh;
 };
 
+void nilfs_btnode_cache_init_once(struct address_space *);
+void nilfs_btnode_cache_init(struct address_space *, struct backing_dev_info *);
 void nilfs_btnode_cache_clear(struct address_space *);
 struct buffer_head *nilfs_btnode_create_block(struct address_space *btnc,
 					      __u64 blocknr);
@@ -49,5 +51,8 @@ void nilfs_btnode_commit_change_key(struct address_space *,
 				    struct nilfs_btnode_chkey_ctxt *);
 void nilfs_btnode_abort_change_key(struct address_space *,
 				   struct nilfs_btnode_chkey_ctxt *);
+
+#define nilfs_btnode_mark_dirty(bh)	nilfs_mark_buffer_dirty(bh)
+
 
 #endif	/* _NILFS_BTNODE_H */

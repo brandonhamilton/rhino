@@ -41,10 +41,10 @@
 #include "vme_user.h"
 
 static DEFINE_MUTEX(vme_user_mutex);
-static const char driver_name[] = "vme_user";
+static char driver_name[] = "vme_user";
 
 static int bus[USER_BUS_MAX];
-static unsigned int bus_num;
+static int bus_num;
 
 /* Currently Documentation/devices.txt defines the following for VME:
  *
@@ -91,18 +91,18 @@ static unsigned int bus_num;
 /*
  * Structure to handle image related parameters.
  */
-struct image_desc {
-	void *kern_buf;	/* Buffer address in kernel space */
+typedef struct {
+	void __iomem *kern_buf;	/* Buffer address in kernel space */
 	dma_addr_t pci_buf;	/* Buffer address in PCI address space */
 	unsigned long long size_buf;	/* Buffer size */
 	struct semaphore sem;	/* Semaphore for locking image */
 	struct device *device;	/* Sysfs device */
 	struct vme_resource *resource;	/* VME resource */
 	int users;		/* Number of current users */
-};
-static struct image_desc image[VME_DEVS];
+} image_desc_t;
+static image_desc_t image[VME_DEVS];
 
-struct driver_stats {
+typedef struct {
 	unsigned long reads;
 	unsigned long writes;
 	unsigned long ioctls;
@@ -111,12 +111,12 @@ struct driver_stats {
 	unsigned long dmaErrors;
 	unsigned long timeouts;
 	unsigned long external;
-};
-static struct driver_stats statistics;
+} driver_stats_t;
+static driver_stats_t statistics;
 
-static struct cdev *vme_user_cdev;		/* Character device */
-static struct class *vme_user_sysfs_class;	/* Sysfs class */
-static struct device *vme_user_bridge;		/* Pointer to bridge device */
+struct cdev *vme_user_cdev;		/* Character device */
+struct class *vme_user_sysfs_class;	/* Sysfs class */
+struct device *vme_user_bridge;		/* Pointer to the bridge device */
 
 
 static const int type[VME_DEVS] = {	MASTER_MINOR,	MASTER_MINOR,
@@ -129,16 +129,15 @@ static const int type[VME_DEVS] = {	MASTER_MINOR,	MASTER_MINOR,
 
 static int vme_user_open(struct inode *, struct file *);
 static int vme_user_release(struct inode *, struct file *);
-static ssize_t vme_user_read(struct file *, char __user *, size_t, loff_t *);
-static ssize_t vme_user_write(struct file *, const char __user *, size_t,
-	loff_t *);
+static ssize_t vme_user_read(struct file *, char *, size_t, loff_t *);
+static ssize_t vme_user_write(struct file *, const char *, size_t, loff_t *);
 static loff_t vme_user_llseek(struct file *, loff_t, int);
 static long vme_user_unlocked_ioctl(struct file *, unsigned int, unsigned long);
 
-static int __devinit vme_user_probe(struct device *, int, int);
-static int __devexit vme_user_remove(struct device *, int, int);
+static int __init vme_user_probe(struct device *, int, int);
+static int __exit vme_user_remove(struct device *, int, int);
 
-static const struct file_operations vme_user_fops = {
+static struct file_operations vme_user_fops = {
 	.open = vme_user_open,
 	.release = vme_user_release,
 	.read = vme_user_read,
@@ -168,8 +167,8 @@ static int vme_user_open(struct inode *inode, struct file *file)
 	unsigned int minor = MINOR(inode->i_rdev);
 
 	down(&image[minor].sem);
-	/* Allow device to be opened if a resource is needed and allocated. */
-	if (minor < CONTROL_MINOR && image[minor].resource == NULL) {
+	/* Only allow device to be opened if a resource is allocated */
+	if (image[minor].resource == NULL) {
 		printk(KERN_ERR "No resources allocated for device\n");
 		err = -EINVAL;
 		goto err_res;
@@ -247,7 +246,7 @@ static ssize_t resource_to_user(int minor, char __user *buf, size_t count,
  * page) transfers will lock the user space buffer into memory and then
  * transfer the data directly from the user space buffers out to VME.
  */
-static ssize_t resource_from_user(unsigned int minor, const char __user *buf,
+static ssize_t resource_from_user(unsigned int minor, const char *buf,
 	size_t count, loff_t *ppos)
 {
 	ssize_t retval;
@@ -278,7 +277,7 @@ static ssize_t resource_from_user(unsigned int minor, const char __user *buf,
 static ssize_t buffer_to_user(unsigned int minor, char __user *buf,
 	size_t count, loff_t *ppos)
 {
-	void *image_ptr;
+	void __iomem *image_ptr;
 	ssize_t retval;
 
 	image_ptr = image[minor].kern_buf + *ppos;
@@ -294,10 +293,10 @@ static ssize_t buffer_to_user(unsigned int minor, char __user *buf,
 	return retval;
 }
 
-static ssize_t buffer_from_user(unsigned int minor, const char __user *buf,
+static ssize_t buffer_from_user(unsigned int minor, const char *buf,
 	size_t count, loff_t *ppos)
 {
-	void *image_ptr;
+	void __iomem *image_ptr;
 	size_t retval;
 
 	image_ptr = image[minor].kern_buf + *ppos;
@@ -313,16 +312,13 @@ static ssize_t buffer_from_user(unsigned int minor, const char __user *buf,
 	return retval;
 }
 
-static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
+static ssize_t vme_user_read(struct file *file, char *buf, size_t count,
 			loff_t *ppos)
 {
 	unsigned int minor = MINOR(file->f_dentry->d_inode->i_rdev);
 	ssize_t retval;
 	size_t image_size;
 	size_t okcount;
-
-	if (minor == CONTROL_MINOR)
-		return 0;
 
 	down(&image[minor].sem);
 
@@ -360,16 +356,13 @@ static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
 	return retval;
 }
 
-static ssize_t vme_user_write(struct file *file, const char __user *buf,
-			size_t count, loff_t *ppos)
+static ssize_t vme_user_write(struct file *file, const char *buf, size_t count,
+			 loff_t *ppos)
 {
 	unsigned int minor = MINOR(file->f_dentry->d_inode->i_rdev);
 	ssize_t retval;
 	size_t image_size;
 	size_t okcount;
-
-	if (minor == CONTROL_MINOR)
-		return 0;
 
 	down(&image[minor].sem);
 
@@ -411,9 +404,6 @@ static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 	loff_t absolute = -1;
 	unsigned int minor = MINOR(file->f_dentry->d_inode->i_rdev);
 	size_t image_size;
-
-	if (minor == CONTROL_MINOR)
-		return -EINVAL;
 
 	down(&image[minor].sem);
 	image_size = vme_get_size(image[minor].resource);
@@ -461,32 +451,15 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 {
 	struct vme_master master;
 	struct vme_slave slave;
-	struct vme_irq_id irq_req;
 	unsigned long copied;
 	unsigned int minor = MINOR(inode->i_rdev);
 	int retval;
 	dma_addr_t pci_addr;
-	void __user *argp = (void __user *)arg;
 
 	statistics.ioctls++;
 
 	switch (type[minor]) {
 	case CONTROL_MINOR:
-		switch (cmd) {
-		case VME_IRQ_GEN:
-			copied = copy_from_user(&irq_req, (char *)arg,
-						sizeof(struct vme_irq_id));
-			if (copied != 0) {
-				printk(KERN_WARNING "Partial copy from userspace\n");
-				return -EFAULT;
-			}
-
-			retval = vme_irq_generate(vme_user_bridge,
-						  irq_req.level,
-						  irq_req.statid);
-
-			return retval;
-		}
 		break;
 	case MASTER_MINOR:
 		switch (cmd) {
@@ -497,11 +470,11 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			 *	to userspace as they are
 			 */
 			retval = vme_master_get(image[minor].resource,
-				&master.enable, &master.vme_addr,
-				&master.size, &master.aspace,
-				&master.cycle, &master.dwidth);
+				&(master.enable), &(master.vme_addr),
+				&(master.size), &(master.aspace),
+				&(master.cycle), &(master.dwidth));
 
-			copied = copy_to_user(argp, &master,
+			copied = copy_to_user((char *)arg, &master,
 				sizeof(struct vme_master));
 			if (copied != 0) {
 				printk(KERN_WARNING "Partial copy to "
@@ -514,7 +487,8 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 
 		case VME_SET_MASTER:
 
-			copied = copy_from_user(&master, argp, sizeof(master));
+			copied = copy_from_user(&master, (char *)arg,
+				sizeof(master));
 			if (copied != 0) {
 				printk(KERN_WARNING "Partial copy from "
 					"userspace\n");
@@ -540,11 +514,11 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			 *	to userspace as they are
 			 */
 			retval = vme_slave_get(image[minor].resource,
-				&slave.enable, &slave.vme_addr,
-				&slave.size, &pci_addr, &slave.aspace,
-				&slave.cycle);
+				&(slave.enable), &(slave.vme_addr),
+				&(slave.size), &pci_addr, &(slave.aspace),
+				&(slave.cycle));
 
-			copied = copy_to_user(argp, &slave,
+			copied = copy_to_user((char *)arg, &slave,
 				sizeof(struct vme_slave));
 			if (copied != 0) {
 				printk(KERN_WARNING "Partial copy to "
@@ -557,7 +531,8 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 
 		case VME_SET_SLAVE:
 
-			copied = copy_from_user(&slave, argp, sizeof(slave));
+			copied = copy_from_user(&slave, (char *)arg,
+				sizeof(slave));
 			if (copied != 0) {
 				printk(KERN_WARNING "Partial copy from "
 					"userspace\n");
@@ -621,7 +596,7 @@ static void buf_unalloc(int num)
 static struct vme_driver vme_user_driver = {
 	.name = driver_name,
 	.probe = vme_user_probe,
-	.remove = __devexit_p(vme_user_remove),
+	.remove = vme_user_remove,
 };
 
 
@@ -636,7 +611,6 @@ static int __init vme_user_init(void)
 	if (bus_num == 0) {
 		printk(KERN_ERR "%s: No cards, skipping registration\n",
 			driver_name);
-		retval = -ENODEV;
 		goto err_nocard;
 	}
 
@@ -655,7 +629,6 @@ static int __init vme_user_init(void)
 	if (ids == NULL) {
 		printk(KERN_ERR "%s: Unable to allocate ID table\n",
 			driver_name);
-		retval = -ENOMEM;
 		goto err_id;
 	}
 
@@ -679,6 +652,7 @@ static int __init vme_user_init(void)
 
 	return retval;
 
+	vme_unregister_driver(&vme_user_driver);
 err_reg:
 	kfree(ids);
 err_id:
@@ -691,8 +665,7 @@ err_nocard:
  * as practical. We will therefore reserve the buffers and request the images
  * here so that we don't have to do it later.
  */
-static int __devinit vme_user_probe(struct device *dev, int cur_bus,
-	int cur_slot)
+static int __init vme_user_probe(struct device *dev, int cur_bus, int cur_slot)
 {
 	int i, err;
 	char name[12];
@@ -710,7 +683,7 @@ static int __devinit vme_user_probe(struct device *dev, int cur_bus,
 	for (i = 0; i < VME_DEVS; i++) {
 		image[i].kern_buf = NULL;
 		image[i].pci_buf = 0;
-		sema_init(&image[i].sem, 1);
+		sema_init(&(image[i].sem), 1);
 		image[i].device = NULL;
 		image[i].resource = NULL;
 		image[i].users = 0;
@@ -754,7 +727,7 @@ static int __devinit vme_user_probe(struct device *dev, int cur_bus,
 		}
 		image[i].size_buf = PCI_BUF_SIZE;
 		image[i].kern_buf = vme_alloc_consistent(image[i].resource,
-			image[i].size_buf, &image[i].pci_buf);
+			image[i].size_buf, &(image[i].pci_buf));
 		if (image[i].kern_buf == NULL) {
 			printk(KERN_WARNING "Unable to allocate memory for "
 				"buffer\n");
@@ -798,7 +771,6 @@ static int __devinit vme_user_probe(struct device *dev, int cur_bus,
 
 	/* Add sysfs Entries */
 	for (i = 0; i < VME_DEVS; i++) {
-		int num;
 		switch (type[i]) {
 		case MASTER_MINOR:
 			sprintf(name, "bus/vme/m%%d");
@@ -815,9 +787,10 @@ static int __devinit vme_user_probe(struct device *dev, int cur_bus,
 			break;
 		}
 
-		num = (type[i] == SLAVE_MINOR) ? i - (MASTER_MAX + 1) : i;
-		image[i].device = device_create(vme_user_sysfs_class, NULL,
-					MKDEV(VME_MAJOR, i), NULL, name, num);
+		image[i].device =
+			device_create(vme_user_sysfs_class, NULL,
+				MKDEV(VME_MAJOR, i), NULL, name,
+				(type[i] == SLAVE_MINOR) ? i - (MASTER_MAX + 1) : i);
 		if (IS_ERR(image[i].device)) {
 			printk(KERN_INFO "%s: Error creating sysfs device\n",
 				driver_name);
@@ -855,8 +828,8 @@ err_master:
 err_slave:
 	while (i > SLAVE_MINOR) {
 		i--;
-		buf_unalloc(i);
 		vme_slave_free(image[i].resource);
+		buf_unalloc(i);
 	}
 err_class:
 	cdev_del(vme_user_cdev);
@@ -867,8 +840,7 @@ err_dev:
 	return err;
 }
 
-static int __devexit vme_user_remove(struct device *dev, int cur_bus,
-	int cur_slot)
+static int __exit vme_user_remove(struct device *dev, int cur_bus, int cur_slot)
 {
 	int i;
 
@@ -877,15 +849,13 @@ static int __devexit vme_user_remove(struct device *dev, int cur_bus,
 		device_destroy(vme_user_sysfs_class, MKDEV(VME_MAJOR, i));
 	class_destroy(vme_user_sysfs_class);
 
-	for (i = MASTER_MINOR; i < (MASTER_MAX + 1); i++) {
+	for (i = MASTER_MINOR; i < (MASTER_MAX + 1); i++)
 		kfree(image[i].kern_buf);
-		vme_master_free(image[i].resource);
-	}
 
 	for (i = SLAVE_MINOR; i < (SLAVE_MAX + 1); i++) {
 		vme_slave_set(image[i].resource, 0, 0, 0, 0, VME_A32, 0);
-		buf_unalloc(i);
 		vme_slave_free(image[i].resource);
+		buf_unalloc(i);
 	}
 
 	/* Unregister device driver */

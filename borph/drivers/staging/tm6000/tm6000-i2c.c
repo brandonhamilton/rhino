@@ -40,7 +40,7 @@ MODULE_PARM_DESC(i2c_debug, "enable debug messages [i2c]");
 
 #define i2c_dprintk(lvl, fmt, args...) if (i2c_debug >= lvl) do { \
 			printk(KERN_DEBUG "%s at %s: " fmt, \
-			dev->name, __func__, ##args); } while (0)
+			dev->name, __FUNCTION__ , ##args); } while (0)
 
 static int tm6000_i2c_send_regs(struct tm6000_core *dev, unsigned char addr,
 				__u8 reg, char *buf, int len)
@@ -237,36 +237,35 @@ err:
 	return rc;
 }
 
-static int tm6000_i2c_eeprom(struct tm6000_core *dev)
+static int tm6000_i2c_eeprom(struct tm6000_core *dev,
+			     unsigned char *eedata, int len)
 {
 	int i, rc;
-	unsigned char *p = dev->eedata;
+	unsigned char *p = eedata;
 	unsigned char bytes[17];
 
 	dev->i2c_client.addr = 0xa0 >> 1;
-	dev->eedata_size = 0;
 
 	bytes[16] = '\0';
-	for (i = 0; i < sizeof(dev->eedata); ) {
-		*p = i;
-		rc = tm6000_i2c_recv_regs(dev, 0xa0, i, p, 1);
+	for (i = 0; i < len; ) {
+	*p = i;
+	rc = tm6000_i2c_recv_regs(dev, 0xa0, i, p, 1);
 		if (rc < 1) {
-			if (p == dev->eedata)
+			if (p == eedata)
 				goto noeeprom;
 			else {
 				printk(KERN_WARNING
 				"%s: i2c eeprom read error (err=%d)\n",
 				dev->name, rc);
 			}
-			return -EINVAL;
+			return -1;
 		}
-		dev->eedata_size++;
 		p++;
 		if (0 == (i % 16))
 			printk(KERN_INFO "%s: i2c eeprom %02x:", dev->name, i);
-		printk(" %02x", dev->eedata[i]);
-		if ((dev->eedata[i] >= ' ') && (dev->eedata[i] <= 'z'))
-			bytes[i%16] = dev->eedata[i];
+		printk(" %02x", eedata[i]);
+		if ((eedata[i] >= ' ') && (eedata[i] <= 'z'))
+			bytes[i%16] = eedata[i];
 		else
 			bytes[i%16] = '.';
 
@@ -281,15 +280,15 @@ static int tm6000_i2c_eeprom(struct tm6000_core *dev)
 		bytes[i%16] = '\0';
 		for (i %= 16; i < 16; i++)
 			printk("   ");
-		printk("  %s\n", bytes);
 	}
+	printk("  %s\n", bytes);
 
 	return 0;
 
 noeeprom:
 	printk(KERN_INFO "%s: Huh, no eeprom present (err=%d)?\n",
-	       dev->name, rc);
-	return -EINVAL;
+		       dev->name, rc);
+	return rc;
 }
 
 /* ----------------------------------------------------------- */
@@ -302,9 +301,31 @@ static u32 functionality(struct i2c_adapter *adap)
 	return I2C_FUNC_SMBUS_EMUL;
 }
 
-static const struct i2c_algorithm tm6000_algo = {
+#define mass_write(addr, reg, data...)					\
+	{ static const u8 _val[] = data;				\
+	rc = tm6000_read_write_usb(dev, USB_DIR_OUT | USB_TYPE_VENDOR,	\
+	REQ_16_SET_GET_I2C_WR1_RDN, (reg<<8)+addr, 0x00, (u8 *) _val,	\
+	ARRAY_SIZE(_val));						\
+	if (rc < 0) {							\
+		printk(KERN_ERR "Error on line %d: %d\n", __LINE__, rc);	\
+		return rc;						\
+	}								\
+	msleep(10);							\
+	}
+
+static struct i2c_algorithm tm6000_algo = {
 	.master_xfer   = tm6000_i2c_xfer,
 	.functionality = functionality,
+};
+
+static struct i2c_adapter tm6000_adap_template = {
+	.owner = THIS_MODULE,
+	.name = "tm6000",
+	.algo = &tm6000_algo,
+};
+
+static struct i2c_client tm6000_client_template = {
+	.name = "tm6000 internal",
 };
 
 /* ----------------------------------------------------------- */
@@ -315,21 +336,20 @@ static const struct i2c_algorithm tm6000_algo = {
  */
 int tm6000_i2c_register(struct tm6000_core *dev)
 {
-	int rc;
+	unsigned char eedata[256];
 
-	dev->i2c_adap.owner = THIS_MODULE;
-	dev->i2c_adap.algo = &tm6000_algo;
+	dev->i2c_adap = tm6000_adap_template;
 	dev->i2c_adap.dev.parent = &dev->udev->dev;
-	strlcpy(dev->i2c_adap.name, dev->name, sizeof(dev->i2c_adap.name));
+	strcpy(dev->i2c_adap.name, dev->name);
 	dev->i2c_adap.algo_data = dev;
-	i2c_set_adapdata(&dev->i2c_adap, &dev->v4l2_dev);
-	rc = i2c_add_adapter(&dev->i2c_adap);
-	if (rc)
-		return rc;
+	i2c_add_adapter(&dev->i2c_adap);
 
+	dev->i2c_client = tm6000_client_template;
 	dev->i2c_client.adapter = &dev->i2c_adap;
-	strlcpy(dev->i2c_client.name, "tm6000 internal", I2C_NAME_SIZE);
-	tm6000_i2c_eeprom(dev);
+
+	i2c_set_adapdata(&dev->i2c_adap, &dev->v4l2_dev);
+
+	tm6000_i2c_eeprom(dev, eedata, sizeof(eedata));
 
 	return 0;
 }

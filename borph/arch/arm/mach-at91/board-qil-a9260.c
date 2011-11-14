@@ -48,10 +48,10 @@
 #include "generic.h"
 
 
-static void __init ek_init_early(void)
+static void __init ek_map_io(void)
 {
 	/* Initialize processor: 12.000 MHz crystal */
-	at91_initialize(12000000);
+	at91sam9260_initialize(12000000);
 
 	/* DBGU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -71,6 +71,12 @@ static void __init ek_init_early(void)
 	at91_set_serial_console(1);
 
 }
+
+static void __init ek_init_irq(void)
+{
+	at91sam9260_init_interrupts(NULL);
+}
+
 
 /*
  * USB Host port
@@ -262,9 +268,9 @@ static void __init ek_board_init(void)
 
 MACHINE_START(QIL_A9260, "CALAO QIL_A9260")
 	/* Maintainer: calao-systems */
+	.boot_params	= AT91_SDRAM_BASE + 0x100,
 	.timer		= &at91sam926x_timer,
-	.map_io		= at91_map_io,
-	.init_early	= ek_init_early,
-	.init_irq	= at91_init_irq_default,
+	.map_io		= ek_map_io,
+	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,
 MACHINE_END

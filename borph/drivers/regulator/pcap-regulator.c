@@ -151,8 +151,7 @@ static struct pcap_regulator vreg_table[] = {
 };
 
 static int pcap_regulator_set_voltage(struct regulator_dev *rdev,
-				      int min_uV, int max_uV,
-				      unsigned *selector)
+						int min_uV, int max_uV)
 {
 	struct pcap_regulator *vreg = &vreg_table[rdev_get_id(rdev)];
 	void *pcap = rdev_get_drvdata(rdev);
@@ -171,12 +170,10 @@ static int pcap_regulator_set_voltage(struct regulator_dev *rdev,
 			i = 0;
 
 		uV = vreg->voltage_table[i] * 1000;
-		if (min_uV <= uV && uV <= max_uV) {
-			*selector = i;
+		if (min_uV <= uV && uV <= max_uV)
 			return ezx_pcap_set_bits(pcap, vreg->reg,
 					(vreg->n_voltages - 1) << vreg->index,
 					i << vreg->index);
-		}
 
 		if (i == 0 && rdev_get_id(rdev) == V1)
 			i = vreg->n_voltages - 1;

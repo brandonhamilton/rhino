@@ -33,8 +33,6 @@
 #include <linux/hid.h>
 
 #include "hid-ids.h"
-
-#ifdef CONFIG_HID_ACRUX_FF
 #include "usbhid/usbhid.h"
 
 struct axff_device {
@@ -75,14 +73,14 @@ static int axff_init(struct hid_device *hid)
 	int error;
 
 	if (list_empty(report_list)) {
-		hid_err(hid, "no output reports found\n");
+		dev_err(&hid->dev, "no output reports found\n");
 		return -ENODEV;
 	}
 
 	report = list_first_entry(report_list, struct hid_report, list);
 
 	if (report->maxfield < 4) {
-		hid_err(hid, "no fields in the report: %d\n", report->maxfield);
+		dev_err(&hid->dev, "no fields in the report: %d\n", report->maxfield);
 		return -ENODEV;
 	}
 
@@ -103,7 +101,7 @@ static int axff_init(struct hid_device *hid)
 	axff->report->field[3]->value[0] = 0x00;
 	usbhid_submit_report(hid, axff->report, USB_DIR_OUT);
 
-	hid_info(hid, "Force Feedback for ACRUX game controllers by Sergei Kolzun<x0r@dv-life.ru>\n");
+	dev_info(&hid->dev, "Force Feedback for ACRUX game controllers by Sergei Kolzun<x0r@dv-life.ru>\n");
 
 	return 0;
 
@@ -111,28 +109,22 @@ err_free_mem:
 	kfree(axff);
 	return error;
 }
-#else
-static inline int axff_init(struct hid_device *hid)
-{
-	return 0;
-}
-#endif
 
 static int ax_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	int error;
 
-	dev_dbg(&hdev->dev, "ACRUX HID hardware probe...\n");
+	dev_dbg(&hdev->dev, "ACRUX HID hardware probe...");
 
 	error = hid_parse(hdev);
 	if (error) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		return error;
 	}
 
 	error = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_FF);
 	if (error) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		return error;
 	}
 
@@ -142,29 +134,12 @@ static int ax_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		 * Do not fail device initialization completely as device
 		 * may still be partially operable, just warn.
 		 */
-		hid_warn(hdev,
+		dev_warn(&hdev->dev,
 			 "Failed to enable force feedback support, error: %d\n",
 			 error);
 	}
 
-	/*
-	 * We need to start polling device right away, otherwise
-	 * it will go into a coma.
-	 */
-	error = hid_hw_open(hdev);
-	if (error) {
-		dev_err(&hdev->dev, "hw open failed\n");
-		hid_hw_stop(hdev);
-		return error;
-	}
-
 	return 0;
-}
-
-static void ax_remove(struct hid_device *hdev)
-{
-	hid_hw_close(hdev);
-	hid_hw_stop(hdev);
 }
 
 static const struct hid_device_id ax_devices[] = {
@@ -174,10 +149,9 @@ static const struct hid_device_id ax_devices[] = {
 MODULE_DEVICE_TABLE(hid, ax_devices);
 
 static struct hid_driver ax_driver = {
-	.name		= "acrux",
-	.id_table	= ax_devices,
-	.probe		= ax_probe,
-	.remove		= ax_remove,
+	.name = "acrux",
+	.id_table = ax_devices,
+	.probe = ax_probe,
 };
 
 static int __init ax_init(void)

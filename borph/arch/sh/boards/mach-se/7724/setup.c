@@ -14,8 +14,7 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/mmc/host.h>
-#include <linux/mmc/sh_mobile_sdhi.h>
+#include <linux/mfd/sh_mobile_sdhi.h>
 #include <linux/mtd/physmap.h>
 #include <linux/delay.h>
 #include <linux/smc91x.h>
@@ -145,7 +144,7 @@ static struct platform_device nor_flash_device = {
 };
 
 /* LCDC */
-static const struct fb_videomode lcdc_720p_modes[] = {
+const static struct fb_videomode lcdc_720p_modes[] = {
 	{
 		.name		= "LB070WV1",
 		.sync		= 0, /* hsync and vsync are active low */
@@ -160,7 +159,7 @@ static const struct fb_videomode lcdc_720p_modes[] = {
 	},
 };
 
-static const struct fb_videomode lcdc_vga_modes[] = {
+const static struct fb_videomode lcdc_vga_modes[] = {
 	{
 		.name		= "LB070WV1",
 		.sync		= 0, /* hsync and vsync are active low */
@@ -286,7 +285,11 @@ static struct platform_device ceu1_device = {
 /* FSI */
 /* change J20, J21, J22 pin to 1-2 connection to use slave mode */
 static struct sh_fsi_platform_info fsi_info = {
-	.porta_flags = SH_FSI_BRS_INV,
+	.porta_flags = SH_FSI_BRS_INV |
+		       SH_FSI_OUT_SLAVE_MODE |
+		       SH_FSI_IN_SLAVE_MODE |
+		       SH_FSI_OFMT(PCM) |
+		       SH_FSI_IFMT(PCM),
 };
 
 static struct resource fsi_resources[] = {
@@ -313,10 +316,6 @@ static struct platform_device fsi_device = {
 	.archdata = {
 		.hwblk_id = HWBLK_SPU, /* FSI needs SPU hwblk */
 	},
-};
-
-static struct platform_device fsi_ak4642_device = {
-	.name		= "sh_fsi_a_ak4642",
 };
 
 /* KEYSC in SoC (Needs SW33-2 set to ON) */
@@ -456,7 +455,7 @@ static struct resource sdhi0_cn7_resources[] = {
 	[0] = {
 		.name	= "SDHI0",
 		.start  = 0x04ce0000,
-		.end    = 0x04ce00ff,
+		.end    = 0x04ce01ff,
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
@@ -468,7 +467,6 @@ static struct resource sdhi0_cn7_resources[] = {
 static struct sh_mobile_sdhi_info sh7724_sdhi0_data = {
 	.dma_slave_tx	= SHDMA_SLAVE_SDHI0_TX,
 	.dma_slave_rx	= SHDMA_SLAVE_SDHI0_RX,
-	.tmio_caps      = MMC_CAP_SDIO_IRQ,
 };
 
 static struct platform_device sdhi0_cn7_device = {
@@ -488,7 +486,7 @@ static struct resource sdhi1_cn8_resources[] = {
 	[0] = {
 		.name	= "SDHI1",
 		.start  = 0x04cf0000,
-		.end    = 0x04cf00ff,
+		.end    = 0x04cf01ff,
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
@@ -500,7 +498,6 @@ static struct resource sdhi1_cn8_resources[] = {
 static struct sh_mobile_sdhi_info sh7724_sdhi1_data = {
 	.dma_slave_tx	= SHDMA_SLAVE_SDHI1_TX,
 	.dma_slave_rx	= SHDMA_SLAVE_SDHI1_RX,
-	.tmio_caps      = MMC_CAP_SDIO_IRQ,
 };
 
 static struct platform_device sdhi1_cn8_device = {
@@ -593,7 +590,6 @@ static struct platform_device *ms7724se_devices[] __initdata = {
 	&sh7724_usb0_host_device,
 	&sh7724_usb1_gadget_device,
 	&fsi_device,
-	&fsi_ak4642_device,
 	&sdhi0_cn7_device,
 	&sdhi1_cn8_device,
 	&irda_device,

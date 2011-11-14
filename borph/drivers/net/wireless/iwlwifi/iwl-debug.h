@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2003 - 2011 Intel Corporation. All rights reserved.
+ * Copyright(c) 2003 - 2010 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project.
  *
@@ -32,10 +32,10 @@
 struct iwl_priv;
 extern u32 iwl_debug_level;
 
-#define IWL_ERR(p, f, a...) dev_err(p->bus->dev, f, ## a)
-#define IWL_WARN(p, f, a...) dev_warn(p->bus->dev, f, ## a)
-#define IWL_INFO(p, f, a...) dev_info(p->bus->dev, f, ## a)
-#define IWL_CRIT(p, f, a...) dev_crit(p->bus->dev, f, ## a)
+#define IWL_ERR(p, f, a...) dev_err(&((p)->pci_dev->dev), f, ## a)
+#define IWL_WARN(p, f, a...) dev_warn(&((p)->pci_dev->dev), f, ## a)
+#define IWL_INFO(p, f, a...) dev_info(&((p)->pci_dev->dev), f, ## a)
+#define IWL_CRIT(p, f, a...) dev_crit(&((p)->pci_dev->dev), f, ## a)
 
 #define iwl_print_hex_error(priv, p, len) 				\
 do {									\
@@ -78,6 +78,8 @@ static inline void iwl_print_hex_dump(struct iwl_priv *priv, int level,
 #ifdef CONFIG_IWLWIFI_DEBUGFS
 int iwl_dbgfs_register(struct iwl_priv *priv, const char *name);
 void iwl_dbgfs_unregister(struct iwl_priv *priv);
+extern int iwl_dbgfs_statistics_flag(struct iwl_priv *priv, char *buf,
+				     int bufsz);
 #else
 static inline int iwl_dbgfs_register(struct iwl_priv *priv, const char *name)
 {
@@ -118,18 +120,17 @@ static inline void iwl_dbgfs_unregister(struct iwl_priv *priv)
 /* 0x000000F0 - 0x00000010 */
 #define IWL_DL_MACDUMP		(1 << 4)
 #define IWL_DL_HCMD_DUMP	(1 << 5)
-#define IWL_DL_EEPROM		(1 << 6)
 #define IWL_DL_RADIO		(1 << 7)
 /* 0x00000F00 - 0x00000100 */
 #define IWL_DL_POWER		(1 << 8)
 #define IWL_DL_TEMP		(1 << 9)
-/* reserved (1 << 10) */
+#define IWL_DL_NOTIF		(1 << 10)
 #define IWL_DL_SCAN		(1 << 11)
 /* 0x0000F000 - 0x00001000 */
 #define IWL_DL_ASSOC		(1 << 12)
 #define IWL_DL_DROP		(1 << 13)
-/* reserved (1 << 14) */
-#define IWL_DL_COEX		(1 << 15)
+#define IWL_DL_TXPOWER		(1 << 14)
+#define IWL_DL_AP		(1 << 15)
 /* 0x000F0000 - 0x00010000 */
 #define IWL_DL_FW		(1 << 16)
 #define IWL_DL_RF_KILL		(1 << 17)
@@ -144,6 +145,7 @@ static inline void iwl_dbgfs_unregister(struct iwl_priv *priv)
 #define IWL_DL_RX		(1 << 24)
 #define IWL_DL_ISR		(1 << 25)
 #define IWL_DL_HT		(1 << 26)
+#define IWL_DL_IO		(1 << 27)
 /* 0xF0000000 - 0x10000000 */
 #define IWL_DL_11H		(1 << 28)
 #define IWL_DL_STATS		(1 << 29)
@@ -162,17 +164,19 @@ static inline void iwl_dbgfs_unregister(struct iwl_priv *priv)
 #define IWL_DEBUG_WEP(p, f, a...)	IWL_DEBUG(p, IWL_DL_WEP, f, ## a)
 #define IWL_DEBUG_HC(p, f, a...)	IWL_DEBUG(p, IWL_DL_HCMD, f, ## a)
 #define IWL_DEBUG_HC_DUMP(p, f, a...)	IWL_DEBUG(p, IWL_DL_HCMD_DUMP, f, ## a)
-#define IWL_DEBUG_EEPROM(p, f, a...)	IWL_DEBUG(p, IWL_DL_EEPROM, f, ## a)
 #define IWL_DEBUG_CALIB(p, f, a...)	IWL_DEBUG(p, IWL_DL_CALIB, f, ## a)
 #define IWL_DEBUG_FW(p, f, a...)	IWL_DEBUG(p, IWL_DL_FW, f, ## a)
 #define IWL_DEBUG_RF_KILL(p, f, a...)	IWL_DEBUG(p, IWL_DL_RF_KILL, f, ## a)
 #define IWL_DEBUG_DROP(p, f, a...)	IWL_DEBUG(p, IWL_DL_DROP, f, ## a)
 #define IWL_DEBUG_DROP_LIMIT(p, f, a...)	\
 		IWL_DEBUG_LIMIT(p, IWL_DL_DROP, f, ## a)
-#define IWL_DEBUG_COEX(p, f, a...)	IWL_DEBUG(p, IWL_DL_COEX, f, ## a)
+#define IWL_DEBUG_AP(p, f, a...)	IWL_DEBUG(p, IWL_DL_AP, f, ## a)
+#define IWL_DEBUG_TXPOWER(p, f, a...)	IWL_DEBUG(p, IWL_DL_TXPOWER, f, ## a)
+#define IWL_DEBUG_IO(p, f, a...)	IWL_DEBUG(p, IWL_DL_IO, f, ## a)
 #define IWL_DEBUG_RATE(p, f, a...)	IWL_DEBUG(p, IWL_DL_RATE, f, ## a)
 #define IWL_DEBUG_RATE_LIMIT(p, f, a...)	\
 		IWL_DEBUG_LIMIT(p, IWL_DL_RATE, f, ## a)
+#define IWL_DEBUG_NOTIF(p, f, a...)	IWL_DEBUG(p, IWL_DL_NOTIF, f, ## a)
 #define IWL_DEBUG_ASSOC(p, f, a...)	\
 		IWL_DEBUG(p, IWL_DL_ASSOC | IWL_DL_INFO, f, ## a)
 #define IWL_DEBUG_ASSOC_LIMIT(p, f, a...)	\

@@ -20,8 +20,8 @@
 #include <linux/kernel.h>
 #include <linux/io.h>
 #include <linux/sh_clk.h>
-#include <linux/clkdev.h>
 #include <mach/common.h>
+#include <asm/clkdev.h>
 
 /* SH7367 registers */
 #define RTFRQCR    0xe6150000
@@ -258,6 +258,9 @@ static struct clk mstp_clks[MSTP_NR] = {
 	[SYMSTP211] = MSTP(&div4_clks[DIV4_HP], SYMSTPCR2, 11, 0), /* SDHI2 */
 	[CMMSTP003] = MSTP(&r_clk, CMMSTPCR0, 3, 0), /* KEYSC */
 };
+
+#define CLKDEV_CON_ID(_id, _clk) { .con_id = _id, .clk = _clk }
+#define CLKDEV_DEV_ID(_id, _clk) { .dev_id = _id, .clk = _clk }
 
 static struct clk_lookup lookups[] = {
 	/* main clocks */

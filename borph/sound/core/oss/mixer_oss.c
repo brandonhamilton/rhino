@@ -190,10 +190,9 @@ static int snd_mixer_oss_get_recsrc(struct snd_mixer_oss_file *fmixer)
 		return -EIO;
 	if (mixer->put_recsrc && mixer->get_recsrc) {	/* exclusive */
 		int err;
-		unsigned int index;
-		if ((err = mixer->get_recsrc(fmixer, &index)) < 0)
+		if ((err = mixer->get_recsrc(fmixer, &result)) < 0)
 			return err;
-		result = 1 << index;
+		result = 1 << result;
 	} else {
 		struct snd_mixer_oss_slot *pslot;
 		int chn;
@@ -215,7 +214,6 @@ static int snd_mixer_oss_set_recsrc(struct snd_mixer_oss_file *fmixer, int recsr
 	struct snd_mixer_oss *mixer = fmixer->mixer;
 	struct snd_mixer_oss_slot *pslot;
 	int chn, active;
-	unsigned int index;
 	int result = 0;
 
 	if (mixer == NULL)
@@ -224,8 +222,8 @@ static int snd_mixer_oss_set_recsrc(struct snd_mixer_oss_file *fmixer, int recsr
 		if (recsrc & ~mixer->oss_recsrc)
 			recsrc &= ~mixer->oss_recsrc;
 		mixer->put_recsrc(fmixer, ffz(~recsrc));
-		mixer->get_recsrc(fmixer, &index);
-		result = 1 << index;
+		mixer->get_recsrc(fmixer, &result);
+		result = 1 << result;
 	}
 	for (chn = 0; chn < 31; chn++) {
 		pslot = &mixer->slots[chn];

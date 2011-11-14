@@ -8,8 +8,6 @@
  *
  */
 
-#include <linux/linkage.h>
-
 LC_EXT_NEW_PSW		= 0x58			# addr of ext int handler
 LC_EXT_NEW_PSW_64	= 0x1b0			# addr of ext int handler 64 bit
 LC_EXT_INT_PARAM	= 0x80			# addr of ext int parameter
@@ -262,7 +260,8 @@ _sclp_print:
 #   R2	= 0 on success, 1 on failure
 #
 
-ENTRY(_sclp_print_early)
+	.globl _sclp_print_early
+_sclp_print_early:
 	stm	%r6,%r15,24(%r15)		# save registers
 	ahi	%r15,-96			# create stack frame
 #ifdef CONFIG_64BIT

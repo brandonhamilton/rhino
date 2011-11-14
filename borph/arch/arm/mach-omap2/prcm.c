@@ -24,7 +24,6 @@
 #include <linux/io.h>
 #include <linux/delay.h>
 
-#include <mach/system.h>
 #include <plat/common.h>
 #include <plat/prcm.h>
 #include <plat/irqs.h>
@@ -58,7 +57,7 @@ u32 omap_prcm_get_reset_sources(void)
 EXPORT_SYMBOL(omap_prcm_get_reset_sources);
 
 /* Resets clock rates and reboots the system. Only called from system.h */
-static void omap_prcm_arch_reset(char mode, const char *cmd)
+void omap_prcm_arch_reset(char mode, const char *cmd)
 {
 	s16 prcm_offs = 0;
 
@@ -70,7 +69,10 @@ static void omap_prcm_arch_reset(char mode, const char *cmd)
 		prcm_offs = OMAP3430_GR_MOD;
 		omap3_ctrl_write_boot_mode((cmd ? (u8)*cmd : 0));
 	} else if (cpu_is_omap44xx()) {
-		omap4_prminst_global_warm_sw_reset(); /* never returns */
+		omap4_prm_global_warm_sw_reset(); /* never returns */
+	} else if (cpu_is_ti81xx()) {
+		omap2_prm_set_mod_reg_bits(TI81XX_GLOBAL_RST_COLD, prcm_offs,
+						TI81XX_PRM_DEVICE_RSTCTRL);
 	} else {
 		WARN_ON(1);
 	}
@@ -108,8 +110,6 @@ static void omap_prcm_arch_reset(char mode, const char *cmd)
 				   OMAP2_RM_RSTCTRL);
 	omap2_prm_read_mod_reg(prcm_offs, OMAP2_RM_RSTCTRL); /* OCP barrier */
 }
-
-void (*arch_reset)(char, const char *) = omap_prcm_arch_reset;
 
 /**
  * omap2_cm_wait_idlest - wait for IDLEST bit to indicate module readiness

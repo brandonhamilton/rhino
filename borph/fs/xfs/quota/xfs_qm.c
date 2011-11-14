@@ -60,12 +60,38 @@ STATIC void	xfs_qm_list_destroy(xfs_dqlist_t *);
 
 STATIC int	xfs_qm_init_quotainos(xfs_mount_t *);
 STATIC int	xfs_qm_init_quotainfo(xfs_mount_t *);
-STATIC int	xfs_qm_shake(struct shrinker *, struct shrink_control *);
+STATIC int	xfs_qm_shake(struct shrinker *, int, gfp_t);
 
 static struct shrinker xfs_qm_shaker = {
 	.shrink = xfs_qm_shake,
 	.seeks = DEFAULT_SEEKS,
 };
+
+#ifdef DEBUG
+extern struct mutex	qcheck_lock;
+#endif
+
+#ifdef QUOTADEBUG
+static void
+xfs_qm_dquot_list_print(
+	struct xfs_mount *mp)
+{
+	xfs_dquot_t	*dqp;
+	int		i = 0;
+
+	list_for_each_entry(dqp, &mp->m_quotainfo->qi_dqlist_lock, qi_mplist) {
+		cmn_err(CE_DEBUG, "   %d. \"%d (%s)\"   "
+				  "bcnt = %lld, icnt = %lld, refs = %d",
+			i++, be32_to_cpu(dqp->q_core.d_id),
+			DQFLAGTO_TYPESTR(dqp),
+			(long long)be64_to_cpu(dqp->q_core.d_bcount),
+			(long long)be64_to_cpu(dqp->q_core.d_icount),
+			dqp->q_nrefs);
+	}
+}
+#else
+static void xfs_qm_dquot_list_print(struct xfs_mount *mp) { }
+#endif
 
 /*
  * Initialize the XQM structure.
@@ -139,6 +165,9 @@ xfs_Gqm_init(void)
 	atomic_set(&xqm->qm_totaldquots, 0);
 	xqm->qm_dqfree_ratio = XFS_QM_DQFREE_RATIO;
 	xqm->qm_nrefs = 0;
+#ifdef DEBUG
+	mutex_init(&qcheck_lock);
+#endif
 	return xqm;
 
  out_free_udqhash:
@@ -175,6 +204,9 @@ xfs_qm_destroy(
 	mutex_lock(&xqm->qm_dqfrlist_lock);
 	list_for_each_entry_safe(dqp, n, &xqm->qm_dqfrlist, q_freelist) {
 		xfs_dqlock(dqp);
+#ifdef QUOTADEBUG
+		cmn_err(CE_DEBUG, "FREELIST destroy 0x%p", dqp);
+#endif
 		list_del_init(&dqp->q_freelist);
 		xfs_Gqm->qm_dqfrlist_cnt--;
 		xfs_dqunlock(dqp);
@@ -182,6 +214,9 @@ xfs_qm_destroy(
 	}
 	mutex_unlock(&xqm->qm_dqfrlist_lock);
 	mutex_destroy(&xqm->qm_dqfrlist_lock);
+#ifdef DEBUG
+	mutex_destroy(&qcheck_lock);
+#endif
 	kmem_free(xqm);
 }
 
@@ -306,7 +341,9 @@ xfs_qm_mount_quotas(
 	 * quotas immediately.
 	 */
 	if (mp->m_sb.sb_rextents) {
-		xfs_notice(mp, "Cannot turn on quotas for realtime filesystem");
+		cmn_err(CE_NOTE,
+			"Cannot turn on quotas for realtime filesystem %s",
+			mp->m_fsname);
 		mp->m_qflags = 0;
 		goto write_changes;
 	}
@@ -365,15 +402,21 @@ xfs_qm_mount_quotas(
 			 * off, but the on disk superblock doesn't know that !
 			 */
 			ASSERT(!(XFS_IS_QUOTA_RUNNING(mp)));
-			xfs_alert(mp, "%s: Superblock update failed!",
-				__func__);
+			xfs_fs_cmn_err(CE_ALERT, mp,
+				"XFS mount_quotas: Superblock update failed!");
 		}
 	}
 
 	if (error) {
-		xfs_warn(mp, "Failed to initialize disk quotas.");
+		xfs_fs_cmn_err(CE_WARN, mp,
+			"Failed to initialize disk quotas.");
 		return;
 	}
+
+#ifdef QUOTADEBUG
+	if (XFS_IS_QUOTA_ON(mp))
+		xfs_qm_internalqcheck(mp);
+#endif
 }
 
 /*
@@ -421,10 +464,12 @@ xfs_qm_dqflush_all(
 	struct xfs_quotainfo	*q = mp->m_quotainfo;
 	int			recl;
 	struct xfs_dquot	*dqp;
+	int			niters;
 	int			error;
 
 	if (!q)
 		return 0;
+	niters = 0;
 again:
 	mutex_lock(&q->qi_dqlist_lock);
 	list_for_each_entry(dqp, &q->qi_dqlist, q_mplist) {
@@ -826,8 +871,8 @@ xfs_qm_dqattach_locked(
 	}
 
  done:
-#ifdef DEBUG
-	if (!error) {
+#ifdef QUOTADEBUG
+	if (! error) {
 		if (XFS_IS_UQUOTA_ON(mp))
 			ASSERT(ip->i_udquot);
 		if (XFS_IS_OQUOTA_ON(mp))
@@ -1185,6 +1230,13 @@ xfs_qm_qino_alloc(
 	}
 
 	/*
+	 * Keep an extra reference to this quota inode. This inode is
+	 * locked exclusively and joined to the transaction already.
+	 */
+	ASSERT(xfs_isilocked(*ip, XFS_ILOCK_EXCL));
+	IHOLD(*ip);
+
+	/*
 	 * Make the changes in the superblock, and log those too.
 	 * sbfields arg may contain fields other than *QUOTINO;
 	 * VERSIONNUM for example.
@@ -1212,7 +1264,7 @@ xfs_qm_qino_alloc(
 	xfs_mod_sb(tp, sbfields);
 
 	if ((error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES))) {
-		xfs_alert(mp, "%s failed (error %d)!", __func__, error);
+		xfs_fs_cmn_err(CE_ALERT, mp, "XFS qino_alloc failed!");
 		return error;
 	}
 	return 0;
@@ -1247,7 +1299,7 @@ xfs_qm_reset_dqcounts(
 		 * output any warnings because it's perfectly possible to
 		 * find uninitialised dquot blks. See comment in xfs_qm_dqcheck.
 		 */
-		(void) xfs_qm_dqcheck(mp, ddq, id+j, type, XFS_QMOPT_DQREPAIR,
+		(void) xfs_qm_dqcheck(ddq, id+j, type, XFS_QMOPT_DQREPAIR,
 				      "xfs_quotacheck");
 		ddq->d_bcount = 0;
 		ddq->d_icount = 0;
@@ -1272,9 +1324,14 @@ xfs_qm_dqiter_bufs(
 {
 	xfs_buf_t	*bp;
 	int		error;
+	int		notcommitted;
+	int		incr;
 	int		type;
 
 	ASSERT(blkcnt > 0);
+	notcommitted = 0;
+	incr = (blkcnt > XFS_QM_MAX_DQCLUSTER_LOGSZ) ?
+		XFS_QM_MAX_DQCLUSTER_LOGSZ : blkcnt;
 	type = flags & XFS_QMOPT_UQUOTA ? XFS_DQ_USER :
 		(flags & XFS_QMOPT_PQUOTA ? XFS_DQ_PROJ : XFS_DQ_GROUP);
 	error = 0;
@@ -1619,7 +1676,7 @@ xfs_qm_quotacheck(
 	 */
 	ASSERT(list_empty(&mp->m_quotainfo->qi_dqlist));
 
-	xfs_notice(mp, "Quotacheck needed: Please wait.");
+	cmn_err(CE_NOTE, "XFS quotacheck %s: Please wait.", mp->m_fsname);
 
 	/*
 	 * First we go thru all the dquots on disk, USR and GRP/PRJ, and reset
@@ -1693,11 +1750,13 @@ xfs_qm_quotacheck(
 	mp->m_qflags &= ~(XFS_OQUOTA_CHKD | XFS_UQUOTA_CHKD);
 	mp->m_qflags |= flags;
 
+	xfs_qm_dquot_list_print(mp);
+
  error_return:
 	if (error) {
-		xfs_warn(mp,
-	"Quotacheck: Unsuccessful (Error %d): Disabling quotas.",
-			error);
+		cmn_err(CE_WARN, "XFS quotacheck %s: Unsuccessful (Error %d): "
+			"Disabling quotas.",
+			mp->m_fsname, error);
 		/*
 		 * We must turn off quotas.
 		 */
@@ -1705,11 +1764,12 @@ xfs_qm_quotacheck(
 		ASSERT(xfs_Gqm != NULL);
 		xfs_qm_destroy_quotainfo(mp);
 		if (xfs_mount_reset_sbqflags(mp)) {
-			xfs_warn(mp,
-				"Quotacheck: Failed to reset quota flags.");
+			cmn_err(CE_WARN, "XFS quotacheck %s: "
+				"Failed to reset quota flags.", mp->m_fsname);
 		}
-	} else
-		xfs_notice(mp, "Quotacheck: Done.");
+	} else {
+		cmn_err(CE_NOTE, "XFS quotacheck %s: Done.", mp->m_fsname);
+	}
 	return (error);
 }
 
@@ -1803,14 +1863,12 @@ xfs_qm_dqreclaim_one(void)
 	xfs_dquot_t	*dqpout;
 	xfs_dquot_t	*dqp;
 	int		restarts;
-	int		startagain;
 
 	restarts = 0;
 	dqpout = NULL;
 
 	/* lockorder: hashchainlock, freelistlock, mplistlock, dqlock, dqflock */
-again:
-	startagain = 0;
+startagain:
 	mutex_lock(&xfs_Gqm->qm_dqfrlist_lock);
 
 	list_for_each_entry(dqp, &xfs_Gqm->qm_dqfrlist, q_freelist) {
@@ -1827,10 +1885,13 @@ again:
 			ASSERT(! (dqp->dq_flags & XFS_DQ_INACTIVE));
 
 			trace_xfs_dqreclaim_want(dqp);
+
+			xfs_dqunlock(dqp);
+			mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
+			if (++restarts >= XFS_QM_RECLAIM_MAX_RESTARTS)
+				return NULL;
 			XQM_STATS_INC(xqmstats.xs_qm_dqwants);
-			restarts++;
-			startagain = 1;
-			goto dqunlock;
+			goto startagain;
 		}
 
 		/*
@@ -1845,20 +1906,23 @@ again:
 			ASSERT(list_empty(&dqp->q_mplist));
 			list_del_init(&dqp->q_freelist);
 			xfs_Gqm->qm_dqfrlist_cnt--;
+			xfs_dqunlock(dqp);
 			dqpout = dqp;
 			XQM_STATS_INC(xqmstats.xs_qm_dqinact_reclaims);
-			goto dqunlock;
+			break;
 		}
 
 		ASSERT(dqp->q_hash);
 		ASSERT(!list_empty(&dqp->q_mplist));
 
 		/*
-		 * Try to grab the flush lock. If this dquot is in the process
-		 * of getting flushed to disk, we don't want to reclaim it.
+		 * Try to grab the flush lock. If this dquot is in the process of
+		 * getting flushed to disk, we don't want to reclaim it.
 		 */
-		if (!xfs_dqflock_nowait(dqp))
-			goto dqunlock;
+		if (!xfs_dqflock_nowait(dqp)) {
+			xfs_dqunlock(dqp);
+			continue;
+		}
 
 		/*
 		 * We have the flush lock so we know that this is not in the
@@ -1877,10 +1941,11 @@ again:
 			 */
 			error = xfs_qm_dqflush(dqp, 0);
 			if (error) {
-				xfs_warn(mp, "%s: dquot %p flush failed",
-					__func__, dqp);
+				xfs_fs_cmn_err(CE_WARN, mp,
+			"xfs_qm_dqreclaim: dquot %p flush failed", dqp);
 			}
-			goto dqunlock;
+			xfs_dqunlock(dqp); /* dqflush unlocks dqflock */
+			continue;
 		}
 
 		/*
@@ -1902,8 +1967,13 @@ again:
 		 */
 		if (!mutex_trylock(&mp->m_quotainfo->qi_dqlist_lock)) {
 			restarts++;
-			startagain = 1;
-			goto qhunlock;
+			mutex_unlock(&dqp->q_hash->qh_lock);
+			xfs_dqfunlock(dqp);
+			xfs_dqunlock(dqp);
+			mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
+			if (restarts++ >= XFS_QM_RECLAIM_MAX_RESTARTS)
+				return NULL;
+			goto startagain;
 		}
 
 		ASSERT(dqp->q_nrefs == 0);
@@ -1916,20 +1986,14 @@ again:
 		xfs_Gqm->qm_dqfrlist_cnt--;
 		dqpout = dqp;
 		mutex_unlock(&mp->m_quotainfo->qi_dqlist_lock);
-qhunlock:
 		mutex_unlock(&dqp->q_hash->qh_lock);
 dqfunlock:
 		xfs_dqfunlock(dqp);
-dqunlock:
 		xfs_dqunlock(dqp);
 		if (dqpout)
 			break;
 		if (restarts >= XFS_QM_RECLAIM_MAX_RESTARTS)
-			break;
-		if (startagain) {
-			mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
-			goto again;
-		}
+			return NULL;
 	}
 	mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
 	return dqpout;
@@ -1967,10 +2031,10 @@ xfs_qm_shake_freelist(
 STATIC int
 xfs_qm_shake(
 	struct shrinker	*shrink,
-	struct shrink_control *sc)
+	int		nr_to_scan,
+	gfp_t		gfp_mask)
 {
 	int	ndqused, nfree, n;
-	gfp_t gfp_mask = sc->gfp_mask;
 
 	if (!kmem_shake_allow(gfp_mask))
 		return 0;
@@ -2054,6 +2118,9 @@ xfs_qm_write_sb_changes(
 	xfs_trans_t	*tp;
 	int		error;
 
+#ifdef QUOTADEBUG
+	cmn_err(CE_NOTE, "Writing superblock quota changes :%s", mp->m_fsname);
+#endif
 	tp = xfs_trans_alloc(mp, XFS_TRANS_QM_SBCHANGE);
 	if ((error = xfs_trans_reserve(tp, 0,
 				      mp->m_sb.sb_sectsize + 128, 0,

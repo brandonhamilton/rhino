@@ -22,11 +22,10 @@
 #include <asm/stacktrace.h>
 #include <asm/cpudata.h>
 #include <asm/uaccess.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/nmi.h>
 #include <asm/pcr.h>
 
-#include "kernel.h"
 #include "kstack.h"
 
 /* Sparc64 chips have two performance counters, 32-bits each, with
@@ -246,20 +245,6 @@ static const cache_map_t ultra3_cache_map = {
 		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
 	},
 },
-[C(NODE)] = {
-	[C(OP_READ)] = {
-		[C(RESULT_ACCESS)] = { CACHE_OP_UNSUPPORTED },
-		[C(RESULT_MISS)  ] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-},
 };
 
 static const struct sparc_pmu ultra3_pmu = {
@@ -375,20 +360,6 @@ static const cache_map_t niagara1_cache_map = {
 		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
 	},
 },
-[C(NODE)] = {
-	[C(OP_READ)] = {
-		[C(RESULT_ACCESS)] = { CACHE_OP_UNSUPPORTED },
-		[C(RESULT_MISS)  ] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-},
 };
 
 static const struct sparc_pmu niagara1_pmu = {
@@ -491,20 +462,6 @@ static const cache_map_t niagara2_cache_map = {
 	[C(OP_READ)] = {
 		[C(RESULT_ACCESS)] = { CACHE_OP_UNSUPPORTED },
 		[C(RESULT_MISS)] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_WRITE) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-	[ C(OP_PREFETCH) ] = {
-		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
-		[ C(RESULT_MISS)   ] = { CACHE_OP_UNSUPPORTED },
-	},
-},
-[C(NODE)] = {
-	[C(OP_READ)] = {
-		[C(RESULT_ACCESS)] = { CACHE_OP_UNSUPPORTED },
-		[C(RESULT_MISS)  ] = { CACHE_OP_UNSUPPORTED },
 	},
 	[ C(OP_WRITE) ] = {
 		[ C(RESULT_ACCESS) ] = { CACHE_OP_UNSUPPORTED },
@@ -1070,7 +1027,7 @@ static int sparc_pmu_add(struct perf_event *event, int ef_flags)
 
 	/*
 	 * If group events scheduling transaction was started,
-	 * skip the schedulability test here, it will be performed
+	 * skip the schedulability test here, it will be peformed
 	 * at commit time(->commit_txn) as a whole
 	 */
 	if (cpuc->group_flag & PERF_EVENT_TXN)
@@ -1319,7 +1276,7 @@ static int __kprobes perf_event_nmi_handler(struct notifier_block *self,
 		if (!sparc_perf_event_set_period(event, hwc, idx))
 			continue;
 
-		if (perf_event_overflow(event, &data, regs))
+		if (perf_event_overflow(event, 1, &data, regs))
 			sparc_pmu_stop(event, 0);
 	}
 
@@ -1343,31 +1300,27 @@ static bool __init supported_pmu(void)
 		sparc_pmu = &niagara1_pmu;
 		return true;
 	}
-	if (!strcmp(sparc_pmu_type, "niagara2") ||
-	    !strcmp(sparc_pmu_type, "niagara3")) {
+	if (!strcmp(sparc_pmu_type, "niagara2")) {
 		sparc_pmu = &niagara2_pmu;
 		return true;
 	}
 	return false;
 }
 
-int __init init_hw_perf_events(void)
+void __init init_hw_perf_events(void)
 {
 	pr_info("Performance events: ");
 
 	if (!supported_pmu()) {
 		pr_cont("No support for PMU type '%s'\n", sparc_pmu_type);
-		return 0;
+		return;
 	}
 
 	pr_cont("Supported PMU type is '%s'\n", sparc_pmu_type);
 
-	perf_pmu_register(&pmu, "cpu", PERF_TYPE_RAW);
+	perf_pmu_register(&pmu);
 	register_die_notifier(&perf_event_nmi_notifier);
-
-	return 0;
 }
-early_initcall(init_hw_perf_events);
 
 void perf_callchain_kernel(struct perf_callchain_entry *entry,
 			   struct pt_regs *regs)

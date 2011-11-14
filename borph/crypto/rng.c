@@ -12,7 +12,7 @@
  *
  */
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <crypto/internal/rng.h>
 #include <linux/err.h>
 #include <linux/module.h>

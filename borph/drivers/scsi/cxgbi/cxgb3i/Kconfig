@@ -1,8 +1,6 @@
 config SCSI_CXGB3_ISCSI
 	tristate "Chelsio T3 iSCSI support"
-	depends on PCI && INET
-	select NETDEVICES
-	select NETDEV_10000
+	depends on CHELSIO_T3_DEPENDS
 	select CHELSIO_T3
 	select SCSI_ISCSI_ATTRS
 	---help---

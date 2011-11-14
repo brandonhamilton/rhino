@@ -6,14 +6,10 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/init.h>
-#include <linux/module.h>
 #include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/atomic.h>
 #include <mach/system.h>
 #include <mach/cns3xxx.h>
-#include <mach/pm.h>
 
 void cns3xxx_pwr_clk_en(unsigned int block)
 {
@@ -22,16 +18,6 @@ void cns3xxx_pwr_clk_en(unsigned int block)
 	reg |= (block & PM_CLK_GATE_REG_MASK);
 	__raw_writel(reg, PM_CLK_GATE_REG);
 }
-EXPORT_SYMBOL(cns3xxx_pwr_clk_en);
-
-void cns3xxx_pwr_clk_dis(unsigned int block)
-{
-	u32 reg = __raw_readl(PM_CLK_GATE_REG);
-
-	reg &= ~(block & PM_CLK_GATE_REG_MASK);
-	__raw_writel(reg, PM_CLK_GATE_REG);
-}
-EXPORT_SYMBOL(cns3xxx_pwr_clk_dis);
 
 void cns3xxx_pwr_power_up(unsigned int block)
 {
@@ -43,7 +29,6 @@ void cns3xxx_pwr_power_up(unsigned int block)
 	/* Wait for 300us for the PLL output clock locked. */
 	udelay(300);
 };
-EXPORT_SYMBOL(cns3xxx_pwr_power_up);
 
 void cns3xxx_pwr_power_down(unsigned int block)
 {
@@ -53,7 +38,6 @@ void cns3xxx_pwr_power_down(unsigned int block)
 	reg |= (block & CNS3XXX_PWR_PLL_ALL);
 	__raw_writel(reg, PM_PLL_HM_PD_CTRL_REG);
 };
-EXPORT_SYMBOL(cns3xxx_pwr_power_down);
 
 static void cns3xxx_pwr_soft_rst_force(unsigned int block)
 {
@@ -67,13 +51,11 @@ static void cns3xxx_pwr_soft_rst_force(unsigned int block)
 		reg &= ~(block & PM_SOFT_RST_REG_MASK);
 	} else {
 		reg &= ~(block & PM_SOFT_RST_REG_MASK);
-		__raw_writel(reg, PM_SOFT_RST_REG);
 		reg |= (block & PM_SOFT_RST_REG_MASK);
 	}
 
 	__raw_writel(reg, PM_SOFT_RST_REG);
 }
-EXPORT_SYMBOL(cns3xxx_pwr_soft_rst_force);
 
 void cns3xxx_pwr_soft_rst(unsigned int block)
 {
@@ -87,7 +69,6 @@ void cns3xxx_pwr_soft_rst(unsigned int block)
 	}
 	cns3xxx_pwr_soft_rst_force(block);
 }
-EXPORT_SYMBOL(cns3xxx_pwr_soft_rst);
 
 void arch_reset(char mode, const char *cmd)
 {
@@ -118,7 +99,3 @@ int cns3xxx_cpu_clock(void)
 
 	return cpu;
 }
-EXPORT_SYMBOL(cns3xxx_cpu_clock);
-
-atomic_t usb_pwr_ref = ATOMIC_INIT(0);
-EXPORT_SYMBOL(usb_pwr_ref);

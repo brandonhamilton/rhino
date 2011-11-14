@@ -23,15 +23,14 @@
 #include "nodelist.h"
 
 /* ---- Initial Security Label Attachment -------------- */
-int jffs2_init_security(struct inode *inode, struct inode *dir,
-			const struct qstr *qstr)
+int jffs2_init_security(struct inode *inode, struct inode *dir)
 {
 	int rc;
 	size_t len;
 	void *value;
 	char *name;
 
-	rc = security_inode_init_security(inode, dir, qstr, &name, &value, &len);
+	rc = security_inode_init_security(inode, dir, &name, &value, &len);
 	if (rc) {
 		if (rc == -EOPNOTSUPP)
 			return 0;

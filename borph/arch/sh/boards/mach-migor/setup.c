@@ -12,8 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/input/sh_keysc.h>
-#include <linux/mmc/host.h>
-#include <linux/mmc/sh_mobile_sdhi.h>
+#include <linux/mfd/sh_mobile_sdhi.h>
 #include <linux/mtd/physmap.h>
 #include <linux/mtd/nand.h>
 #include <linux/i2c.h>
@@ -214,7 +213,7 @@ static struct platform_device migor_nand_flash_device = {
 	}
 };
 
-static const struct fb_videomode migor_lcd_modes[] = {
+const static struct fb_videomode migor_lcd_modes[] = {
 	{
 #if defined(CONFIG_SH_MIGOR_RTA_WVGA)
 		.name = "LB070WV1",
@@ -399,7 +398,7 @@ static struct resource sdhi_cn9_resources[] = {
 	[0] = {
 		.name	= "SDHI",
 		.start	= 0x04ce0000,
-		.end	= 0x04ce00ff,
+		.end	= 0x04ce01ff,
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
@@ -411,7 +410,6 @@ static struct resource sdhi_cn9_resources[] = {
 static struct sh_mobile_sdhi_info sh7724_sdhi_data = {
 	.dma_slave_tx	= SHDMA_SLAVE_SDHI0_TX,
 	.dma_slave_rx	= SHDMA_SLAVE_SDHI0_RX,
-	.tmio_caps      = MMC_CAP_SDIO_IRQ,
 };
 
 static struct platform_device sdhi_cn9_device = {

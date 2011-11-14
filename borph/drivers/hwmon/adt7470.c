@@ -19,8 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/jiffies.h>
 #include <linux/i2c.h>
@@ -276,7 +274,7 @@ static int adt7470_read_temperatures(struct i2c_client *client,
 	i2c_smbus_write_byte_data(client, ADT7470_REG_PWM_CFG(2), pwm_cfg[1]);
 
 	if (res) {
-		pr_err("ha ha, interrupted\n");
+		printk(KERN_ERR "ha ha, interrupted");
 		return -EAGAIN;
 	}
 

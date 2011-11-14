@@ -38,7 +38,6 @@ Configuration Options:
 #include <linux/mc146818rtc.h>
 #include <linux/gfp.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 #include <asm/dma.h>
 
 #include "8253.h"
@@ -109,7 +108,7 @@ struct pcl816_board {
 	const char *name;	/*  board name */
 	int n_ranges;		/*  len of range list */
 	int n_aichan;		/*  num of A/D chans in diferencial mode */
-	unsigned int ai_ns_min;	/*  minimal allowed delay between samples (in ns) */
+	unsigned int ai_ns_min;	/*  minimal alllowed delay between samples (in ns) */
 	int n_aochan;		/*  num of D/A chans */
 	int n_dichan;		/*  num of DI chans */
 	int n_dochan;		/*  num of DO chans */
@@ -955,7 +954,7 @@ check_channel_list(struct comedi_device *dev,
 	}
 
 	if (chanlen > 1) {
-		/*  first channel is every time ok */
+		/*  first channel is everytime ok */
 		chansegment[0] = chanlist[0];
 		for (i = 1, seglen = 1; i < chanlen; i++, seglen++) {
 			/*  build part of chanlist */
@@ -969,10 +968,10 @@ check_channel_list(struct comedi_device *dev,
 			nowmustbechan =
 			    (CR_CHAN(chansegment[i - 1]) + 1) % chanlen;
 			if (nowmustbechan != CR_CHAN(chanlist[i])) {
-				/*  channel list isn't continuous :-( */
+				/*  channel list isn't continous :-( */
 				printk(KERN_WARNING
 				       "comedi%d: pcl816: channel list must "
-				       "be continuous! chanlist[%i]=%d but "
+				       "be continous! chanlist[%i]=%d but "
 				       "must be %d or %d!\n", dev->minor,
 				       i, CR_CHAN(chanlist[i]), nowmustbechan,
 				       CR_CHAN(chanlist[0]));

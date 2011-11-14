@@ -17,7 +17,6 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/proc_fs.h>
-#include <linux/reboot.h>
 #include <asm/delay.h>
 #include <asm/uaccess.h>
 #include <asm/rtas.h>
@@ -257,16 +256,31 @@ static ssize_t rtas_flash_read(struct file *file, char __user *buf,
 	struct proc_dir_entry *dp = PDE(file->f_path.dentry->d_inode);
 	struct rtas_update_flash_t *uf;
 	char msg[RTAS_MSG_MAXLEN];
+	int msglen;
 
-	uf = dp->data;
+	uf = (struct rtas_update_flash_t *) dp->data;
 
 	if (!strcmp(dp->name, FIRMWARE_FLASH_NAME)) {
 		get_flash_status_msg(uf->status, msg);
 	} else {	   /* FIRMWARE_UPDATE_NAME */
 		sprintf(msg, "%d\n", uf->status);
 	}
+	msglen = strlen(msg);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, strlen(msg));
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 /* constructor for flash_block_cache */
@@ -380,13 +394,26 @@ static ssize_t manage_flash_read(struct file *file, char __user *buf,
 	char msg[RTAS_MSG_MAXLEN];
 	int msglen;
 
-	args_buf = dp->data;
+	args_buf = (struct rtas_manage_flash_t *) dp->data;
 	if (args_buf == NULL)
 		return 0;
 
 	msglen = sprintf(msg, "%d\n", args_buf->status);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, msglen);
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 static ssize_t manage_flash_write(struct file *file, const char __user *buf,
@@ -468,11 +495,24 @@ static ssize_t validate_flash_read(struct file *file, char __user *buf,
 	char msg[RTAS_MSG_MAXLEN];
 	int msglen;
 
-	args_buf = dp->data;
+	args_buf = (struct rtas_validate_flash_t *) dp->data;
 
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+	
 	msglen = get_validate_flash_msg(args_buf, msg);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, msglen);
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 static ssize_t validate_flash_write(struct file *file, const char __user *buf,

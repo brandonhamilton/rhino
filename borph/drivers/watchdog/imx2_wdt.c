@@ -270,7 +270,7 @@ static int __init imx2_wdt_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	imx2_wdt.clk = clk_get(&pdev->dev, NULL);
+	imx2_wdt.clk = clk_get_sys("imx-wdt.0", NULL);
 	if (IS_ERR(imx2_wdt.clk)) {
 		dev_err(&pdev->dev, "can't get Watchdog clock\n");
 		return PTR_ERR(imx2_wdt.clk);
@@ -329,18 +329,12 @@ static void imx2_wdt_shutdown(struct platform_device *pdev)
 	}
 }
 
-static const struct of_device_id imx2_wdt_dt_ids[] = {
-	{ .compatible = "fsl,imx21-wdt", },
-	{ /* sentinel */ }
-};
-
 static struct platform_driver imx2_wdt_driver = {
 	.remove		= __exit_p(imx2_wdt_remove),
 	.shutdown	= imx2_wdt_shutdown,
 	.driver		= {
 		.name	= DRIVER_NAME,
 		.owner	= THIS_MODULE,
-		.of_match_table = imx2_wdt_dt_ids,
 	},
 };
 

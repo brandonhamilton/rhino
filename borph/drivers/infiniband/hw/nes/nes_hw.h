@@ -1193,8 +1193,6 @@ struct nes_listener {
 
 struct nes_ib_device;
 
-#define NES_EVENT_DELAY msecs_to_jiffies(100)
-
 struct nes_vnic {
 	struct nes_ib_device *nesibdev;
 	u64 sq_full;
@@ -1211,6 +1209,7 @@ struct nes_vnic {
 	/* void *mem; */
 	struct nes_device *nesdev;
 	struct net_device *netdev;
+	struct vlan_group *vlan_grp;
 	atomic_t          rx_skbs_needed;
 	atomic_t          rx_skb_timer_running;
 	int               budget;
@@ -1244,13 +1243,10 @@ struct nes_vnic {
 	u8  next_qp_nic_index;
 	u8  of_device_registered;
 	u8  rdma_enabled;
+	u8  rx_checksum_disabled;
 	u32 lro_max_aggr;
 	struct net_lro_mgr lro_mgr;
 	struct net_lro_desc lro_desc[NES_MAX_LRO_DESCRIPTORS];
-	struct timer_list event_timer;
-	enum ib_event_type delayed_event;
-	enum ib_event_type last_dispatched_event;
-	spinlock_t port_ibevent_lock;
 };
 
 struct nes_ib_device {
@@ -1352,8 +1348,7 @@ struct nes_terminate_hdr {
 #define BAD_FRAME_OFFSET	64
 #define CQE_MAJOR_DRV		0x8000
 
-/* Used for link status recheck after interrupt processing */
-#define NES_LINK_RECHECK_DELAY	msecs_to_jiffies(50)
-#define NES_LINK_RECHECK_MAX	60
+#define nes_vlan_rx vlan_hwaccel_receive_skb
+#define nes_netif_rx netif_receive_skb
 
 #endif		/* __NES_HW_H */

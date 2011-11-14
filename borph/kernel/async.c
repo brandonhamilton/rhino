@@ -49,13 +49,12 @@ asynchronous and synchronous parts of the kernel.
 */
 
 #include <linux/async.h>
-#include <linux/atomic.h>
-#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
+#include <asm/atomic.h>
 
 static async_cookie_t next_cookie = 1;
 
@@ -129,8 +128,7 @@ static void async_run_entry_fn(struct work_struct *work)
 
 	/* 2) run (and print duration) */
 	if (initcall_debug && system_state == SYSTEM_BOOTING) {
-		printk(KERN_DEBUG "calling  %lli_%pF @ %i\n",
-			(long long)entry->cookie,
+		printk("calling  %lli_%pF @ %i\n", (long long)entry->cookie,
 			entry->func, task_pid_nr(current));
 		calltime = ktime_get();
 	}
@@ -138,7 +136,7 @@ static void async_run_entry_fn(struct work_struct *work)
 	if (initcall_debug && system_state == SYSTEM_BOOTING) {
 		rettime = ktime_get();
 		delta = ktime_sub(rettime, calltime);
-		printk(KERN_DEBUG "initcall %lli_%pF returned 0 after %lld usecs\n",
+		printk("initcall %lli_%pF returned 0 after %lld usecs\n",
 			(long long)entry->cookie,
 			entry->func,
 			(long long)ktime_to_ns(delta) >> 10);
@@ -272,7 +270,7 @@ void async_synchronize_cookie_domain(async_cookie_t cookie,
 	ktime_t starttime, delta, endtime;
 
 	if (initcall_debug && system_state == SYSTEM_BOOTING) {
-		printk(KERN_DEBUG "async_waiting @ %i\n", task_pid_nr(current));
+		printk("async_waiting @ %i\n", task_pid_nr(current));
 		starttime = ktime_get();
 	}
 
@@ -282,7 +280,7 @@ void async_synchronize_cookie_domain(async_cookie_t cookie,
 		endtime = ktime_get();
 		delta = ktime_sub(endtime, starttime);
 
-		printk(KERN_DEBUG "async_continuing @ %i after %lli usec\n",
+		printk("async_continuing @ %i after %lli usec\n",
 			task_pid_nr(current),
 			(long long)ktime_to_ns(delta) >> 10);
 	}

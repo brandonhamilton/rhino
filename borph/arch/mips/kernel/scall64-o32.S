@@ -123,7 +123,8 @@ trace_a_syscall:
 
 	move	s0, t2			# Save syscall pointer
 	move	a0, sp
-	jal	syscall_trace_enter
+	li	a1, 0
+	jal	do_syscall_trace
 
 	move	t0, s0
 	RESTORE_STATIC
@@ -521,7 +522,7 @@ sys_call_table:
 	PTR	sys_ioprio_get			/* 4315 */
 	PTR	compat_sys_utimensat
 	PTR	compat_sys_signalfd
-	PTR	sys_ni_syscall			/* was timerfd */
+	PTR	sys_ni_syscall
 	PTR	sys_eventfd
 	PTR	sys32_fallocate			/* 4320 */
 	PTR	sys_timerfd_create
@@ -542,10 +543,4 @@ sys_call_table:
 	PTR	sys_fanotify_init
 	PTR	sys_32_fanotify_mark
 	PTR	sys_prlimit64
-	PTR	sys_name_to_handle_at
-	PTR	compat_sys_open_by_handle_at	/* 4340 */
-	PTR	compat_sys_clock_adjtime
-	PTR	sys_syncfs
-	PTR	compat_sys_sendmmsg
-	PTR	sys_setns
 	.size	sys_call_table,.-sys_call_table

@@ -28,6 +28,12 @@
 #include <mach/board.h>
 #include <mach/msm_iomap.h>
 
+void __iomem *gic_cpu_base_addr;
+
+unsigned long clk_get_max_axi_khz(void)
+{
+	return 0;
+}
 
 static void __init msm8x60_map_io(void)
 {
@@ -38,8 +44,9 @@ static void __init msm8x60_init_irq(void)
 {
 	unsigned int i;
 
-	gic_init(0, GIC_PPI_START, MSM_QGIC_DIST_BASE,
-		 (void *)MSM_QGIC_CPU_BASE);
+	gic_dist_init(0, MSM_QGIC_DIST_BASE, GIC_PPI_START);
+	gic_cpu_base_addr = (void *)MSM_QGIC_CPU_BASE;
+	gic_cpu_init(0, MSM_QGIC_CPU_BASE);
 
 	/* Edge trigger PPIs except AVS_SVICINT and AVS_SVICINTSWDONE */
 	writel(0xFFFFD7FF, MSM_QGIC_DIST_BASE + GIC_DIST_CONFIG + 4);
@@ -56,7 +63,7 @@ static void __init msm8x60_init_irq(void)
 	 */
 	for (i = GIC_PPI_START; i < GIC_SPI_START; i++) {
 		if (i != AVS_SVICINT && i != AVS_SVICINTSWDONE)
-			irq_set_handler(i, handle_percpu_irq);
+			set_irq_handler(i, handle_percpu_irq);
 	}
 }
 

@@ -4,7 +4,6 @@ config MIPS
 	select HAVE_GENERIC_DMA_COHERENT
 	select HAVE_IDE
 	select HAVE_OPROFILE
-	select HAVE_IRQ_WORK
 	select HAVE_PERF_EVENTS
 	select PERF_USE_VMALLOC
 	select HAVE_ARCH_KGDB
@@ -22,8 +21,6 @@ config MIPS
 	select HAVE_DMA_API_DEBUG
 	select HAVE_GENERIC_HARDIRQS
 	select GENERIC_IRQ_PROBE
-	select GENERIC_IRQ_SHOW
-	select HAVE_ARCH_JUMP_LABEL
 
 menu "Machine selection"
 
@@ -67,22 +64,6 @@ config AR7
 	help
 	  Support for the Texas Instruments AR7 System-on-a-Chip
 	  family: TNETD7100, 7200 and 7300.
-
-config ATH79
-	bool "Atheros AR71XX/AR724X/AR913X based boards"
-	select ARCH_REQUIRE_GPIOLIB
-	select BOOT_RAW
-	select CEVT_R4K
-	select CSRC_R4K
-	select DMA_NONCOHERENT
-	select IRQ_CPU
-	select MIPS_MACHINE
-	select SYS_HAS_CPU_MIPS32_R2
-	select SYS_HAS_EARLY_PRINTK
-	select SYS_SUPPORTS_32BIT_KERNEL
-	select SYS_SUPPORTS_BIG_ENDIAN
-	help
-	  Support for the Atheros AR71XX/AR724X/AR913X SoCs.
 
 config BCM47XX
 	bool "Broadcom BCM47XX based boards"
@@ -185,7 +166,6 @@ config MACH_JAZZ
 	select CSRC_R4K
 	select DEFAULT_SGI_PARTITION if CPU_BIG_ENDIAN
 	select GENERIC_ISA_DMA
-	select HAVE_PCSPKR_PLATFORM
 	select IRQ_CPU
 	select I8253
 	select I8259
@@ -211,25 +191,6 @@ config MACH_JZ4740
 	select ARCH_REQUIRE_GPIOLIB
 	select SYS_HAS_EARLY_PRINTK
 	select HAVE_PWM
-	select HAVE_CLK
-
-config LANTIQ
-	bool "Lantiq based platforms"
-	select DMA_NONCOHERENT
-	select IRQ_CPU
-	select CEVT_R4K
-	select CSRC_R4K
-	select SYS_HAS_CPU_MIPS32_R1
-	select SYS_HAS_CPU_MIPS32_R2
-	select SYS_SUPPORTS_BIG_ENDIAN
-	select SYS_SUPPORTS_32BIT_KERNEL
-	select SYS_SUPPORTS_MULTITHREADING
-	select SYS_HAS_EARLY_PRINTK
-	select ARCH_REQUIRE_GPIOLIB
-	select SWAP_IO_SPACE
-	select BOOT_RAW
-	select HAVE_CLK
-	select MIPS_MACHINE
 
 config LASAT
 	bool "LASAT Networks platforms"
@@ -267,7 +228,6 @@ config MIPS_MALTA
 	select CSRC_R4K
 	select DMA_NONCOHERENT
 	select GENERIC_ISA_DMA
-	select HAVE_PCSPKR_PLATFORM
 	select IRQ_CPU
 	select IRQ_GIC
 	select HW_HAS_PCI
@@ -356,8 +316,6 @@ config PNX8550_STB810
 config PMC_MSP
 	bool "PMC-Sierra MSP chipsets"
 	depends on EXPERIMENTAL
-	select CEVT_R4K
-	select CSRC_R4K
 	select DMA_NONCOHERENT
 	select SWAP_IO_SPACE
 	select NO_EXCEPT_FILL
@@ -642,7 +600,6 @@ config SNI_RM
 	select DEFAULT_SGI_PARTITION if CPU_BIG_ENDIAN
 	select DMA_NONCOHERENT
 	select GENERIC_ISA_DMA
-	select HAVE_PCSPKR_PLATFORM
 	select HW_HAS_EISA
 	select HW_HAS_PCI
 	select IRQ_CPU
@@ -757,41 +714,12 @@ config CAVIUM_OCTEON_REFERENCE_BOARD
 		Hikari
 	  Say Y here for most Octeon reference boards.
 
-config NLM_XLR_BOARD
-	bool "Netlogic XLR/XLS based systems"
-	depends on EXPERIMENTAL
-	select BOOT_ELF32
-	select NLM_COMMON
-	select NLM_XLR
-	select SYS_HAS_CPU_XLR
-	select SYS_SUPPORTS_SMP
-	select HW_HAS_PCI
-	select SWAP_IO_SPACE
-	select SYS_SUPPORTS_32BIT_KERNEL
-	select SYS_SUPPORTS_64BIT_KERNEL
-	select 64BIT_PHYS_ADDR
-	select SYS_SUPPORTS_BIG_ENDIAN
-	select SYS_SUPPORTS_HIGHMEM
-	select DMA_COHERENT
-	select NR_CPUS_DEFAULT_32
-	select CEVT_R4K
-	select CSRC_R4K
-	select IRQ_CPU
-	select ZONE_DMA if 64BIT
-	select SYNC_R4K
-	select SYS_HAS_EARLY_PRINTK
-	help
-	  Support for systems based on Netlogic XLR and XLS processors.
-	  Say Y here if you have a XLR or XLS based board.
-
 endchoice
 
 source "arch/mips/alchemy/Kconfig"
-source "arch/mips/ath79/Kconfig"
 source "arch/mips/bcm63xx/Kconfig"
 source "arch/mips/jazz/Kconfig"
 source "arch/mips/jz4740/Kconfig"
-source "arch/mips/lantiq/Kconfig"
 source "arch/mips/lasat/Kconfig"
 source "arch/mips/pmc-sierra/Kconfig"
 source "arch/mips/powertv/Kconfig"
@@ -801,7 +729,6 @@ source "arch/mips/txx9/Kconfig"
 source "arch/mips/vr41xx/Kconfig"
 source "arch/mips/cavium-octeon/Kconfig"
 source "arch/mips/loongson/Kconfig"
-source "arch/mips/netlogic/Kconfig"
 
 endmenu
 
@@ -824,6 +751,10 @@ config ARCH_SUPPORTS_OPROFILE
 	bool
 	default y if !MIPS_MT_SMTC
 
+config GENERIC_FIND_NEXT_BIT
+	bool
+	default y
+
 config GENERIC_HWEIGHT
 	bool
 	default y
@@ -843,6 +774,9 @@ config GENERIC_CMOS_UPDATE
 config SCHED_OMIT_FRAME_POINTER
 	bool
 	default y
+
+config GENERIC_HARDIRQS_NO__DO_IRQ
+	def_bool y
 
 #
 # Select some configuration options automatically based on user selections.
@@ -905,9 +839,6 @@ config GPIO_TXX9
 config CFE
 	bool
 
-config ARCH_DMA_ADDR_T_64BIT
-	def_bool (HIGHMEM && 64BIT_PHYS_ADDR) || 64BIT
-
 config DMA_COHERENT
 	bool
 
@@ -951,9 +882,6 @@ config MIPS_DISABLE_OBSOLETE_IDE
 
 config SYNC_R4K
 	bool
-
-config MIPS_MACHINE
-	def_bool n
 
 config NO_IOPORT
 	def_bool n
@@ -1037,6 +965,9 @@ config IRQ_GT641XX
 	bool
 
 config IRQ_GIC
+	bool
+
+config IRQ_CPU_OCTEON
 	bool
 
 config MIPS_BOARDS_GEN
@@ -1174,7 +1105,7 @@ config CPU_LOONGSON2E
 	  The Loongson 2E processor implements the MIPS III instruction set
 	  with many extensions.
 
-	  It has an internal FPGA northbridge, which is compatible to
+	  It has an internal FPGA northbridge, which is compatiable to
 	  bonito64.
 
 config CPU_LOONGSON2F
@@ -1398,6 +1329,8 @@ config CPU_SB1
 config CPU_CAVIUM_OCTEON
 	bool "Cavium Octeon processor"
 	depends on SYS_HAS_CPU_CAVIUM_OCTEON
+	select IRQ_CPU
+	select IRQ_CPU_OCTEON
 	select CPU_HAS_PREFETCH
 	select CPU_SUPPORTS_64BIT_KERNEL
 	select SYS_SUPPORTS_SMP
@@ -1462,17 +1395,6 @@ config CPU_BMIPS5000
 	help
 	  Broadcom BMIPS5000 processors.
 
-config CPU_XLR
-	bool "Netlogic XLR SoC"
-	depends on SYS_HAS_CPU_XLR
-	select CPU_SUPPORTS_32BIT_KERNEL
-	select CPU_SUPPORTS_64BIT_KERNEL
-	select CPU_SUPPORTS_HIGHMEM
-	select WEAK_ORDERING
-	select WEAK_REORDERING_BEYOND_LLSC
-	select CPU_SUPPORTS_HUGEPAGES
-	help
-	  Netlogic Microsystems XLR/XLS processors.
 endchoice
 
 if CPU_LOONGSON2F
@@ -1601,9 +1523,6 @@ config SYS_HAS_CPU_BMIPS4380
 	bool
 
 config SYS_HAS_CPU_BMIPS5000
-	bool
-
-config SYS_HAS_CPU_XLR
 	bool
 
 #
@@ -2299,7 +2218,7 @@ config SECCOMP
 config USE_OF
 	bool "Flattened Device Tree support"
 	select OF
-	select OF_EARLY_FLATTREE
+	select OF_FLATTREE
 	help
 	  Include support for flattened device tree machine descriptions.
 
@@ -2390,8 +2309,6 @@ config MMU
 
 config I8253
 	bool
-	select CLKSRC_I8253
-	select CLKEVT_I8253
 	select MIPS_EXTERNAL_TIMER
 
 config ZONE_DMA32
@@ -2400,16 +2317,6 @@ config ZONE_DMA32
 source "drivers/pcmcia/Kconfig"
 
 source "drivers/pci/hotplug/Kconfig"
-
-config RAPIDIO
-	bool "RapidIO support"
-	depends on PCI
-	default n
-	help
-	  If you say Y here, the kernel will include drivers and
-	  infrastructure code to support RapidIO interconnect devices.
-
-source "drivers/rapidio/Kconfig"
 
 endmenu
 

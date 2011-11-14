@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2011 QLogic Corporation
+ * Copyright (c)  2003-2010 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -36,8 +36,7 @@ done:
 }
 
 int
-qla24xx_fcp_prio_cfg_valid(scsi_qla_host_t *vha,
-	struct qla_fcp_prio_cfg *pri_cfg, uint8_t flag)
+qla24xx_fcp_prio_cfg_valid(struct qla_fcp_prio_cfg *pri_cfg, uint8_t flag)
 {
 	int i, ret, num_valid;
 	uint8_t *bcode;
@@ -52,17 +51,18 @@ qla24xx_fcp_prio_cfg_valid(scsi_qla_host_t *vha,
 
 	if (bcode_val == 0xFFFFFFFF) {
 		/* No FCP Priority config data in flash */
-		ql_dbg(ql_dbg_user, vha, 0x7051,
-		    "No FCP Priority config data.\n");
+		DEBUG2(printk(KERN_INFO
+		    "%s: No FCP priority config data.\n",
+		    __func__));
 		return 0;
 	}
 
 	if (bcode[0] != 'H' || bcode[1] != 'Q' || bcode[2] != 'O' ||
 			bcode[3] != 'S') {
 		/* Invalid FCP priority data header*/
-		ql_dbg(ql_dbg_user, vha, 0x7052,
-		    "Invalid FCP Priority data header. bcode=0x%x.\n",
-		    bcode_val);
+		DEBUG2(printk(KERN_ERR
+		    "%s: Invalid FCP Priority data header. bcode=0x%x\n",
+		    __func__, bcode_val));
 		return 0;
 	}
 	if (flag != 1)
@@ -77,14 +77,15 @@ qla24xx_fcp_prio_cfg_valid(scsi_qla_host_t *vha,
 
 	if (num_valid == 0) {
 		/* No valid FCP priority data entries */
-		ql_dbg(ql_dbg_user, vha, 0x7053,
-		    "No valid FCP Priority data entries.\n");
+		DEBUG2(printk(KERN_ERR
+		    "%s: No valid FCP Priority data entries.\n",
+		    __func__));
 		ret = 0;
 	} else {
 		/* FCP priority data is valid */
-		ql_dbg(ql_dbg_user, vha, 0x7054,
-		    "Valid FCP priority data. num entries = %d.\n",
-		    num_valid);
+		DEBUG2(printk(KERN_INFO
+		    "%s: Valid FCP priority data. num entries = %d\n",
+		    __func__, num_valid));
 	}
 
 	return ret;
@@ -102,7 +103,7 @@ qla24xx_proc_fcp_prio_cfg_cmd(struct fc_bsg_job *bsg_job)
 
 	bsg_job->reply->reply_payload_rcv_len = 0;
 
-	if (!(IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha))) {
+	if (!IS_QLA24XX_TYPE(ha) || !IS_QLA25XX(ha)) {
 		ret = -EINVAL;
 		goto exit_fcp_prio_cfg;
 	}
@@ -181,9 +182,10 @@ qla24xx_proc_fcp_prio_cfg_cmd(struct fc_bsg_job *bsg_job)
 		if (!ha->fcp_prio_cfg) {
 			ha->fcp_prio_cfg = vmalloc(FCP_PRIO_CFG_SIZE);
 			if (!ha->fcp_prio_cfg) {
-				ql_log(ql_log_warn, vha, 0x7050,
-				    "Unable to allocate memory for fcp prio "
-				    "config data (%x).\n", FCP_PRIO_CFG_SIZE);
+				qla_printk(KERN_WARNING, ha,
+					"Unable to allocate memory "
+					"for fcp prio config data (%x).\n",
+					FCP_PRIO_CFG_SIZE);
 				bsg_job->reply->result = (DID_ERROR << 16);
 				ret = -ENOMEM;
 				goto exit_fcp_prio_cfg;
@@ -196,9 +198,9 @@ qla24xx_proc_fcp_prio_cfg_cmd(struct fc_bsg_job *bsg_job)
 			FCP_PRIO_CFG_SIZE);
 
 		/* validate fcp priority data */
-
-		if (!qla24xx_fcp_prio_cfg_valid(vha,
-		    (struct qla_fcp_prio_cfg *) ha->fcp_prio_cfg, 1)) {
+		if (!qla24xx_fcp_prio_cfg_valid(
+			(struct qla_fcp_prio_cfg *)
+			ha->fcp_prio_cfg, 1)) {
 			bsg_job->reply->result = (DID_ERROR << 16);
 			ret = -EINVAL;
 			/* If buffer was invalidatic int
@@ -254,8 +256,9 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 
 	/* pass through is supported only for ISP 4Gb or higher */
 	if (!IS_FWI2_CAPABLE(ha)) {
-		ql_dbg(ql_dbg_user, vha, 0x7001,
-		    "ELS passthru not supported for ISP23xx based adapters.\n");
+		DEBUG2(qla_printk(KERN_INFO, ha,
+		    "scsi(%ld):ELS passthru not supported for ISP23xx based "
+		    "adapters\n", vha->host_no));
 		rval = -EPERM;
 		goto done;
 	}
@@ -263,11 +266,11 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 	/*  Multiple SG's are not supported for ELS requests */
 	if (bsg_job->request_payload.sg_cnt > 1 ||
 		bsg_job->reply_payload.sg_cnt > 1) {
-		ql_dbg(ql_dbg_user, vha, 0x7002,
-		    "Multiple SG's are not suppored for ELS requests, "
-		    "request_sg_cnt=%x reply_sg_cnt=%x.\n",
-		    bsg_job->request_payload.sg_cnt,
-		    bsg_job->reply_payload.sg_cnt);
+		DEBUG2(printk(KERN_INFO
+			"multiple SG's are not supported for ELS requests"
+			" [request_sg_cnt: %x reply_sg_cnt: %x]\n",
+			bsg_job->request_payload.sg_cnt,
+			bsg_job->reply_payload.sg_cnt));
 		rval = -EPERM;
 		goto done;
 	}
@@ -278,9 +281,9 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 		 * if not perform fabric login
 		 */
 		if (qla2x00_fabric_login(vha, fcport, &nextlid)) {
-			ql_dbg(ql_dbg_user, vha, 0x7003,
-			    "Failed to login port %06X for ELS passthru.\n",
-			    fcport->d_id.b24);
+			DEBUG2(qla_printk(KERN_WARNING, ha,
+			"failed to login port %06X for ELS passthru\n",
+			fcport->d_id.b24));
 			rval = -EIO;
 			goto done;
 		}
@@ -311,7 +314,8 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 	}
 
 	if (!vha->flags.online) {
-		ql_log(ql_log_warn, vha, 0x7005, "Host not online.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha,
+		"host not online\n"));
 		rval = -EIO;
 		goto done;
 	}
@@ -333,11 +337,12 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 
 	if ((req_sg_cnt !=  bsg_job->request_payload.sg_cnt) ||
 		(rsp_sg_cnt != bsg_job->reply_payload.sg_cnt)) {
-		ql_log(ql_log_warn, vha, 0x7008,
-		    "dma mapping resulted in different sg counts, "
-		    "request_sg_cnt: %x dma_request_sg_cnt:%x reply_sg_cnt:%x "
-		    "dma_reply_sg_cnt:%x.\n", bsg_job->request_payload.sg_cnt,
-		    req_sg_cnt, bsg_job->reply_payload.sg_cnt, rsp_sg_cnt);
+		DEBUG2(printk(KERN_INFO
+			"dma mapping resulted in different sg counts \
+			[request_sg_cnt: %x dma_request_sg_cnt: %x\
+			reply_sg_cnt: %x dma_reply_sg_cnt: %x]\n",
+			bsg_job->request_payload.sg_cnt, req_sg_cnt,
+			bsg_job->reply_payload.sg_cnt, rsp_sg_cnt));
 		rval = -EAGAIN;
 		goto done_unmap_sg;
 	}
@@ -358,16 +363,15 @@ qla2x00_process_els(struct fc_bsg_job *bsg_job)
 		"bsg_els_rpt" : "bsg_els_hst");
 	els->u.bsg_job = bsg_job;
 
-	ql_dbg(ql_dbg_user, vha, 0x700a,
-	    "bsg rqst type: %s els type: %x - loop-id=%x "
-	    "portid=%-2x%02x%02x.\n", type,
-	    bsg_job->request->rqst_data.h_els.command_code, fcport->loop_id,
-	    fcport->d_id.b.domain, fcport->d_id.b.area, fcport->d_id.b.al_pa);
+	DEBUG2(qla_printk(KERN_INFO, ha,
+		"scsi(%ld:%x): bsg rqst type: %s els type: %x - loop-id=%x "
+		"portid=%02x%02x%02x.\n", vha->host_no, sp->handle, type,
+		bsg_job->request->rqst_data.h_els.command_code,
+		fcport->loop_id, fcport->d_id.b.domain, fcport->d_id.b.area,
+		fcport->d_id.b.al_pa));
 
 	rval = qla2x00_start_sp(sp);
 	if (rval != QLA_SUCCESS) {
-		ql_log(ql_log_warn, vha, 0x700e,
-		    "qla2x00_start_sp failed = %d\n", rval);
 		kfree(sp->ctx);
 		mempool_free(sp, ha->srb_mempool);
 		rval = -EIO;
@@ -407,8 +411,6 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 		dma_map_sg(&ha->pdev->dev, bsg_job->request_payload.sg_list,
 			bsg_job->request_payload.sg_cnt, DMA_TO_DEVICE);
 	if (!req_sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x700f,
-		    "dma_map_sg return %d for request\n", req_sg_cnt);
 		rval = -ENOMEM;
 		goto done;
 	}
@@ -416,25 +418,24 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 	rsp_sg_cnt = dma_map_sg(&ha->pdev->dev, bsg_job->reply_payload.sg_list,
 		bsg_job->reply_payload.sg_cnt, DMA_FROM_DEVICE);
 	if (!rsp_sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x7010,
-		    "dma_map_sg return %d for reply\n", rsp_sg_cnt);
 		rval = -ENOMEM;
 		goto done;
 	}
 
 	if ((req_sg_cnt !=  bsg_job->request_payload.sg_cnt) ||
 	    (rsp_sg_cnt != bsg_job->reply_payload.sg_cnt)) {
-		ql_log(ql_log_warn, vha, 0x7011,
-		    "request_sg_cnt: %x dma_request_sg_cnt: %x reply_sg_cnt:%x "
-		    "dma_reply_sg_cnt: %x\n", bsg_job->request_payload.sg_cnt,
-		    req_sg_cnt, bsg_job->reply_payload.sg_cnt, rsp_sg_cnt);
+		DEBUG2(qla_printk(KERN_WARNING, ha,
+		    "[request_sg_cnt: %x dma_request_sg_cnt: %x\
+		    reply_sg_cnt: %x dma_reply_sg_cnt: %x]\n",
+		    bsg_job->request_payload.sg_cnt, req_sg_cnt,
+		    bsg_job->reply_payload.sg_cnt, rsp_sg_cnt));
 		rval = -EAGAIN;
 		goto done_unmap_sg;
 	}
 
 	if (!vha->flags.online) {
-		ql_log(ql_log_warn, vha, 0x7012,
-		    "Host is not online.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha,
+			"host not online\n"));
 		rval = -EIO;
 		goto done_unmap_sg;
 	}
@@ -450,8 +451,8 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 		loop_id = vha->mgmt_svr_loop_id;
 		break;
 	default:
-		ql_dbg(ql_dbg_user, vha, 0x7013,
-		    "Unknown loop id: %x.\n", loop_id);
+		DEBUG2(qla_printk(KERN_INFO, ha,
+		    "Unknown loop id: %x\n", loop_id));
 		rval = -EINVAL;
 		goto done_unmap_sg;
 	}
@@ -463,8 +464,6 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 	 */
 	fcport = qla2x00_alloc_fcport(vha, GFP_KERNEL);
 	if (!fcport) {
-		ql_log(ql_log_warn, vha, 0x7014,
-		    "Failed to allocate fcport.\n");
 		rval = -ENOMEM;
 		goto done_unmap_sg;
 	}
@@ -480,8 +479,6 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 	/* Alloc SRB structure */
 	sp = qla2x00_get_ctx_bsg_sp(vha, fcport, sizeof(struct srb_ctx));
 	if (!sp) {
-		ql_log(ql_log_warn, vha, 0x7015,
-		    "qla2x00_get_ctx_bsg_sp failed.\n");
 		rval = -ENOMEM;
 		goto done_free_fcport;
 	}
@@ -491,17 +488,15 @@ qla2x00_process_ct(struct fc_bsg_job *bsg_job)
 	ct->name = "bsg_ct";
 	ct->u.bsg_job = bsg_job;
 
-	ql_dbg(ql_dbg_user, vha, 0x7016,
-	    "bsg rqst type: %s else type: %x - "
-	    "loop-id=%x portid=%02x%02x%02x.\n", type,
-	    (bsg_job->request->rqst_data.h_ct.preamble_word2 >> 16),
-	    fcport->loop_id, fcport->d_id.b.domain, fcport->d_id.b.area,
-	    fcport->d_id.b.al_pa);
+	DEBUG2(qla_printk(KERN_INFO, ha,
+		"scsi(%ld:%x): bsg rqst type: %s els type: %x - loop-id=%x "
+		"portid=%02x%02x%02x.\n", vha->host_no, sp->handle, type,
+		(bsg_job->request->rqst_data.h_ct.preamble_word2 >> 16),
+		fcport->loop_id, fcport->d_id.b.domain, fcport->d_id.b.area,
+		fcport->d_id.b.al_pa));
 
 	rval = qla2x00_start_sp(sp);
 	if (rval != QLA_SUCCESS) {
-		ql_log(ql_log_warn, vha, 0x7017,
-		    "qla2x00_start_sp failed=%d.\n", rval);
 		kfree(sp->ctx);
 		mempool_free(sp, ha->srb_mempool);
 		rval = -EIO;
@@ -540,8 +535,9 @@ qla81xx_set_internal_loopback(scsi_qla_host_t *vha, uint16_t *config,
 	ha->notify_dcbx_comp = 1;
 	ret = qla81xx_set_port_config(vha, new_config);
 	if (ret != QLA_SUCCESS) {
-		ql_log(ql_log_warn, vha, 0x7021,
-		    "set port config failed.\n");
+		DEBUG2(printk(KERN_ERR
+		    "%s(%lu): Set port config failed\n",
+		    __func__, vha->host_no));
 		ha->notify_dcbx_comp = 0;
 		rval = -EINVAL;
 		goto done_set_internal;
@@ -549,11 +545,11 @@ qla81xx_set_internal_loopback(scsi_qla_host_t *vha, uint16_t *config,
 
 	/* Wait for DCBX complete event */
 	if (!wait_for_completion_timeout(&ha->dcbx_comp, (20 * HZ))) {
-		ql_dbg(ql_dbg_user, vha, 0x7022,
-		    "State change notification not received.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha,
+		    "State change notificaition not received.\n"));
 	} else
-		ql_dbg(ql_dbg_user, vha, 0x7023,
-		    "State change received.\n");
+		DEBUG2(qla_printk(KERN_INFO, ha,
+		    "State change RECEIVED\n"));
 
 	ha->notify_dcbx_comp = 0;
 
@@ -585,8 +581,9 @@ qla81xx_reset_internal_loopback(scsi_qla_host_t *vha, uint16_t *config,
 		ha->notify_dcbx_comp = wait;
 		ret = qla81xx_set_port_config(vha, new_config);
 		if (ret != QLA_SUCCESS) {
-			ql_log(ql_log_warn, vha, 0x7025,
-			    "Set port config failed.\n");
+			DEBUG2(printk(KERN_ERR
+			    "%s(%lu): Set port config failed\n",
+			     __func__, vha->host_no));
 			ha->notify_dcbx_comp = 0;
 			rval = -EINVAL;
 			goto done_reset_internal;
@@ -595,14 +592,14 @@ qla81xx_reset_internal_loopback(scsi_qla_host_t *vha, uint16_t *config,
 		/* Wait for DCBX complete event */
 		if (wait && !wait_for_completion_timeout(&ha->dcbx_comp,
 			(20 * HZ))) {
-			ql_dbg(ql_dbg_user, vha, 0x7026,
-			    "State change notification not received.\n");
+			DEBUG2(qla_printk(KERN_WARNING, ha,
+			    "State change notificaition not received.\n"));
 			ha->notify_dcbx_comp = 0;
 			rval = -EINVAL;
 			goto done_reset_internal;
 		} else
-			ql_dbg(ql_dbg_user, vha, 0x7027,
-			    "State change received.\n");
+			DEBUG2(qla_printk(KERN_INFO, ha,
+			    "State change RECEIVED\n"));
 
 		ha->notify_dcbx_comp = 0;
 	}
@@ -632,13 +629,11 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 
 	if (test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
 		test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
-		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
-		ql_log(ql_log_warn, vha, 0x7018, "Abort active or needed.\n");
+		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags))
 		return -EBUSY;
-	}
 
 	if (!vha->flags.online) {
-		ql_log(ql_log_warn, vha, 0x7019, "Host is not online.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "host not online\n"));
 		return -EIO;
 	}
 
@@ -646,31 +641,26 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 		bsg_job->request_payload.sg_list, bsg_job->request_payload.sg_cnt,
 		DMA_TO_DEVICE);
 
-	if (!elreq.req_sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x701a,
-		    "dma_map_sg returned %d for request.\n", elreq.req_sg_cnt);
+	if (!elreq.req_sg_cnt)
 		return -ENOMEM;
-	}
 
 	elreq.rsp_sg_cnt = dma_map_sg(&ha->pdev->dev,
 		bsg_job->reply_payload.sg_list, bsg_job->reply_payload.sg_cnt,
 		DMA_FROM_DEVICE);
 
 	if (!elreq.rsp_sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x701b,
-		    "dma_map_sg returned %d for reply.\n", elreq.rsp_sg_cnt);
 		rval = -ENOMEM;
 		goto done_unmap_req_sg;
 	}
 
 	if ((elreq.req_sg_cnt !=  bsg_job->request_payload.sg_cnt) ||
 		(elreq.rsp_sg_cnt != bsg_job->reply_payload.sg_cnt)) {
-		ql_log(ql_log_warn, vha, 0x701c,
-		    "dma mapping resulted in different sg counts, "
-		    "request_sg_cnt: %x dma_request_sg_cnt: %x "
-		    "reply_sg_cnt: %x dma_reply_sg_cnt: %x.\n",
-		    bsg_job->request_payload.sg_cnt, elreq.req_sg_cnt,
-		    bsg_job->reply_payload.sg_cnt, elreq.rsp_sg_cnt);
+		DEBUG2(printk(KERN_INFO
+			"dma mapping resulted in different sg counts "
+			"[request_sg_cnt: %x dma_request_sg_cnt: %x "
+			"reply_sg_cnt: %x dma_reply_sg_cnt: %x]\n",
+			bsg_job->request_payload.sg_cnt, elreq.req_sg_cnt,
+			bsg_job->reply_payload.sg_cnt, elreq.rsp_sg_cnt));
 		rval = -EAGAIN;
 		goto done_unmap_sg;
 	}
@@ -678,8 +668,8 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 	req_data = dma_alloc_coherent(&ha->pdev->dev, req_data_len,
 		&req_data_dma, GFP_KERNEL);
 	if (!req_data) {
-		ql_log(ql_log_warn, vha, 0x701d,
-		    "dma alloc failed for req_data.\n");
+		DEBUG2(printk(KERN_ERR "%s: dma alloc for req_data "
+			"failed for host=%lu\n", __func__, vha->host_no));
 		rval = -ENOMEM;
 		goto done_unmap_sg;
 	}
@@ -687,8 +677,8 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 	rsp_data = dma_alloc_coherent(&ha->pdev->dev, rsp_data_len,
 		&rsp_data_dma, GFP_KERNEL);
 	if (!rsp_data) {
-		ql_log(ql_log_warn, vha, 0x7004,
-		    "dma alloc failed for rsp_data.\n");
+		DEBUG2(printk(KERN_ERR "%s: dma alloc for rsp_data "
+			"failed for host=%lu\n", __func__, vha->host_no));
 		rval = -ENOMEM;
 		goto done_free_dma_req;
 	}
@@ -709,8 +699,8 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 	    && req_data_len == MAX_ELS_FRAME_PAYLOAD)) &&
 		elreq.options == EXTERNAL_LOOPBACK) {
 		type = "FC_BSG_HST_VENDOR_ECHO_DIAG";
-		ql_dbg(ql_dbg_user, vha, 0x701e,
-		    "BSG request type: %s.\n", type);
+		DEBUG2(qla_printk(KERN_INFO, ha,
+			"scsi(%ld) bsg rqst type: %s\n", vha->host_no, type));
 		command_sent = INT_DEF_LB_ECHO_CMD;
 		rval = qla2x00_echo_test(vha, &elreq, response);
 	} else {
@@ -718,8 +708,9 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 			memset(config, 0, sizeof(config));
 			memset(new_config, 0, sizeof(new_config));
 			if (qla81xx_get_port_config(vha, config)) {
-				ql_log(ql_log_warn, vha, 0x701f,
-				    "Get port config failed.\n");
+				DEBUG2(printk(KERN_ERR
+					"%s(%lu): Get port config failed\n",
+					__func__, vha->host_no));
 				bsg_job->reply->reply_payload_rcv_len = 0;
 				bsg_job->reply->result = (DID_ERROR << 16);
 				rval = -EPERM;
@@ -727,13 +718,11 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 			}
 
 			if (elreq.options != EXTERNAL_LOOPBACK) {
-				ql_dbg(ql_dbg_user, vha, 0x7020,
-				    "Internal: curent port config = %x\n",
-				    config[0]);
+				DEBUG2(qla_printk(KERN_INFO, ha,
+					"Internal: current port config = %x\n",
+					config[0]));
 				if (qla81xx_set_internal_loopback(vha, config,
 					new_config)) {
-					ql_log(ql_log_warn, vha, 0x7024,
-					    "Internal loopback failed.\n");
 					bsg_job->reply->reply_payload_rcv_len =
 						0;
 					bsg_job->reply->result =
@@ -757,13 +746,14 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 			}
 
 			type = "FC_BSG_HST_VENDOR_LOOPBACK";
-			ql_dbg(ql_dbg_user, vha, 0x7028,
-			    "BSG request type: %s.\n", type);
+			DEBUG2(qla_printk(KERN_INFO, ha,
+				"scsi(%ld) bsg rqst type: %s\n",
+				vha->host_no, type));
 
 			command_sent = INT_DEF_LB_LOOPBACK_CMD;
 			rval = qla2x00_loopback_test(vha, &elreq, response);
 
-			if (new_config[0]) {
+			if (new_config[1]) {
 				/* Revert back to original port config
 				 * Also clear internal loopback
 				 */
@@ -773,16 +763,17 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 
 			if (response[0] == MBS_COMMAND_ERROR &&
 					response[1] == MBS_LB_RESET) {
-				ql_log(ql_log_warn, vha, 0x7029,
-				    "MBX command error, Aborting ISP.\n");
+				DEBUG2(printk(KERN_ERR "%s(%ld): ABORTing "
+					"ISP\n", __func__, vha->host_no));
 				set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
 				qla2xxx_wake_dpc(vha);
 				qla2x00_wait_for_chip_reset(vha);
 				/* Also reset the MPI */
 				if (qla81xx_restart_mpi_firmware(vha) !=
 				    QLA_SUCCESS) {
-					ql_log(ql_log_warn, vha, 0x702a,
-					    "MPI reset failed.\n");
+					qla_printk(KERN_INFO, ha,
+					    "MPI reset failed for host%ld.\n",
+					    vha->host_no);
 				}
 
 				bsg_job->reply->reply_payload_rcv_len = 0;
@@ -792,16 +783,17 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 			}
 		} else {
 			type = "FC_BSG_HST_VENDOR_LOOPBACK";
-			ql_dbg(ql_dbg_user, vha, 0x702b,
-			    "BSG request type: %s.\n", type);
+			DEBUG2(qla_printk(KERN_INFO, ha,
+				"scsi(%ld) bsg rqst type: %s\n",
+				vha->host_no, type));
 			command_sent = INT_DEF_LB_LOOPBACK_CMD;
 			rval = qla2x00_loopback_test(vha, &elreq, response);
 		}
 	}
 
 	if (rval) {
-		ql_log(ql_log_warn, vha, 0x702c,
-		    "Vendor request %s failed.\n", type);
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+		    "request %s failed\n", vha->host_no, type));
 
 		fw_sts_ptr = ((uint8_t *)bsg_job->req->sense) +
 		    sizeof(struct fc_bsg_reply);
@@ -813,8 +805,8 @@ qla2x00_process_loopback(struct fc_bsg_job *bsg_job)
 		bsg_job->reply->reply_payload_rcv_len = 0;
 		bsg_job->reply->result = (DID_ERROR << 16);
 	} else {
-		ql_dbg(ql_dbg_user, vha, 0x702d,
-		    "Vendor request %s completed.\n", type);
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+			"request %s completed\n", vha->host_no, type));
 
 		bsg_job->reply_len = sizeof(struct fc_bsg_reply) +
 			sizeof(response) + sizeof(uint8_t);
@@ -859,13 +851,12 @@ qla84xx_reset(struct fc_bsg_job *bsg_job)
 
 	if (test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
 	    test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
-	    test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
-		ql_log(ql_log_warn, vha, 0x702e, "Abort active or needed.\n");
+	    test_bit(ISP_ABORT_RETRY, &vha->dpc_flags))
 		return -EBUSY;
-	}
 
 	if (!IS_QLA84XX(ha)) {
-		ql_dbg(ql_dbg_user, vha, 0x702f, "Not 84xx, exiting.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld): Not 84xx, "
+		   "exiting.\n", vha->host_no));
 		return -EINVAL;
 	}
 
@@ -874,14 +865,14 @@ qla84xx_reset(struct fc_bsg_job *bsg_job)
 	rval = qla84xx_reset_chip(vha, flag == A84_ISSUE_RESET_DIAG_FW);
 
 	if (rval) {
-		ql_log(ql_log_warn, vha, 0x7030,
-		    "Vendor request 84xx reset failed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+		    "request 84xx reset failed\n", vha->host_no));
 		rval = bsg_job->reply->reply_payload_rcv_len = 0;
 		bsg_job->reply->result = (DID_ERROR << 16);
 
 	} else {
-		ql_dbg(ql_dbg_user, vha, 0x7031,
-		    "Vendor request 84xx reset completed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+		    "request 84xx reset completed\n", vha->host_no));
 		bsg_job->reply->result = DID_OK;
 	}
 
@@ -911,24 +902,21 @@ qla84xx_updatefw(struct fc_bsg_job *bsg_job)
 		return -EBUSY;
 
 	if (!IS_QLA84XX(ha)) {
-		ql_dbg(ql_dbg_user, vha, 0x7032,
-		    "Not 84xx, exiting.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld): Not 84xx, "
+			"exiting.\n", vha->host_no));
 		return -EINVAL;
 	}
 
 	sg_cnt = dma_map_sg(&ha->pdev->dev, bsg_job->request_payload.sg_list,
 		bsg_job->request_payload.sg_cnt, DMA_TO_DEVICE);
-	if (!sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x7033,
-		    "dma_map_sg returned %d for request.\n", sg_cnt);
+	if (!sg_cnt)
 		return -ENOMEM;
-	}
 
 	if (sg_cnt != bsg_job->request_payload.sg_cnt) {
-		ql_log(ql_log_warn, vha, 0x7034,
-		    "DMA mapping resulted in different sg counts, "
-		    "request_sg_cnt: %x dma_request_sg_cnt: %x.\n",
-		    bsg_job->request_payload.sg_cnt, sg_cnt);
+		DEBUG2(printk(KERN_INFO
+			"dma mapping resulted in different sg counts "
+			"request_sg_cnt: %x dma_request_sg_cnt: %x ",
+			bsg_job->request_payload.sg_cnt, sg_cnt));
 		rval = -EAGAIN;
 		goto done_unmap_sg;
 	}
@@ -937,8 +925,8 @@ qla84xx_updatefw(struct fc_bsg_job *bsg_job)
 	fw_buf = dma_alloc_coherent(&ha->pdev->dev, data_len,
 		&fw_dma, GFP_KERNEL);
 	if (!fw_buf) {
-		ql_log(ql_log_warn, vha, 0x7035,
-		    "DMA alloc failed for fw_buf.\n");
+		DEBUG2(printk(KERN_ERR "%s: dma alloc for fw_buf "
+			"failed for host=%lu\n", __func__, vha->host_no));
 		rval = -ENOMEM;
 		goto done_unmap_sg;
 	}
@@ -948,8 +936,8 @@ qla84xx_updatefw(struct fc_bsg_job *bsg_job)
 
 	mn = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &mn_dma);
 	if (!mn) {
-		ql_log(ql_log_warn, vha, 0x7036,
-		    "DMA alloc failed for fw buffer.\n");
+		DEBUG2(printk(KERN_ERR "%s: dma alloc for fw buffer "
+			"failed for host=%lu\n", __func__, vha->host_no));
 		rval = -ENOMEM;
 		goto done_free_fw_buf;
 	}
@@ -977,15 +965,15 @@ qla84xx_updatefw(struct fc_bsg_job *bsg_job)
 	rval = qla2x00_issue_iocb_timeout(vha, mn, mn_dma, 0, 120);
 
 	if (rval) {
-		ql_log(ql_log_warn, vha, 0x7037,
-		    "Vendor request 84xx updatefw failed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+			"request 84xx updatefw failed\n", vha->host_no));
 
 		rval = bsg_job->reply->reply_payload_rcv_len = 0;
 		bsg_job->reply->result = (DID_ERROR << 16);
 
 	} else {
-		ql_dbg(ql_dbg_user, vha, 0x7038,
-		    "Vendor request 84xx updatefw completed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+			"request 84xx updatefw completed\n", vha->host_no));
 
 		bsg_job->reply_len = sizeof(struct fc_bsg_reply);
 		bsg_job->reply->result = DID_OK;
@@ -1021,30 +1009,27 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 
 	if (test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
 		test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
-		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
-		ql_log(ql_log_warn, vha, 0x7039,
-		    "Abort active or needed.\n");
+		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags))
 		return -EBUSY;
-	}
 
 	if (!IS_QLA84XX(ha)) {
-		ql_log(ql_log_warn, vha, 0x703a,
-		    "Not 84xx, exiting.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld): Not 84xx, "
+			"exiting.\n", vha->host_no));
 		return -EINVAL;
 	}
 
 	ql84_mgmt = (struct qla_bsg_a84_mgmt *)((char *)bsg_job->request +
 		sizeof(struct fc_bsg_request));
 	if (!ql84_mgmt) {
-		ql_log(ql_log_warn, vha, 0x703b,
-		    "MGMT header not provided, exiting.\n");
+		DEBUG2(printk("%s(%ld): mgmt header not provided, exiting.\n",
+			__func__, vha->host_no));
 		return -EINVAL;
 	}
 
 	mn = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &mn_dma);
 	if (!mn) {
-		ql_log(ql_log_warn, vha, 0x703c,
-		    "DMA alloc failed for fw buffer.\n");
+		DEBUG2(printk(KERN_ERR "%s: dma alloc for fw buffer "
+			"failed for host=%lu\n", __func__, vha->host_no));
 		return -ENOMEM;
 	}
 
@@ -1059,8 +1044,6 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 			bsg_job->reply_payload.sg_list,
 			bsg_job->reply_payload.sg_cnt, DMA_FROM_DEVICE);
 		if (!sg_cnt) {
-			ql_log(ql_log_warn, vha, 0x703d,
-			    "dma_map_sg returned %d for reply.\n", sg_cnt);
 			rval = -ENOMEM;
 			goto exit_mgmt;
 		}
@@ -1068,10 +1051,10 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 		dma_direction = DMA_FROM_DEVICE;
 
 		if (sg_cnt != bsg_job->reply_payload.sg_cnt) {
-			ql_log(ql_log_warn, vha, 0x703e,
-			    "DMA mapping resulted in different sg counts, "
-			    "reply_sg_cnt: %x dma_reply_sg_cnt: %x.\n",
-			    bsg_job->reply_payload.sg_cnt, sg_cnt);
+			DEBUG2(printk(KERN_INFO
+				"dma mapping resulted in different sg counts "
+				"reply_sg_cnt: %x dma_reply_sg_cnt: %x\n",
+				bsg_job->reply_payload.sg_cnt, sg_cnt));
 			rval = -EAGAIN;
 			goto done_unmap_sg;
 		}
@@ -1081,8 +1064,9 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 		mgmt_b = dma_alloc_coherent(&ha->pdev->dev, data_len,
 		    &mgmt_dma, GFP_KERNEL);
 		if (!mgmt_b) {
-			ql_log(ql_log_warn, vha, 0x703f,
-			    "DMA alloc failed for mgmt_b.\n");
+			DEBUG2(printk(KERN_ERR "%s: dma alloc for mgmt_b "
+				"failed for host=%lu\n",
+				__func__, vha->host_no));
 			rval = -ENOMEM;
 			goto done_unmap_sg;
 		}
@@ -1110,8 +1094,6 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 			bsg_job->request_payload.sg_cnt, DMA_TO_DEVICE);
 
 		if (!sg_cnt) {
-			ql_log(ql_log_warn, vha, 0x7040,
-			    "dma_map_sg returned %d.\n", sg_cnt);
 			rval = -ENOMEM;
 			goto exit_mgmt;
 		}
@@ -1119,10 +1101,10 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 		dma_direction = DMA_TO_DEVICE;
 
 		if (sg_cnt != bsg_job->request_payload.sg_cnt) {
-			ql_log(ql_log_warn, vha, 0x7041,
-			    "DMA mapping resulted in different sg counts, "
-			    "request_sg_cnt: %x dma_request_sg_cnt: %x.\n",
-			    bsg_job->request_payload.sg_cnt, sg_cnt);
+			DEBUG2(printk(KERN_INFO
+				"dma mapping resulted in different sg counts "
+				"request_sg_cnt: %x dma_request_sg_cnt: %x ",
+				bsg_job->request_payload.sg_cnt, sg_cnt));
 			rval = -EAGAIN;
 			goto done_unmap_sg;
 		}
@@ -1131,8 +1113,9 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 		mgmt_b = dma_alloc_coherent(&ha->pdev->dev, data_len,
 			&mgmt_dma, GFP_KERNEL);
 		if (!mgmt_b) {
-			ql_log(ql_log_warn, vha, 0x7042,
-			    "DMA alloc failed for mgmt_b.\n");
+			DEBUG2(printk(KERN_ERR "%s: dma alloc for mgmt_b "
+				"failed for host=%lu\n",
+				__func__, vha->host_no));
 			rval = -ENOMEM;
 			goto done_unmap_sg;
 		}
@@ -1173,15 +1156,15 @@ qla84xx_mgmt_cmd(struct fc_bsg_job *bsg_job)
 	rval = qla2x00_issue_iocb(vha, mn, mn_dma, 0);
 
 	if (rval) {
-		ql_log(ql_log_warn, vha, 0x7043,
-		    "Vendor request 84xx mgmt failed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+			"request 84xx mgmt failed\n", vha->host_no));
 
 		rval = bsg_job->reply->reply_payload_rcv_len = 0;
 		bsg_job->reply->result = (DID_ERROR << 16);
 
 	} else {
-		ql_dbg(ql_dbg_user, vha, 0x7044,
-		    "Vendor request 84xx mgmt completed.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "scsi(%ld) Vendor "
+			"request 84xx mgmt completed\n", vha->host_no));
 
 		bsg_job->reply_len = sizeof(struct fc_bsg_reply);
 		bsg_job->reply->result = DID_OK;
@@ -1221,6 +1204,7 @@ qla24xx_iidma(struct fc_bsg_job *bsg_job)
 {
 	struct Scsi_Host *host = bsg_job->shost;
 	scsi_qla_host_t *vha = shost_priv(host);
+	struct qla_hw_data *ha = vha->hw;
 	int rval = 0;
 	struct qla_port_param *port_param = NULL;
 	fc_port_t *fcport = NULL;
@@ -1231,27 +1215,26 @@ qla24xx_iidma(struct fc_bsg_job *bsg_job)
 
 	if (test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
 		test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) ||
-		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags)) {
-		ql_log(ql_log_warn, vha, 0x7045, "abort active or needed.\n");
+		test_bit(ISP_ABORT_RETRY, &vha->dpc_flags))
 		return -EBUSY;
-	}
 
 	if (!IS_IIDMA_CAPABLE(vha->hw)) {
-		ql_log(ql_log_info, vha, 0x7046, "iiDMA not supported.\n");
+		DEBUG2(qla_printk(KERN_WARNING, ha, "%s(%lu): iiDMA not "
+			"supported\n",  __func__, vha->host_no));
 		return -EINVAL;
 	}
 
 	port_param = (struct qla_port_param *)((char *)bsg_job->request +
 		sizeof(struct fc_bsg_request));
 	if (!port_param) {
-		ql_log(ql_log_warn, vha, 0x7047,
-		    "port_param header not provided.\n");
+		DEBUG2(printk("%s(%ld): port_param header not provided, "
+			"exiting.\n", __func__, vha->host_no));
 		return -EINVAL;
 	}
 
 	if (port_param->fc_scsi_addr.dest_type != EXT_DEF_TYPE_WWPN) {
-		ql_log(ql_log_warn, vha, 0x7048,
-		    "Invalid destination type.\n");
+		DEBUG2(printk(KERN_ERR "%s(%ld): Invalid destination type\n",
+			__func__, vha->host_no));
 		return -EINVAL;
 	}
 
@@ -1266,20 +1249,21 @@ qla24xx_iidma(struct fc_bsg_job *bsg_job)
 	}
 
 	if (!fcport) {
-		ql_log(ql_log_warn, vha, 0x7049,
-		    "Failed to find port.\n");
+		DEBUG2(printk(KERN_ERR "%s(%ld): Failed to find port\n",
+			__func__, vha->host_no));
 		return -EINVAL;
 	}
 
 	if (atomic_read(&fcport->state) != FCS_ONLINE) {
-		ql_log(ql_log_warn, vha, 0x704a,
-		    "Port is not online.\n");
+		DEBUG2(printk(KERN_ERR "%s(%ld): Port not online\n",
+			__func__, vha->host_no));
 		return -EINVAL;
 	}
 
 	if (fcport->flags & FCF_LOGIN_NEEDED) {
-		ql_log(ql_log_warn, vha, 0x704b,
-		    "Remote port not logged in flags = 0x%x.\n", fcport->flags);
+		DEBUG2(printk(KERN_ERR "%s(%ld): Remote port not logged in, "
+		    "flags = 0x%x\n",
+		    __func__, vha->host_no, fcport->flags));
 		return -EINVAL;
 	}
 
@@ -1291,13 +1275,15 @@ qla24xx_iidma(struct fc_bsg_job *bsg_job)
 			&port_param->speed, mb);
 
 	if (rval) {
-		ql_log(ql_log_warn, vha, 0x704c,
-		    "iIDMA cmd failed for %02x%02x%02x%02x%02x%02x%02x%02x -- "
-		    "%04x %x %04x %04x.\n", fcport->port_name[0],
-		    fcport->port_name[1], fcport->port_name[2],
-		    fcport->port_name[3], fcport->port_name[4],
-		    fcport->port_name[5], fcport->port_name[6],
-		    fcport->port_name[7], rval, fcport->fp_speed, mb[0], mb[1]);
+		DEBUG16(printk(KERN_ERR "scsi(%ld): iIDMA cmd failed for "
+			"%02x%02x%02x%02x%02x%02x%02x%02x -- "
+			"%04x %x %04x %04x.\n",
+			vha->host_no, fcport->port_name[0],
+			fcport->port_name[1],
+			fcport->port_name[2], fcport->port_name[3],
+			fcport->port_name[4], fcport->port_name[5],
+			fcport->port_name[6], fcport->port_name[7], rval,
+			fcport->fp_speed, mb[0], mb[1]));
 		rval = 0;
 		bsg_job->reply->result = (DID_ERROR << 16);
 
@@ -1321,12 +1307,11 @@ qla24xx_iidma(struct fc_bsg_job *bsg_job)
 }
 
 static int
-qla2x00_optrom_setup(struct fc_bsg_job *bsg_job, scsi_qla_host_t *vha,
+qla2x00_optrom_setup(struct fc_bsg_job *bsg_job, struct qla_hw_data *ha,
 	uint8_t is_update)
 {
 	uint32_t start = 0;
 	int valid = 0;
-	struct qla_hw_data *ha = vha->hw;
 
 	bsg_job->reply->reply_payload_rcv_len = 0;
 
@@ -1334,20 +1319,14 @@ qla2x00_optrom_setup(struct fc_bsg_job *bsg_job, scsi_qla_host_t *vha,
 		return -EINVAL;
 
 	start = bsg_job->request->rqst_data.h_vendor.vendor_cmd[1];
-	if (start > ha->optrom_size) {
-		ql_log(ql_log_warn, vha, 0x7055,
-		    "start %d > optrom_size %d.\n", start, ha->optrom_size);
+	if (start > ha->optrom_size)
 		return -EINVAL;
-	}
 
-	if (ha->optrom_state != QLA_SWAITING) {
-		ql_log(ql_log_info, vha, 0x7056,
-		    "optrom_state %d.\n", ha->optrom_state);
+	if (ha->optrom_state != QLA_SWAITING)
 		return -EBUSY;
-	}
 
 	ha->optrom_region_start = start;
-	ql_dbg(ql_dbg_user, vha, 0x7057, "is_update=%d.\n", is_update);
+
 	if (is_update) {
 		if (ha->optrom_size == OPTROM_SIZE_2300 && start == 0)
 			valid = 1;
@@ -1358,9 +1337,9 @@ qla2x00_optrom_setup(struct fc_bsg_job *bsg_job, scsi_qla_host_t *vha,
 		    IS_QLA8XXX_TYPE(ha))
 			valid = 1;
 		if (!valid) {
-			ql_log(ql_log_warn, vha, 0x7058,
-			    "Invalid start region 0x%x/0x%x.\n", start,
-			    bsg_job->request_payload.payload_len);
+			qla_printk(KERN_WARNING, ha,
+			    "Invalid start region 0x%x/0x%x.\n",
+			    start, bsg_job->request_payload.payload_len);
 			return -EINVAL;
 		}
 
@@ -1379,9 +1358,9 @@ qla2x00_optrom_setup(struct fc_bsg_job *bsg_job, scsi_qla_host_t *vha,
 
 	ha->optrom_buffer = vmalloc(ha->optrom_region_size);
 	if (!ha->optrom_buffer) {
-		ql_log(ql_log_warn, vha, 0x7059,
+		qla_printk(KERN_WARNING, ha,
 		    "Read: Unable to allocate memory for optrom retrieval "
-		    "(%x)\n", ha->optrom_region_size);
+		    "(%x).\n", ha->optrom_region_size);
 
 		ha->optrom_state = QLA_SWAITING;
 		return -ENOMEM;
@@ -1399,7 +1378,7 @@ qla2x00_read_optrom(struct fc_bsg_job *bsg_job)
 	struct qla_hw_data *ha = vha->hw;
 	int rval = 0;
 
-	rval = qla2x00_optrom_setup(bsg_job, vha, 0);
+	rval = qla2x00_optrom_setup(bsg_job, ha, 0);
 	if (rval)
 		return rval;
 
@@ -1427,7 +1406,7 @@ qla2x00_update_optrom(struct fc_bsg_job *bsg_job)
 	struct qla_hw_data *ha = vha->hw;
 	int rval = 0;
 
-	rval = qla2x00_optrom_setup(bsg_job, vha, 1);
+	rval = qla2x00_optrom_setup(bsg_job, ha, 1);
 	if (rval)
 		return rval;
 
@@ -1485,23 +1464,6 @@ int
 qla24xx_bsg_request(struct fc_bsg_job *bsg_job)
 {
 	int ret = -EINVAL;
-	struct fc_rport *rport;
-	fc_port_t *fcport = NULL;
-	struct Scsi_Host *host;
-	scsi_qla_host_t *vha;
-
-	if (bsg_job->request->msgcode == FC_BSG_RPT_ELS) {
-		rport = bsg_job->rport;
-		fcport = *(fc_port_t **) rport->dd_data;
-		host = rport_to_shost(rport);
-		vha = shost_priv(host);
-	} else {
-		host = bsg_job->shost;
-		vha = shost_priv(host);
-	}
-
-	ql_dbg(ql_dbg_user, vha, 0x7000,
-	    "Entered %s msgcode=%d.\n", __func__, bsg_job->request->msgcode);
 
 	switch (bsg_job->request->msgcode) {
 	case FC_BSG_RPT_ELS:
@@ -1518,7 +1480,7 @@ qla24xx_bsg_request(struct fc_bsg_job *bsg_job)
 	case FC_BSG_HST_DEL_RPORT:
 	case FC_BSG_RPT_CT:
 	default:
-		ql_log(ql_log_warn, vha, 0x705a, "Unsupported BSG request.\n");
+		DEBUG2(printk("qla2xxx: unsupported BSG request\n"));
 		break;
 	}
 	return ret;
@@ -1550,28 +1512,29 @@ qla24xx_bsg_timeout(struct fc_bsg_job *bsg_job)
 				if (((sp_bsg->type == SRB_CT_CMD) ||
 					(sp_bsg->type == SRB_ELS_CMD_HST))
 					&& (sp_bsg->u.bsg_job == bsg_job)) {
-					spin_unlock_irqrestore(&ha->hardware_lock, flags);
 					if (ha->isp_ops->abort_command(sp)) {
-						ql_log(ql_log_warn, vha, 0x7089,
-						    "mbx abort_command "
-						    "failed.\n");
+						DEBUG2(qla_printk(KERN_INFO, ha,
+						    "scsi(%ld): mbx "
+						    "abort_command failed\n",
+						    vha->host_no));
 						bsg_job->req->errors =
 						bsg_job->reply->result = -EIO;
 					} else {
-						ql_dbg(ql_dbg_user, vha, 0x708a,
-						    "mbx abort_command "
-						    "success.\n");
+						DEBUG2(qla_printk(KERN_INFO, ha,
+						    "scsi(%ld): mbx "
+						    "abort_command success\n",
+						    vha->host_no));
 						bsg_job->req->errors =
 						bsg_job->reply->result = 0;
 					}
-					spin_lock_irqsave(&ha->hardware_lock, flags);
 					goto done;
 				}
 			}
 		}
 	}
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
-	ql_log(ql_log_info, vha, 0x708b, "SRB not found to abort.\n");
+	DEBUG2(qla_printk(KERN_INFO, ha,
+		"scsi(%ld) SRB not found to abort\n", vha->host_no));
 	bsg_job->req->errors = bsg_job->reply->result = -ENXIO;
 	return 0;
 

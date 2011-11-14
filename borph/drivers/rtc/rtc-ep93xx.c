@@ -151,7 +151,6 @@ static int __init ep93xx_rtc_probe(struct platform_device *pdev)
 		return -ENXIO;
 
 	pdev->dev.platform_data = ep93xx_rtc;
-	platform_set_drvdata(pdev, rtc);
 
 	rtc = rtc_device_register(pdev->name,
 				&pdev->dev, &ep93xx_rtc_ops, THIS_MODULE);
@@ -160,6 +159,8 @@ static int __init ep93xx_rtc_probe(struct platform_device *pdev)
 		goto exit;
 	}
 
+	platform_set_drvdata(pdev, rtc);
+
 	err = sysfs_create_group(&pdev->dev.kobj, &ep93xx_rtc_sysfs_files);
 	if (err)
 		goto fail;
@@ -167,9 +168,9 @@ static int __init ep93xx_rtc_probe(struct platform_device *pdev)
 	return 0;
 
 fail:
+	platform_set_drvdata(pdev, NULL);
 	rtc_device_unregister(rtc);
 exit:
-	platform_set_drvdata(pdev, NULL);
 	pdev->dev.platform_data = NULL;
 	return err;
 }

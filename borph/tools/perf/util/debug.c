@@ -46,28 +46,22 @@ int dump_printf(const char *fmt, ...)
 	return ret;
 }
 
-#ifdef NO_NEWT_SUPPORT
-void ui__warning(const char *format, ...)
+static int dump_printf_color(const char *fmt, const char *color, ...)
 {
 	va_list args;
+	int ret = 0;
 
-	va_start(args, format);
-	vfprintf(stderr, format, args);
-	va_end(args);
-}
-#endif
+	if (dump_trace) {
+		va_start(args, color);
+		ret = color_vfprintf(stdout, color, fmt, args);
+		va_end(args);
+	}
 
-void ui__warning_paranoid(void)
-{
-	ui__warning("Permission error - are you root?\n"
-		    "Consider tweaking /proc/sys/kernel/perf_event_paranoid:\n"
-		    " -1 - Not paranoid at all\n"
-		    "  0 - Disallow raw tracepoint access for unpriv\n"
-		    "  1 - Disallow cpu events for unpriv\n"
-		    "  2 - Disallow kernel profiling for unpriv\n");
+	return ret;
 }
 
-void trace_event(union perf_event *event)
+
+void trace_event(event_t *event)
 {
 	unsigned char *raw_event = (void *)event;
 	const char *color = PERF_COLOR_BLUE;
@@ -76,29 +70,29 @@ void trace_event(union perf_event *event)
 	if (!dump_trace)
 		return;
 
-	printf(".");
-	color_fprintf(stdout, color, "\n. ... raw event: size %d bytes\n",
-		      event->header.size);
+	dump_printf(".");
+	dump_printf_color("\n. ... raw event: size %d bytes\n", color,
+			  event->header.size);
 
 	for (i = 0; i < event->header.size; i++) {
 		if ((i & 15) == 0) {
-			printf(".");
-			color_fprintf(stdout, color, "  %04x: ", i);
+			dump_printf(".");
+			dump_printf_color("  %04x: ", color, i);
 		}
 
-		color_fprintf(stdout, color, " %02x", raw_event[i]);
+		dump_printf_color(" %02x", color, raw_event[i]);
 
 		if (((i & 15) == 15) || i == event->header.size-1) {
-			color_fprintf(stdout, color, "  ");
+			dump_printf_color("  ", color);
 			for (j = 0; j < 15-(i & 15); j++)
-				color_fprintf(stdout, color, "   ");
+				dump_printf_color("   ", color);
 			for (j = i & ~15; j <= i; j++) {
-				color_fprintf(stdout, color, "%c",
-					      isprint(raw_event[j]) ?
-					      raw_event[j] : '.');
+				dump_printf_color("%c", color,
+						isprint(raw_event[j]) ?
+						raw_event[j] : '.');
 			}
-			color_fprintf(stdout, color, "\n");
+			dump_printf_color("\n", color);
 		}
 	}
-	printf(".\n");
+	dump_printf(".\n");
 }

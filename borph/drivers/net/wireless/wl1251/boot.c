@@ -19,6 +19,7 @@
  *
  */
 
+#include <linux/gpio.h>
 #include <linux/slab.h>
 
 #include "reg.h"

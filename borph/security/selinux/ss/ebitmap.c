@@ -4,7 +4,7 @@
  * Author : Stephen Smalley, <sds@epoch.ncsc.mil>
  */
 /*
- * Updated: Hewlett-Packard <paul@paul-moore.com>
+ * Updated: Hewlett-Packard <paul.moore@hp.com>
  *
  *      Added support to import/export the NetLabel category bitmap
  *

@@ -47,12 +47,9 @@
 #include <linux/list.h>
 #include <linux/rwsem.h>
 #include <linux/scatterlist.h>
-#include <linux/workqueue.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/uaccess.h>
-
-extern struct workqueue_struct *ib_wq;
 
 union ib_gid {
 	u8	raw[16];
@@ -350,8 +347,7 @@ enum ib_event_type {
 	IB_EVENT_SRQ_ERR,
 	IB_EVENT_SRQ_LIMIT_REACHED,
 	IB_EVENT_QP_LAST_WQE_REACHED,
-	IB_EVENT_CLIENT_REREGISTER,
-	IB_EVENT_GID_CHANGE,
+	IB_EVENT_CLIENT_REREGISTER
 };
 
 struct ib_event {

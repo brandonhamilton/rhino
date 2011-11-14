@@ -171,7 +171,7 @@ static void __init openrd_init(void)
 
 	kirkwood_i2c_init();
 
-	if (machine_is_openrd_client() || machine_is_openrd_ultimate()) {
+	if (machine_is_openrd_client()) {
 		i2c_register_board_info(0, i2c_board_info,
 			ARRAY_SIZE(i2c_board_info));
 		kirkwood_audio_init();
@@ -217,7 +217,6 @@ MACHINE_START(OPENRD_BASE, "Marvell OpenRD Base Board")
 	.boot_params	= 0x00000100,
 	.init_machine	= openrd_init,
 	.map_io		= kirkwood_map_io,
-	.init_early	= kirkwood_init_early,
 	.init_irq	= kirkwood_init_irq,
 	.timer		= &kirkwood_timer,
 MACHINE_END
@@ -229,7 +228,6 @@ MACHINE_START(OPENRD_CLIENT, "Marvell OpenRD Client Board")
 	.boot_params	= 0x00000100,
 	.init_machine	= openrd_init,
 	.map_io		= kirkwood_map_io,
-	.init_early	= kirkwood_init_early,
 	.init_irq	= kirkwood_init_irq,
 	.timer		= &kirkwood_timer,
 MACHINE_END
@@ -241,7 +239,6 @@ MACHINE_START(OPENRD_ULTIMATE, "Marvell OpenRD Ultimate Board")
 	.boot_params	= 0x00000100,
 	.init_machine	= openrd_init,
 	.map_io		= kirkwood_map_io,
-	.init_early	= kirkwood_init_early,
 	.init_irq	= kirkwood_init_irq,
 	.timer		= &kirkwood_timer,
 MACHINE_END

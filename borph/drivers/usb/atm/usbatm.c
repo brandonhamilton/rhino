@@ -81,7 +81,6 @@
 #include <linux/timer.h>
 #include <linux/wait.h>
 #include <linux/kthread.h>
-#include <linux/ratelimit.h>
 
 #ifdef VERBOSE_DEBUG
 static int usbatm_print_packet(const unsigned char *data, int len);
@@ -669,7 +668,8 @@ static int usbatm_atm_send(struct atm_vcc *vcc, struct sk_buff *skb)
 	/* racy disconnection check - fine */
 	if (!instance || instance->disconnected) {
 #ifdef DEBUG
-		printk_ratelimited(KERN_DEBUG "%s: %s!\n", __func__, instance ? "disconnected" : "NULL instance");
+		if (printk_ratelimit())
+			printk(KERN_DEBUG "%s: %s!\n", __func__, instance ? "disconnected" : "NULL instance");
 #endif
 		err = -ENODEV;
 		goto fail;

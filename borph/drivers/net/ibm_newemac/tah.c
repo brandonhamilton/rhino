@@ -60,7 +60,7 @@ void tah_reset(struct platform_device *ofdev)
 		printk(KERN_ERR "%s: reset timeout\n",
 			ofdev->dev.of_node->full_name);
 
-	/* 10KB TAH TX FIFO accommodates the max MTU of 9000 */
+	/* 10KB TAH TX FIFO accomodates the max MTU of 9000 */
 	out_be32(&p->mr,
 		 TAH_MR_CVR | TAH_MR_ST_768 | TAH_MR_TFS_10KB | TAH_MR_DTFP |
 		 TAH_MR_DIG);
@@ -87,7 +87,8 @@ void *tah_dump_regs(struct platform_device *ofdev, void *buf)
 	return regs + 1;
 }
 
-static int __devinit tah_probe(struct platform_device *ofdev)
+static int __devinit tah_probe(struct platform_device *ofdev,
+			       const struct of_device_id *match)
 {
 	struct device_node *np = ofdev->dev.of_node;
 	struct tah_instance *dev;
@@ -164,7 +165,7 @@ static struct of_device_id tah_match[] =
 	{},
 };
 
-static struct platform_driver tah_driver = {
+static struct of_platform_driver tah_driver = {
 	.driver = {
 		.name = "emac-tah",
 		.owner = THIS_MODULE,
@@ -176,10 +177,10 @@ static struct platform_driver tah_driver = {
 
 int __init tah_init(void)
 {
-	return platform_driver_register(&tah_driver);
+	return of_register_platform_driver(&tah_driver);
 }
 
 void tah_exit(void)
 {
-	platform_driver_unregister(&tah_driver);
+	of_unregister_platform_driver(&tah_driver);
 }

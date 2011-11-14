@@ -174,10 +174,14 @@ struct sys_timer ep93xx_timer = {
 /*************************************************************************
  * EP93xx IRQ handling
  *************************************************************************/
+extern void ep93xx_gpio_init_irq(void);
+
 void __init ep93xx_init_irq(void)
 {
 	vic_init(EP93XX_VIC1_BASE, 0, EP93XX_VIC1_VALID_IRQ_MASK, 0);
 	vic_init(EP93XX_VIC2_BASE, 32, EP93XX_VIC2_VALID_IRQ_MASK, 0);
+
+	ep93xx_gpio_init_irq();
 }
 
 
@@ -237,24 +241,6 @@ unsigned int ep93xx_chip_revision(void)
 }
 
 /*************************************************************************
- * EP93xx GPIO
- *************************************************************************/
-static struct resource ep93xx_gpio_resource[] = {
-	{
-		.start		= EP93XX_GPIO_PHYS_BASE,
-		.end		= EP93XX_GPIO_PHYS_BASE + 0xcc - 1,
-		.flags		= IORESOURCE_MEM,
-	},
-};
-
-static struct platform_device ep93xx_gpio_device = {
-	.name		= "gpio-ep93xx",
-	.id		= -1,
-	.num_resources	= ARRAY_SIZE(ep93xx_gpio_resource),
-	.resource	= ep93xx_gpio_resource,
-};
-
-/*************************************************************************
  * EP93xx peripheral handling
  *************************************************************************/
 #define EP93XX_UART_MCR_OFFSET		(0x0100)
@@ -265,9 +251,9 @@ static void ep93xx_uart_set_mctrl(struct amba_device *dev,
 	unsigned int mcr;
 
 	mcr = 0;
-	if (mctrl & TIOCM_RTS)
+	if (!(mctrl & TIOCM_RTS))
 		mcr |= 2;
-	if (mctrl & TIOCM_DTR)
+	if (!(mctrl & TIOCM_DTR))
 		mcr |= 1;
 
 	__raw_writel(mcr, base + EP93XX_UART_MCR_OFFSET);
@@ -416,15 +402,11 @@ static struct resource ep93xx_eth_resource[] = {
 	}
 };
 
-static u64 ep93xx_eth_dma_mask = DMA_BIT_MASK(32);
-
 static struct platform_device ep93xx_eth_device = {
 	.name		= "ep93xx-eth",
 	.id		= -1,
 	.dev		= {
-		.platform_data		= &ep93xx_eth_data,
-		.coherent_dma_mask	= DMA_BIT_MASK(32),
-		.dma_mask		= &ep93xx_eth_dma_mask,
+		.platform_data	= &ep93xx_eth_data,
 	},
 	.num_resources	= ARRAY_SIZE(ep93xx_eth_resource),
 	.resource	= ep93xx_eth_resource,
@@ -506,15 +488,11 @@ static struct resource ep93xx_spi_resources[] = {
 	},
 };
 
-static u64 ep93xx_spi_dma_mask = DMA_BIT_MASK(32);
-
 static struct platform_device ep93xx_spi_device = {
 	.name		= "ep93xx-spi",
 	.id		= 0,
 	.dev		= {
-		.platform_data		= &ep93xx_spi_master_data,
-		.coherent_dma_mask	= DMA_BIT_MASK(32),
-		.dma_mask		= &ep93xx_spi_dma_mask,
+		.platform_data = &ep93xx_spi_master_data,
 	},
 	.num_resources	= ARRAY_SIZE(ep93xx_spi_resources),
 	.resource	= ep93xx_spi_resources,
@@ -860,7 +838,7 @@ EXPORT_SYMBOL(ep93xx_i2s_release);
 static struct resource ep93xx_ac97_resources[] = {
 	{
 		.start	= EP93XX_AAC_PHYS_BASE,
-		.end	= EP93XX_AAC_PHYS_BASE + 0xac - 1,
+		.end	= EP93XX_AAC_PHYS_BASE + 0xb0 - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
@@ -888,13 +866,14 @@ void __init ep93xx_register_ac97(void)
 	platform_device_register(&ep93xx_pcm_device);
 }
 
+extern void ep93xx_gpio_init(void);
+
 void __init ep93xx_init_devices(void)
 {
 	/* Disallow access to MaverickCrunch initially */
 	ep93xx_devcfg_clear_bits(EP93XX_SYSCON_DEVCFG_CPENA);
 
-	/* Get the GPIO working early, other devices need it */
-	platform_device_register(&ep93xx_gpio_device);
+	ep93xx_gpio_init();
 
 	amba_device_register(&uart1_device, &iomem_resource);
 	amba_device_register(&uart2_device, &iomem_resource);

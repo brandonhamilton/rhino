@@ -33,7 +33,6 @@
 #include <linux/stat.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
-#include <linux/version.h>
 #include <linux/page-flags.h>
 #include <asm/byteorder.h>
 #include <asm/page.h>
@@ -48,7 +47,8 @@
 #define SN9C102_MODULE_AUTHOR   "(C) 2004-2007 Luca Risolia"
 #define SN9C102_AUTHOR_EMAIL    "<luca.risolia@studio.unibo.it>"
 #define SN9C102_MODULE_LICENSE  "GPL"
-#define SN9C102_MODULE_VERSION  "1:1.48"
+#define SN9C102_MODULE_VERSION  "1:1.47pre49"
+#define SN9C102_MODULE_VERSION_CODE  KERNEL_VERSION(1, 1, 47)
 
 /*****************************************************************************/
 
@@ -1430,9 +1430,9 @@ static DEVICE_ATTR(i2c_reg, S_IRUGO | S_IWUSR,
 		   sn9c102_show_i2c_reg, sn9c102_store_i2c_reg);
 static DEVICE_ATTR(i2c_val, S_IRUGO | S_IWUSR,
 		   sn9c102_show_i2c_val, sn9c102_store_i2c_val);
-static DEVICE_ATTR(green, S_IWUSR, NULL, sn9c102_store_green);
-static DEVICE_ATTR(blue, S_IWUSR, NULL, sn9c102_store_blue);
-static DEVICE_ATTR(red, S_IWUSR, NULL, sn9c102_store_red);
+static DEVICE_ATTR(green, S_IWUGO, NULL, sn9c102_store_green);
+static DEVICE_ATTR(blue, S_IWUGO, NULL, sn9c102_store_blue);
+static DEVICE_ATTR(red, S_IWUGO, NULL, sn9c102_store_red);
 static DEVICE_ATTR(frame_header, S_IRUGO, sn9c102_show_frame_header, NULL);
 
 
@@ -1810,7 +1810,7 @@ static int sn9c102_open(struct file *filp)
 		/*
 		   We will not release the "open_mutex" lock, so that only one
 		   process can be in the wait queue below. This way the process
-		   will be sleeping while holding the lock, without losing its
+		   will be sleeping while holding the lock, without loosing its
 		   priority after any wake_up().
 		*/
 		err = wait_event_interruptible_exclusive(cam->wait_open,
@@ -2158,7 +2158,7 @@ sn9c102_vidioc_querycap(struct sn9c102_device* cam, void __user * arg)
 {
 	struct v4l2_capability cap = {
 		.driver = "sn9c102",
-		.version = LINUX_VERSION_CODE,
+		.version = SN9C102_MODULE_VERSION_CODE,
 		.capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
 				V4L2_CAP_STREAMING,
 	};
@@ -2189,7 +2189,6 @@ sn9c102_vidioc_enuminput(struct sn9c102_device* cam, void __user * arg)
 	memset(&i, 0, sizeof(i));
 	strcpy(i.name, "Camera");
 	i.type = V4L2_INPUT_TYPE_CAMERA;
-	i.capabilities = V4L2_IN_CAP_STD;
 
 	if (copy_to_user(arg, &i, sizeof(i)))
 		return -EFAULT;
@@ -3187,8 +3186,16 @@ static long sn9c102_ioctl_v4l2(struct file *filp,
 	case VIDIOC_S_AUDIO:
 		return sn9c102_vidioc_s_audio(cam, arg);
 
+	case VIDIOC_G_STD:
+	case VIDIOC_S_STD:
+	case VIDIOC_QUERYSTD:
+	case VIDIOC_ENUMSTD:
+	case VIDIOC_QUERYMENU:
+	case VIDIOC_ENUM_FRAMEINTERVALS:
+		return -EINVAL;
+
 	default:
-		return -ENOTTY;
+		return -EINVAL;
 
 	}
 }

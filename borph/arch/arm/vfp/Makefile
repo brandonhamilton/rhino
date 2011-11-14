@@ -4,8 +4,8 @@
 # Copyright (C) 2001 ARM Limited
 #
 
-# ccflags-y := -DDEBUG
-# asflags-y := -DDEBUG
+# EXTRA_CFLAGS := -DDEBUG
+# EXTRA_AFLAGS := -DDEBUG
 
 KBUILD_AFLAGS	:=$(KBUILD_AFLAGS:-msoft-float=-Wa,-mfpu=softvfp+vfp)
 LDFLAGS		+=--no-warn-mismatch

@@ -35,8 +35,9 @@
  *  02110-1301, USA.
  */
 
+#include <linux/input.h>
 #include <linux/slab.h>
-#include <media/rc-core.h>
+#include <media/ir-core.h>
 #include <media/v4l2-subdev.h>
 
 #include "cx23885.h"
@@ -61,16 +62,16 @@ static void cx23885_input_process_measurements(struct cx23885_dev *dev,
 		count = num / sizeof(struct ir_raw_event);
 
 		for (i = 0; i < count; i++) {
-			ir_raw_event_store(kernel_ir->rc,
+			ir_raw_event_store(kernel_ir->inp_dev,
 					   &ir_core_event[i]);
 			handle = true;
 		}
 	} while (num != 0);
 
 	if (overrun)
-		ir_raw_event_reset(kernel_ir->rc);
+		ir_raw_event_reset(kernel_ir->inp_dev);
 	else if (handle)
-		ir_raw_event_handle(kernel_ir->rc);
+		ir_raw_event_handle(kernel_ir->inp_dev);
 }
 
 void cx23885_input_rx_work_handler(struct cx23885_dev *dev, u32 events)
@@ -82,7 +83,6 @@ void cx23885_input_rx_work_handler(struct cx23885_dev *dev, u32 events)
 		return;
 
 	switch (dev->board) {
-	case CX23885_BOARD_HAUPPAUGE_HVR1270:
 	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 	case CX23885_BOARD_HAUPPAUGE_HVR1290:
 	case CX23885_BOARD_TEVII_S470:
@@ -134,7 +134,6 @@ static int cx23885_input_ir_start(struct cx23885_dev *dev)
 
 	v4l2_subdev_call(dev->sd_ir, ir, rx_g_parameters, &params);
 	switch (dev->board) {
-	case CX23885_BOARD_HAUPPAUGE_HVR1270:
 	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 	case CX23885_BOARD_HAUPPAUGE_HVR1290:
 	case CX23885_BOARD_HAUPPAUGE_HVR1250:
@@ -198,9 +197,9 @@ static int cx23885_input_ir_start(struct cx23885_dev *dev)
 	return 0;
 }
 
-static int cx23885_input_ir_open(struct rc_dev *rc)
+static int cx23885_input_ir_open(void *priv)
 {
-	struct cx23885_kernel_ir *kernel_ir = rc->priv;
+	struct cx23885_kernel_ir *kernel_ir = priv;
 
 	if (kernel_ir->cx == NULL)
 		return -ENODEV;
@@ -231,14 +230,13 @@ static void cx23885_input_ir_stop(struct cx23885_dev *dev)
 		v4l2_subdev_call(dev->sd_ir, ir, rx_s_parameters, &params);
 		v4l2_subdev_call(dev->sd_ir, ir, rx_g_parameters, &params);
 	}
-	flush_work_sync(&dev->cx25840_work);
-	flush_work_sync(&dev->ir_rx_work);
-	flush_work_sync(&dev->ir_tx_work);
+
+	flush_scheduled_work();
 }
 
-static void cx23885_input_ir_close(struct rc_dev *rc)
+static void cx23885_input_ir_close(void *priv)
 {
-	struct cx23885_kernel_ir *kernel_ir = rc->priv;
+	struct cx23885_kernel_ir *kernel_ir = priv;
 
 	if (kernel_ir->cx != NULL)
 		cx23885_input_ir_stop(kernel_ir->cx);
@@ -247,7 +245,9 @@ static void cx23885_input_ir_close(struct rc_dev *rc)
 int cx23885_input_init(struct cx23885_dev *dev)
 {
 	struct cx23885_kernel_ir *kernel_ir;
-	struct rc_dev *rc;
+	struct input_dev *inp_dev;
+	struct ir_dev_props *props;
+
 	char *rc_map;
 	enum rc_driver_type driver_type;
 	unsigned long allowed_protos;
@@ -262,20 +262,19 @@ int cx23885_input_init(struct cx23885_dev *dev)
 		return -ENODEV;
 
 	switch (dev->board) {
-	case CX23885_BOARD_HAUPPAUGE_HVR1270:
 	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 	case CX23885_BOARD_HAUPPAUGE_HVR1290:
 	case CX23885_BOARD_HAUPPAUGE_HVR1250:
 		/* Integrated CX2388[58] IR controller */
 		driver_type = RC_DRIVER_IR_RAW;
-		allowed_protos = RC_TYPE_ALL;
+		allowed_protos = IR_TYPE_ALL;
 		/* The grey Hauppauge RC-5 remote */
-		rc_map = RC_MAP_HAUPPAUGE;
+		rc_map = RC_MAP_RC5_HAUPPAUGE_NEW;
 		break;
 	case CX23885_BOARD_TEVII_S470:
 		/* Integrated CX23885 IR controller */
 		driver_type = RC_DRIVER_IR_RAW;
-		allowed_protos = RC_TYPE_ALL;
+		allowed_protos = IR_TYPE_ALL;
 		/* A guess at the remote */
 		rc_map = RC_MAP_TEVII_NEC;
 		break;
@@ -295,36 +294,37 @@ int cx23885_input_init(struct cx23885_dev *dev)
 				    pci_name(dev->pci));
 
 	/* input device */
-	rc = rc_allocate_device();
-	if (!rc) {
+	inp_dev = input_allocate_device();
+	if (inp_dev == NULL) {
 		ret = -ENOMEM;
 		goto err_out_free;
 	}
 
-	kernel_ir->rc = rc;
-	rc->input_name = kernel_ir->name;
-	rc->input_phys = kernel_ir->phys;
-	rc->input_id.bustype = BUS_PCI;
-	rc->input_id.version = 1;
+	kernel_ir->inp_dev = inp_dev;
+	inp_dev->name = kernel_ir->name;
+	inp_dev->phys = kernel_ir->phys;
+	inp_dev->id.bustype = BUS_PCI;
+	inp_dev->id.version = 1;
 	if (dev->pci->subsystem_vendor) {
-		rc->input_id.vendor  = dev->pci->subsystem_vendor;
-		rc->input_id.product = dev->pci->subsystem_device;
+		inp_dev->id.vendor  = dev->pci->subsystem_vendor;
+		inp_dev->id.product = dev->pci->subsystem_device;
 	} else {
-		rc->input_id.vendor  = dev->pci->vendor;
-		rc->input_id.product = dev->pci->device;
+		inp_dev->id.vendor  = dev->pci->vendor;
+		inp_dev->id.product = dev->pci->device;
 	}
-	rc->dev.parent = &dev->pci->dev;
-	rc->driver_type = driver_type;
-	rc->allowed_protos = allowed_protos;
-	rc->priv = kernel_ir;
-	rc->open = cx23885_input_ir_open;
-	rc->close = cx23885_input_ir_close;
-	rc->map_name = rc_map;
-	rc->driver_name = MODULE_NAME;
+	inp_dev->dev.parent = &dev->pci->dev;
+
+	/* kernel ir device properties */
+	props = &kernel_ir->props;
+	props->driver_type = driver_type;
+	props->allowed_protos = allowed_protos;
+	props->priv = kernel_ir;
+	props->open = cx23885_input_ir_open;
+	props->close = cx23885_input_ir_close;
 
 	/* Go */
 	dev->kernel_ir = kernel_ir;
-	ret = rc_register_device(rc);
+	ret = ir_input_register(inp_dev, rc_map, props, MODULE_NAME);
 	if (ret)
 		goto err_out_stop;
 
@@ -333,7 +333,7 @@ int cx23885_input_init(struct cx23885_dev *dev)
 err_out_stop:
 	cx23885_input_ir_stop(dev);
 	dev->kernel_ir = NULL;
-	rc_free_device(rc);
+	/* TODO: double check clean-up of kernel_ir->inp_dev */
 err_out_free:
 	kfree(kernel_ir->phys);
 	kfree(kernel_ir->name);
@@ -348,7 +348,7 @@ void cx23885_input_fini(struct cx23885_dev *dev)
 
 	if (dev->kernel_ir == NULL)
 		return;
-	rc_unregister_device(dev->kernel_ir->rc);
+	ir_input_unregister(dev->kernel_ir->inp_dev);
 	kfree(dev->kernel_ir->phys);
 	kfree(dev->kernel_ir->name);
 	kfree(dev->kernel_ir);

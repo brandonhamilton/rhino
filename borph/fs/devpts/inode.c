@@ -479,7 +479,6 @@ int devpts_pty_new(struct inode *ptmx_inode, struct tty_struct *tty)
 	struct dentry *root = sb->s_root;
 	struct pts_fs_info *fsi = DEVPTS_SB(sb);
 	struct pts_mount_opts *opts = &fsi->mount_opts;
-	int ret = 0;
 	char s[12];
 
 	/* We're supposed to be given the slave end of a pty */
@@ -502,17 +501,14 @@ int devpts_pty_new(struct inode *ptmx_inode, struct tty_struct *tty)
 	mutex_lock(&root->d_inode->i_mutex);
 
 	dentry = d_alloc_name(root, s);
-	if (dentry) {
+	if (!IS_ERR(dentry)) {
 		d_add(dentry, inode);
 		fsnotify_create(root->d_inode, dentry);
-	} else {
-		iput(inode);
-		ret = -ENOMEM;
 	}
 
 	mutex_unlock(&root->d_inode->i_mutex);
 
-	return ret;
+	return 0;
 }
 
 struct tty_struct *devpts_get_tty(struct inode *pts_inode, int number)
@@ -548,12 +544,17 @@ void devpts_pty_kill(struct tty_struct *tty)
 	mutex_lock(&root->d_inode->i_mutex);
 
 	dentry = d_find_alias(inode);
+	if (IS_ERR(dentry))
+		goto out;
 
-	inode->i_nlink--;
-	d_delete(dentry);
-	dput(dentry);	/* d_alloc_name() in devpts_pty_new() */
+	if (dentry) {
+		inode->i_nlink--;
+		d_delete(dentry);
+		dput(dentry);	/* d_alloc_name() in devpts_pty_new() */
+	}
+
 	dput(dentry);		/* d_find_alias above */
-
+out:
 	mutex_unlock(&root->d_inode->i_mutex);
 }
 

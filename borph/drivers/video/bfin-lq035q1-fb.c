@@ -154,10 +154,8 @@ static int __devinit lq035q1_spidev_probe(struct spi_device *spi)
 
 	ret = lq035q1_control(spi, LQ035_SHUT_CTL, LQ035_ON);
 	ret |= lq035q1_control(spi, LQ035_DRIVER_OUTPUT_CTL, ctl->mode);
-	if (ret) {
-		kfree(ctl);
+	if (ret)
 		return ret;
-	}
 
 	spi_set_drvdata(spi, ctl);
 

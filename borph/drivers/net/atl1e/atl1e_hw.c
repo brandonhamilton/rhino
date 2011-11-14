@@ -318,7 +318,7 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 	 * Advertisement Register (Address 4) and the 1000 mb speed bits in
 	 * the  1000Base-T control Register (Address 9).
 	 */
-	mii_autoneg_adv_reg &= ~ADVERTISE_ALL;
+	mii_autoneg_adv_reg &= ~MII_AR_SPEED_MASK;
 	mii_1000t_ctrl_reg  &= ~MII_AT001_CR_1000T_SPEED_MASK;
 
 	/*
@@ -327,37 +327,44 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 	 */
 	switch (hw->media_type) {
 	case MEDIA_TYPE_AUTO_SENSOR:
-		mii_autoneg_adv_reg |= ADVERTISE_ALL;
-		hw->autoneg_advertised = ADVERTISE_ALL;
+		mii_autoneg_adv_reg |= (MII_AR_10T_HD_CAPS   |
+					MII_AR_10T_FD_CAPS   |
+					MII_AR_100TX_HD_CAPS |
+					MII_AR_100TX_FD_CAPS);
+		hw->autoneg_advertised = ADVERTISE_10_HALF  |
+					 ADVERTISE_10_FULL  |
+					 ADVERTISE_100_HALF |
+					 ADVERTISE_100_FULL;
 		if (hw->nic_type == athr_l1e) {
-			mii_1000t_ctrl_reg |= ADVERTISE_1000FULL;
+			mii_1000t_ctrl_reg |=
+				MII_AT001_CR_1000T_FD_CAPS;
 			hw->autoneg_advertised |= ADVERTISE_1000_FULL;
 		}
 		break;
 
 	case MEDIA_TYPE_100M_FULL:
-		mii_autoneg_adv_reg   |= ADVERTISE_100FULL;
+		mii_autoneg_adv_reg   |= MII_AR_100TX_FD_CAPS;
 		hw->autoneg_advertised = ADVERTISE_100_FULL;
 		break;
 
 	case MEDIA_TYPE_100M_HALF:
-		mii_autoneg_adv_reg   |= ADVERTISE_100_HALF;
+		mii_autoneg_adv_reg   |= MII_AR_100TX_HD_CAPS;
 		hw->autoneg_advertised = ADVERTISE_100_HALF;
 		break;
 
 	case MEDIA_TYPE_10M_FULL:
-		mii_autoneg_adv_reg   |= ADVERTISE_10_FULL;
+		mii_autoneg_adv_reg   |= MII_AR_10T_FD_CAPS;
 		hw->autoneg_advertised = ADVERTISE_10_FULL;
 		break;
 
 	default:
-		mii_autoneg_adv_reg   |= ADVERTISE_10_HALF;
+		mii_autoneg_adv_reg   |= MII_AR_10T_HD_CAPS;
 		hw->autoneg_advertised = ADVERTISE_10_HALF;
 		break;
 	}
 
 	/* flow control fixed to enable all */
-	mii_autoneg_adv_reg |= (ADVERTISE_PAUSE_ASYM | ADVERTISE_PAUSE_CAP);
+	mii_autoneg_adv_reg |= (MII_AR_ASM_DIR | MII_AR_PAUSE);
 
 	hw->mii_autoneg_adv_reg = mii_autoneg_adv_reg;
 	hw->mii_1000t_ctrl_reg  = mii_1000t_ctrl_reg;
@@ -367,7 +374,7 @@ static int atl1e_phy_setup_autoneg_adv(struct atl1e_hw *hw)
 		return ret_val;
 
 	if (hw->nic_type == athr_l1e || hw->nic_type == athr_l2e_revA) {
-		ret_val = atl1e_write_phy_reg(hw, MII_CTRL1000,
+		ret_val = atl1e_write_phy_reg(hw, MII_AT001_CR,
 					   mii_1000t_ctrl_reg);
 		if (ret_val)
 			return ret_val;
@@ -390,7 +397,7 @@ int atl1e_phy_commit(struct atl1e_hw *hw)
 	int ret_val;
 	u16 phy_data;
 
-	phy_data = BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART;
+	phy_data = MII_CR_RESET | MII_CR_AUTO_NEG_EN | MII_CR_RESTART_AUTO_NEG;
 
 	ret_val = atl1e_write_phy_reg(hw, MII_BMCR, phy_data);
 	if (ret_val) {
@@ -638,14 +645,15 @@ int atl1e_restart_autoneg(struct atl1e_hw *hw)
 		return err;
 
 	if (hw->nic_type == athr_l1e || hw->nic_type == athr_l2e_revA) {
-		err = atl1e_write_phy_reg(hw, MII_CTRL1000,
+		err = atl1e_write_phy_reg(hw, MII_AT001_CR,
 				       hw->mii_1000t_ctrl_reg);
 		if (err)
 			return err;
 	}
 
 	err = atl1e_write_phy_reg(hw, MII_BMCR,
-			BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART);
+			MII_CR_RESET | MII_CR_AUTO_NEG_EN |
+			MII_CR_RESTART_AUTO_NEG);
 	return err;
 }
 

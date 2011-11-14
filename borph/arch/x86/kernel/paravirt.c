@@ -202,14 +202,6 @@ static void native_flush_tlb_single(unsigned long addr)
 	__native_flush_tlb_single(addr);
 }
 
-struct jump_label_key paravirt_steal_enabled;
-struct jump_label_key paravirt_steal_rq_enabled;
-
-static u64 native_steal_clock(int cpu)
-{
-	return 0;
-}
-
 /* These are in entry.S */
 extern void native_iret(void);
 extern void native_irq_enable_sysexit(void);
@@ -315,7 +307,6 @@ struct pv_init_ops pv_init_ops = {
 
 struct pv_time_ops pv_time_ops = {
 	.sched_clock = native_sched_clock,
-	.steal_clock = native_steal_clock,
 };
 
 struct pv_irq_ops pv_irq_ops = {
@@ -430,11 +421,8 @@ struct pv_mmu_ops pv_mmu_ops = {
 	.set_pte = native_set_pte,
 	.set_pte_at = native_set_pte_at,
 	.set_pmd = native_set_pmd,
-	.set_pmd_at = native_set_pmd_at,
 	.pte_update = paravirt_nop,
 	.pte_update_defer = paravirt_nop,
-	.pmd_update = paravirt_nop,
-	.pmd_update_defer = paravirt_nop,
 
 	.ptep_modify_prot_start = __ptep_modify_prot_start,
 	.ptep_modify_prot_commit = __ptep_modify_prot_commit,

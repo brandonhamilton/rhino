@@ -343,19 +343,17 @@ static int usbfs_empty (struct dentry *dentry)
 {
 	struct list_head *list;
 
-	spin_lock(&dentry->d_lock);
+	spin_lock(&dcache_lock);
+
 	list_for_each(list, &dentry->d_subdirs) {
 		struct dentry *de = list_entry(list, struct dentry, d_u.d_child);
-
-		spin_lock_nested(&de->d_lock, DENTRY_D_LOCK_NESTED);
 		if (usbfs_positive(de)) {
-			spin_unlock(&de->d_lock);
-			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
 			return 0;
 		}
-		spin_unlock(&de->d_lock);
 	}
-	spin_unlock(&dentry->d_lock);
+
+	spin_unlock(&dcache_lock);
 	return 1;
 }
 
@@ -389,6 +387,7 @@ static int usbfs_rmdir(struct inode *dir, struct dentry *dentry)
 	mutex_unlock(&inode->i_mutex);
 	if (!error)
 		d_delete(dentry);
+	dput(dentry);
 	return error;
 }
 

@@ -28,7 +28,7 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <net/genetlink.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * Maximum length of a cpumask that can be specified in
@@ -89,7 +89,8 @@ static int prepare_reply(struct genl_info *info, u8 cmd, struct sk_buff **skbp,
 		return -ENOMEM;
 
 	if (!info) {
-		int seq = this_cpu_inc_return(taskstats_seqnum) - 1;
+		int seq = get_cpu_var(taskstats_seqnum)++;
+		put_cpu_var(taskstats_seqnum);
 
 		reply = genlmsg_put(skb, 0, seq, &family, 0, cmd);
 	} else
@@ -285,7 +286,7 @@ ret:
 static int add_del_listener(pid_t pid, const struct cpumask *mask, int isadd)
 {
 	struct listener_list *listeners;
-	struct listener *s, *tmp, *s2;
+	struct listener *s, *tmp;
 	unsigned int cpu;
 
 	if (!cpumask_subset(mask, cpu_possible_mask))
@@ -293,25 +294,18 @@ static int add_del_listener(pid_t pid, const struct cpumask *mask, int isadd)
 
 	if (isadd == REGISTER) {
 		for_each_cpu(cpu, mask) {
-			s = kmalloc_node(sizeof(struct listener),
-					GFP_KERNEL, cpu_to_node(cpu));
+			s = kmalloc_node(sizeof(struct listener), GFP_KERNEL,
+					 cpu_to_node(cpu));
 			if (!s)
 				goto cleanup;
-
 			s->pid = pid;
+			INIT_LIST_HEAD(&s->list);
 			s->valid = 1;
 
 			listeners = &per_cpu(listener_array, cpu);
 			down_write(&listeners->sem);
-			list_for_each_entry(s2, &listeners->list, list) {
-				if (s2->pid == pid && s2->valid)
-					goto exists;
-			}
 			list_add(&s->list, &listeners->list);
-			s = NULL;
-exists:
 			up_write(&listeners->sem);
-			kfree(s); /* nop if NULL */
 		}
 		return 0;
 	}
@@ -355,7 +349,7 @@ static int parse(struct nlattr *na, struct cpumask *mask)
 	return ret;
 }
 
-#if defined(CONFIG_64BIT) && !defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)
+#ifdef CONFIG_IA64
 #define TASKSTATS_NEEDS_PADDING 1
 #endif
 
@@ -618,7 +612,7 @@ void taskstats_exit(struct task_struct *tsk, int group_dead)
 		fill_tgid_exit(tsk);
 	}
 
-	listeners = __this_cpu_ptr(&listener_array);
+	listeners = &__raw_get_cpu_var(listener_array);
 	if (list_empty(&listeners->list))
 		return;
 
@@ -692,7 +686,7 @@ static int __init taskstats_init(void)
 		goto err_cgroup_ops;
 
 	family_registered = 1;
-	pr_info("registered taskstats version %d\n", TASKSTATS_GENL_VERSION);
+	printk("registered taskstats version %d\n", TASKSTATS_GENL_VERSION);
 	return 0;
 err_cgroup_ops:
 	genl_unregister_ops(&family, &taskstats_ops);

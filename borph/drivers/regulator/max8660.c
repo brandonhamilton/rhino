@@ -141,8 +141,7 @@ static int max8660_dcdc_get(struct regulator_dev *rdev)
 	return MAX8660_DCDC_MIN_UV + selector * MAX8660_DCDC_STEP;
 }
 
-static int max8660_dcdc_set(struct regulator_dev *rdev, int min_uV, int max_uV,
-			    unsigned int *s)
+static int max8660_dcdc_set(struct regulator_dev *rdev, int min_uV, int max_uV)
 {
 	struct max8660 *max8660 = rdev_get_drvdata(rdev);
 	u8 reg, selector, bits;
@@ -155,7 +154,6 @@ static int max8660_dcdc_set(struct regulator_dev *rdev, int min_uV, int max_uV,
 
 	selector = (min_uV - (MAX8660_DCDC_MIN_UV - MAX8660_DCDC_STEP + 1))
 			/ MAX8660_DCDC_STEP;
-	*s = selector;
 
 	ret = max8660_dcdc_list(rdev, selector);
 	if (ret < 0 || ret > max_uV)
@@ -198,8 +196,7 @@ static int max8660_ldo5_get(struct regulator_dev *rdev)
 	return MAX8660_LDO5_MIN_UV + selector * MAX8660_LDO5_STEP;
 }
 
-static int max8660_ldo5_set(struct regulator_dev *rdev, int min_uV, int max_uV,
-			    unsigned int *s)
+static int max8660_ldo5_set(struct regulator_dev *rdev, int min_uV, int max_uV)
 {
 	struct max8660 *max8660 = rdev_get_drvdata(rdev);
 	u8 selector;
@@ -215,8 +212,6 @@ static int max8660_ldo5_set(struct regulator_dev *rdev, int min_uV, int max_uV,
 	ret = max8660_ldo5_list(rdev, selector);
 	if (ret < 0 || ret > max_uV)
 		return -EINVAL;
-
-	*s = selector;
 
 	ret = max8660_write(max8660, MAX8660_MDTV2, 0, selector);
 	if (ret)
@@ -275,8 +270,7 @@ static int max8660_ldo67_get(struct regulator_dev *rdev)
 	return MAX8660_LDO67_MIN_UV + selector * MAX8660_LDO67_STEP;
 }
 
-static int max8660_ldo67_set(struct regulator_dev *rdev, int min_uV,
-			     int max_uV, unsigned int *s)
+static int max8660_ldo67_set(struct regulator_dev *rdev, int min_uV, int max_uV)
 {
 	struct max8660 *max8660 = rdev_get_drvdata(rdev);
 	u8 selector;
@@ -293,8 +287,6 @@ static int max8660_ldo67_set(struct regulator_dev *rdev, int min_uV,
 	ret = max8660_ldo67_list(rdev, selector);
 	if (ret < 0 || ret > max_uV)
 		return -EINVAL;
-
-	*s = selector;
 
 	if (rdev_get_id(rdev) == MAX8660_V6)
 		return max8660_write(max8660, MAX8660_L12VCR, 0xf0, selector);

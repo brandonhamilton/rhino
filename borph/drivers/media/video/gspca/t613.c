@@ -92,6 +92,8 @@ static int sd_setmirror(struct gspca_dev *gspca_dev, __s32 val);
 static int sd_getmirror(struct gspca_dev *gspca_dev, __s32 *val);
 static int sd_seteffect(struct gspca_dev *gspca_dev, __s32 val);
 static int sd_geteffect(struct gspca_dev *gspca_dev, __s32 *val);
+static int sd_querymenu(struct gspca_dev *gspca_dev,
+			struct v4l2_querymenu *menu);
 
 static const struct ctrl sd_ctrls[] = {
 	{
@@ -485,7 +487,7 @@ static const u8 gamma_table[GAMMA_MAX][17] = {
 	{0x00, 0x02, 0x07, 0x0f, 0x18, 0x24, 0x30, 0x3f,	/* 3 */
 	 0x4f, 0x61, 0x73, 0x88, 0x9d, 0xb4, 0xcd, 0xe6,
 	 0xff},
-	{0x00, 0x04, 0x0b, 0x15, 0x20, 0x2d, 0x3b, 0x4a,	/* 4 */
+	{0x00, 0x04, 0x0B, 0x15, 0x20, 0x2d, 0x3b, 0x4a,	/* 4 */
 	 0x5b, 0x6c, 0x7f, 0x92, 0xa7, 0xbc, 0xd2, 0xe9,
 	 0xff},
 	{0x00, 0x07, 0x11, 0x15, 0x20, 0x2d, 0x48, 0x58,	/* 5 */
@@ -1377,17 +1379,20 @@ static int sd_getlowlight(struct gspca_dev *gspca_dev, __s32 *val)
 static int sd_querymenu(struct gspca_dev *gspca_dev,
 			struct v4l2_querymenu *menu)
 {
-	static const char *freq_nm[3] = {"NoFliker", "50 Hz", "60 Hz"};
-
 	switch (menu->id) {
 	case V4L2_CID_POWER_LINE_FREQUENCY:
-		if ((unsigned) menu->index >= ARRAY_SIZE(freq_nm))
-			break;
-		strcpy((char *) menu->name, freq_nm[menu->index]);
-		return 0;
+		switch (menu->index) {
+		case 1:		/* V4L2_CID_POWER_LINE_FREQUENCY_50HZ */
+			strcpy((char *) menu->name, "50 Hz");
+			return 0;
+		case 2:		/* V4L2_CID_POWER_LINE_FREQUENCY_60HZ */
+			strcpy((char *) menu->name, "60 Hz");
+			return 0;
+		}
+		break;
 	case V4L2_CID_EFFECTS:
 		if ((unsigned) menu->index < ARRAY_SIZE(effects_control)) {
-			strlcpy((char *) menu->name,
+			strncpy((char *) menu->name,
 				effects_control[menu->index],
 				sizeof menu->name);
 			return 0;
@@ -1411,7 +1416,7 @@ static const struct sd_desc sd_desc = {
 };
 
 /* -- module initialisation -- */
-static const struct usb_device_id device_table[] = {
+static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x17a1, 0x0128)},
 	{}
 };

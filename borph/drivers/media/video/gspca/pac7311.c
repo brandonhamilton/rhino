@@ -261,7 +261,7 @@ static const __u8 page4_7311[] = {
 
 static void reg_w_buf(struct gspca_dev *gspca_dev,
 		  __u8 index,
-		  const u8 *buffer, int len)
+		  const char *buffer, int len)
 {
 	int ret;
 
@@ -837,7 +837,7 @@ static const struct sd_desc sd_desc = {
 };
 
 /* -- module initialisation -- */
-static const struct usb_device_id device_table[] = {
+static const struct usb_device_id device_table[] __devinitconst = {
 	{USB_DEVICE(0x093a, 0x2600)},
 	{USB_DEVICE(0x093a, 0x2601)},
 	{USB_DEVICE(0x093a, 0x2603)},
@@ -849,7 +849,7 @@ static const struct usb_device_id device_table[] = {
 MODULE_DEVICE_TABLE(usb, device_table);
 
 /* -- device connect -- */
-static int sd_probe(struct usb_interface *intf,
+static int __devinit sd_probe(struct usb_interface *intf,
 			const struct usb_device_id *id)
 {
 	return gspca_dev_probe(intf, id, &sd_desc, sizeof(struct sd),

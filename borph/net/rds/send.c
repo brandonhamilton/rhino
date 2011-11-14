@@ -35,7 +35,6 @@
 #include <net/sock.h>
 #include <linux/in.h>
 #include <linux/list.h>
-#include <linux/ratelimit.h>
 
 #include "rds.h"
 
@@ -117,7 +116,7 @@ static void release_in_xmit(struct rds_connection *conn)
 }
 
 /*
- * We're making the conscious trade-off here to only send one message
+ * We're making the concious trade-off here to only send one message
  * down the connection at a time.
  *   Pro:
  *      - tx queueing is a simple fifo list
@@ -1007,14 +1006,16 @@ int rds_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 		goto out;
 
 	if (rm->rdma.op_active && !conn->c_trans->xmit_rdma) {
-		printk_ratelimited(KERN_NOTICE "rdma_op %p conn xmit_rdma %p\n",
+		if (printk_ratelimit())
+			printk(KERN_NOTICE "rdma_op %p conn xmit_rdma %p\n",
 			       &rm->rdma, conn->c_trans->xmit_rdma);
 		ret = -EOPNOTSUPP;
 		goto out;
 	}
 
 	if (rm->atomic.op_active && !conn->c_trans->xmit_atomic) {
-		printk_ratelimited(KERN_NOTICE "atomic_op %p conn xmit_atomic %p\n",
+		if (printk_ratelimit())
+			printk(KERN_NOTICE "atomic_op %p conn xmit_atomic %p\n",
 			       &rm->atomic, conn->c_trans->xmit_atomic);
 		ret = -EOPNOTSUPP;
 		goto out;

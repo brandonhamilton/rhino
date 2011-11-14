@@ -40,13 +40,17 @@ static struct sirc_cascade_regs sirc_reg_table[] = {
 	}
 };
 
+static unsigned int save_type;
+static unsigned int save_polarity;
+
 /* Mask off the given interrupt. Keep the int_enable mask in sync with
    the enable reg, so it can be restored after power collapse. */
-static void sirc_irq_mask(struct irq_data *d)
+static void sirc_irq_mask(unsigned int irq)
 {
 	unsigned int mask;
 
-	mask = 1 << (d->irq - FIRST_SIRC_IRQ);
+
+	mask = 1 << (irq - FIRST_SIRC_IRQ);
 	writel(mask, sirc_regs.int_enable_clear);
 	int_enable &= ~mask;
 	return;
@@ -54,31 +58,31 @@ static void sirc_irq_mask(struct irq_data *d)
 
 /* Unmask the given interrupt. Keep the int_enable mask in sync with
    the enable reg, so it can be restored after power collapse. */
-static void sirc_irq_unmask(struct irq_data *d)
+static void sirc_irq_unmask(unsigned int irq)
 {
 	unsigned int mask;
 
-	mask = 1 << (d->irq - FIRST_SIRC_IRQ);
+	mask = 1 << (irq - FIRST_SIRC_IRQ);
 	writel(mask, sirc_regs.int_enable_set);
 	int_enable |= mask;
 	return;
 }
 
-static void sirc_irq_ack(struct irq_data *d)
+static void sirc_irq_ack(unsigned int irq)
 {
 	unsigned int mask;
 
-	mask = 1 << (d->irq - FIRST_SIRC_IRQ);
+	mask = 1 << (irq - FIRST_SIRC_IRQ);
 	writel(mask, sirc_regs.int_clear);
 	return;
 }
 
-static int sirc_irq_set_wake(struct irq_data *d, unsigned int on)
+static int sirc_irq_set_wake(unsigned int irq, unsigned int on)
 {
 	unsigned int mask;
 
 	/* Used to set the interrupt enable mask during power collapse. */
-	mask = 1 << (d->irq - FIRST_SIRC_IRQ);
+	mask = 1 << (irq - FIRST_SIRC_IRQ);
 	if (on)
 		wake_enable |= mask;
 	else
@@ -87,12 +91,12 @@ static int sirc_irq_set_wake(struct irq_data *d, unsigned int on)
 	return 0;
 }
 
-static int sirc_irq_set_type(struct irq_data *d, unsigned int flow_type)
+static int sirc_irq_set_type(unsigned int irq, unsigned int flow_type)
 {
 	unsigned int mask;
 	unsigned int val;
 
-	mask = 1 << (d->irq - FIRST_SIRC_IRQ);
+	mask = 1 << (irq - FIRST_SIRC_IRQ);
 	val = readl(sirc_regs.int_polarity);
 
 	if (flow_type & (IRQF_TRIGGER_LOW | IRQF_TRIGGER_FALLING))
@@ -105,10 +109,10 @@ static int sirc_irq_set_type(struct irq_data *d, unsigned int flow_type)
 	val = readl(sirc_regs.int_type);
 	if (flow_type & (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING)) {
 		val |= mask;
-		__irq_set_handler_locked(d->irq, handle_edge_irq);
+		irq_desc[irq].handle_irq = handle_edge_irq;
 	} else {
 		val &= ~mask;
-		__irq_set_handler_locked(d->irq, handle_level_irq);
+		irq_desc[irq].handle_irq = handle_level_irq;
 	}
 
 	writel(val, sirc_regs.int_type);
@@ -138,16 +142,16 @@ static void sirc_irq_handler(unsigned int irq, struct irq_desc *desc)
 		;
 	generic_handle_irq(sirq+FIRST_SIRC_IRQ);
 
-	desc->irq_data.chip->irq_ack(&desc->irq_data);
+	desc->chip->ack(irq);
 }
 
 static struct irq_chip sirc_irq_chip = {
-	.name          = "sirc",
-	.irq_ack       = sirc_irq_ack,
-	.irq_mask      = sirc_irq_mask,
-	.irq_unmask    = sirc_irq_unmask,
-	.irq_set_wake  = sirc_irq_set_wake,
-	.irq_set_type  = sirc_irq_set_type,
+	.name      = "sirc",
+	.ack       = sirc_irq_ack,
+	.mask      = sirc_irq_mask,
+	.unmask    = sirc_irq_unmask,
+	.set_wake  = sirc_irq_set_wake,
+	.set_type  = sirc_irq_set_type,
 };
 
 void __init msm_init_sirc(void)
@@ -158,14 +162,15 @@ void __init msm_init_sirc(void)
 	wake_enable = 0;
 
 	for (i = FIRST_SIRC_IRQ; i < LAST_SIRC_IRQ; i++) {
-		irq_set_chip_and_handler(i, &sirc_irq_chip, handle_edge_irq);
+		set_irq_chip(i, &sirc_irq_chip);
+		set_irq_handler(i, handle_edge_irq);
 		set_irq_flags(i, IRQF_VALID);
 	}
 
 	for (i = 0; i < ARRAY_SIZE(sirc_reg_table); i++) {
-		irq_set_chained_handler(sirc_reg_table[i].cascade_irq,
+		set_irq_chained_handler(sirc_reg_table[i].cascade_irq,
 					sirc_irq_handler);
-		irq_set_irq_wake(sirc_reg_table[i].cascade_irq, 1);
+		set_irq_wake(sirc_reg_table[i].cascade_irq, 1);
 	}
 	return;
 }

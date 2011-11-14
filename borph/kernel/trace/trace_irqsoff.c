@@ -80,7 +80,7 @@ static struct tracer_flags tracer_flags = {
  * skip the latency if the sequence has changed - some other section
  * did a maximum and could disturb our measurement with serial console
  * printouts, etc. Truly coinciding maximum latencies should be rare
- * and what happens together happens separately as well, so this doesn't
+ * and what happens together happens separately as well, so this doesnt
  * decrease the validity of the maximum found:
  */
 static __cacheline_aligned_in_smp	unsigned long max_sequence;
@@ -153,7 +153,6 @@ irqsoff_tracer_call(unsigned long ip, unsigned long parent_ip)
 static struct ftrace_ops trace_ops __read_mostly =
 {
 	.func = irqsoff_tracer_call,
-	.flags = FTRACE_OPS_FL_GLOBAL,
 };
 #endif /* CONFIG_FUNCTION_TRACER */
 
@@ -226,9 +225,7 @@ static void irqsoff_trace_close(struct trace_iterator *iter)
 }
 
 #define GRAPH_TRACER_FLAGS (TRACE_GRAPH_PRINT_CPU | \
-			    TRACE_GRAPH_PRINT_PROC | \
-			    TRACE_GRAPH_PRINT_ABS_TIME | \
-			    TRACE_GRAPH_PRINT_DURATION)
+			    TRACE_GRAPH_PRINT_PROC)
 
 static enum print_line_t irqsoff_print_line(struct trace_iterator *iter)
 {
@@ -455,6 +452,14 @@ void time_hardirqs_off(unsigned long a0, unsigned long a1)
 /*
  * Stubs:
  */
+
+void early_boot_irqs_off(void)
+{
+}
+
+void early_boot_irqs_on(void)
+{
+}
 
 void trace_softirqs_on(unsigned long ip)
 {

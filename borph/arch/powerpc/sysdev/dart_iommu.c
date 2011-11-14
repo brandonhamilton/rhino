@@ -239,7 +239,7 @@ static int __init dart_init(struct device_node *dart_node)
 					 DARTMAP_RPNMASK);
 
 	/* Map in DART registers */
-	dart = ioremap(r.start, resource_size(&r));
+	dart = ioremap(r.start, r.end - r.start + 1);
 	if (dart == NULL)
 		panic("DART: Cannot map registers!");
 
@@ -312,10 +312,17 @@ static void pci_dma_dev_setup_dart(struct pci_dev *dev)
 
 static void pci_dma_bus_setup_dart(struct pci_bus *bus)
 {
+	struct device_node *dn;
+
 	if (!iommu_table_dart_inited) {
 		iommu_table_dart_inited = 1;
 		iommu_table_dart_setup();
 	}
+
+	dn = pci_bus_to_OF_node(bus);
+
+	if (dn)
+		PCI_DN(dn)->iommu_table = &iommu_table_dart;
 }
 
 static bool dart_device_on_pcie(struct device *dev)
@@ -366,7 +373,7 @@ void __init iommu_init_early_dart(void)
 	if (dn == NULL) {
 		dn = of_find_compatible_node(NULL, "dart", "u4-dart");
 		if (dn == NULL)
-			return;	/* use default direct_dma_ops */
+			goto bail;
 		dart_is_u4 = 1;
 	}
 

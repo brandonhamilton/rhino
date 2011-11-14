@@ -97,7 +97,7 @@ static struct device_node *derive_parent(const char *path)
 	return parent;
 }
 
-static BLOCKING_NOTIFIER_HEAD(pSeries_reconfig_chain);
+BLOCKING_NOTIFIER_HEAD(pSeries_reconfig_chain);
 
 int pSeries_reconfig_notifier_register(struct notifier_block *nb)
 {
@@ -107,14 +107,6 @@ int pSeries_reconfig_notifier_register(struct notifier_block *nb)
 void pSeries_reconfig_notifier_unregister(struct notifier_block *nb)
 {
 	blocking_notifier_chain_unregister(&pSeries_reconfig_chain, nb);
-}
-
-int pSeries_reconfig_notify(unsigned long action, void *p)
-{
-	int err = blocking_notifier_call_chain(&pSeries_reconfig_chain,
-						action, p);
-
-	return notifier_to_errno(err);
 }
 
 static int pSeries_reconfig_add_node(const char *path, struct property *proplist)
@@ -140,9 +132,11 @@ static int pSeries_reconfig_add_node(const char *path, struct property *proplist
 		goto out_err;
 	}
 
-	err = pSeries_reconfig_notify(PSERIES_RECONFIG_ADD, np);
-	if (err) {
+	err = blocking_notifier_call_chain(&pSeries_reconfig_chain,
+				  PSERIES_RECONFIG_ADD, np);
+	if (err == NOTIFY_BAD) {
 		printk(KERN_ERR "Failed to add device node %s\n", path);
+		err = -ENOMEM; /* For now, safe to assume kmalloc failure */
 		goto out_err;
 	}
 
@@ -179,7 +173,8 @@ static int pSeries_reconfig_remove_node(struct device_node *np)
 
 	remove_node_proc_entries(np);
 
-	pSeries_reconfig_notify(PSERIES_RECONFIG_REMOVE, np);
+	blocking_notifier_call_chain(&pSeries_reconfig_chain,
+			    PSERIES_RECONFIG_REMOVE, np);
 	of_detach_node(np);
 
 	of_node_put(parent);
@@ -477,10 +472,11 @@ static int do_update_property(char *buf, size_t bufsize)
 		else
 			action = PSERIES_DRCONF_MEM_REMOVE;
 
-		rc = pSeries_reconfig_notify(action, value);
-		if (rc) {
-			prom_update_property(np, oldprop, newprop);
-			return rc;
+		rc = blocking_notifier_call_chain(&pSeries_reconfig_chain,
+						  action, value);
+		if (rc == NOTIFY_BAD) {
+			rc = prom_update_property(np, oldprop, newprop);
+			return -ENOMEM;
 		}
 	}
 

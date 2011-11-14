@@ -41,7 +41,7 @@ static const unsigned short normal_i2c[] = { 0x2c, 0x2d, 0x2e, I2C_CLIENT_END };
 enum chips {
 	any_chip, lm85b, lm85c,
 	adm1027, adt7463, adt7468,
-	emc6d100, emc6d102, emc6d103, emc6d103s
+	emc6d100, emc6d102
 };
 
 /* The LM85 registers */
@@ -90,9 +90,6 @@ enum chips {
 #define	LM85_VERSTEP_EMC6D100_A0        0x60
 #define	LM85_VERSTEP_EMC6D100_A1        0x61
 #define	LM85_VERSTEP_EMC6D102		0x65
-#define	LM85_VERSTEP_EMC6D103_A0	0x68
-#define	LM85_VERSTEP_EMC6D103_A1	0x69
-#define	LM85_VERSTEP_EMC6D103S		0x6A	/* Also known as EMC6D103:A2 */
 
 #define	LM85_REG_CONFIG			0x40
 
@@ -130,7 +127,7 @@ enum chips {
    these macros are called: arguments may be evaluated more than once.
  */
 
-/* IN are scaled according to built-in resistors */
+/* IN are scaled acording to built-in resistors */
 static const int lm85_scaling[] = {  /* .001 Volts */
 	2500, 2250, 3300, 5000, 12000,
 	3300, 1500, 1800 /*EMC6D100*/
@@ -283,6 +280,10 @@ struct lm85_zone {
 	u8 hyst;	/* Low limit hysteresis. (0-15) */
 	u8 range;	/* Temp range, encoded */
 	s8 critical;	/* "All fans ON" temp limit */
+	u8 off_desired; /* Actual "off" temperature specified.  Preserved
+			 * to prevent "drift" as other autofan control
+			 * values change.
+			 */
 	u8 max_desired; /* Actual "max" temperature specified.  Preserved
 			 * to prevent "drift" as other autofan control
 			 * values change.
@@ -301,8 +302,6 @@ struct lm85_data {
 	struct device *hwmon_dev;
 	const int *freq_map;
 	enum chips type;
-
-	bool has_vid5;	/* true if VID5 is configured for ADT7463 or ADT7468 */
 
 	struct mutex update_lock;
 	int valid;		/* !=0 if following fields are valid */
@@ -349,8 +348,6 @@ static const struct i2c_device_id lm85_id[] = {
 	{ "emc6d100", emc6d100 },
 	{ "emc6d101", emc6d100 },
 	{ "emc6d102", emc6d102 },
-	{ "emc6d103", emc6d103 },
-	{ "emc6d103s", emc6d103s },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, lm85_id);
@@ -419,7 +416,8 @@ static ssize_t show_vid_reg(struct device *dev, struct device_attribute *attr,
 	struct lm85_data *data = lm85_update_device(dev);
 	int vid;
 
-	if (data->has_vid5) {
+	if ((data->type == adt7463 || data->type == adt7468) &&
+	    (data->vid & 0x80)) {
 		/* 6-pin VID (VRM 10) */
 		vid = vid_from_reg(data->vid & 0x3f, data->vrm);
 	} else {
@@ -889,6 +887,7 @@ static ssize_t set_temp_auto_temp_off(struct device *dev,
 
 	mutex_lock(&data->update_lock);
 	min = TEMP_FROM_REG(data->zone[nr].limit);
+	data->zone[nr].off_desired = TEMP_TO_REG(val);
 	data->zone[nr].hyst = HYST_TO_REG(min - val);
 	if (nr == 0 || nr == 1) {
 		lm85_write_value(client, LM85_REG_AFAN_HYST1,
@@ -931,6 +930,18 @@ static ssize_t set_temp_auto_temp_min(struct device *dev,
 		((data->zone[nr].range & 0x0f) << 4)
 		| (data->pwm_freq[nr] & 0x07));
 
+/* Update temp_auto_hyst and temp_auto_off */
+	data->zone[nr].hyst = HYST_TO_REG(TEMP_FROM_REG(
+		data->zone[nr].limit) - TEMP_FROM_REG(
+		data->zone[nr].off_desired));
+	if (nr == 0 || nr == 1) {
+		lm85_write_value(client, LM85_REG_AFAN_HYST1,
+			(data->zone[0].hyst << 4)
+			| data->zone[1].hyst);
+	} else {
+		lm85_write_value(client, LM85_REG_AFAN_HYST2,
+			(data->zone[2].hyst << 4));
+	}
 	mutex_unlock(&data->update_lock);
 	return count;
 }
@@ -1069,7 +1080,13 @@ static struct attribute *lm85_attributes[] = {
 	&sensor_dev_attr_pwm1_auto_pwm_min.dev_attr.attr,
 	&sensor_dev_attr_pwm2_auto_pwm_min.dev_attr.attr,
 	&sensor_dev_attr_pwm3_auto_pwm_min.dev_attr.attr,
+	&sensor_dev_attr_pwm1_auto_pwm_minctl.dev_attr.attr,
+	&sensor_dev_attr_pwm2_auto_pwm_minctl.dev_attr.attr,
+	&sensor_dev_attr_pwm3_auto_pwm_minctl.dev_attr.attr,
 
+	&sensor_dev_attr_temp1_auto_temp_off.dev_attr.attr,
+	&sensor_dev_attr_temp2_auto_temp_off.dev_attr.attr,
+	&sensor_dev_attr_temp3_auto_temp_off.dev_attr.attr,
 	&sensor_dev_attr_temp1_auto_temp_min.dev_attr.attr,
 	&sensor_dev_attr_temp2_auto_temp_min.dev_attr.attr,
 	&sensor_dev_attr_temp3_auto_temp_min.dev_attr.attr,
@@ -1088,28 +1105,6 @@ static struct attribute *lm85_attributes[] = {
 
 static const struct attribute_group lm85_group = {
 	.attrs = lm85_attributes,
-};
-
-static struct attribute *lm85_attributes_minctl[] = {
-	&sensor_dev_attr_pwm1_auto_pwm_minctl.dev_attr.attr,
-	&sensor_dev_attr_pwm2_auto_pwm_minctl.dev_attr.attr,
-	&sensor_dev_attr_pwm3_auto_pwm_minctl.dev_attr.attr,
-	NULL
-};
-
-static const struct attribute_group lm85_group_minctl = {
-	.attrs = lm85_attributes_minctl,
-};
-
-static struct attribute *lm85_attributes_temp_off[] = {
-	&sensor_dev_attr_temp1_auto_temp_off.dev_attr.attr,
-	&sensor_dev_attr_temp2_auto_temp_off.dev_attr.attr,
-	&sensor_dev_attr_temp3_auto_temp_off.dev_attr.attr,
-	NULL
-};
-
-static const struct attribute_group lm85_group_temp_off = {
-	.attrs = lm85_attributes_temp_off,
 };
 
 static struct attribute *lm85_attributes_in4[] = {
@@ -1255,13 +1250,6 @@ static int lm85_detect(struct i2c_client *client, struct i2c_board_info *info)
 		case LM85_VERSTEP_EMC6D102:
 			type_name = "emc6d102";
 			break;
-		case LM85_VERSTEP_EMC6D103_A0:
-		case LM85_VERSTEP_EMC6D103_A1:
-			type_name = "emc6d103";
-			break;
-		case LM85_VERSTEP_EMC6D103S:
-			type_name = "emc6d103s";
-			break;
 		}
 	} else {
 		dev_dbg(&adapter->dev,
@@ -1272,19 +1260,6 @@ static int lm85_detect(struct i2c_client *client, struct i2c_board_info *info)
 	strlcpy(info->type, type_name, I2C_NAME_SIZE);
 
 	return 0;
-}
-
-static void lm85_remove_files(struct i2c_client *client, struct lm85_data *data)
-{
-	sysfs_remove_group(&client->dev.kobj, &lm85_group);
-	if (data->type != emc6d103s) {
-		sysfs_remove_group(&client->dev.kobj, &lm85_group_minctl);
-		sysfs_remove_group(&client->dev.kobj, &lm85_group_temp_off);
-	}
-	if (!data->has_vid5)
-		sysfs_remove_group(&client->dev.kobj, &lm85_group_in4);
-	if (data->type == emc6d100)
-		sysfs_remove_group(&client->dev.kobj, &lm85_group_in567);
 }
 
 static int lm85_probe(struct i2c_client *client,
@@ -1308,8 +1283,6 @@ static int lm85_probe(struct i2c_client *client,
 	case adt7468:
 	case emc6d100:
 	case emc6d102:
-	case emc6d103:
-	case emc6d103s:
 		data->freq_map = adm1027_freq_map;
 		break;
 	default:
@@ -1327,26 +1300,11 @@ static int lm85_probe(struct i2c_client *client,
 	if (err)
 		goto err_kfree;
 
-	/* minctl and temp_off exist on all chips except emc6d103s */
-	if (data->type != emc6d103s) {
-		err = sysfs_create_group(&client->dev.kobj, &lm85_group_minctl);
-		if (err)
-			goto err_remove_files;
-		err = sysfs_create_group(&client->dev.kobj,
-					 &lm85_group_temp_off);
-		if (err)
-			goto err_remove_files;
-	}
-
 	/* The ADT7463/68 have an optional VRM 10 mode where pin 21 is used
 	   as a sixth digital VID input rather than an analog input. */
-	if (data->type == adt7463 || data->type == adt7468) {
-		u8 vid = lm85_read_value(client, LM85_REG_VID);
-		if (vid & 0x80)
-			data->has_vid5 = true;
-	}
-
-	if (!data->has_vid5)
+	data->vid = lm85_read_value(client, LM85_REG_VID);
+	if (!((data->type == adt7463 || data->type == adt7468) &&
+	    (data->vid & 0x80)))
 		if ((err = sysfs_create_group(&client->dev.kobj,
 					&lm85_group_in4)))
 			goto err_remove_files;
@@ -1367,7 +1325,10 @@ static int lm85_probe(struct i2c_client *client,
 
 	/* Error out and cleanup code */
  err_remove_files:
-	lm85_remove_files(client, data);
+	sysfs_remove_group(&client->dev.kobj, &lm85_group);
+	sysfs_remove_group(&client->dev.kobj, &lm85_group_in4);
+	if (data->type == emc6d100)
+		sysfs_remove_group(&client->dev.kobj, &lm85_group_in567);
  err_kfree:
 	kfree(data);
 	return err;
@@ -1377,7 +1338,10 @@ static int lm85_remove(struct i2c_client *client)
 {
 	struct lm85_data *data = i2c_get_clientdata(client);
 	hwmon_device_unregister(data->hwmon_dev);
-	lm85_remove_files(client, data);
+	sysfs_remove_group(&client->dev.kobj, &lm85_group);
+	sysfs_remove_group(&client->dev.kobj, &lm85_group_in4);
+	if (data->type == emc6d100)
+		sysfs_remove_group(&client->dev.kobj, &lm85_group_in567);
 	kfree(data);
 	return 0;
 }
@@ -1474,8 +1438,11 @@ static struct lm85_data *lm85_update_device(struct device *dev)
 			    lm85_read_value(client, LM85_REG_FAN(i));
 		}
 
-		if (!data->has_vid5)
-			data->in[4] = lm85_read_value(client, LM85_REG_IN(4));
+		if (!((data->type == adt7463 || data->type == adt7468) &&
+		    (data->vid & 0x80))) {
+			data->in[4] = lm85_read_value(client,
+				      LM85_REG_IN(4));
+		}
 
 		if (data->type == adt7468)
 			data->cfg5 = lm85_read_value(client, ADT7468_REG_CFG5);
@@ -1501,8 +1468,7 @@ static struct lm85_data *lm85_update_device(struct device *dev)
 			/* More alarm bits */
 			data->alarms |= lm85_read_value(client,
 						EMC6D100_REG_ALARM3) << 16;
-		} else if (data->type == emc6d102 || data->type == emc6d103 ||
-			   data->type == emc6d103s) {
+		} else if (data->type == emc6d102) {
 			/* Have to read LSB bits after the MSB ones because
 			   the reading of the MSB bits has frozen the
 			   LSBs (backward from the ADM1027).
@@ -1543,7 +1509,8 @@ static struct lm85_data *lm85_update_device(struct device *dev)
 			    lm85_read_value(client, LM85_REG_FAN_MIN(i));
 		}
 
-		if (!data->has_vid5)  {
+		if (!((data->type == adt7463 || data->type == adt7468) &&
+		    (data->vid & 0x80))) {
 			data->in_min[4] = lm85_read_value(client,
 					  LM85_REG_IN_MIN(4));
 			data->in_max[4] = lm85_read_value(client,
@@ -1587,19 +1554,17 @@ static struct lm85_data *lm85_update_device(struct device *dev)
 			}
 		}
 
-		if (data->type != emc6d103s) {
-			i = lm85_read_value(client, LM85_REG_AFAN_SPIKE1);
-			data->autofan[0].min_off = (i & 0x20) != 0;
-			data->autofan[1].min_off = (i & 0x40) != 0;
-			data->autofan[2].min_off = (i & 0x80) != 0;
+		i = lm85_read_value(client, LM85_REG_AFAN_SPIKE1);
+		data->autofan[0].min_off = (i & 0x20) != 0;
+		data->autofan[1].min_off = (i & 0x40) != 0;
+		data->autofan[2].min_off = (i & 0x80) != 0;
 
-			i = lm85_read_value(client, LM85_REG_AFAN_HYST1);
-			data->zone[0].hyst = i >> 4;
-			data->zone[1].hyst = i & 0x0f;
+		i = lm85_read_value(client, LM85_REG_AFAN_HYST1);
+		data->zone[0].hyst = i >> 4;
+		data->zone[1].hyst = i & 0x0f;
 
-			i = lm85_read_value(client, LM85_REG_AFAN_HYST2);
-			data->zone[2].hyst = i >> 4;
-		}
+		i = lm85_read_value(client, LM85_REG_AFAN_HYST2);
+		data->zone[2].hyst = i >> 4;
 
 		data->last_config = jiffies;
 	}  /* last_config */

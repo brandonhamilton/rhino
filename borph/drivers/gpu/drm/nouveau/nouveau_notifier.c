@@ -34,24 +34,21 @@ int
 nouveau_notifier_init_channel(struct nouveau_channel *chan)
 {
 	struct drm_device *dev = chan->dev;
-	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_bo *ntfy = NULL;
-	uint32_t flags, ttmpl;
+	uint32_t flags;
 	int ret;
 
-	if (nouveau_vram_notify) {
-		flags = NOUVEAU_GEM_DOMAIN_VRAM;
-		ttmpl = TTM_PL_FLAG_VRAM;
-	} else {
-		flags = NOUVEAU_GEM_DOMAIN_GART;
-		ttmpl = TTM_PL_FLAG_TT;
-	}
+	if (nouveau_vram_notify)
+		flags = TTM_PL_FLAG_VRAM;
+	else
+		flags = TTM_PL_FLAG_TT;
 
-	ret = nouveau_gem_new(dev, PAGE_SIZE, 0, flags, 0, 0, &ntfy);
+	ret = nouveau_gem_new(dev, NULL, PAGE_SIZE, 0, flags,
+			      0, 0x0000, false, true, &ntfy);
 	if (ret)
 		return ret;
 
-	ret = nouveau_bo_pin(ntfy, ttmpl);
+	ret = nouveau_bo_pin(ntfy, flags);
 	if (ret)
 		goto out_err;
 
@@ -59,22 +56,14 @@ nouveau_notifier_init_channel(struct nouveau_channel *chan)
 	if (ret)
 		goto out_err;
 
-	if (dev_priv->card_type >= NV_50) {
-		ret = nouveau_bo_vma_add(ntfy, chan->vm, &chan->notifier_vma);
-		if (ret)
-			goto out_err;
-	}
-
 	ret = drm_mm_init(&chan->notifier_heap, 0, ntfy->bo.mem.size);
 	if (ret)
 		goto out_err;
 
 	chan->notifier_bo = ntfy;
 out_err:
-	if (ret) {
-		nouveau_bo_vma_del(ntfy, &chan->notifier_vma);
+	if (ret)
 		drm_gem_object_unreference_unlocked(ntfy->gem);
-	}
 
 	return ret;
 }
@@ -87,7 +76,6 @@ nouveau_notifier_takedown_channel(struct nouveau_channel *chan)
 	if (!chan->notifier_bo)
 		return;
 
-	nouveau_bo_vma_del(chan->notifier_bo, &chan->notifier_vma);
 	nouveau_bo_unmap(chan->notifier_bo);
 	mutex_lock(&dev->struct_mutex);
 	nouveau_bo_unpin(chan->notifier_bo);
@@ -108,8 +96,7 @@ nouveau_notifier_gpuobj_dtor(struct drm_device *dev,
 
 int
 nouveau_notifier_alloc(struct nouveau_channel *chan, uint32_t handle,
-		       int size, uint32_t start, uint32_t end,
-		       uint32_t *b_offset)
+		       int size, uint32_t *b_offset)
 {
 	struct drm_device *dev = chan->dev;
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
@@ -118,29 +105,39 @@ nouveau_notifier_alloc(struct nouveau_channel *chan, uint32_t handle,
 	uint32_t offset;
 	int target, ret;
 
-	mem = drm_mm_search_free_in_range(&chan->notifier_heap, size, 0,
-					  start, end, 0);
+	mem = drm_mm_search_free(&chan->notifier_heap, size, 0, 0);
 	if (mem)
-		mem = drm_mm_get_block_range(mem, size, 0, start, end);
+		mem = drm_mm_get_block(mem, size, 0);
 	if (!mem) {
 		NV_ERROR(dev, "Channel %d notifier block full\n", chan->id);
 		return -ENOMEM;
 	}
 
-	if (dev_priv->card_type < NV_50) {
-		if (chan->notifier_bo->bo.mem.mem_type == TTM_PL_VRAM)
-			target = NV_MEM_TARGET_VRAM;
-		else
-			target = NV_MEM_TARGET_GART;
-		offset  = chan->notifier_bo->bo.offset;
+	offset = chan->notifier_bo->bo.mem.start << PAGE_SHIFT;
+	if (chan->notifier_bo->bo.mem.mem_type == TTM_PL_VRAM) {
+		target = NV_DMA_TARGET_VIDMEM;
+	} else
+	if (chan->notifier_bo->bo.mem.mem_type == TTM_PL_TT) {
+		if (dev_priv->gart_info.type == NOUVEAU_GART_SGDMA &&
+		    dev_priv->card_type < NV_50) {
+			ret = nouveau_sgdma_get_page(dev, offset, &offset);
+			if (ret)
+				return ret;
+			target = NV_DMA_TARGET_PCI;
+		} else {
+			target = NV_DMA_TARGET_AGP;
+			if (dev_priv->card_type >= NV_50)
+				offset += dev_priv->vm_gart_base;
+		}
 	} else {
-		target = NV_MEM_TARGET_VM;
-		offset = chan->notifier_vma.offset;
+		NV_ERROR(dev, "Bad DMA target, mem_type %d!\n",
+			 chan->notifier_bo->bo.mem.mem_type);
+		return -EINVAL;
 	}
 	offset += mem->start;
 
 	ret = nouveau_gpuobj_dma_new(chan, NV_CLASS_DMA_IN_MEMORY, offset,
-				     mem->size, NV_MEM_ACCESS_RW, target,
+				     mem->size, NV_DMA_ACCESS_RW, target,
 				     &nobj);
 	if (ret) {
 		drm_mm_put_block(mem);
@@ -184,21 +181,15 @@ int
 nouveau_ioctl_notifier_alloc(struct drm_device *dev, void *data,
 			     struct drm_file *file_priv)
 {
-	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct drm_nouveau_notifierobj_alloc *na = data;
 	struct nouveau_channel *chan;
 	int ret;
 
-	/* completely unnecessary for these chipsets... */
-	if (unlikely(dev_priv->card_type >= NV_C0))
-		return -EINVAL;
+	NOUVEAU_GET_USER_CHANNEL_WITH_RETURN(na->channel, file_priv, chan);
 
-	chan = nouveau_channel_get(file_priv, na->channel);
-	if (IS_ERR(chan))
-		return PTR_ERR(chan);
+	ret = nouveau_notifier_alloc(chan, na->handle, na->size, &na->offset);
+	if (ret)
+		return ret;
 
-	ret = nouveau_notifier_alloc(chan, na->handle, na->size, 0, 0x1000,
-				     &na->offset);
-	nouveau_channel_put(&chan);
-	return ret;
+	return 0;
 }

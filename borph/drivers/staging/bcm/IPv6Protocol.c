@@ -1,9 +1,5 @@
 #include "headers.h"
 
-static BOOLEAN MatchSrcIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header);
-static BOOLEAN MatchDestIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header);
-static VOID DumpIpv6Header(IPV6Header *pstIpv6Header);
-
 static UCHAR * GetNextIPV6ChainedHeader(UCHAR **ppucPayload,UCHAR *pucNextHeader,BOOLEAN *bParseDone,USHORT *pusPayloadLength)
 {
 	UCHAR *pucRetHeaderPtr = NULL;
@@ -261,7 +257,7 @@ USHORT	IpVersion6(PMINI_ADAPTER Adapter, /**< Pointer to the driver control stru
 }
 
 
-static BOOLEAN MatchSrcIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header)
+BOOLEAN MatchSrcIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header)
 {
 	UINT uiLoopIndex=0;
 	UINT  uiIpv6AddIndex=0;
@@ -287,7 +283,7 @@ static BOOLEAN MatchSrcIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Head
 
 	for(uiLoopIndex=0;uiLoopIndex<uiCountIPSrcAddresses;uiLoopIndex+=uiIpv6AddrNoLongWords)
 	{
-		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Src Ipv6 Address In Received Packet : \n ");
+		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Src Ipv6 Address In Recieved Packet : \n ");
 		DumpIpv6Address(aulSrcIP);
 		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Src Ipv6 Mask In Classifier Rule: \n");
 		DumpIpv6Address(&pstClassifierRule->stSrcIpAddress.ulIpv6Mask[uiLoopIndex]);
@@ -314,7 +310,7 @@ static BOOLEAN MatchSrcIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Head
 	return FALSE;
 }
 
-static BOOLEAN MatchDestIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header)
+BOOLEAN MatchDestIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Header *pstIpv6Header)
 {
 	UINT uiLoopIndex=0;
 	UINT  uiIpv6AddIndex=0;
@@ -340,7 +336,7 @@ static BOOLEAN MatchDestIpv6Address(S_CLASSIFIER_RULE *pstClassifierRule,IPV6Hea
 
 	for(uiLoopIndex=0;uiLoopIndex<uiCountIPDestinationAddresses;uiLoopIndex+=uiIpv6AddrNoLongWords)
 	{
-		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Destination Ipv6 Address In Received Packet : \n ");
+		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Destination Ipv6 Address In Recieved Packet : \n ");
 		DumpIpv6Address(aulDestIP);
 		BCM_DEBUG_PRINT( Adapter,DBG_TYPE_TX, IPV6_DBG, DBG_LVL_ALL, "\n Destination Ipv6 Mask In Classifier Rule: \n");
 		DumpIpv6Address(&pstClassifierRule->stDestIpAddress.ulIpv6Mask[uiLoopIndex]);
@@ -380,7 +376,7 @@ VOID DumpIpv6Address(ULONG *puIpv6Address)
 
 }
 
-static VOID DumpIpv6Header(IPV6Header *pstIpv6Header)
+VOID DumpIpv6Header(IPV6Header *pstIpv6Header)
 {
 	UCHAR ucVersion;
 	UCHAR  ucPrio ;

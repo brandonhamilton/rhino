@@ -44,16 +44,14 @@ extern struct device omap_device_parent;
 #define OMAP_DEVICE_STATE_IDLE		2
 #define OMAP_DEVICE_STATE_SHUTDOWN	3
 
-/* omap_device.flags values */
-#define OMAP_DEVICE_SUSPENDED BIT(0)
-#define OMAP_DEVICE_NO_IDLE_ON_SUSPEND BIT(1)
-
 /**
  * struct omap_device - omap_device wrapper for platform_devices
  * @pdev: platform_device
  * @hwmods: (one .. many per omap_device)
  * @hwmods_cnt: ARRAY_SIZE() of @hwmods
  * @pm_lats: ptr to an omap_device_pm_latency table
+ * @set_rate: fn ptr to change the operating rate.
+ * @get_rate: fn ptr to retrieve the current operating rate.
  * @pm_lats_cnt: ARRAY_SIZE() of what is passed to @pm_lats
  * @pm_lat_level: array index of the last odpl entry executed - -1 if never
  * @dev_wakeup_lat: dev wakeup latency in nanoseconds
@@ -71,13 +69,14 @@ struct omap_device {
 	struct platform_device		pdev;
 	struct omap_hwmod		**hwmods;
 	struct omap_device_pm_latency	*pm_lats;
+	int (*set_rate)(struct device *dev, unsigned long rate);
+	unsigned long (*get_rate) (struct device *dev);
 	u32				dev_wakeup_lat;
 	u32				_dev_wakeup_lat_limit;
 	u8				pm_lats_cnt;
 	s8				pm_lat_level;
 	u8				hwmods_cnt;
 	u8				_state;
-	u8                              flags;
 };
 
 /* Device driver interface (call via platform_data fn ptrs) */
@@ -113,6 +112,13 @@ int omap_device_align_pm_lat(struct platform_device *pdev,
 			     u32 new_wakeup_lat_limit);
 struct powerdomain *omap_device_get_pwrdm(struct omap_device *od);
 u32 omap_device_get_context_loss_count(struct platform_device *pdev);
+int omap_device_set_rate(struct device *dev, unsigned long freq);
+unsigned long omap_device_get_rate(struct device *dev);
+void omap_device_populate_rate_fns(struct device *dev,
+		int (*set_rate)(struct device *dev, unsigned long rate),
+		unsigned long (*get_rate) (struct device *dev));
+int omap_device_scale(struct device *req_dev, struct device *dev,
+		unsigned long rate);
 
 /* Other */
 
@@ -121,11 +127,6 @@ int omap_device_enable_hwmods(struct omap_device *od);
 
 int omap_device_disable_clocks(struct omap_device *od);
 int omap_device_enable_clocks(struct omap_device *od);
-
-static inline void omap_device_disable_idle_on_suspend(struct omap_device *od)
-{
-	od->flags |= OMAP_DEVICE_NO_IDLE_ON_SUSPEND;
-}
 
 /*
  * Entries should be kept in latency order ascending

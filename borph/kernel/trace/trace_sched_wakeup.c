@@ -129,7 +129,6 @@ wakeup_tracer_call(unsigned long ip, unsigned long parent_ip)
 static struct ftrace_ops trace_ops __read_mostly =
 {
 	.func = wakeup_tracer_call,
-	.flags = FTRACE_OPS_FL_GLOBAL,
 };
 #endif /* CONFIG_FUNCTION_TRACER */
 
@@ -227,9 +226,7 @@ static void wakeup_trace_close(struct trace_iterator *iter)
 		graph_trace_close(iter);
 }
 
-#define GRAPH_TRACER_FLAGS (TRACE_GRAPH_PRINT_PROC | \
-			    TRACE_GRAPH_PRINT_ABS_TIME | \
-			    TRACE_GRAPH_PRINT_DURATION)
+#define GRAPH_TRACER_FLAGS (TRACE_GRAPH_PRINT_PROC)
 
 static enum print_line_t wakeup_print_line(struct trace_iterator *iter)
 {

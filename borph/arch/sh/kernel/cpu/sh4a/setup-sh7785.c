@@ -15,17 +15,16 @@
 #include <linux/mm.h>
 #include <linux/sh_dma.h>
 #include <linux/sh_timer.h>
+
 #include <asm/mmzone.h>
+
 #include <cpu/dma-register.h>
 
 static struct plat_sci_port scif0_platform_data = {
 	.mapbase	= 0xffea0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 40, 40, 40, 40 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif0_device = {
@@ -39,11 +38,8 @@ static struct platform_device scif0_device = {
 static struct plat_sci_port scif1_platform_data = {
 	.mapbase	= 0xffeb0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 44, 44, 44, 44 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif1_device = {
@@ -57,11 +53,8 @@ static struct platform_device scif1_device = {
 static struct plat_sci_port scif2_platform_data = {
 	.mapbase	= 0xffec0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 60, 60, 60, 60 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif2_device = {
@@ -75,11 +68,8 @@ static struct platform_device scif2_device = {
 static struct plat_sci_port scif3_platform_data = {
 	.mapbase	= 0xffed0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 61, 61, 61, 61 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif3_device = {
@@ -93,11 +83,8 @@ static struct platform_device scif3_device = {
 static struct plat_sci_port scif4_platform_data = {
 	.mapbase	= 0xffee0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 62, 62, 62, 62 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif4_device = {
@@ -111,11 +98,8 @@ static struct platform_device scif4_device = {
 static struct plat_sci_port scif5_platform_data = {
 	.mapbase	= 0xffef0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE | SCSCR_CKE1,
-	.scbrr_algo_id	= SCBRR_ALGO_1,
 	.type		= PORT_SCIF,
 	.irqs		= { 63, 63, 63, 63 },
-	.regtype	= SCIx_SH4_SCIF_FIFODATA_REGTYPE,
 };
 
 static struct platform_device scif5_device = {

@@ -29,6 +29,10 @@ enum sparc_cpu {
 /* This cannot ever be a sun4c :) That's just history. */
 #define ARCH_SUN4C 0
 
+extern const char *sparc_cpu_type;
+extern const char *sparc_fpu_type;
+extern const char *sparc_pmu_type;
+
 extern char reboot_command[];
 
 /* These are here in an effort to more fully work around Spitfire Errata
@@ -234,7 +238,7 @@ static inline unsigned long __xchg(unsigned long x, __volatile__ void * ptr,
 		return xchg32(ptr, x);
 	case 8:
 		return xchg64(ptr, x);
-	}
+	};
 	__xchg_called_with_bad_pointer();
 	return x;
 }

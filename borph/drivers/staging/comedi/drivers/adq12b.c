@@ -65,7 +65,7 @@ If you do not specify any options, they will default to
    written by jeremy theler <thelerg@ib.cnea.gov.ar>
 
    instituto balseiro
-   commission nacional de energia atomica
+   comision nacional de energia atomica
    universidad nacional de cuyo
    argentina
 
@@ -342,7 +342,7 @@ static int adq12b_ai_rinsn(struct comedi_device *dev,
 	/* convert n samples */
 	for (n = 0; n < insn->n; n++) {
 
-		/* wait for end of conversion */
+		/* wait for end of convertion */
 		i = 0;
 		do {
 			/* udelay(1); */

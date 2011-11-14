@@ -26,7 +26,6 @@
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -295,13 +294,13 @@ static void pluto_dma_end(struct pluto *pluto, unsigned int nbpackets)
 
 	/* Workaround for broken hardware:
 	 * [1] On startup NBPACKETS seems to contain an uninitialized value,
-	 *     but no packets have been transferred.
+	 *     but no packets have been transfered.
 	 * [2] Sometimes (actually very often) NBPACKETS stays at zero
-	 *     although one packet has been transferred.
+	 *     although one packet has been transfered.
 	 * [3] Sometimes (actually rarely), the card gets into an erroneous
 	 *     mode where it continuously generates interrupts, claiming it
-	 *     has received nbpackets>TS_DMA_PACKETS packets, but no packet
-	 *     has been transferred. Only a reset seems to solve this
+	 *     has recieved nbpackets>TS_DMA_PACKETS packets, but no packet
+	 *     has been transfered. Only a reset seems to solve this
 	 */
 	if ((nbpackets == 0) || (nbpackets > TS_DMA_PACKETS)) {
 		unsigned int i = 0;
@@ -333,7 +332,7 @@ static irqreturn_t pluto_irq(int irq, void *dev_id)
 	struct pluto *pluto = dev_id;
 	u32 tscr;
 
-	/* check whether an interrupt occurred on this device */
+	/* check whether an interrupt occured on this device */
 	tscr = pluto_readreg(pluto, REG_TSCR);
 	if (!(tscr & (TSCR_DE | TSCR_OVR)))
 		return IRQ_NONE;

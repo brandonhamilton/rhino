@@ -22,6 +22,7 @@
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <asm/io.h>
+#include <asm/pgtable.h>
 #include <asm/page.h>
 #include <linux/kmod.h>
 #include <linux/vmalloc.h>
@@ -48,7 +49,7 @@
 
 int __devinit mantis_pci_init(struct mantis_pci *mantis)
 {
-	u8 latency;
+	u8 revision, latency;
 	struct mantis_hwconfig *config	= mantis->hwconfig;
 	struct pci_dev *pdev		= mantis->pdev;
 	int err, ret = 0;
@@ -95,8 +96,9 @@ int __devinit mantis_pci_init(struct mantis_pci *mantis)
 	}
 
 	pci_read_config_byte(pdev, PCI_LATENCY_TIMER, &latency);
+	pci_read_config_byte(pdev, PCI_CLASS_REVISION, &revision);
 	mantis->latency = latency;
-	mantis->revision = pdev->revision;
+	mantis->revision = revision;
 
 	dprintk(MANTIS_ERROR, 0, "    Mantis Rev %d [%04x:%04x], ",
 		mantis->revision,

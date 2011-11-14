@@ -48,7 +48,7 @@ static int __init se7751_devices_setup(void)
 {
 	return platform_add_devices(se7751_devices, ARRAY_SIZE(se7751_devices));
 }
-device_initcall(se7751_devices_setup);
+__initcall(se7751_devices_setup);
 
 /*
  * The Machine Vector

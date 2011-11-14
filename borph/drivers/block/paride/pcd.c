@@ -172,8 +172,7 @@ module_param_array(drive3, int, NULL, 0);
 static int pcd_open(struct cdrom_device_info *cdi, int purpose);
 static void pcd_release(struct cdrom_device_info *cdi);
 static int pcd_drive_status(struct cdrom_device_info *cdi, int slot_nr);
-static unsigned int pcd_check_events(struct cdrom_device_info *cdi,
-				     unsigned int clearing, int slot_nr);
+static int pcd_media_changed(struct cdrom_device_info *cdi, int slot_nr);
 static int pcd_tray_move(struct cdrom_device_info *cdi, int position);
 static int pcd_lock_door(struct cdrom_device_info *cdi, int lock);
 static int pcd_drive_reset(struct cdrom_device_info *cdi);
@@ -258,11 +257,10 @@ static int pcd_block_ioctl(struct block_device *bdev, fmode_t mode,
 	return ret;
 }
 
-static unsigned int pcd_block_check_events(struct gendisk *disk,
-					   unsigned int clearing)
+static int pcd_block_media_changed(struct gendisk *disk)
 {
 	struct pcd_unit *cd = disk->private_data;
-	return cdrom_check_events(&cd->info, clearing);
+	return cdrom_media_changed(&cd->info);
 }
 
 static const struct block_device_operations pcd_bdops = {
@@ -270,14 +268,14 @@ static const struct block_device_operations pcd_bdops = {
 	.open		= pcd_block_open,
 	.release	= pcd_block_release,
 	.ioctl		= pcd_block_ioctl,
-	.check_events	= pcd_block_check_events,
+	.media_changed	= pcd_block_media_changed,
 };
 
 static struct cdrom_device_ops pcd_dops = {
 	.open		= pcd_open,
 	.release	= pcd_release,
 	.drive_status	= pcd_drive_status,
-	.check_events	= pcd_check_events,
+	.media_changed	= pcd_media_changed,
 	.tray_move	= pcd_tray_move,
 	.lock_door	= pcd_lock_door,
 	.get_mcn	= pcd_get_mcn,
@@ -320,7 +318,6 @@ static void pcd_init_units(void)
 		disk->first_minor = unit;
 		strcpy(disk->disk_name, cd->name);	/* umm... */
 		disk->fops = &pcd_bdops;
-		disk->flags = GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE;
 	}
 }
 
@@ -505,14 +502,13 @@ static int pcd_packet(struct cdrom_device_info *cdi, struct packet_command *cgc)
 
 #define DBMSG(msg)	((verbose>1)?(msg):NULL)
 
-static unsigned int pcd_check_events(struct cdrom_device_info *cdi,
-				     unsigned int clearing, int slot_nr)
+static int pcd_media_changed(struct cdrom_device_info *cdi, int slot_nr)
 {
 	struct pcd_unit *cd = cdi->handle;
 	int res = cd->changed;
 	if (res)
 		cd->changed = 0;
-	return res ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return res;
 }
 
 static int pcd_lock_door(struct cdrom_device_info *cdi, int lock)

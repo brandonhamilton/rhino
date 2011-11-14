@@ -23,13 +23,9 @@
 /* Serial */
 static struct plat_sci_port scif0_platform_data = {
 	.mapbase        = 0xffe00000,
-	.port_reg	= 0xa4050160,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
 	.type           = PORT_SCIF,
 	.irqs           = { 80, 80, 80, 80 },
-	.regtype	= SCIx_SH4_SCIF_NO_SCSPTR_REGTYPE,
 };
 
 static struct platform_device scif0_device = {
@@ -42,13 +38,9 @@ static struct platform_device scif0_device = {
 
 static struct plat_sci_port scif1_platform_data = {
 	.mapbase        = 0xffe10000,
-	.port_reg	= SCIx_NOT_SUPPORTED,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
 	.type           = PORT_SCIF,
 	.irqs           = { 81, 81, 81, 81 },
-	.regtype	= SCIx_SH4_SCIF_NO_SCSPTR_REGTYPE,
 };
 
 static struct platform_device scif1_device = {
@@ -61,13 +53,9 @@ static struct platform_device scif1_device = {
 
 static struct plat_sci_port scif2_platform_data = {
 	.mapbase        = 0xffe20000,
-	.port_reg	= SCIx_NOT_SUPPORTED,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
 	.type           = PORT_SCIF,
 	.irqs           = { 82, 82, 82, 82 },
-	.regtype	= SCIx_SH4_SCIF_NO_SCSPTR_REGTYPE,
 };
 
 static struct platform_device scif2_device = {
@@ -81,9 +69,6 @@ static struct platform_device scif2_device = {
 static struct plat_sci_port scif3_platform_data = {
 	.mapbase        = 0xa4e30000,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.port_reg	= SCIx_NOT_SUPPORTED,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_3,
 	.type           = PORT_SCIFA,
 	.irqs           = { 56, 56, 56, 56 },
 };
@@ -98,10 +83,7 @@ static struct platform_device scif3_device = {
 
 static struct plat_sci_port scif4_platform_data = {
 	.mapbase        = 0xa4e40000,
-	.port_reg	= SCIx_NOT_SUPPORTED,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_3,
 	.type           = PORT_SCIFA,
 	.irqs           = { 88, 88, 88, 88 },
 };
@@ -116,10 +98,7 @@ static struct platform_device scif4_device = {
 
 static struct plat_sci_port scif5_platform_data = {
 	.mapbase        = 0xa4e50000,
-	.port_reg	= SCIx_NOT_SUPPORTED,
 	.flags          = UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_RE | SCSCR_TE | SCSCR_REIE,
-	.scbrr_algo_id	= SCBRR_ALGO_3,
 	.type           = PORT_SCIFA,
 	.irqs           = { 109, 109, 109, 109 },
 };
@@ -740,7 +719,7 @@ static struct intc_group groups[] __initdata = {
 static struct intc_mask_reg mask_registers[] __initdata = {
 	{ 0xa4080080, 0xa40800c0, 8, /* IMR0 / IMCR0 */
 	  { 0, TMU1_TUNI2, TMU1_TUNI1, TMU1_TUNI0,
-	    0, ENABLED, ENABLED, ENABLED } },
+	    0, DISABLED, ENABLED, ENABLED } },
 	{ 0xa4080084, 0xa40800c4, 8, /* IMR1 / IMCR1 */
 	  { VIO_VOUI, VIO_VEU2HI,VIO_BEUI,VIO_CEUI,DMAC0A_DEI3,DMAC0A_DEI2,DMAC0A_DEI1,DMAC0A_DEI0 } },
 	{ 0xa4080088, 0xa40800c8, 8, /* IMR2 / IMCR2 */
@@ -757,7 +736,7 @@ static struct intc_mask_reg mask_registers[] __initdata = {
 	  { I2C_DTEI, I2C_WAITI, I2C_TACKI, I2C_ALI,
 	    FLCTL_FLTREQ1I, FLCTL_FLTREQ0I, FLCTL_FLTENDI, FLCTL_FLSTEI } },
 	{ 0xa40800a0, 0xa40800e0, 8, /* IMR8 / IMCR8 */
-	  { 0, ENABLED, ENABLED, ENABLED,
+	  { 0, DISABLED, ENABLED, ENABLED,
 	    0, 0, SCIFA_SCIFA2, SIU_SIUI } },
 	{ 0xa40800a4, 0xa40800e4, 8, /* IMR9 / IMCR9 */
 	  { 0, 0, 0, CMT_CMTI, 0, 0, USB_USI0,0 } },

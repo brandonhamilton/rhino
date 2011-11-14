@@ -27,8 +27,6 @@
  *  to get/set bandwidth.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -137,7 +135,8 @@ static int memory_set_cur_bandwidth(struct thermal_cooling_device *cdev,
 	    acpi_evaluate_integer(handle, MEMORY_SET_BANDWIDTH, &arg_list,
 				  &temp);
 
-	pr_info("Bandwidth value was %ld: status is %d\n", state, status);
+	printk(KERN_INFO
+	       "Bandwidth value was %ld: status is %d\n", state, status);
 	if (ACPI_FAILURE(status))
 		return -EFAULT;
 
@@ -476,8 +475,6 @@ static acpi_status intel_menlow_register_sensor(acpi_handle handle, u32 lvl,
 		intel_menlow_unregister_sensor();
 		return AE_ERROR;
 	}
-
-	return AE_OK;
 
  aux1_not_found:
 	if (status == AE_NOT_FOUND)

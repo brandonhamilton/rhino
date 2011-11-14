@@ -104,19 +104,17 @@ nouveau_ramht_insert(struct nouveau_channel *chan, u32 handle,
 	nouveau_gpuobj_ref(gpuobj, &entry->gpuobj);
 
 	if (dev_priv->card_type < NV_40) {
-		ctx = NV_RAMHT_CONTEXT_VALID | (gpuobj->pinst >> 4) |
+		ctx = NV_RAMHT_CONTEXT_VALID | (gpuobj->cinst >> 4) |
 		      (chan->id << NV_RAMHT_CONTEXT_CHANNEL_SHIFT) |
 		      (gpuobj->engine << NV_RAMHT_CONTEXT_ENGINE_SHIFT);
 	} else
 	if (dev_priv->card_type < NV_50) {
-		ctx = (gpuobj->pinst >> 4) |
+		ctx = (gpuobj->cinst >> 4) |
 		      (chan->id << NV40_RAMHT_CONTEXT_CHANNEL_SHIFT) |
 		      (gpuobj->engine << NV40_RAMHT_CONTEXT_ENGINE_SHIFT);
 	} else {
 		if (gpuobj->engine == NVOBJ_ENGINE_DISPLAY) {
-			ctx = (gpuobj->cinst << 10) |
-			      (chan->id << 28) |
-			      chan->id; /* HASH_TAG */
+			ctx = (gpuobj->cinst << 10) | 2;
 		} else {
 			ctx = (gpuobj->cinst >> 4) |
 			      ((gpuobj->engine <<
@@ -216,19 +214,18 @@ out:
 	spin_unlock_irqrestore(&chan->ramht->lock, flags);
 }
 
-int
+void
 nouveau_ramht_remove(struct nouveau_channel *chan, u32 handle)
 {
 	struct nouveau_ramht_entry *entry;
 
 	entry = nouveau_ramht_remove_entry(chan, handle);
 	if (!entry)
-		return -ENOENT;
+		return;
 
 	nouveau_ramht_remove_hash(chan, entry->handle);
 	nouveau_gpuobj_ref(NULL, &entry->gpuobj);
 	kfree(entry);
-	return 0;
 }
 
 struct nouveau_gpuobj *

@@ -141,7 +141,8 @@ err:
 
 	if (walk->iv != req->info)
 		memcpy(req->info, walk->iv, tfm->crt_ablkcipher.ivsize);
-	kfree(walk->iv_buffer);
+	if (walk->iv_buffer)
+		kfree(walk->iv_buffer);
 
 	return err;
 }

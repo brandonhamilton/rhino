@@ -26,7 +26,6 @@
 #include <net/sock.h>
 #include <net/xfrm.h>
 #include <net/netlink.h>
-#include <net/ah.h>
 #include <asm/uaccess.h>
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 #include <linux/in6.h>
@@ -119,25 +118,6 @@ static inline int verify_sec_ctx_len(struct nlattr **attrs)
 	return 0;
 }
 
-static inline int verify_replay(struct xfrm_usersa_info *p,
-				struct nlattr **attrs)
-{
-	struct nlattr *rt = attrs[XFRMA_REPLAY_ESN_VAL];
-
-	if ((p->flags & XFRM_STATE_ESN) && !rt)
-		return -EINVAL;
-
-	if (!rt)
-		return 0;
-
-	if (p->id.proto != IPPROTO_ESP)
-		return -EINVAL;
-
-	if (p->replay_window != 0)
-		return -EINVAL;
-
-	return 0;
-}
 
 static int verify_newsa_info(struct xfrm_usersa_info *p,
 			     struct nlattr **attrs)
@@ -168,8 +148,7 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		     !attrs[XFRMA_ALG_AUTH_TRUNC]) ||
 		    attrs[XFRMA_ALG_AEAD]	||
 		    attrs[XFRMA_ALG_CRYPT]	||
-		    attrs[XFRMA_ALG_COMP]	||
-		    attrs[XFRMA_TFCPAD])
+		    attrs[XFRMA_ALG_COMP])
 			goto out;
 		break;
 
@@ -186,9 +165,6 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		     attrs[XFRMA_ALG_CRYPT]) &&
 		    attrs[XFRMA_ALG_AEAD])
 			goto out;
-		if (attrs[XFRMA_TFCPAD] &&
-		    p->mode != XFRM_MODE_TUNNEL)
-			goto out;
 		break;
 
 	case IPPROTO_COMP:
@@ -196,8 +172,7 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		    attrs[XFRMA_ALG_AEAD]	||
 		    attrs[XFRMA_ALG_AUTH]	||
 		    attrs[XFRMA_ALG_AUTH_TRUNC]	||
-		    attrs[XFRMA_ALG_CRYPT]	||
-		    attrs[XFRMA_TFCPAD])
+		    attrs[XFRMA_ALG_CRYPT])
 			goto out;
 		break;
 
@@ -211,7 +186,6 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		    attrs[XFRMA_ALG_CRYPT]	||
 		    attrs[XFRMA_ENCAP]		||
 		    attrs[XFRMA_SEC_CTX]	||
-		    attrs[XFRMA_TFCPAD]		||
 		    !attrs[XFRMA_COADDR])
 			goto out;
 		break;
@@ -233,8 +207,6 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		goto out;
 	if ((err = verify_sec_ctx_len(attrs)))
 		goto out;
-	if ((err = verify_replay(p, attrs)))
-		goto out;
 
 	err = -EINVAL;
 	switch (p->mode) {
@@ -255,7 +227,7 @@ out:
 }
 
 static int attach_one_algo(struct xfrm_algo **algpp, u8 *props,
-			   struct xfrm_algo_desc *(*get_byname)(const char *, int),
+			   struct xfrm_algo_desc *(*get_byname)(char *, int),
 			   struct nlattr *rta)
 {
 	struct xfrm_algo *p, *ualg;
@@ -324,8 +296,7 @@ static int attach_auth_trunc(struct xfrm_algo_auth **algpp, u8 *props,
 	algo = xfrm_aalg_get_byname(ualg->alg_name, 1);
 	if (!algo)
 		return -ENOSYS;
-	if ((ualg->alg_trunc_len / 8) > MAX_AH_AUTH_LEN ||
-	    ualg->alg_trunc_len > algo->uinfo.auth.icv_fullbits)
+	if (ualg->alg_trunc_len > algo->uinfo.auth.icv_fullbits)
 		return -EINVAL;
 	*props = algo->desc.sadb_alg_id;
 
@@ -366,50 +337,6 @@ static int attach_aead(struct xfrm_algo_aead **algpp, u8 *props,
 	return 0;
 }
 
-static inline int xfrm_replay_verify_len(struct xfrm_replay_state_esn *replay_esn,
-					 struct nlattr *rp)
-{
-	struct xfrm_replay_state_esn *up;
-
-	if (!replay_esn || !rp)
-		return 0;
-
-	up = nla_data(rp);
-
-	if (xfrm_replay_state_esn_len(replay_esn) !=
-			xfrm_replay_state_esn_len(up))
-		return -EINVAL;
-
-	return 0;
-}
-
-static int xfrm_alloc_replay_state_esn(struct xfrm_replay_state_esn **replay_esn,
-				       struct xfrm_replay_state_esn **preplay_esn,
-				       struct nlattr *rta)
-{
-	struct xfrm_replay_state_esn *p, *pp, *up;
-
-	if (!rta)
-		return 0;
-
-	up = nla_data(rta);
-
-	p = kmemdup(up, xfrm_replay_state_esn_len(up), GFP_KERNEL);
-	if (!p)
-		return -ENOMEM;
-
-	pp = kmemdup(up, xfrm_replay_state_esn_len(up), GFP_KERNEL);
-	if (!pp) {
-		kfree(p);
-		return -ENOMEM;
-	}
-
-	*replay_esn = p;
-	*preplay_esn = pp;
-
-	return 0;
-}
-
 static inline int xfrm_user_sec_ctx_size(struct xfrm_sec_ctx *xfrm_ctx)
 {
 	int len = 0;
@@ -445,19 +372,9 @@ static void copy_from_user_state(struct xfrm_state *x, struct xfrm_usersa_info *
 static void xfrm_update_ae_params(struct xfrm_state *x, struct nlattr **attrs)
 {
 	struct nlattr *rp = attrs[XFRMA_REPLAY_VAL];
-	struct nlattr *re = attrs[XFRMA_REPLAY_ESN_VAL];
 	struct nlattr *lt = attrs[XFRMA_LTIME_VAL];
 	struct nlattr *et = attrs[XFRMA_ETIMER_THRESH];
 	struct nlattr *rt = attrs[XFRMA_REPLAY_THRESH];
-
-	if (re) {
-		struct xfrm_replay_state_esn *replay_esn;
-		replay_esn = nla_data(re);
-		memcpy(x->replay_esn, replay_esn,
-		       xfrm_replay_state_esn_len(replay_esn));
-		memcpy(x->preplay_esn, replay_esn,
-		       xfrm_replay_state_esn_len(replay_esn));
-	}
 
 	if (rp) {
 		struct xfrm_replay_state *replay;
@@ -522,9 +439,6 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 			goto error;
 	}
 
-	if (attrs[XFRMA_TFCPAD])
-		x->tfcpad = nla_get_u32(attrs[XFRMA_TFCPAD]);
-
 	if (attrs[XFRMA_COADDR]) {
 		x->coaddr = kmemdup(nla_data(attrs[XFRMA_COADDR]),
 				    sizeof(*x->coaddr), GFP_KERNEL);
@@ -534,7 +448,7 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 
 	xfrm_mark_get(attrs, &x->mark);
 
-	err = __xfrm_init_state(x, false);
+	err = xfrm_init_state(x);
 	if (err)
 		goto error;
 
@@ -542,19 +456,16 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	    security_xfrm_state_alloc(x, nla_data(attrs[XFRMA_SEC_CTX])))
 		goto error;
 
-	if ((err = xfrm_alloc_replay_state_esn(&x->replay_esn, &x->preplay_esn,
-					       attrs[XFRMA_REPLAY_ESN_VAL])))
-		goto error;
-
 	x->km.seq = p->seq;
 	x->replay_maxdiff = net->xfrm.sysctl_aevent_rseqth;
 	/* sysctl_xfrm_aevent_etime is in 100ms units */
 	x->replay_maxage = (net->xfrm.sysctl_aevent_etime*HZ)/XFRM_AE_ETH_M;
-
-	if ((err = xfrm_init_replay(x)))
-		goto error;
+	x->preplay.bitmap = 0;
+	x->preplay.seq = x->replay.seq+x->replay_maxdiff;
+	x->preplay.oseq = x->replay.oseq +x->replay_maxdiff;
 
 	/* override default values from above */
+
 	xfrm_update_ae_params(x, attrs);
 
 	return x;
@@ -575,9 +486,9 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_state *x;
 	int err;
 	struct km_event c;
-	uid_t loginuid = audit_get_loginuid(current);
-	u32 sessionid = audit_get_sessionid(current);
-	u32 sid;
+	uid_t loginuid = NETLINK_CB(skb).loginuid;
+	u32 sessionid = NETLINK_CB(skb).sessionid;
+	u32 sid = NETLINK_CB(skb).sid;
 
 	err = verify_newsa_info(p, attrs);
 	if (err)
@@ -593,7 +504,6 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	else
 		err = xfrm_state_update(x);
 
-	security_task_getsecid(current, &sid);
 	xfrm_audit_state_add(x, err ? 0 : 1, loginuid, sessionid, sid);
 
 	if (err < 0) {
@@ -654,9 +564,9 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	int err = -ESRCH;
 	struct km_event c;
 	struct xfrm_usersa_id *p = nlmsg_data(nlh);
-	uid_t loginuid = audit_get_loginuid(current);
-	u32 sessionid = audit_get_sessionid(current);
-	u32 sid;
+	uid_t loginuid = NETLINK_CB(skb).loginuid;
+	u32 sessionid = NETLINK_CB(skb).sessionid;
+	u32 sid = NETLINK_CB(skb).sid;
 
 	x = xfrm_user_state_lookup(net, p, attrs, &err);
 	if (x == NULL)
@@ -681,7 +591,6 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	km_state_notify(x, &c);
 
 out:
-	security_task_getsecid(current, &sid);
 	xfrm_audit_state_delete(x, err ? 0 : 1, loginuid, sessionid, sid);
 	xfrm_state_put(x);
 	return err;
@@ -779,15 +688,8 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 	if (x->encap)
 		NLA_PUT(skb, XFRMA_ENCAP, sizeof(*x->encap), x->encap);
 
-	if (x->tfcpad)
-		NLA_PUT_U32(skb, XFRMA_TFCPAD, x->tfcpad);
-
 	if (xfrm_mark_put(skb, &x->mark))
 		goto nla_put_failure;
-
-	if (x->replay_esn)
-		NLA_PUT(skb, XFRMA_REPLAY_ESN_VAL,
-			xfrm_replay_state_esn_len(x->replay_esn), x->replay_esn);
 
 	if (x->security && copy_sec_ctx(x->security, skb) < 0)
 		goto nla_put_failure;
@@ -897,7 +799,7 @@ static int build_spdinfo(struct sk_buff *skb, struct net *net,
 	u32 *f;
 
 	nlh = nlmsg_put(skb, pid, seq, XFRM_MSG_NEWSPDINFO, sizeof(u32), 0);
-	if (nlh == NULL) /* shouldn't really happen ... */
+	if (nlh == NULL) /* shouldnt really happen ... */
 		return -EMSGSIZE;
 
 	f = nlmsg_data(nlh);
@@ -957,7 +859,7 @@ static int build_sadinfo(struct sk_buff *skb, struct net *net,
 	u32 *f;
 
 	nlh = nlmsg_put(skb, pid, seq, XFRM_MSG_NEWSADINFO, sizeof(u32), 0);
-	if (nlh == NULL) /* shouldn't really happen ... */
+	if (nlh == NULL) /* shouldnt really happen ... */
 		return -EMSGSIZE;
 
 	f = nlmsg_data(nlh);
@@ -1349,9 +1251,9 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct km_event c;
 	int err;
 	int excl;
-	uid_t loginuid = audit_get_loginuid(current);
-	u32 sessionid = audit_get_sessionid(current);
-	u32 sid;
+	uid_t loginuid = NETLINK_CB(skb).loginuid;
+	u32 sessionid = NETLINK_CB(skb).sessionid;
+	u32 sid = NETLINK_CB(skb).sid;
 
 	err = verify_newpolicy_info(p);
 	if (err)
@@ -1364,13 +1266,12 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (!xp)
 		return err;
 
-	/* shouldn't excl be based on nlh flags??
+	/* shouldnt excl be based on nlh flags??
 	 * Aha! this is anti-netlink really i.e  more pfkey derived
 	 * in netlink excl is a flag and you wouldnt need
 	 * a type XFRM_MSG_UPDPOLICY - JHS */
 	excl = nlh->nlmsg_type == XFRM_MSG_NEWPOLICY;
 	err = xfrm_policy_insert(p->dir, xp, excl);
-	security_task_getsecid(current, &sid);
 	xfrm_audit_policy_add(xp, err ? 0 : 1, loginuid, sessionid, sid);
 
 	if (err) {
@@ -1607,11 +1508,10 @@ static int xfrm_get_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 					    NETLINK_CB(skb).pid);
 		}
 	} else {
-		uid_t loginuid = audit_get_loginuid(current);
-		u32 sessionid = audit_get_sessionid(current);
-		u32 sid;
+		uid_t loginuid = NETLINK_CB(skb).loginuid;
+		u32 sessionid = NETLINK_CB(skb).sessionid;
+		u32 sid = NETLINK_CB(skb).sid;
 
-		security_task_getsecid(current, &sid);
 		xfrm_audit_policy_delete(xp, err ? 0 : 1, loginuid, sessionid,
 					 sid);
 
@@ -1639,9 +1539,9 @@ static int xfrm_flush_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_audit audit_info;
 	int err;
 
-	audit_info.loginuid = audit_get_loginuid(current);
-	audit_info.sessionid = audit_get_sessionid(current);
-	security_task_getsecid(current, &audit_info.secid);
+	audit_info.loginuid = NETLINK_CB(skb).loginuid;
+	audit_info.sessionid = NETLINK_CB(skb).sessionid;
+	audit_info.secid = NETLINK_CB(skb).sid;
 	err = xfrm_state_flush(net, p->proto, &audit_info);
 	if (err) {
 		if (err == -ESRCH) /* empty table */
@@ -1658,21 +1558,17 @@ static int xfrm_flush_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	return 0;
 }
 
-static inline size_t xfrm_aevent_msgsize(struct xfrm_state *x)
+static inline size_t xfrm_aevent_msgsize(void)
 {
-	size_t replay_size = x->replay_esn ?
-			      xfrm_replay_state_esn_len(x->replay_esn) :
-			      sizeof(struct xfrm_replay_state);
-
 	return NLMSG_ALIGN(sizeof(struct xfrm_aevent_id))
-	       + nla_total_size(replay_size)
+	       + nla_total_size(sizeof(struct xfrm_replay_state))
 	       + nla_total_size(sizeof(struct xfrm_lifetime_cur))
 	       + nla_total_size(sizeof(struct xfrm_mark))
 	       + nla_total_size(4) /* XFRM_AE_RTHR */
 	       + nla_total_size(4); /* XFRM_AE_ETHR */
 }
 
-static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
+static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, struct km_event *c)
 {
 	struct xfrm_aevent_id *id;
 	struct nlmsghdr *nlh;
@@ -1690,13 +1586,7 @@ static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	id->reqid = x->props.reqid;
 	id->flags = c->data.aevent;
 
-	if (x->replay_esn)
-		NLA_PUT(skb, XFRMA_REPLAY_ESN_VAL,
-			xfrm_replay_state_esn_len(x->replay_esn),
-			x->replay_esn);
-	else
-		NLA_PUT(skb, XFRMA_REPLAY_VAL, sizeof(x->replay), &x->replay);
-
+	NLA_PUT(skb, XFRMA_REPLAY_VAL, sizeof(x->replay), &x->replay);
 	NLA_PUT(skb, XFRMA_LTIME_VAL, sizeof(x->curlft), &x->curlft);
 
 	if (id->flags & XFRM_AE_RTHR)
@@ -1729,16 +1619,16 @@ static int xfrm_get_ae(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_aevent_id *p = nlmsg_data(nlh);
 	struct xfrm_usersa_id *id = &p->sa_id;
 
+	r_skb = nlmsg_new(xfrm_aevent_msgsize(), GFP_ATOMIC);
+	if (r_skb == NULL)
+		return -ENOMEM;
+
 	mark = xfrm_mark_get(attrs, &m);
 
 	x = xfrm_state_lookup(net, mark, &id->daddr, id->spi, id->proto, id->family);
-	if (x == NULL)
+	if (x == NULL) {
+		kfree_skb(r_skb);
 		return -ESRCH;
-
-	r_skb = nlmsg_new(xfrm_aevent_msgsize(x), GFP_ATOMIC);
-	if (r_skb == NULL) {
-		xfrm_state_put(x);
-		return -ENOMEM;
 	}
 
 	/*
@@ -1770,10 +1660,9 @@ static int xfrm_new_ae(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct xfrm_mark m;
 	struct xfrm_aevent_id *p = nlmsg_data(nlh);
 	struct nlattr *rp = attrs[XFRMA_REPLAY_VAL];
-	struct nlattr *re = attrs[XFRMA_REPLAY_ESN_VAL];
 	struct nlattr *lt = attrs[XFRMA_LTIME_VAL];
 
-	if (!lt && !rp && !re)
+	if (!lt && !rp)
 		return err;
 
 	/* pedantic mode - thou shalt sayeth replaceth */
@@ -1787,10 +1676,6 @@ static int xfrm_new_ae(struct sk_buff *skb, struct nlmsghdr *nlh,
 		return -ESRCH;
 
 	if (x->km.state != XFRM_STATE_VALID)
-		goto out;
-
-	err = xfrm_replay_verify_len(x->replay_esn, rp);
-	if (err)
 		goto out;
 
 	spin_lock_bh(&x->lock);
@@ -1821,9 +1706,9 @@ static int xfrm_flush_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (err)
 		return err;
 
-	audit_info.loginuid = audit_get_loginuid(current);
-	audit_info.sessionid = audit_get_sessionid(current);
-	security_task_getsecid(current, &audit_info.secid);
+	audit_info.loginuid = NETLINK_CB(skb).loginuid;
+	audit_info.sessionid = NETLINK_CB(skb).sessionid;
+	audit_info.secid = NETLINK_CB(skb).sid;
 	err = xfrm_policy_flush(net, type, &audit_info);
 	if (err) {
 		if (err == -ESRCH) /* empty table */
@@ -1890,11 +1775,9 @@ static int xfrm_add_pol_expire(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	err = 0;
 	if (up->hard) {
-		uid_t loginuid = audit_get_loginuid(current);
-		u32 sessionid = audit_get_sessionid(current);
-		u32 sid;
-
-		security_task_getsecid(current, &sid);
+		uid_t loginuid = NETLINK_CB(skb).loginuid;
+		uid_t sessionid = NETLINK_CB(skb).sessionid;
+		u32 sid = NETLINK_CB(skb).sid;
 		xfrm_policy_delete(xp, p->dir);
 		xfrm_audit_policy_delete(xp, 1, loginuid, sessionid, sid);
 
@@ -1933,11 +1816,9 @@ static int xfrm_add_sa_expire(struct sk_buff *skb, struct nlmsghdr *nlh,
 	km_state_expired(x, ue->hard, current->pid);
 
 	if (ue->hard) {
-		uid_t loginuid = audit_get_loginuid(current);
-		u32 sessionid = audit_get_sessionid(current);
-		u32 sid;
-
-		security_task_getsecid(current, &sid);
+		uid_t loginuid = NETLINK_CB(skb).loginuid;
+		uid_t sessionid = NETLINK_CB(skb).sessionid;
+		u32 sid = NETLINK_CB(skb).sid;
 		__xfrm_state_delete(x);
 		xfrm_audit_state_delete(x, 1, loginuid, sessionid, sid);
 	}
@@ -2091,7 +1972,7 @@ static int xfrm_do_migrate(struct sk_buff *skb, struct nlmsghdr *nlh,
 #endif
 
 #ifdef CONFIG_XFRM_MIGRATE
-static int copy_to_user_migrate(const struct xfrm_migrate *m, struct sk_buff *skb)
+static int copy_to_user_migrate(struct xfrm_migrate *m, struct sk_buff *skb)
 {
 	struct xfrm_user_migrate um;
 
@@ -2109,7 +1990,7 @@ static int copy_to_user_migrate(const struct xfrm_migrate *m, struct sk_buff *sk
 	return nla_put(skb, XFRMA_MIGRATE, sizeof(um), &um);
 }
 
-static int copy_to_user_kmaddress(const struct xfrm_kmaddress *k, struct sk_buff *skb)
+static int copy_to_user_kmaddress(struct xfrm_kmaddress *k, struct sk_buff *skb)
 {
 	struct xfrm_user_kmaddress uk;
 
@@ -2130,11 +2011,11 @@ static inline size_t xfrm_migrate_msgsize(int num_migrate, int with_kma)
 	      + userpolicy_type_attrsize();
 }
 
-static int build_migrate(struct sk_buff *skb, const struct xfrm_migrate *m,
-			 int num_migrate, const struct xfrm_kmaddress *k,
-			 const struct xfrm_selector *sel, u8 dir, u8 type)
+static int build_migrate(struct sk_buff *skb, struct xfrm_migrate *m,
+			 int num_migrate, struct xfrm_kmaddress *k,
+			 struct xfrm_selector *sel, u8 dir, u8 type)
 {
-	const struct xfrm_migrate *mp;
+	struct xfrm_migrate *mp;
 	struct xfrm_userpolicy_id *pol_id;
 	struct nlmsghdr *nlh;
 	int i;
@@ -2166,9 +2047,9 @@ nlmsg_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
-			     const struct xfrm_migrate *m, int num_migrate,
-			     const struct xfrm_kmaddress *k)
+static int xfrm_send_migrate(struct xfrm_selector *sel, u8 dir, u8 type,
+			     struct xfrm_migrate *m, int num_migrate,
+			     struct xfrm_kmaddress *k)
 {
 	struct net *net = &init_net;
 	struct sk_buff *skb;
@@ -2184,9 +2065,9 @@ static int xfrm_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_MIGRATE, GFP_ATOMIC);
 }
 #else
-static int xfrm_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
-			     const struct xfrm_migrate *m, int num_migrate,
-			     const struct xfrm_kmaddress *k)
+static int xfrm_send_migrate(struct xfrm_selector *sel, u8 dir, u8 type,
+			     struct xfrm_migrate *m, int num_migrate,
+			     struct xfrm_kmaddress *k)
 {
 	return -ENOPROTOOPT;
 }
@@ -2241,8 +2122,6 @@ static const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
 	[XFRMA_MIGRATE]		= { .len = sizeof(struct xfrm_user_migrate) },
 	[XFRMA_KMADDRESS]	= { .len = sizeof(struct xfrm_user_kmaddress) },
 	[XFRMA_MARK]		= { .len = sizeof(struct xfrm_mark) },
-	[XFRMA_TFCPAD]		= { .type = NLA_U32 },
-	[XFRMA_REPLAY_ESN_VAL]	= { .len = sizeof(struct xfrm_replay_state_esn) },
 };
 
 static struct xfrm_link {
@@ -2299,8 +2178,7 @@ static int xfrm_user_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 		if (link->dump == NULL)
 			return -EINVAL;
 
-		return netlink_dump_start(net->xfrm.nlsk, skb, nlh,
-					  link->dump, link->done, 0);
+		return netlink_dump_start(net->xfrm.nlsk, skb, nlh, link->dump, link->done);
 	}
 
 	err = nlmsg_parse(nlh, xfrm_msg_min[type], attrs, XFRMA_MAX,
@@ -2327,7 +2205,7 @@ static inline size_t xfrm_expire_msgsize(void)
 	       + nla_total_size(sizeof(struct xfrm_mark));
 }
 
-static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
+static int build_expire(struct sk_buff *skb, struct xfrm_state *x, struct km_event *c)
 {
 	struct xfrm_user_expire *ue;
 	struct nlmsghdr *nlh;
@@ -2349,7 +2227,7 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_exp_state_notify(struct xfrm_state *x, const struct km_event *c)
+static int xfrm_exp_state_notify(struct xfrm_state *x, struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct sk_buff *skb;
@@ -2366,12 +2244,12 @@ static int xfrm_exp_state_notify(struct xfrm_state *x, const struct km_event *c)
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_EXPIRE, GFP_ATOMIC);
 }
 
-static int xfrm_aevent_state_notify(struct xfrm_state *x, const struct km_event *c)
+static int xfrm_aevent_state_notify(struct xfrm_state *x, struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct sk_buff *skb;
 
-	skb = nlmsg_new(xfrm_aevent_msgsize(x), GFP_ATOMIC);
+	skb = nlmsg_new(xfrm_aevent_msgsize(), GFP_ATOMIC);
 	if (skb == NULL)
 		return -ENOMEM;
 
@@ -2381,7 +2259,7 @@ static int xfrm_aevent_state_notify(struct xfrm_state *x, const struct km_event 
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_AEVENTS, GFP_ATOMIC);
 }
 
-static int xfrm_notify_sa_flush(const struct km_event *c)
+static int xfrm_notify_sa_flush(struct km_event *c)
 {
 	struct net *net = c->net;
 	struct xfrm_usersa_flush *p;
@@ -2423,10 +2301,6 @@ static inline size_t xfrm_sa_len(struct xfrm_state *x)
 		l += nla_total_size(sizeof(*x->calg));
 	if (x->encap)
 		l += nla_total_size(sizeof(*x->encap));
-	if (x->tfcpad)
-		l += nla_total_size(sizeof(x->tfcpad));
-	if (x->replay_esn)
-		l += nla_total_size(xfrm_replay_state_esn_len(x->replay_esn));
 	if (x->security)
 		l += nla_total_size(sizeof(struct xfrm_user_sec_ctx) +
 				    x->security->ctx_len);
@@ -2439,7 +2313,7 @@ static inline size_t xfrm_sa_len(struct xfrm_state *x)
 	return l;
 }
 
-static int xfrm_notify_sa(struct xfrm_state *x, const struct km_event *c)
+static int xfrm_notify_sa(struct xfrm_state *x, struct km_event *c)
 {
 	struct net *net = xs_net(x);
 	struct xfrm_usersa_info *p;
@@ -2496,7 +2370,7 @@ nla_put_failure:
 	return -1;
 }
 
-static int xfrm_send_state_notify(struct xfrm_state *x, const struct km_event *c)
+static int xfrm_send_state_notify(struct xfrm_state *x, struct km_event *c)
 {
 
 	switch (c->event) {
@@ -2655,7 +2529,7 @@ static inline size_t xfrm_polexpire_msgsize(struct xfrm_policy *xp)
 }
 
 static int build_polexpire(struct sk_buff *skb, struct xfrm_policy *xp,
-			   int dir, const struct km_event *c)
+			   int dir, struct km_event *c)
 {
 	struct xfrm_user_polexpire *upe;
 	struct nlmsghdr *nlh;
@@ -2685,7 +2559,7 @@ nlmsg_failure:
 	return -EMSGSIZE;
 }
 
-static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, const struct km_event *c)
+static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, struct km_event *c)
 {
 	struct net *net = xp_net(xp);
 	struct sk_buff *skb;
@@ -2700,7 +2574,7 @@ static int xfrm_exp_policy_notify(struct xfrm_policy *xp, int dir, const struct 
 	return nlmsg_multicast(net->xfrm.nlsk, skb, 0, XFRMNLGRP_EXPIRE, GFP_ATOMIC);
 }
 
-static int xfrm_notify_policy(struct xfrm_policy *xp, int dir, const struct km_event *c)
+static int xfrm_notify_policy(struct xfrm_policy *xp, int dir, struct km_event *c)
 {
 	struct net *net = xp_net(xp);
 	struct xfrm_userpolicy_info *p;
@@ -2765,7 +2639,7 @@ nlmsg_failure:
 	return -1;
 }
 
-static int xfrm_notify_policy_flush(const struct km_event *c)
+static int xfrm_notify_policy_flush(struct km_event *c)
 {
 	struct net *net = c->net;
 	struct nlmsghdr *nlh;
@@ -2790,7 +2664,7 @@ nlmsg_failure:
 	return -1;
 }
 
-static int xfrm_send_policy_notify(struct xfrm_policy *xp, int dir, const struct km_event *c)
+static int xfrm_send_policy_notify(struct xfrm_policy *xp, int dir, struct km_event *c)
 {
 
 	switch (c->event) {

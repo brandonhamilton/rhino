@@ -26,6 +26,12 @@ static struct vfsmount *anon_inode_mnt __read_mostly;
 static struct inode *anon_inode_inode;
 static const struct file_operations anon_inode_fops;
 
+static struct dentry *anon_inodefs_mount(struct file_system_type *fs_type,
+				int flags, const char *dev_name, void *data)
+{
+	return mount_pseudo(fs_type, "anon_inode:", NULL, ANON_INODE_FS_MAGIC);
+}
+
 /*
  * anon_inodefs_dname() is called from d_path().
  */
@@ -35,21 +41,13 @@ static char *anon_inodefs_dname(struct dentry *dentry, char *buffer, int buflen)
 				dentry->d_name.name);
 }
 
-static const struct dentry_operations anon_inodefs_dentry_operations = {
-	.d_dname	= anon_inodefs_dname,
-};
-
-static struct dentry *anon_inodefs_mount(struct file_system_type *fs_type,
-				int flags, const char *dev_name, void *data)
-{
-	return mount_pseudo(fs_type, "anon_inode:", NULL,
-			&anon_inodefs_dentry_operations, ANON_INODE_FS_MAGIC);
-}
-
 static struct file_system_type anon_inode_fs_type = {
 	.name		= "anon_inodefs",
 	.mount		= anon_inodefs_mount,
 	.kill_sb	= kill_anon_super,
+};
+static const struct dentry_operations anon_inodefs_dentry_operations = {
+	.d_dname	= anon_inodefs_dname,
 };
 
 /*
@@ -66,9 +64,9 @@ static const struct address_space_operations anon_aops = {
 };
 
 /**
- * anon_inode_getfile - creates a new file instance by hooking it up to an
- *                      anonymous inode, and a dentry that describe the "class"
- *                      of the file
+ * anon_inode_getfd - creates a new file instance by hooking it up to an
+ *                    anonymous inode, and a dentry that describe the "class"
+ *                    of the file
  *
  * @name:    [in]    name of the "class" of the new file
  * @fops:    [in]    file operations for the new file
@@ -104,7 +102,7 @@ struct file *anon_inode_getfile(const char *name,
 	this.name = name;
 	this.len = strlen(name);
 	this.hash = 0;
-	path.dentry = d_alloc_pseudo(anon_inode_mnt->mnt_sb, &this);
+	path.dentry = d_alloc(anon_inode_mnt->mnt_sb->s_root, &this);
 	if (!path.dentry)
 		goto err_module;
 
@@ -115,6 +113,7 @@ struct file *anon_inode_getfile(const char *name,
 	 */
 	ihold(anon_inode_inode);
 
+	path.dentry->d_op = &anon_inodefs_dentry_operations;
 	d_instantiate(path.dentry, anon_inode_inode);
 
 	error = -ENFILE;
@@ -187,7 +186,7 @@ EXPORT_SYMBOL_GPL(anon_inode_getfd);
  */
 static struct inode *anon_inode_mkinode(void)
 {
-	struct inode *inode = new_inode_pseudo(anon_inode_mnt->mnt_sb);
+	struct inode *inode = new_inode(anon_inode_mnt->mnt_sb);
 
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
@@ -233,7 +232,7 @@ static int __init anon_inode_init(void)
 	return 0;
 
 err_mntput:
-	kern_unmount(anon_inode_mnt);
+	mntput(anon_inode_mnt);
 err_unregister_filesystem:
 	unregister_filesystem(&anon_inode_fs_type);
 err_exit:

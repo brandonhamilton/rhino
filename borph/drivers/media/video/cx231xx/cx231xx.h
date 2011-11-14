@@ -34,8 +34,7 @@
 
 #include <media/videobuf-vmalloc.h>
 #include <media/v4l2-device.h>
-#include <media/rc-core.h>
-#include <media/ir-kbd-i2c.h>
+#include <media/ir-core.h>
 #include <media/videobuf-dvb.h>
 
 #include "cx231xx-reg.h"
@@ -43,7 +42,7 @@
 #include "cx231xx-conf-reg.h"
 
 #define DRIVER_NAME                     "cx231xx"
-#define PWR_SLEEP_INTERVAL              10
+#define PWR_SLEEP_INTERVAL              5
 
 /* I2C addresses for control block in Cx231xx */
 #define     AFE_DEVICE_ADDRESS		0x60
@@ -63,12 +62,6 @@
 #define CX231XX_BOARD_CNXT_RDU_250	7
 #define CX231XX_BOARD_HAUPPAUGE_EXETER  8
 #define CX231XX_BOARD_HAUPPAUGE_USBLIVE2 9
-#define CX231XX_BOARD_PV_PLAYTV_USB_HYBRID 10
-#define CX231XX_BOARD_PV_XCAPTURE_USB 11
-#define CX231XX_BOARD_KWORLD_UB430_USB_HYBRID 12
-#define CX231XX_BOARD_ICONBIT_U100 13
-#define CX231XX_BOARD_HAUPPAUGE_USB2_FM_PAL 14
-#define CX231XX_BOARD_HAUPPAUGE_USB2_FM_NTSC 15
 
 /* Limits minimum and default number of buffers */
 #define CX231XX_MIN_BUF                 4
@@ -114,6 +107,7 @@
 	V4L2_STD_PAL_BG |  V4L2_STD_PAL_DK    |  V4L2_STD_PAL_I    | \
 	V4L2_STD_PAL_M  |  V4L2_STD_PAL_N     |  V4L2_STD_PAL_Nc   | \
 	V4L2_STD_PAL_60 |  V4L2_STD_SECAM_L   |  V4L2_STD_SECAM_DK)
+#define CX231xx_VERSION_CODE KERNEL_VERSION(0, 0, 2)
 
 #define SLEEP_S5H1432    30
 #define CX23417_OSC_EN   8
@@ -350,18 +344,10 @@ struct cx231xx_board {
 	/* i2c masters */
 	u8 tuner_i2c_master;
 	u8 demod_i2c_master;
-	u8 ir_i2c_master;
-
-	/* for devices with I2C chips for IR */
-	char *rc_map_name;
 
 	unsigned int max_range_640_480:1;
 	unsigned int has_dvb:1;
-	unsigned int has_417:1;
 	unsigned int valid:1;
-	unsigned int no_alt_vanc:1;
-	unsigned int external_av:1;
-	unsigned int dont_use_port_3:1;
 
 	unsigned char xclk, i2c_speed;
 
@@ -370,7 +356,7 @@ struct cx231xx_board {
 
 	struct cx231xx_input input[MAX_CX231XX_INPUT];
 	struct cx231xx_input radio;
-	struct rc_map *ir_codes;
+	struct ir_scancode_table *ir_codes;
 };
 
 /* device states */
@@ -472,7 +458,7 @@ struct cx231xx_fh {
 #define I2C_STOP                0x0
 /* 1-- do not transmit STOP at end of transaction */
 #define I2C_NOSTOP              0x1
-/* 1--allow slave to insert clock wait states */
+/* 1--alllow slave to insert clock wait states */
 #define I2C_SYNC                0x1
 
 struct cx231xx_i2c {
@@ -619,9 +605,6 @@ struct cx231xx {
 
 	struct cx231xx_board board;
 
-	/* For I2C IR support */
-	struct IR_i2c_init_data    init_data;
-
 	unsigned int stream_on:1;	/* Locks streams */
 	unsigned int vbi_stream_on:1;	/* Locks streams for VBI */
 	unsigned int has_audio_class:1;
@@ -632,6 +615,8 @@ struct cx231xx {
 	struct v4l2_device v4l2_dev;
 	struct v4l2_subdev *sd_cx25840;
 	struct v4l2_subdev *sd_tuner;
+
+	struct cx231xx_IR *ir;
 
 	struct work_struct wq_trigger;		/* Trigger to start/stop audio for alsa module */
 	atomic_t	   stream_started;	/* stream should be running if true */
@@ -968,17 +953,6 @@ int cx231xx_tuner_callback(void *ptr, int component, int command, int arg);
 /* cx23885-417.c                                               */
 extern int cx231xx_417_register(struct cx231xx *dev);
 extern void cx231xx_417_unregister(struct cx231xx *dev);
-
-/* cx23885-input.c                                             */
-
-#if defined(CONFIG_VIDEO_CX231XX_RC)
-int cx231xx_ir_init(struct cx231xx *dev);
-void cx231xx_ir_exit(struct cx231xx *dev);
-#else
-#define cx231xx_ir_init(dev)	(0)
-#define cx231xx_ir_exit(dev)	(0)
-#endif
-
 
 /* printk macros */
 

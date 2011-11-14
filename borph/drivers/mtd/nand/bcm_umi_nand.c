@@ -52,7 +52,9 @@
 static const __devinitconst char gBanner[] = KERN_INFO \
 	"BCM UMI MTD NAND Driver: 1.00\n";
 
+#ifdef CONFIG_MTD_PARTITIONS
 const char *part_probes[] = { "cmdlinepart", NULL };
+#endif
 
 #if NAND_ECC_BCH
 static uint8_t scan_ff_pattern[] = { 0xff };
@@ -380,7 +382,7 @@ static int __devinit bcm_umi_nand_probe(struct platform_device *pdev)
 		return -ENXIO;
 
 	/* map physical address */
-	bcm_umi_io_base = ioremap(r->start, resource_size(r));
+	bcm_umi_io_base = ioremap(r->start, r->end - r->start + 1);
 
 	if (!bcm_umi_io_base) {
 		printk(KERN_ERR "ioremap to access BCM UMI NAND chip failed\n");
@@ -507,7 +509,7 @@ static int __devinit bcm_umi_nand_probe(struct platform_device *pdev)
 			kfree(board_mtd);
 			return -EIO;
 		}
-		mtd_device_register(board_mtd, partition_info, nr_partitions);
+		add_mtd_partitions(board_mtd, partition_info, nr_partitions);
 	}
 
 	/* Return happy */

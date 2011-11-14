@@ -19,7 +19,6 @@
 
 static int __init no_halt(char *s)
 {
-	WARN_ONCE(1, "\"no-hlt\" is deprecated, please use \"idle=poll\"\n");
 	boot_cpu_data.hlt_works_ok = 0;
 	return 1;
 }
@@ -62,8 +61,6 @@ static void __init check_fpu(void)
 		return;
 	}
 
-	kernel_fpu_begin();
-
 	/*
 	 * trap_init() enabled FXSR and company _before_ testing for FP
 	 * problems here.
@@ -81,8 +78,6 @@ static void __init check_fpu(void)
 		"fninit"
 		: "=m" (*&fdiv_bug)
 		: "m" (*&x), "m" (*&y));
-
-	kernel_fpu_end();
 
 	boot_cpu_data.fdiv_bug = fdiv_bug;
 	if (boot_cpu_data.fdiv_bug)

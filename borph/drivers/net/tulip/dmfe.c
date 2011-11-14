@@ -295,7 +295,8 @@ enum dmfe_CR6_bits {
 /* Global variable declaration ----------------------------- */
 static int __devinitdata printed_version;
 static const char version[] __devinitconst =
-	"Davicom DM9xxx net driver, version " DRV_VERSION " (" DRV_RELDATE ")";
+	KERN_INFO DRV_NAME ": Davicom DM9xxx net driver, version "
+	DRV_VERSION " (" DRV_RELDATE ")\n";
 
 static int dmfe_debug;
 static unsigned char dmfe_media_mode = DMFE_AUTO;
@@ -380,7 +381,7 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 	DMFE_DBUG(0, "dmfe_init_one()", 0);
 
 	if (!printed_version++)
-		pr_info("%s\n", version);
+		printk(version);
 
 	/*
 	 *	SPARC on-board DM910x chips should be handled by the main
@@ -405,7 +406,7 @@ static int __devinit dmfe_init_one (struct pci_dev *pdev,
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
-		pr_warn("32-bit PCI DMA not available\n");
+		pr_warning("32-bit PCI DMA not available\n");
 		err = -ENODEV;
 		goto err_out_free;
 	}
@@ -879,6 +880,7 @@ static void dmfe_free_tx_pkt(struct DEVICE *dev, struct dmfe_board_info * db)
 	txptr = db->tx_remove_ptr;
 	while(db->tx_packet_cnt) {
 		tdes0 = le32_to_cpu(txptr->tdes0);
+		pr_debug("tdes0=%x\n", tdes0);
 		if (tdes0 & 0x80000000)
 			break;
 
@@ -888,6 +890,7 @@ static void dmfe_free_tx_pkt(struct DEVICE *dev, struct dmfe_board_info * db)
 
 		/* Transmit statistic counter */
 		if ( tdes0 != 0x7fffffff ) {
+			pr_debug("tdes0=%x\n", tdes0);
 			dev->stats.collisions += (tdes0 >> 3) & 0xf;
 			dev->stats.tx_bytes += le32_to_cpu(txptr->tdes1) & 0x7ff;
 			if (tdes0 & TDES0_ERR_MASK) {
@@ -984,6 +987,7 @@ static void dmfe_rx_packet(struct DEVICE *dev, struct dmfe_board_info * db)
 			/* error summary bit check */
 			if (rdes0 & 0x8000) {
 				/* This is a error packet */
+				pr_debug("rdes0: %x\n", rdes0);
 				dev->stats.rx_errors++;
 				if (rdes0 & 1)
 					dev->stats.rx_fifo_errors++;
@@ -1220,7 +1224,7 @@ static void dmfe_timer(unsigned long data)
 
 
 	/* If chip reports that link is failed it could be because external
-		PHY link status pin is not connected correctly to chip
+		PHY link status pin is not conected correctly to chip
 		To be sure ask PHY too.
 	*/
 
@@ -1635,6 +1639,7 @@ static u8 dmfe_sense_speed(struct dmfe_board_info * db)
 		else 				/* DM9102/DM9102A */
 			phy_mode = phy_read(db->ioaddr,
 				    db->phy_addr, 17, db->chip_id) & 0xf000;
+		pr_debug("Phy_mode %x\n", phy_mode);
 		switch (phy_mode) {
 		case 0x1000: db->op_mode = DMFE_10MHF; break;
 		case 0x2000: db->op_mode = DMFE_10MFD; break;
@@ -2198,7 +2203,7 @@ static int __init dmfe_init_module(void)
 {
 	int rc;
 
-	pr_info("%s\n", version);
+	printk(version);
 	printed_version = 1;
 
 	DMFE_DBUG(0, "init_module() ", debug);

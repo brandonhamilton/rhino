@@ -21,8 +21,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -1256,7 +1254,8 @@ static int __init vt1211_device_add(unsigned short address)
 	pdev = platform_device_alloc(DRVNAME, address);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device allocation failed (%d)\n",
+		       err);
 		goto EXIT;
 	}
 
@@ -1267,13 +1266,15 @@ static int __init vt1211_device_add(unsigned short address)
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device resource addition failed "
+		       "(%d)\n", err);
 		goto EXIT_DEV_PUT;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto EXIT_DEV_PUT;
 	}
 
@@ -1300,20 +1301,23 @@ static int __init vt1211_find(int sio_cip, unsigned short *address)
 	superio_select(sio_cip, SIO_VT1211_LDN_HWMON);
 
 	if ((superio_inb(sio_cip, SIO_VT1211_ACTIVE) & 1) == 0) {
-		pr_warn("HW monitor is disabled, skipping\n");
+		printk(KERN_WARNING DRVNAME ": HW monitor is disabled, "
+		       "skipping\n");
 		goto EXIT;
 	}
 
 	*address = ((superio_inb(sio_cip, SIO_VT1211_BADDR) << 8) |
 		    (superio_inb(sio_cip, SIO_VT1211_BADDR + 1))) & 0xff00;
 	if (*address == 0) {
-		pr_warn("Base address is not set, skipping\n");
+		printk(KERN_WARNING DRVNAME ": Base address is not set, "
+		       "skipping\n");
 		goto EXIT;
 	}
 
 	err = 0;
-	pr_info("Found VT1211 chip at 0x%04x, revision %u\n",
-		*address, superio_inb(sio_cip, SIO_VT1211_DEVREV));
+	printk(KERN_INFO DRVNAME ": Found VT1211 chip at 0x%04x, "
+	       "revision %u\n", *address,
+	       superio_inb(sio_cip, SIO_VT1211_DEVREV));
 
 EXIT:
 	superio_exit(sio_cip);
@@ -1332,15 +1336,15 @@ static int __init vt1211_init(void)
 
 	if ((uch_config < -1) || (uch_config > 31)) {
 		err = -EINVAL;
-		pr_warn("Invalid UCH configuration %d. "
-			"Choose a value between 0 and 31.\n", uch_config);
+		printk(KERN_WARNING DRVNAME ": Invalid UCH configuration %d. "
+		       "Choose a value between 0 and 31.\n", uch_config);
 	  goto EXIT;
 	}
 
 	if ((int_mode < -1) || (int_mode > 0)) {
 		err = -EINVAL;
-		pr_warn("Invalid interrupt mode %d. "
-			"Only mode 0 is supported.\n", int_mode);
+		printk(KERN_WARNING DRVNAME ": Invalid interrupt mode %d. "
+		       "Only mode 0 is supported.\n", int_mode);
 	  goto EXIT;
 	}
 

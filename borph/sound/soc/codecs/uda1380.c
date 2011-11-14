@@ -27,6 +27,7 @@
 #include <sound/control.h>
 #include <sound/initval.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/tlv.h>
 #include <sound/uda1380.h>
 
@@ -35,6 +36,7 @@
 /* codec private data */
 struct uda1380_priv {
 	struct snd_soc_codec *codec;
+	u16 reg_cache[UDA1380_CACHEREGNUM];
 	unsigned int dac_clk;
 	struct work_struct work;
 	void *control_data;
@@ -412,11 +414,10 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 static int uda1380_add_widgets(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
-
-	snd_soc_dapm_new_controls(dapm, uda1380_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, uda1380_dapm_widgets,
 				  ARRAY_SIZE(uda1380_dapm_widgets));
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
 	return 0;
 }
@@ -602,7 +603,7 @@ static int uda1380_set_bias_level(struct snd_soc_codec *codec,
 	int reg;
 	struct uda1380_platform_data *pdata = codec->dev->platform_data;
 
-	if (codec->dapm.bias_level == level)
+	if (codec->bias_level == level)
 		return 0;
 
 	switch (level) {
@@ -612,7 +613,7 @@ static int uda1380_set_bias_level(struct snd_soc_codec *codec,
 		uda1380_write(codec, UDA1380_PM, R02_PON_BIAS | pm);
 		break;
 	case SND_SOC_BIAS_STANDBY:
-		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
+		if (codec->bias_level == SND_SOC_BIAS_OFF) {
 			if (gpio_is_valid(pdata->gpio_power)) {
 				gpio_set_value(pdata->gpio_power, 1);
 				mdelay(1);
@@ -635,7 +636,7 @@ static int uda1380_set_bias_level(struct snd_soc_codec *codec,
 		for (reg = UDA1380_MVOL; reg < UDA1380_CACHEREGNUM; reg++)
 			set_bit(reg - 0x10, &uda1380_cache_dirty);
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 

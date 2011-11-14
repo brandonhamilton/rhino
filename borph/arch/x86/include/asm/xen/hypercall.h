@@ -39,8 +39,6 @@
 #include <linux/string.h>
 #include <linux/types.h>
 
-#include <trace/events/xen.h>
-
 #include <asm/page.h>
 #include <asm/pgtable.h>
 
@@ -289,7 +287,7 @@ HYPERVISOR_fpu_taskswitch(int set)
 static inline int
 HYPERVISOR_sched_op(int cmd, void *arg)
 {
-	return _hypercall2(int, sched_op, cmd, arg);
+	return _hypercall2(int, sched_op_new, cmd, arg);
 }
 
 static inline long
@@ -424,17 +422,10 @@ HYPERVISOR_set_segment_base(int reg, unsigned long value)
 #endif
 
 static inline int
-HYPERVISOR_suspend(unsigned long start_info_mfn)
+HYPERVISOR_suspend(unsigned long srec)
 {
-	struct sched_shutdown r = { .reason = SHUTDOWN_suspend };
-
-	/*
-	 * For a PV guest the tools require that the start_info mfn be
-	 * present in rdx/edx when the hypercall is made. Per the
-	 * hypercall calling convention this is the third hypercall
-	 * argument, which is start_info_mfn here.
-	 */
-	return _hypercall3(int, sched_op, SCHEDOP_shutdown, &r, start_info_mfn);
+	return _hypercall3(int, sched_op, SCHEDOP_shutdown,
+			   SHUTDOWN_suspend, srec);
 }
 
 static inline int
@@ -449,20 +440,11 @@ HYPERVISOR_hvm_op(int op, void *arg)
        return _hypercall2(unsigned long, hvm_op, op, arg);
 }
 
-static inline int
-HYPERVISOR_tmem_op(
-	struct tmem_op *op)
-{
-	return _hypercall1(int, tmem_op, op);
-}
-
 static inline void
 MULTI_fpu_taskswitch(struct multicall_entry *mcl, int set)
 {
 	mcl->op = __HYPERVISOR_fpu_taskswitch;
 	mcl->args[0] = set;
-
-	trace_xen_mc_entry(mcl, 1);
 }
 
 static inline void
@@ -479,8 +461,6 @@ MULTI_update_va_mapping(struct multicall_entry *mcl, unsigned long va,
 		mcl->args[2] = new_val.pte >> 32;
 		mcl->args[3] = flags;
 	}
-
-	trace_xen_mc_entry(mcl, sizeof(new_val) == sizeof(long) ? 3 : 4);
 }
 
 static inline void
@@ -491,8 +471,6 @@ MULTI_grant_table_op(struct multicall_entry *mcl, unsigned int cmd,
 	mcl->args[0] = cmd;
 	mcl->args[1] = (unsigned long)uop;
 	mcl->args[2] = count;
-
-	trace_xen_mc_entry(mcl, 3);
 }
 
 static inline void
@@ -512,8 +490,6 @@ MULTI_update_va_mapping_otherdomain(struct multicall_entry *mcl, unsigned long v
 		mcl->args[3] = flags;
 		mcl->args[4] = domid;
 	}
-
-	trace_xen_mc_entry(mcl, sizeof(new_val) == sizeof(long) ? 4 : 5);
 }
 
 static inline void
@@ -530,8 +506,6 @@ MULTI_update_descriptor(struct multicall_entry *mcl, u64 maddr,
 		mcl->args[2] = desc.a;
 		mcl->args[3] = desc.b;
 	}
-
-	trace_xen_mc_entry(mcl, sizeof(maddr) == sizeof(long) ? 2 : 4);
 }
 
 static inline void
@@ -540,8 +514,6 @@ MULTI_memory_op(struct multicall_entry *mcl, unsigned int cmd, void *arg)
 	mcl->op = __HYPERVISOR_memory_op;
 	mcl->args[0] = cmd;
 	mcl->args[1] = (unsigned long)arg;
-
-	trace_xen_mc_entry(mcl, 2);
 }
 
 static inline void
@@ -553,8 +525,6 @@ MULTI_mmu_update(struct multicall_entry *mcl, struct mmu_update *req,
 	mcl->args[1] = count;
 	mcl->args[2] = (unsigned long)success_count;
 	mcl->args[3] = domid;
-
-	trace_xen_mc_entry(mcl, 4);
 }
 
 static inline void
@@ -566,8 +536,6 @@ MULTI_mmuext_op(struct multicall_entry *mcl, struct mmuext_op *op, int count,
 	mcl->args[1] = count;
 	mcl->args[2] = (unsigned long)success_count;
 	mcl->args[3] = domid;
-
-	trace_xen_mc_entry(mcl, 4);
 }
 
 static inline void
@@ -576,8 +544,6 @@ MULTI_set_gdt(struct multicall_entry *mcl, unsigned long *frames, int entries)
 	mcl->op = __HYPERVISOR_set_gdt;
 	mcl->args[0] = (unsigned long)frames;
 	mcl->args[1] = entries;
-
-	trace_xen_mc_entry(mcl, 2);
 }
 
 static inline void
@@ -587,8 +553,6 @@ MULTI_stack_switch(struct multicall_entry *mcl,
 	mcl->op = __HYPERVISOR_stack_switch;
 	mcl->args[0] = ss;
 	mcl->args[1] = esp;
-
-	trace_xen_mc_entry(mcl, 2);
 }
 
 #endif /* _ASM_X86_XEN_HYPERCALL_H */

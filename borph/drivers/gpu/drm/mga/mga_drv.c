@@ -75,6 +75,10 @@ static struct drm_driver driver = {
 #endif
 		.llseek = noop_llseek,
 	},
+	.pci_driver = {
+		.name = DRIVER_NAME,
+		.id_table = pciidlist,
+	},
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
@@ -84,20 +88,15 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-static struct pci_driver mga_pci_driver = {
-	.name = DRIVER_NAME,
-	.id_table = pciidlist,
-};
-
 static int __init mga_init(void)
 {
 	driver.num_ioctls = mga_max_ioctl;
-	return drm_pci_init(&driver, &mga_pci_driver);
+	return drm_init(&driver);
 }
 
 static void __exit mga_exit(void)
 {
-	drm_pci_exit(&driver, &mga_pci_driver);
+	drm_exit(&driver);
 }
 
 module_init(mga_init);

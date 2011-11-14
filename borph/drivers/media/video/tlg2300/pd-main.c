@@ -452,8 +452,7 @@ static int poseidon_probe(struct usb_interface *interface,
 
 	device_init_wakeup(&udev->dev, 1);
 #ifdef CONFIG_PM
-	pm_runtime_set_autosuspend_delay(&pd->udev->dev,
-			1000 * PM_SUSPEND_DELAY);
+	pd->udev->autosuspend_delay = HZ * PM_SUSPEND_DELAY;
 	usb_enable_autosuspend(pd->udev);
 
 	if (in_hibernation(pd)) {
@@ -531,4 +530,3 @@ module_exit(poseidon_exit);
 MODULE_AUTHOR("Telegent Systems");
 MODULE_DESCRIPTION("For tlg2300-based USB device ");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("0.0.2");

@@ -108,8 +108,7 @@ void copy_user_highpage(struct page *to, struct page *from,
 		kunmap_atomic(vfrom, KM_USER0);
 	}
 
-	if (pages_do_alias((unsigned long)vto, vaddr & PAGE_MASK) ||
-	    (vma->vm_flags & VM_EXEC))
+	if (pages_do_alias((unsigned long)vto, vaddr & PAGE_MASK))
 		__flush_purge_region(vto, PAGE_SIZE);
 
 	kunmap_atomic(vto, KM_USER1);

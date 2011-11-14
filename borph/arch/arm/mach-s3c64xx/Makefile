@@ -23,6 +23,10 @@ obj-$(CONFIG_CPU_S3C6410)	+= s3c6410.o
 obj-y				+= irq.o
 obj-y				+= irq-eint.o
 
+# CPU frequency scaling
+
+obj-$(CONFIG_CPU_FREQ_S3C64XX)  += cpufreq.o
+
 # DMA support
 
 obj-$(CONFIG_S3C64XX_DMA)	+= dma.o
@@ -55,7 +59,6 @@ obj-$(CONFIG_MACH_HMT)		+= mach-hmt.o
 obj-$(CONFIG_MACH_SMARTQ)	+= mach-smartq.o
 obj-$(CONFIG_MACH_SMARTQ5)	+= mach-smartq5.o
 obj-$(CONFIG_MACH_SMARTQ7)	+= mach-smartq7.o
-obj-$(CONFIG_MACH_WLF_CRAGG_6410) += mach-crag6410.o
 
 # device support
 

@@ -21,7 +21,6 @@
 #ifndef __MANTIS_COMMON_H
 #define __MANTIS_COMMON_H
 
-#include <linux/interrupt.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
 
@@ -172,9 +171,7 @@ struct mantis_pci {
 	struct work_struct	uart_work;
 	spinlock_t		uart_lock;
 
-	struct rc_dev		*rc;
-	char			input_name[80];
-	char			input_phys[80];
+	struct input_dev	*rc;
 };
 
 #define MANTIS_HIF_STATUS	(mantis->gpio_status)

@@ -186,26 +186,16 @@ static int autofs4_getpath(struct autofs_sb_info *sbi,
 {
 	struct dentry *root = sbi->sb->s_root;
 	struct dentry *tmp;
-	char *buf;
+	char *buf = *name;
 	char *p;
-	int len;
-	unsigned seq;
+	int len = 0;
 
-rename_retry:
-	buf = *name;
-	len = 0;
-
-	seq = read_seqbegin(&rename_lock);
-	rcu_read_lock();
-	spin_lock(&sbi->fs_lock);
+	spin_lock(&dcache_lock);
 	for (tmp = dentry ; tmp != root ; tmp = tmp->d_parent)
 		len += tmp->d_name.len + 1;
 
 	if (!len || --len > NAME_MAX) {
-		spin_unlock(&sbi->fs_lock);
-		rcu_read_unlock();
-		if (read_seqretry(&rename_lock, seq))
-			goto rename_retry;
+		spin_unlock(&dcache_lock);
 		return 0;
 	}
 
@@ -218,10 +208,7 @@ rename_retry:
 		p -= tmp->d_name.len;
 		strncpy(p, tmp->d_name.name, tmp->d_name.len);
 	}
-	spin_unlock(&sbi->fs_lock);
-	rcu_read_unlock();
-	if (read_seqretry(&rename_lock, seq))
-		goto rename_retry;
+	spin_unlock(&dcache_lock);
 
 	return len;
 }
@@ -309,9 +296,6 @@ static int validate_request(struct autofs_wait_queue **wait,
 	 * completed while we waited on the mutex ...
 	 */
 	if (notify == NFY_MOUNT) {
-		struct dentry *new = NULL;
-		int valid = 1;
-
 		/*
 		 * If the dentry was successfully mounted while we slept
 		 * on the wait queue mutex we can return success. If it
@@ -319,20 +303,8 @@ static int validate_request(struct autofs_wait_queue **wait,
 		 * a multi-mount with no mount at it's base) we can
 		 * continue on and create a new request.
 		 */
-		if (!IS_ROOT(dentry)) {
-			if (dentry->d_inode && d_unhashed(dentry)) {
-				struct dentry *parent = dentry->d_parent;
-				new = d_lookup(parent, &dentry->d_name);
-				if (new)
-					dentry = new;
-			}
-		}
 		if (have_submounts(dentry))
-			valid = 0;
-
-		if (new)
-			dput(new);
-		return valid;
+			return 0;
 	}
 
 	return 1;

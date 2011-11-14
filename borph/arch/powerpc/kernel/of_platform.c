@@ -26,7 +26,7 @@
 #include <asm/topology.h>
 #include <asm/pci-bridge.h>
 #include <asm/ppc-pci.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #ifdef CONFIG_PPC_OF_PLATFORM_PCI
 
@@ -36,7 +36,8 @@
  * lacking some bits needed here.
  */
 
-static int __devinit of_pci_phb_probe(struct platform_device *dev)
+static int __devinit of_pci_phb_probe(struct platform_device *dev,
+				      const struct of_device_id *match)
 {
 	struct pci_controller *phb;
 
@@ -73,7 +74,7 @@ static int __devinit of_pci_phb_probe(struct platform_device *dev)
 #endif /* CONFIG_EEH */
 
 	/* Scan the bus */
-	pcibios_scan_phb(phb);
+	pcibios_scan_phb(phb, dev->dev.of_node);
 	if (phb->bus == NULL)
 		return -ENXIO;
 
@@ -103,7 +104,7 @@ static struct of_device_id of_pci_phb_ids[] = {
 	{}
 };
 
-static struct platform_driver of_pci_phb_driver = {
+static struct of_platform_driver of_pci_phb_driver = {
 	.probe = of_pci_phb_probe,
 	.driver = {
 		.name = "of-pci",
@@ -114,7 +115,7 @@ static struct platform_driver of_pci_phb_driver = {
 
 static __init int of_pci_phb_init(void)
 {
-	return platform_driver_register(&of_pci_phb_driver);
+	return of_register_platform_driver(&of_pci_phb_driver);
 }
 
 device_initcall(of_pci_phb_init);

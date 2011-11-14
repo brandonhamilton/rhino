@@ -285,7 +285,7 @@ static int __devinit snd_cs5530_probe(struct pci_dev *pci,
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "CS5530_Audio",
 	.id_table = snd_cs5530_ids,
 	.probe = snd_cs5530_probe,
 	.remove = __devexit_p(snd_cs5530_remove),

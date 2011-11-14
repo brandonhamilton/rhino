@@ -202,7 +202,7 @@ xfs_swap_extents(
 	xfs_inode_t	*tip,	/* tmp inode */
 	xfs_swapext_t	*sxp)
 {
-	xfs_mount_t	*mp = ip->i_mount;
+	xfs_mount_t	*mp;
 	xfs_trans_t	*tp;
 	xfs_bstat_t	*sbp = &sxp->sx_stat;
 	xfs_ifork_t	*tempifp, *ifp, *tifp;
@@ -212,11 +212,15 @@ xfs_swap_extents(
 	int		taforkblks = 0;
 	__uint64_t	tmp;
 
+	mp = ip->i_mount;
+
 	tempifp = kmem_alloc(sizeof(xfs_ifork_t), KM_MAYFAIL);
 	if (!tempifp) {
 		error = XFS_ERROR(ENOMEM);
 		goto out;
 	}
+
+	sbp = &sxp->sx_stat;
 
 	/*
 	 * we have to do two separate lock calls here to keep lockdep
@@ -266,9 +270,9 @@ xfs_swap_extents(
 	/* check inode formats now that data is flushed */
 	error = xfs_swap_extents_check_format(ip, tip);
 	if (error) {
-		xfs_notice(mp,
+		xfs_fs_cmn_err(CE_NOTE, mp,
 		    "%s: inode 0x%llx format is incompatible for exchanging.",
-				__func__, ip->i_ino);
+				__FILE__, ip->i_ino);
 		goto out_unlock;
 	}
 

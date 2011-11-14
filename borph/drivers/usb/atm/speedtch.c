@@ -139,8 +139,7 @@ struct speedtch_instance_data {
 
 	struct speedtch_params params; /* set in probe, constant afterwards */
 
-	struct timer_list status_check_timer;
-	struct work_struct status_check_work;
+	struct delayed_work status_checker;
 
 	unsigned char last_status;
 
@@ -499,7 +498,7 @@ static void speedtch_check_status(struct work_struct *work)
 {
 	struct speedtch_instance_data *instance =
 		container_of(work, struct speedtch_instance_data,
-			     status_check_work);
+			     status_checker.work);
 	struct usbatm_data *usbatm = instance->usbatm;
 	struct atm_dev *atm_dev = usbatm->atm_dev;
 	unsigned char *buf = instance->scratch_buffer;
@@ -576,11 +575,11 @@ static void speedtch_status_poll(unsigned long data)
 {
 	struct speedtch_instance_data *instance = (void *)data;
 
-	schedule_work(&instance->status_check_work);
+	schedule_delayed_work(&instance->status_checker, 0);
 
 	/* The following check is racy, but the race is harmless */
 	if (instance->poll_delay < MAX_POLL_DELAY)
-		mod_timer(&instance->status_check_timer, jiffies + msecs_to_jiffies(instance->poll_delay));
+		mod_timer(&instance->status_checker.timer, jiffies + msecs_to_jiffies(instance->poll_delay));
 	else
 		atm_warn(instance->usbatm, "Too many failures - disabling line status polling\n");
 }
@@ -596,7 +595,7 @@ static void speedtch_resubmit_int(unsigned long data)
 	if (int_urb) {
 		ret = usb_submit_urb(int_urb, GFP_ATOMIC);
 		if (!ret)
-			schedule_work(&instance->status_check_work);
+			schedule_delayed_work(&instance->status_checker, 0);
 		else {
 			atm_dbg(instance->usbatm, "%s: usb_submit_urb failed with result %d\n", __func__, ret);
 			mod_timer(&instance->resubmit_timer, jiffies + msecs_to_jiffies(RESUBMIT_DELAY));
@@ -625,7 +624,7 @@ static void speedtch_handle_int(struct urb *int_urb)
 	}
 
 	if ((count == 6) && !memcmp(up_int, instance->int_data, 6)) {
-		del_timer(&instance->status_check_timer);
+		del_timer(&instance->status_checker.timer);
 		atm_info(usbatm, "DSL line goes up\n");
 	} else if ((count == 6) && !memcmp(down_int, instance->int_data, 6)) {
 		atm_info(usbatm, "DSL line goes down\n");
@@ -641,7 +640,7 @@ static void speedtch_handle_int(struct urb *int_urb)
 
 	if ((int_urb = instance->int_urb)) {
 		ret = usb_submit_urb(int_urb, GFP_ATOMIC);
-		schedule_work(&instance->status_check_work);
+		schedule_delayed_work(&instance->status_checker, 0);
 		if (ret < 0) {
 			atm_dbg(usbatm, "%s: usb_submit_urb failed with result %d\n", __func__, ret);
 			goto fail;
@@ -687,7 +686,7 @@ static int speedtch_atm_start(struct usbatm_data *usbatm, struct atm_dev *atm_de
 	}
 
 	/* Start status polling */
-	mod_timer(&instance->status_check_timer, jiffies + msecs_to_jiffies(1000));
+	mod_timer(&instance->status_checker.timer, jiffies + msecs_to_jiffies(1000));
 
 	return 0;
 }
@@ -699,7 +698,7 @@ static void speedtch_atm_stop(struct usbatm_data *usbatm, struct atm_dev *atm_de
 
 	atm_dbg(usbatm, "%s entered\n", __func__);
 
-	del_timer_sync(&instance->status_check_timer);
+	del_timer_sync(&instance->status_checker.timer);
 
 	/*
 	 * Since resubmit_timer and int_urb can schedule themselves and
@@ -718,7 +717,7 @@ static void speedtch_atm_stop(struct usbatm_data *usbatm, struct atm_dev *atm_de
 	del_timer_sync(&instance->resubmit_timer);
 	usb_free_urb(int_urb);
 
-	flush_work_sync(&instance->status_check_work);
+	flush_scheduled_work();
 }
 
 static int speedtch_pre_reset(struct usb_interface *intf)
@@ -870,11 +869,10 @@ static int speedtch_bind(struct usbatm_data *usbatm,
 
 	usbatm->flags |= (use_isoc ? UDSL_USE_ISOC : 0);
 
-	INIT_WORK(&instance->status_check_work, speedtch_check_status);
-	init_timer(&instance->status_check_timer);
+	INIT_DELAYED_WORK(&instance->status_checker, speedtch_check_status);
 
-	instance->status_check_timer.function = speedtch_status_poll;
-	instance->status_check_timer.data = (unsigned long)instance;
+	instance->status_checker.timer.function = speedtch_status_poll;
+	instance->status_checker.timer.data = (unsigned long)instance;
 	instance->last_status = 0xff;
 	instance->poll_delay = MIN_POLL_DELAY;
 

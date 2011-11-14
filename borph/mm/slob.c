@@ -70,7 +70,7 @@
 
 #include <trace/events/kmem.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * slob_block has a field 'units', which indicates size of block if +ve,
@@ -482,8 +482,6 @@ void *__kmalloc_node(size_t size, gfp_t gfp, int node)
 	int align = max(ARCH_KMALLOC_MINALIGN, ARCH_SLAB_MINALIGN);
 	void *ret;
 
-	gfp &= gfp_allowed_mask;
-
 	lockdep_trace_alloc(gfp);
 
 	if (size < PAGE_SIZE - align) {
@@ -610,10 +608,6 @@ void *kmem_cache_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
 {
 	void *b;
 
-	flags &= gfp_allowed_mask;
-
-	lockdep_trace_alloc(flags);
-
 	if (c->size < PAGE_SIZE) {
 		b = slob_alloc(c->size, flags, c->align, node);
 		trace_kmem_cache_alloc_node(_RET_IP_, b, c->size,
@@ -672,11 +666,22 @@ unsigned int kmem_cache_size(struct kmem_cache *c)
 }
 EXPORT_SYMBOL(kmem_cache_size);
 
+const char *kmem_cache_name(struct kmem_cache *c)
+{
+	return c->name;
+}
+EXPORT_SYMBOL(kmem_cache_name);
+
 int kmem_cache_shrink(struct kmem_cache *d)
 {
 	return 0;
 }
 EXPORT_SYMBOL(kmem_cache_shrink);
+
+int kmem_ptr_validate(struct kmem_cache *a, const void *b)
+{
+	return 0;
+}
 
 static unsigned int slob_ready __read_mostly;
 

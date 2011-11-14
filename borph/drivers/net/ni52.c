@@ -388,9 +388,9 @@ static long memend;	/* e.g 0xd4000 */
 struct net_device * __init ni52_probe(int unit)
 {
 	struct net_device *dev = alloc_etherdev(sizeof(struct priv));
-	static const int ports[] = {0x300, 0x280, 0x360, 0x320, 0x340, 0};
-	const int *port;
+	static int ports[] = {0x300, 0x280, 0x360 , 0x320 , 0x340, 0};
 	struct priv *p;
+	int *port;
 	int err = 0;
 
 	if (!dev)

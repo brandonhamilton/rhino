@@ -262,7 +262,7 @@ void ib_umem_release(struct ib_umem *umem)
 			umem->mm   = mm;
 			umem->diff = diff;
 
-			queue_work(ib_wq, &umem->work);
+			schedule_work(&umem->work);
 			return;
 		}
 	} else

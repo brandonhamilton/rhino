@@ -332,7 +332,7 @@ static struct {
 static int tosa_bat_suspend(struct platform_device *dev, pm_message_t state)
 {
 	/* flush all pending status updates */
-	flush_work_sync(&bat_work);
+	flush_scheduled_work();
 	return 0;
 }
 
@@ -422,7 +422,7 @@ err_psy_reg_jacket:
 err_psy_reg_main:
 
 	/* see comment in tosa_bat_remove */
-	cancel_work_sync(&bat_work);
+	flush_scheduled_work();
 
 	i--;
 err_gpio:
@@ -445,11 +445,12 @@ static int __devexit tosa_bat_remove(struct platform_device *dev)
 	power_supply_unregister(&tosa_bat_main.psy);
 
 	/*
-	 * Now cancel the bat_work.  We won't get any more schedules,
-	 * since all sources (isr and external_power_changed) are
-	 * unregistered now.
+	 * now flush all pending work.
+	 * we won't get any more schedules, since all
+	 * sources (isr and external_power_changed)
+	 * are unregistered now.
 	 */
-	cancel_work_sync(&bat_work);
+	flush_scheduled_work();
 
 	for (i = ARRAY_SIZE(gpios) - 1; i >= 0; i--)
 		gpio_free(gpios[i].gpio);

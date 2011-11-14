@@ -15,7 +15,6 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
@@ -551,7 +550,7 @@ static int __devinit nuc900fb_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
-	size = resource_size(res);
+	size = (res->end - res->start) + 1;
 	fbi->mem = request_mem_region(res->start, size, pdev->name);
 	if (fbi->mem == NULL) {
 		dev_err(&pdev->dev, "failed to alloc memory region\n");
@@ -598,9 +597,9 @@ static int __devinit nuc900fb_probe(struct platform_device *pdev)
 	}
 
 	fbi->clk = clk_get(&pdev->dev, NULL);
-	if (IS_ERR(fbi->clk)) {
+	if (!fbi->clk || IS_ERR(fbi->clk)) {
 		printk(KERN_ERR "nuc900-lcd:failed to get lcd clock source\n");
-		ret = PTR_ERR(fbi->clk);
+		ret = -ENOENT;
 		goto release_irq;
 	}
 
@@ -696,8 +695,6 @@ static int nuc900fb_remove(struct platform_device *pdev)
 	nuc900fb_stop_lcd(fbinfo);
 	msleep(1);
 
-	unregister_framebuffer(fbinfo);
-	nuc900fb_cpufreq_deregister(fbi);
 	nuc900fb_unmap_video_memory(fbinfo);
 
 	iounmap(fbi->io);
@@ -725,7 +722,7 @@ static int nuc900fb_suspend(struct platform_device *dev, pm_message_t state)
 	struct fb_info	   *fbinfo = platform_get_drvdata(dev);
 	struct nuc900fb_info *info = fbinfo->par;
 
-	nuc900fb_stop_lcd(fbinfo);
+	nuc900fb_stop_lcd();
 	msleep(1);
 	clk_disable(info->clk);
 	return 0;
@@ -742,7 +739,7 @@ static int nuc900fb_resume(struct platform_device *dev)
 	msleep(1);
 
 	nuc900fb_init_registers(fbinfo);
-	nuc900fb_activate_var(fbinfo);
+	nuc900fb_activate_var(bfinfo);
 
 	return 0;
 }

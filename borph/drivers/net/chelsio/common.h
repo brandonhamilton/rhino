@@ -240,6 +240,8 @@ struct adapter {
 	struct work_struct ext_intr_handler_task;
 	struct adapter_params params;
 
+	struct vlan_group *vlan_grp;
+
 	/* Terminator modules. */
 	struct sge    *sge;
 	struct peespi *espi;
@@ -262,6 +264,11 @@ struct adapter {
 
 enum {                                           /* adapter flags */
 	FULL_INIT_DONE        = 1 << 0,
+	TSO_CAPABLE           = 1 << 2,
+	TCP_CSUM_CAPABLE      = 1 << 3,
+	UDP_CSUM_CAPABLE      = 1 << 4,
+	VLAN_ACCEL_CAPABLE    = 1 << 5,
+	RX_CSUM_ENABLED       = 1 << 6,
 };
 
 struct mdio_ops;

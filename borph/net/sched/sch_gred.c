@@ -32,7 +32,8 @@
 struct gred_sched_data;
 struct gred_sched;
 
-struct gred_sched_data {
+struct gred_sched_data
+{
 	u32		limit;		/* HARD maximal queue length	*/
 	u32      	DP;		/* the drop pramaters */
 	u32		bytesin;	/* bytes seen on virtualQ so far*/
@@ -49,7 +50,8 @@ enum {
 	GRED_RIO_MODE,
 };
 
-struct gred_sched {
+struct gred_sched
+{
 	struct gred_sched_data *tab[MAX_DPs];
 	unsigned long	flags;
 	u32		red_flags;
@@ -148,18 +150,17 @@ static inline int gred_use_harddrop(struct gred_sched *t)
 	return t->red_flags & TC_RED_HARDDROP;
 }
 
-static int gred_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+static int gred_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 {
-	struct gred_sched_data *q = NULL;
-	struct gred_sched *t = qdisc_priv(sch);
+	struct gred_sched_data *q=NULL;
+	struct gred_sched *t= qdisc_priv(sch);
 	unsigned long qavg = 0;
 	u16 dp = tc_index_to_dp(skb);
 
-	if (dp >= t->DPs || (q = t->tab[dp]) == NULL) {
+	if (dp >= t->DPs  || (q = t->tab[dp]) == NULL) {
 		dp = t->def;
 
-		q = t->tab[dp];
-		if (!q) {
+		if ((q = t->tab[dp]) == NULL) {
 			/* Pass through packets not assigned to a DP
 			 * if no default DP has been configured. This
 			 * allows for DP flows to be left untouched.
@@ -182,7 +183,7 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 		for (i = 0; i < t->DPs; i++) {
 			if (t->tab[i] && t->tab[i]->prio < q->prio &&
 			    !red_is_idling(&t->tab[i]->parms))
-				qavg += t->tab[i]->parms.qavg;
+				qavg +=t->tab[i]->parms.qavg;
 		}
 
 	}
@@ -202,28 +203,28 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 		gred_store_wred_set(t, q);
 
 	switch (red_action(&q->parms, q->parms.qavg + qavg)) {
-	case RED_DONT_MARK:
-		break;
+		case RED_DONT_MARK:
+			break;
 
-	case RED_PROB_MARK:
-		sch->qstats.overlimits++;
-		if (!gred_use_ecn(t) || !INET_ECN_set_ce(skb)) {
-			q->stats.prob_drop++;
-			goto congestion_drop;
-		}
+		case RED_PROB_MARK:
+			sch->qstats.overlimits++;
+			if (!gred_use_ecn(t) || !INET_ECN_set_ce(skb)) {
+				q->stats.prob_drop++;
+				goto congestion_drop;
+			}
 
-		q->stats.prob_mark++;
-		break;
+			q->stats.prob_mark++;
+			break;
 
-	case RED_HARD_MARK:
-		sch->qstats.overlimits++;
-		if (gred_use_harddrop(t) || !gred_use_ecn(t) ||
-		    !INET_ECN_set_ce(skb)) {
-			q->stats.forced_drop++;
-			goto congestion_drop;
-		}
-		q->stats.forced_mark++;
-		break;
+		case RED_HARD_MARK:
+			sch->qstats.overlimits++;
+			if (gred_use_harddrop(t) || !gred_use_ecn(t) ||
+			    !INET_ECN_set_ce(skb)) {
+				q->stats.forced_drop++;
+				goto congestion_drop;
+			}
+			q->stats.forced_mark++;
+			break;
 	}
 
 	if (q->backlog + qdisc_pkt_len(skb) <= q->limit) {
@@ -240,7 +241,7 @@ congestion_drop:
 	return NET_XMIT_CN;
 }
 
-static struct sk_buff *gred_dequeue(struct Qdisc *sch)
+static struct sk_buff *gred_dequeue(struct Qdisc* sch)
 {
 	struct sk_buff *skb;
 	struct gred_sched *t = qdisc_priv(sch);
@@ -253,9 +254,9 @@ static struct sk_buff *gred_dequeue(struct Qdisc *sch)
 
 		if (dp >= t->DPs || (q = t->tab[dp]) == NULL) {
 			if (net_ratelimit())
-				pr_warning("GRED: Unable to relocate VQ 0x%x "
-					   "after dequeue, screwing up "
-					   "backlog.\n", tc_index_to_dp(skb));
+				printk(KERN_WARNING "GRED: Unable to relocate "
+				       "VQ 0x%x after dequeue, screwing up "
+				       "backlog.\n", tc_index_to_dp(skb));
 		} else {
 			q->backlog -= qdisc_pkt_len(skb);
 
@@ -272,7 +273,7 @@ static struct sk_buff *gred_dequeue(struct Qdisc *sch)
 	return NULL;
 }
 
-static unsigned int gred_drop(struct Qdisc *sch)
+static unsigned int gred_drop(struct Qdisc* sch)
 {
 	struct sk_buff *skb;
 	struct gred_sched *t = qdisc_priv(sch);
@@ -285,9 +286,9 @@ static unsigned int gred_drop(struct Qdisc *sch)
 
 		if (dp >= t->DPs || (q = t->tab[dp]) == NULL) {
 			if (net_ratelimit())
-				pr_warning("GRED: Unable to relocate VQ 0x%x "
-					   "while dropping, screwing up "
-					   "backlog.\n", tc_index_to_dp(skb));
+				printk(KERN_WARNING "GRED: Unable to relocate "
+				       "VQ 0x%x while dropping, screwing up "
+				       "backlog.\n", tc_index_to_dp(skb));
 		} else {
 			q->backlog -= len;
 			q->stats.other++;
@@ -307,7 +308,7 @@ static unsigned int gred_drop(struct Qdisc *sch)
 
 }
 
-static void gred_reset(struct Qdisc *sch)
+static void gred_reset(struct Qdisc* sch)
 {
 	int i;
 	struct gred_sched *t = qdisc_priv(sch);
@@ -368,8 +369,8 @@ static inline int gred_change_table_def(struct Qdisc *sch, struct nlattr *dps)
 
 	for (i = table->DPs; i < MAX_DPs; i++) {
 		if (table->tab[i]) {
-			pr_warning("GRED: Warning: Destroying "
-				   "shadowed VQ 0x%x\n", i);
+			printk(KERN_WARNING "GRED: Warning: Destroying "
+			       "shadowed VQ 0x%x\n", i);
 			gred_destroy_vq(table->tab[i]);
 			table->tab[i] = NULL;
 		}

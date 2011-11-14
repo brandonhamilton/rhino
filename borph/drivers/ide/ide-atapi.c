@@ -233,7 +233,8 @@ int ide_queue_sense_rq(ide_drive_t *drive, void *special)
 
 	drive->hwif->rq = NULL;
 
-	elv_add_request(drive->queue, &drive->sense_rq, ELEVATOR_INSERT_FRONT);
+	elv_add_request(drive->queue, &drive->sense_rq,
+			ELEVATOR_INSERT_FRONT, 0);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ide_queue_sense_rq);

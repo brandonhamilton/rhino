@@ -579,8 +579,7 @@ static int sharpsl_ac_check(void)
 static int sharpsl_pm_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	sharpsl_pm.flags |= SHARPSL_SUSPENDED;
-	flush_delayed_work_sync(&toggle_charger);
-	flush_delayed_work_sync(&sharpsl_bat);
+	flush_scheduled_work();
 
 	if (sharpsl_pm.charge_mode == CHRG_ON)
 		sharpsl_pm.flags |= SHARPSL_DO_OFFLINE_CHRG;

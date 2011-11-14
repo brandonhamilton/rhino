@@ -9,7 +9,8 @@
 
 #ifdef CONFIG_SMP
 static int
-select_task_rq_stop(struct task_struct *p, int sd_flag, int flags)
+select_task_rq_stop(struct rq *rq, struct task_struct *p,
+		    int sd_flag, int flags)
 {
 	return task_cpu(p); /* stop tasks as never migrate */
 }
@@ -25,7 +26,7 @@ static struct task_struct *pick_next_task_stop(struct rq *rq)
 {
 	struct task_struct *stop = rq->stop;
 
-	if (stop && stop->on_rq)
+	if (stop && stop->se.on_rq)
 		return stop;
 
 	return NULL;
@@ -58,13 +59,14 @@ static void set_curr_task_stop(struct rq *rq)
 {
 }
 
-static void switched_to_stop(struct rq *rq, struct task_struct *p)
+static void switched_to_stop(struct rq *rq, struct task_struct *p,
+			     int running)
 {
 	BUG(); /* its impossible to change to this class */
 }
 
-static void
-prio_changed_stop(struct rq *rq, struct task_struct *p, int oldprio)
+static void prio_changed_stop(struct rq *rq, struct task_struct *p,
+			      int oldprio, int running)
 {
 	BUG(); /* how!?, what priority? */
 }
@@ -101,4 +103,6 @@ static const struct sched_class stop_sched_class = {
 
 	.prio_changed		= prio_changed_stop,
 	.switched_to		= switched_to_stop,
+
+	/* no .task_new for stop tasks */
 };

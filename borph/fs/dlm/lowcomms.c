@@ -63,9 +63,6 @@
 #define NEEDED_RMEM (4*1024*1024)
 #define CONN_HASH_SIZE 32
 
-/* Number of messages to send before rescheduling */
-#define MAX_SEND_MSG_COUNT 25
-
 struct cbuf {
 	unsigned int base;
 	unsigned int len;
@@ -111,7 +108,6 @@ struct connection {
 #define CF_INIT_PENDING 4
 #define CF_IS_OTHERCON 5
 #define CF_CLOSE 6
-#define CF_APP_LIMITED 7
 	struct list_head writequeue;  /* List of outgoing writequeue_entries */
 	spinlock_t writequeue_lock;
 	int (*rx_action) (struct connection *);	/* What to do when active */
@@ -299,17 +295,7 @@ static void lowcomms_write_space(struct sock *sk)
 {
 	struct connection *con = sock2con(sk);
 
-	if (!con)
-		return;
-
-	clear_bit(SOCK_NOSPACE, &con->sock->flags);
-
-	if (test_and_clear_bit(CF_APP_LIMITED, &con->flags)) {
-		con->sock->sk->sk_write_pending--;
-		clear_bit(SOCK_ASYNC_NOSPACE, &con->sock->flags);
-	}
-
-	if (!test_and_set_bit(CF_WRITE_PENDING, &con->flags))
+	if (con && !test_and_set_bit(CF_WRITE_PENDING, &con->flags))
 		queue_work(send_workqueue, &con->swork);
 }
 
@@ -512,10 +498,12 @@ static void process_sctp_notification(struct connection *con,
 			}
 			make_sockaddr(&prim.ssp_addr, 0, &addr_len);
 			if (dlm_addr_to_nodeid(&prim.ssp_addr, &nodeid)) {
+				int i;
 				unsigned char *b=(unsigned char *)&prim.ssp_addr;
 				log_print("reject connect from unknown addr");
-				print_hex_dump_bytes("ss: ", DUMP_PREFIX_NONE, 
-						     b, sizeof(struct sockaddr_storage));
+				for (i=0; i<sizeof(struct sockaddr_storage);i++)
+					printk("%02x ", b[i]);
+				printk("\n");
 				sctp_send_shutdown(prim.ssp_assoc_id);
 				return;
 			}
@@ -746,10 +734,7 @@ static int tcp_accept_from_sock(struct connection *con)
 	/* Get the new node's NODEID */
 	make_sockaddr(&peeraddr, 0, &len);
 	if (dlm_addr_to_nodeid(&peeraddr, &nodeid)) {
-		unsigned char *b=(unsigned char *)&peeraddr;
 		log_print("connect from non cluster node");
-		print_hex_dump_bytes("ss: ", DUMP_PREFIX_NONE, 
-				     b, sizeof(struct sockaddr_storage));
 		sock_release(newsock);
 		mutex_unlock(&con->sock_mutex);
 		return -1;
@@ -811,7 +796,7 @@ static int tcp_accept_from_sock(struct connection *con)
 
 	/*
 	 * Add it to the active queue in case we got data
-	 * between processing the accept adding the socket
+	 * beween processing the accept adding the socket
 	 * to the read_sockets list
 	 */
 	if (!test_and_set_bit(CF_READ_PENDING, &addcon->flags))
@@ -930,7 +915,6 @@ static void tcp_connect_to_sock(struct connection *con)
 	struct sockaddr_storage saddr, src_addr;
 	int addr_len;
 	struct socket *sock = NULL;
-	int one = 1;
 
 	if (con->nodeid == 0) {
 		log_print("attempt to connect sock 0 foiled");
@@ -976,11 +960,6 @@ static void tcp_connect_to_sock(struct connection *con)
 	make_sockaddr(&saddr, dlm_config.ci_tcp_port, &addr_len);
 
 	log_print("connecting to %d", con->nodeid);
-
-	/* Turn off Nagle's algorithm */
-	kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY, (char *)&one,
-			  sizeof(one));
-
 	result =
 		sock->ops->connect(sock, (struct sockaddr *)&saddr, addr_len,
 				   O_NONBLOCK);
@@ -1031,10 +1010,6 @@ static struct socket *tcp_create_listen_sock(struct connection *con,
 		log_print("Can't create listening comms socket");
 		goto create_out;
 	}
-
-	/* Turn off Nagle's algorithm */
-	kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY, (char *)&one,
-			  sizeof(one));
 
 	result = kernel_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
 				   (char *)&one, sizeof(one));
@@ -1322,7 +1297,6 @@ static void send_to_sock(struct connection *con)
 	const int msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
 	struct writequeue_entry *e;
 	int len, offset;
-	int count = 0;
 
 	mutex_lock(&con->sock_mutex);
 	if (con->sock == NULL)
@@ -1345,27 +1319,14 @@ static void send_to_sock(struct connection *con)
 			ret = kernel_sendpage(con->sock, e->page, offset, len,
 					      msg_flags);
 			if (ret == -EAGAIN || ret == 0) {
-				if (ret == -EAGAIN &&
-				    test_bit(SOCK_ASYNC_NOSPACE, &con->sock->flags) &&
-				    !test_and_set_bit(CF_APP_LIMITED, &con->flags)) {
-					/* Notify TCP that we're limited by the
-					 * application window size.
-					 */
-					set_bit(SOCK_NOSPACE, &con->sock->flags);
-					con->sock->sk->sk_write_pending++;
-				}
 				cond_resched();
 				goto out;
 			}
 			if (ret <= 0)
 				goto send_error;
 		}
-
-		/* Don't starve people filling buffers */
-		if (++count >= MAX_SEND_MSG_COUNT) {
+			/* Don't starve people filling buffers */
 			cond_resched();
-			count = 0;
-		}
 
 		spin_lock(&con->writequeue_lock);
 		e->offset += ret;
@@ -1469,19 +1430,20 @@ static void work_stop(void)
 
 static int work_start(void)
 {
-	recv_workqueue = alloc_workqueue("dlm_recv",
-					 WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!recv_workqueue) {
-		log_print("can't start dlm_recv");
-		return -ENOMEM;
+	int error;
+	recv_workqueue = create_workqueue("dlm_recv");
+	error = IS_ERR(recv_workqueue);
+	if (error) {
+		log_print("can't start dlm_recv %d", error);
+		return error;
 	}
 
-	send_workqueue = alloc_workqueue("dlm_send",
-					 WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!send_workqueue) {
-		log_print("can't start dlm_send");
+	send_workqueue = create_singlethread_workqueue("dlm_send");
+	error = IS_ERR(send_workqueue);
+	if (error) {
+		log_print("can't start dlm_send %d", error);
 		destroy_workqueue(recv_workqueue);
-		return -ENOMEM;
+		return error;
 	}
 
 	return 0;

@@ -1157,6 +1157,7 @@ static void write_iso_tasklet(unsigned long data)
 	struct urb *urb;
 	int status;
 	struct usb_iso_packet_descriptor *ifd;
+	int offset;
 	unsigned long flags;
 	int i;
 	struct sk_buff *skb;
@@ -1224,6 +1225,7 @@ static void write_iso_tasklet(unsigned long data)
 			 *   successfully sent
 			 * - all following frames are not sent at all
 			 */
+			offset = done->limit;	/* default (no error) */
 			for (i = 0; i < BAS_NUMFRAMES; i++) {
 				ifd = &urb->iso_frame_desc[i];
 				if (ifd->status ||
@@ -1233,6 +1235,9 @@ static void write_iso_tasklet(unsigned long data)
 						 i, ifd->actual_length,
 						 ifd->length,
 						 get_usb_statmsg(ifd->status));
+					offset = (ifd->offset +
+						  ifd->actual_length)
+						 % BAS_OUTBUFSIZE;
 					break;
 				}
 			}
@@ -2313,7 +2318,7 @@ static int gigaset_probe(struct usb_interface *interface,
 		 __func__, le16_to_cpu(udev->descriptor.idVendor),
 		 le16_to_cpu(udev->descriptor.idProduct));
 
-	/* allocate memory for our device state and initialize it */
+	/* allocate memory for our device state and intialize it */
 	cs = gigaset_initcs(driver, BAS_CHANNELS, 0, 0, cidmode,
 			    GIGASET_MODULENAME);
 	if (!cs)
@@ -2571,7 +2576,7 @@ static int __init bas_gigaset_init(void)
 {
 	int result;
 
-	/* allocate memory for our driver state and initialize it */
+	/* allocate memory for our driver state and intialize it */
 	driver = gigaset_initdriver(GIGASET_MINOR, GIGASET_MINORS,
 				    GIGASET_MODULENAME, GIGASET_DEVNAME,
 				    &gigops, THIS_MODULE);

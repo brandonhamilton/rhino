@@ -49,7 +49,7 @@
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
 #include <asm/debugreg.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/system.h>
 #include <asm/traps.h>
 #include <asm/desc.h>
@@ -82,13 +82,6 @@ DECLARE_BITMAP(used_vectors, NR_VECTORS);
 EXPORT_SYMBOL_GPL(used_vectors);
 
 static int ignore_nmis;
-
-int unknown_nmi_panic;
-/*
- * Prevent NMI reason port (0x61) being accessed simultaneously, can
- * only be used in NMI handler.
- */
-static DEFINE_RAW_SPINLOCK(nmi_reason_lock);
 
 static inline void conditional_sti(struct pt_regs *regs)
 {
@@ -307,23 +300,16 @@ gp_in_kernel:
 	die("general protection fault", regs, error_code);
 }
 
-static int __init setup_unknown_nmi_panic(char *str)
-{
-	unknown_nmi_panic = 1;
-	return 1;
-}
-__setup("unknown_nmi_panic", setup_unknown_nmi_panic);
-
 static notrace __kprobes void
-pci_serr_error(unsigned char reason, struct pt_regs *regs)
+mem_parity_error(unsigned char reason, struct pt_regs *regs)
 {
-	pr_emerg("NMI: PCI system error (SERR) for reason %02x on CPU %d.\n",
-		 reason, smp_processor_id());
+	printk(KERN_EMERG
+		"Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+			reason, smp_processor_id());
 
-	/*
-	 * On some machines, PCI SERR line is used to report memory
-	 * errors. EDAC makes use of it.
-	 */
+	printk(KERN_EMERG
+		"You have some hardware problem, likely on the PCI bus.\n");
+
 #if defined(CONFIG_EDAC)
 	if (edac_handler_set()) {
 		edac_atomic_assert_error();
@@ -334,11 +320,11 @@ pci_serr_error(unsigned char reason, struct pt_regs *regs)
 	if (panic_on_unrecovered_nmi)
 		panic("NMI: Not continuing");
 
-	pr_emerg("Dazed and confused, but trying to continue\n");
+	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 
-	/* Clear and disable the PCI SERR error line. */
-	reason = (reason & NMI_REASON_CLEAR_MASK) | NMI_REASON_CLEAR_SERR;
-	outb(reason, NMI_REASON_PORT);
+	/* Clear and disable the memory parity error line. */
+	reason = (reason & 0xf) | 4;
+	outb(reason, 0x61);
 }
 
 static notrace __kprobes void
@@ -346,26 +332,22 @@ io_check_error(unsigned char reason, struct pt_regs *regs)
 {
 	unsigned long i;
 
-	pr_emerg(
-	"NMI: IOCK error (debug interrupt?) for reason %02x on CPU %d.\n",
-		 reason, smp_processor_id());
+	printk(KERN_EMERG "NMI: IOCK error (debug interrupt?)\n");
 	show_registers(regs);
 
 	if (panic_on_io_nmi)
 		panic("NMI IOCK error: Not continuing");
 
 	/* Re-enable the IOCK line, wait for a few seconds */
-	reason = (reason & NMI_REASON_CLEAR_MASK) | NMI_REASON_CLEAR_IOCHK;
-	outb(reason, NMI_REASON_PORT);
+	reason = (reason & 0xf) | 8;
+	outb(reason, 0x61);
 
-	i = 20000;
-	while (--i) {
-		touch_nmi_watchdog();
-		udelay(100);
-	}
+	i = 2000;
+	while (--i)
+		udelay(1000);
 
-	reason &= ~NMI_REASON_CLEAR_IOCHK;
-	outb(reason, NMI_REASON_PORT);
+	reason &= ~8;
+	outb(reason, 0x61);
 }
 
 static notrace __kprobes void
@@ -384,50 +366,69 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 		return;
 	}
 #endif
-	pr_emerg("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
-		 reason, smp_processor_id());
+	printk(KERN_EMERG
+		"Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+			reason, smp_processor_id());
 
-	pr_emerg("Do you have a strange power saving mode enabled?\n");
-	if (unknown_nmi_panic || panic_on_unrecovered_nmi)
+	printk(KERN_EMERG "Do you have a strange power saving mode enabled?\n");
+	if (panic_on_unrecovered_nmi)
 		panic("NMI: Not continuing");
 
-	pr_emerg("Dazed and confused, but trying to continue\n");
+	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 }
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 {
 	unsigned char reason = 0;
+	int cpu;
 
-	/*
-	 * CPU-specific NMI must be processed before non-CPU-specific
-	 * NMI, otherwise we may lose it, because the CPU-specific
-	 * NMI can not be detected/processed on other CPUs.
-	 */
-	if (notify_die(DIE_NMI, "nmi", regs, 0, 2, SIGINT) == NOTIFY_STOP)
-		return;
+	cpu = smp_processor_id();
 
-	/* Non-CPU-specific NMI: NMI sources can be processed on any CPU */
-	raw_spin_lock(&nmi_reason_lock);
-	reason = get_nmi_reason();
+	/* Only the BSP gets external NMIs from the system. */
+	if (!cpu)
+		reason = get_nmi_reason();
 
-	if (reason & NMI_REASON_MASK) {
-		if (reason & NMI_REASON_SERR)
-			pci_serr_error(reason, regs);
-		else if (reason & NMI_REASON_IOCHK)
-			io_check_error(reason, regs);
-#ifdef CONFIG_X86_32
+	if (!(reason & 0xc0)) {
+		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 2, SIGINT)
+								== NOTIFY_STOP)
+			return;
+
+#ifdef CONFIG_X86_LOCAL_APIC
+		if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT)
+							== NOTIFY_STOP)
+			return;
+
+#ifndef CONFIG_LOCKUP_DETECTOR
 		/*
-		 * Reassert NMI in case it became active
-		 * meanwhile as it's edge-triggered:
+		 * Ok, so this is none of the documented NMI sources,
+		 * so it must be the NMI watchdog.
 		 */
-		reassert_nmi();
+		if (nmi_watchdog_tick(regs, reason))
+			return;
+		if (!do_nmi_callback(regs, cpu))
+#endif /* !CONFIG_LOCKUP_DETECTOR */
+			unknown_nmi_error(reason, regs);
+#else
+		unknown_nmi_error(reason, regs);
 #endif
-		raw_spin_unlock(&nmi_reason_lock);
+
 		return;
 	}
-	raw_spin_unlock(&nmi_reason_lock);
+	if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT) == NOTIFY_STOP)
+		return;
 
-	unknown_nmi_error(reason, regs);
+	/* AK: following checks seem to be broken on modern chipsets. FIXME */
+	if (reason & 0x80)
+		mem_parity_error(reason, regs);
+	if (reason & 0x40)
+		io_check_error(reason, regs);
+#ifdef CONFIG_X86_32
+	/*
+	 * Reassert NMI in case it became active meanwhile
+	 * as it's edge-triggered:
+	 */
+	reassert_nmi();
+#endif
 }
 
 dotraplinkage notrace __kprobes void
@@ -445,12 +446,14 @@ do_nmi(struct pt_regs *regs, long error_code)
 
 void stop_nmi(void)
 {
+	acpi_nmi_disable();
 	ignore_nmis++;
 }
 
 void restart_nmi(void)
 {
 	ignore_nmis--;
+	acpi_nmi_enable();
 }
 
 /* May run on IST stack. */
@@ -870,12 +873,6 @@ void __init trap_init(void)
 #ifdef CONFIG_X86_32
 	set_system_trap_gate(SYSCALL_VECTOR, &system_call);
 	set_bit(SYSCALL_VECTOR, used_vectors);
-#endif
-
-#ifdef CONFIG_X86_64
-	BUG_ON(test_bit(VSYSCALL_EMU_VECTOR, used_vectors));
-	set_system_intr_gate(VSYSCALL_EMU_VECTOR, &emulate_vsyscall);
-	set_bit(VSYSCALL_EMU_VECTOR, used_vectors);
 #endif
 
 	/*

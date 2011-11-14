@@ -67,18 +67,23 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 			goto error;
 		}
 
-		err = x->repl->overflow(x, skb);
-		if (err) {
-			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATESEQERROR);
-			goto error;
+		if (x->type->flags & XFRM_TYPE_REPLAY_PROT) {
+			XFRM_SKB_CB(skb)->seq.output = ++x->replay.oseq;
+			if (unlikely(x->replay.oseq == 0)) {
+				XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATESEQERROR);
+				x->replay.oseq--;
+				xfrm_audit_state_replay_overflow(x, skb);
+				err = -EOVERFLOW;
+				goto error;
+			}
+			if (xfrm_aevent_is_on(net))
+				xfrm_replay_notify(x, XFRM_REPLAY_UPDATE);
 		}
 
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;
 
 		spin_unlock_bh(&x->lock);
-
-		skb_dst_force(skb);
 
 		err = x->type->output(x, skb);
 		if (err == -EINPROGRESS)
@@ -96,7 +101,7 @@ resume:
 			err = -EHOSTUNREACH;
 			goto error_nolock;
 		}
-		skb_dst_set(skb, dst);
+		skb_dst_set(skb, dst_clone(dst));
 		x = dst->xfrm;
 	} while (x && !(x->outer_mode->flags & XFRM_MODE_FLAG_TUNNEL));
 

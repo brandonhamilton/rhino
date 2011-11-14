@@ -134,9 +134,9 @@ static __inline__ u32 fib6_new_sernum(void)
 # define BITOP_BE32_SWIZZLE	0
 #endif
 
-static __inline__ __be32 addr_bit_set(const void *token, int fn_bit)
+static __inline__ __be32 addr_bit_set(void *token, int fn_bit)
 {
-	const __be32 *addr = token;
+	__be32 *addr = token;
 	/*
 	 * Here,
 	 * 	1 << ((~fn_bit ^ BITOP_BE32_SWIZZLE) & 0x1f)
@@ -260,10 +260,10 @@ struct fib6_table *fib6_get_table(struct net *net, u32 id)
 	  return net->ipv6.fib6_main_tbl;
 }
 
-struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
+struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi *fl,
 				   int flags, pol_lookup_t lookup)
 {
-	return (struct dst_entry *) lookup(net, net->ipv6.fib6_main_tbl, fl6, flags);
+	return (struct dst_entry *) lookup(net, net->ipv6.fib6_main_tbl, fl, flags);
 }
 
 static void __net_init fib6_tables_init(struct net *net)
@@ -394,11 +394,10 @@ static int inet6_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 	arg.net = net;
 	w->args = &arg;
 
-	rcu_read_lock();
 	for (h = s_h; h < FIB6_TABLE_HASHSZ; h++, s_e = 0) {
 		e = 0;
 		head = &net->ipv6.fib_table_hash[h];
-		hlist_for_each_entry_rcu(tb, node, head, tb6_hlist) {
+		hlist_for_each_entry(tb, node, head, tb6_hlist) {
 			if (e < s_e)
 				goto next;
 			res = fib6_dump_table(tb, skb, cb);
@@ -409,7 +408,6 @@ next:
 		}
 	}
 out:
-	rcu_read_unlock();
 	cb->args[1] = e;
 	cb->args[0] = h;
 
@@ -824,7 +822,7 @@ st_failure:
 
 struct lookup_args {
 	int		offset;		/* key offset on rt6_info	*/
-	const struct in6_addr	*addr;		/* search key			*/
+	struct in6_addr	*addr;		/* search key			*/
 };
 
 static struct fib6_node * fib6_lookup_1(struct fib6_node *root,
@@ -883,8 +881,8 @@ static struct fib6_node * fib6_lookup_1(struct fib6_node *root,
 	return NULL;
 }
 
-struct fib6_node * fib6_lookup(struct fib6_node *root, const struct in6_addr *daddr,
-			       const struct in6_addr *saddr)
+struct fib6_node * fib6_lookup(struct fib6_node *root, struct in6_addr *daddr,
+			       struct in6_addr *saddr)
 {
 	struct fib6_node *fn;
 	struct lookup_args args[] = {
@@ -918,7 +916,7 @@ struct fib6_node * fib6_lookup(struct fib6_node *root, const struct in6_addr *da
 
 
 static struct fib6_node * fib6_locate_1(struct fib6_node *root,
-					const struct in6_addr *addr,
+					struct in6_addr *addr,
 					int plen, int offset)
 {
 	struct fib6_node *fn;
@@ -948,8 +946,8 @@ static struct fib6_node * fib6_locate_1(struct fib6_node *root,
 }
 
 struct fib6_node * fib6_locate(struct fib6_node *root,
-			       const struct in6_addr *daddr, int dst_len,
-			       const struct in6_addr *saddr, int src_len)
+			       struct in6_addr *daddr, int dst_len,
+			       struct in6_addr *saddr, int src_len)
 {
 	struct fib6_node *fn;
 
@@ -1455,7 +1453,7 @@ static int fib6_age(struct rt6_info *rt, void *arg)
 			RT6_TRACE("aging clone %p\n", rt);
 			return -1;
 		} else if ((rt->rt6i_flags & RTF_GATEWAY) &&
-			   (!(dst_get_neighbour_raw(&rt->dst)->flags & NTF_ROUTER))) {
+			   (!(rt->rt6i_nexthop->flags & NTF_ROUTER))) {
 			RT6_TRACE("purging route %p via non-router but gateway\n",
 				  rt);
 			return -1;
@@ -1586,8 +1584,7 @@ int __init fib6_init(void)
 	if (ret)
 		goto out_kmem_cache_create;
 
-	ret = __rtnl_register(PF_INET6, RTM_GETROUTE, NULL, inet6_dump_fib,
-			      NULL);
+	ret = __rtnl_register(PF_INET6, RTM_GETROUTE, NULL, inet6_dump_fib);
 	if (ret)
 		goto out_unregister_subsys;
 out:

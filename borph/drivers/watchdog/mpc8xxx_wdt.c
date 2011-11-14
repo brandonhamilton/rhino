@@ -2,9 +2,9 @@
  * mpc8xxx_wdt.c - MPC8xx/MPC83xx/MPC86xx watchdog userspace interface
  *
  * Authors: Dave Updegraff <dave@cray.org>
- *	    Kumar Gala <galak@kernel.crashing.org>
- *		Attribution: from 83xx_wst: Florian Schirmer <jolt@tuxbox.org>
- *				..and from sc520_wdt
+ * 	    Kumar Gala <galak@kernel.crashing.org>
+ * 		Attribution: from 83xx_wst: Florian Schirmer <jolt@tuxbox.org>
+ * 				..and from sc520_wdt
  * Copyright (c) 2008  MontaVista Software, Inc.
  *                     Anton Vorontsov <avorontsov@ru.mvista.com>
  *
@@ -185,20 +185,14 @@ static struct miscdevice mpc8xxx_wdt_miscdev = {
 	.fops	= &mpc8xxx_wdt_fops,
 };
 
-static const struct of_device_id mpc8xxx_wdt_match[];
-static int __devinit mpc8xxx_wdt_probe(struct platform_device *ofdev)
+static int __devinit mpc8xxx_wdt_probe(struct platform_device *ofdev,
+				       const struct of_device_id *match)
 {
 	int ret;
-	const struct of_device_id *match;
 	struct device_node *np = ofdev->dev.of_node;
-	struct mpc8xxx_wdt_type *wdt_type;
+	struct mpc8xxx_wdt_type *wdt_type = match->data;
 	u32 freq = fsl_get_sys_freq();
 	bool enabled;
-
-	match = of_match_device(mpc8xxx_wdt_match, &ofdev->dev);
-	if (!match)
-		return -EINVAL;
-	wdt_type = match->data;
 
 	if (!freq || freq == -1)
 		return -EINVAL;
@@ -278,7 +272,7 @@ static const struct of_device_id mpc8xxx_wdt_match[] = {
 };
 MODULE_DEVICE_TABLE(of, mpc8xxx_wdt_match);
 
-static struct platform_driver mpc8xxx_wdt_driver = {
+static struct of_platform_driver mpc8xxx_wdt_driver = {
 	.probe		= mpc8xxx_wdt_probe,
 	.remove		= __devexit_p(mpc8xxx_wdt_remove),
 	.driver = {
@@ -314,13 +308,13 @@ module_init(mpc8xxx_wdt_init_late);
 
 static int __init mpc8xxx_wdt_init(void)
 {
-	return platform_driver_register(&mpc8xxx_wdt_driver);
+	return of_register_platform_driver(&mpc8xxx_wdt_driver);
 }
 arch_initcall(mpc8xxx_wdt_init);
 
 static void __exit mpc8xxx_wdt_exit(void)
 {
-	platform_driver_unregister(&mpc8xxx_wdt_driver);
+	of_unregister_platform_driver(&mpc8xxx_wdt_driver);
 }
 module_exit(mpc8xxx_wdt_exit);
 

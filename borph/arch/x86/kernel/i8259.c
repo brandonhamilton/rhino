@@ -8,13 +8,13 @@
 #include <linux/random.h>
 #include <linux/init.h>
 #include <linux/kernel_stat.h>
-#include <linux/syscore_ops.h>
+#include <linux/sysdev.h>
 #include <linux/bitops.h>
 #include <linux/acpi.h>
 #include <linux/io.h>
 #include <linux/delay.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/system.h>
 #include <asm/timer.h>
 #include <asm/hw_irq.h>
@@ -112,7 +112,7 @@ static void make_8259A_irq(unsigned int irq)
 {
 	disable_irq_nosync(irq);
 	io_apic_irqs &= ~(1<<irq);
-	irq_set_chip_and_handler_name(irq, &i8259A_chip, handle_level_irq,
+	set_irq_chip_and_handler_name(irq, &i8259A_chip, handle_level_irq,
 				      i8259A_chip.name);
 	enable_irq(irq);
 }
@@ -245,19 +245,20 @@ static void save_ELCR(char *trigger)
 	trigger[1] = inb(0x4d1) & 0xDE;
 }
 
-static void i8259A_resume(void)
+static int i8259A_resume(struct sys_device *dev)
 {
 	init_8259A(i8259A_auto_eoi);
 	restore_ELCR(irq_trigger);
+	return 0;
 }
 
-static int i8259A_suspend(void)
+static int i8259A_suspend(struct sys_device *dev, pm_message_t state)
 {
 	save_ELCR(irq_trigger);
 	return 0;
 }
 
-static void i8259A_shutdown(void)
+static int i8259A_shutdown(struct sys_device *dev)
 {
 	/* Put the i8259A into a quiescent state that
 	 * the kernel initialization code can get it
@@ -265,12 +266,19 @@ static void i8259A_shutdown(void)
 	 */
 	outb(0xff, PIC_MASTER_IMR);	/* mask all of 8259A-1 */
 	outb(0xff, PIC_SLAVE_IMR);	/* mask all of 8259A-1 */
+	return 0;
 }
 
-static struct syscore_ops i8259_syscore_ops = {
+static struct sysdev_class i8259_sysdev_class = {
+	.name = "i8259",
 	.suspend = i8259A_suspend,
 	.resume = i8259A_resume,
 	.shutdown = i8259A_shutdown,
+};
+
+static struct sys_device device_i8259A = {
+	.id	= 0,
+	.cls	= &i8259_sysdev_class,
 };
 
 static void mask_8259A(void)
@@ -391,12 +399,17 @@ struct legacy_pic default_legacy_pic = {
 
 struct legacy_pic *legacy_pic = &default_legacy_pic;
 
-static int __init i8259A_init_ops(void)
+static int __init i8259A_init_sysfs(void)
 {
-	if (legacy_pic == &default_legacy_pic)
-		register_syscore_ops(&i8259_syscore_ops);
+	int error;
 
-	return 0;
+	if (legacy_pic != &default_legacy_pic)
+		return 0;
+
+	error = sysdev_class_register(&i8259_sysdev_class);
+	if (!error)
+		error = sysdev_register(&device_i8259A);
+	return error;
 }
 
-device_initcall(i8259A_init_ops);
+device_initcall(i8259A_init_sysfs);

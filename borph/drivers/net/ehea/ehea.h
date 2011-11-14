@@ -40,7 +40,7 @@
 #include <asm/io.h>
 
 #define DRV_NAME	"ehea"
-#define DRV_VERSION	"EHEA_0107"
+#define DRV_VERSION	"EHEA_0106"
 
 /* eHEA capability flags */
 #define DLPAR_PORT_ADD_REM 1
@@ -129,6 +129,19 @@
 #define EHEA_WATCH_DOG_TIMEOUT 10*HZ
 
 /* utility functions */
+
+#define ehea_info(fmt, args...) \
+	printk(KERN_INFO DRV_NAME ": " fmt "\n", ## args)
+
+#define ehea_error(fmt, args...) \
+	printk(KERN_ERR DRV_NAME ": Error in %s: " fmt "\n", __func__, ## args)
+
+#ifdef DEBUG
+#define ehea_debug(fmt, args...) \
+	printk(KERN_DEBUG DRV_NAME ": " fmt, ## args)
+#else
+#define ehea_debug(fmt, args...) do {} while (0)
+#endif
 
 void ehea_dump(void *adr, int len, char *msg);
 
@@ -457,6 +470,7 @@ struct ehea_port {
 	struct ehea_port_res port_res[EHEA_MAX_PORT_RES];
 	struct platform_device  ofdev; /* Open Firmware Device */
 	struct ehea_mc_list *mc_list;	 /* Multicast MAC addresses */
+	struct vlan_group *vgrp;
 	struct ehea_eq *qp_eq;
 	struct work_struct reset_task;
 	struct mutex port_lock;
@@ -500,5 +514,7 @@ enum ehea_flag_bits {
 void ehea_set_ethtool_ops(struct net_device *netdev);
 int ehea_sense_port_attr(struct ehea_port *port);
 int ehea_set_portspeed(struct ehea_port *port, u32 port_speed);
+
+extern struct work_struct ehea_rereg_mr_task;
 
 #endif	/* __EHEA_H__ */

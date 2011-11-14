@@ -20,6 +20,8 @@
 #if !defined _DSPDRV_H_
 #define _DSPDRV_H_
 
+#define MAX_DEV     10		/* Max support of 10 devices */
+
 /*
  *  ======== dsp_deinit ========
  *  Purpose:

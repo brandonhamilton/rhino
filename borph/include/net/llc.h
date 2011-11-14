@@ -20,7 +20,7 @@
 #include <linux/hash.h>
 #include <linux/jhash.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct net_device;
 struct packet_type;

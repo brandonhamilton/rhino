@@ -377,7 +377,7 @@ static int init_timing_params(unsigned int new_duty_cycle,
 	duty_cycle = new_duty_cycle;
 	freq = new_freq;
 
-	loops_per_sec = __this_cpu_read(cpu.info.loops_per_jiffy);
+	loops_per_sec = current_cpu_data.loops_per_jiffy;
 	loops_per_sec *= HZ;
 
 	/* How many clocks in a microsecond?, avoiding long long divide */
@@ -398,7 +398,7 @@ static int init_timing_params(unsigned int new_duty_cycle,
 	dprintk("in init_timing_params, freq=%d, duty_cycle=%d, "
 		"clk/jiffy=%ld, pulse=%ld, space=%ld, "
 		"conv_us_to_clocks=%ld\n",
-		freq, duty_cycle, __this_cpu_read(cpu_info.loops_per_jiffy),
+		freq, duty_cycle, current_cpu_data.loops_per_jiffy,
 		pulse_width, space_width, conv_us_to_clocks);
 	return 0;
 }
@@ -838,23 +838,7 @@ static int hardware_init_port(void)
 
 static int init_port(void)
 {
-	int i, nlow, nhigh, result;
-
-	result = request_irq(irq, irq_handler,
-			     IRQF_DISABLED | (share_irq ? IRQF_SHARED : 0),
-			     LIRC_DRIVER_NAME, (void *)&hardware);
-
-	switch (result) {
-	case -EBUSY:
-		printk(KERN_ERR LIRC_DRIVER_NAME ": IRQ %d busy\n", irq);
-		return -EBUSY;
-	case -EINVAL:
-		printk(KERN_ERR LIRC_DRIVER_NAME
-		       ": Bad irq number or handler\n");
-		return -EINVAL;
-	default:
-		break;
-	};
+	int i, nlow, nhigh;
 
 	/* Reserve io region. */
 	/*
@@ -909,16 +893,33 @@ static int init_port(void)
 		printk(KERN_INFO LIRC_DRIVER_NAME  ": Manually using active "
 		       "%s receiver\n", sense ? "low" : "high");
 
-	dprintk("Interrupt %d, port %04x obtained\n", irq, io);
 	return 0;
 }
 
 static int set_use_inc(void *data)
 {
+	int result;
 	unsigned long flags;
 
 	/* initialize timestamp */
 	do_gettimeofday(&lasttv);
+
+	result = request_irq(irq, irq_handler,
+			     IRQF_DISABLED | (share_irq ? IRQF_SHARED : 0),
+			     LIRC_DRIVER_NAME, (void *)&hardware);
+
+	switch (result) {
+	case -EBUSY:
+		printk(KERN_ERR LIRC_DRIVER_NAME ": IRQ %d busy\n", irq);
+		return -EBUSY;
+	case -EINVAL:
+		printk(KERN_ERR LIRC_DRIVER_NAME
+		       ": Bad irq number or handler\n");
+		return -EINVAL;
+	default:
+		dprintk("Interrupt %d, port %04x obtained\n", irq, io);
+		break;
+	};
 
 	spin_lock_irqsave(&hardware[type].lock, flags);
 
@@ -944,6 +945,10 @@ static void set_use_dec(void *data)
 	soutp(UART_IER, sinp(UART_IER) &
 	      (~(UART_IER_MSI|UART_IER_RLSI|UART_IER_THRI|UART_IER_RDI)));
 	spin_unlock_irqrestore(&hardware[type].lock, flags);
+
+	free_irq(irq, (void *)&hardware);
+
+	dprintk("freed IRQ %d\n", irq);
 }
 
 static ssize_t lirc_write(struct file *file, const char *buf,
@@ -961,7 +966,7 @@ static ssize_t lirc_write(struct file *file, const char *buf,
 	if (n % sizeof(int) || count % 2 == 0)
 		return -EINVAL;
 	wbuf = memdup_user(buf, n);
-	if (IS_ERR(wbuf))
+	if (PTR_ERR(wbuf))
 		return PTR_ERR(wbuf);
 	spin_lock_irqsave(&hardware[type].lock, flags);
 	if (type == LIRC_IRDEO) {
@@ -976,7 +981,6 @@ static ssize_t lirc_write(struct file *file, const char *buf,
 	}
 	off();
 	spin_unlock_irqrestore(&hardware[type].lock, flags);
-	kfree(wbuf);
 	return n;
 }
 
@@ -1251,9 +1255,6 @@ exit_serial_exit:
 static void __exit lirc_serial_exit_module(void)
 {
 	lirc_serial_exit();
-
-	free_irq(irq, (void *)&hardware);
-
 	if (iommap != 0)
 		release_mem_region(iommap, 8 << ioshift);
 	else

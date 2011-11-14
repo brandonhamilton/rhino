@@ -36,7 +36,7 @@
 #define KBT_LOOP	3  /* Backtrace entered a loop */
 
 /* Is address on the specified kernel stack? */
-static int in_kernel_stack(struct KBacktraceIterator *kbt, unsigned long sp)
+static int in_kernel_stack(struct KBacktraceIterator *kbt, VirtualAddress sp)
 {
 	ulong kstack_base = (ulong) kbt->task->stack;
 	if (kstack_base == 0)  /* corrupt task pointer; just follow stack... */
@@ -44,8 +44,15 @@ static int in_kernel_stack(struct KBacktraceIterator *kbt, unsigned long sp)
 	return sp >= kstack_base && sp < kstack_base + THREAD_SIZE;
 }
 
+/* Is address in the specified kernel code? */
+static int in_kernel_text(VirtualAddress address)
+{
+	return (address >= MEM_SV_INTRPT &&
+		address < MEM_SV_INTRPT + HPAGE_SIZE);
+}
+
 /* Is address valid for reading? */
-static int valid_address(struct KBacktraceIterator *kbt, unsigned long address)
+static int valid_address(struct KBacktraceIterator *kbt, VirtualAddress address)
 {
 	HV_PTE *l1_pgtable = kbt->pgtable;
 	HV_PTE *l2_pgtable;
@@ -56,23 +63,6 @@ static int valid_address(struct KBacktraceIterator *kbt, unsigned long address)
 	if (l1_pgtable == NULL)
 		return 0;	/* can't read user space in other tasks */
 
-#ifdef CONFIG_64BIT
-	/* Find the real l1_pgtable by looking in the l0_pgtable. */
-	pte = l1_pgtable[HV_L0_INDEX(address)];
-	if (!hv_pte_get_present(pte))
-		return 0;
-	pfn = hv_pte_get_pfn(pte);
-	if (pte_huge(pte)) {
-		if (!pfn_valid(pfn)) {
-			pr_err("L0 huge page has bad pfn %#lx\n", pfn);
-			return 0;
-		}
-		return hv_pte_get_present(pte) && hv_pte_get_readable(pte);
-	}
-	page = pfn_to_page(pfn);
-	BUG_ON(PageHighMem(page));  /* No HIGHMEM on 64-bit. */
-	l1_pgtable = (HV_PTE *)pfn_to_kaddr(pfn);
-#endif
 	pte = l1_pgtable[HV_L1_INDEX(address)];
 	if (!hv_pte_get_present(pte))
 		return 0;
@@ -97,12 +87,12 @@ static int valid_address(struct KBacktraceIterator *kbt, unsigned long address)
 }
 
 /* Callback for backtracer; basically a glorified memcpy */
-static bool read_memory_func(void *result, unsigned long address,
+static bool read_memory_func(void *result, VirtualAddress address,
 			     unsigned int size, void *vkbt)
 {
 	int retval;
 	struct KBacktraceIterator *kbt = (struct KBacktraceIterator *)vkbt;
-	if (__kernel_text_address(address)) {
+	if (in_kernel_text(address)) {
 		/* OK to read kernel code. */
 	} else if (address >= PAGE_OFFSET) {
 		/* We only tolerate kernel-space reads of this task's stack */
@@ -124,7 +114,7 @@ static struct pt_regs *valid_fault_handler(struct KBacktraceIterator* kbt)
 {
 	const char *fault = NULL;  /* happy compiler */
 	char fault_buf[64];
-	unsigned long sp = kbt->it.sp;
+	VirtualAddress sp = kbt->it.sp;
 	struct pt_regs *p;
 
 	if (!in_kernel_stack(kbt, sp))
@@ -142,7 +132,7 @@ static struct pt_regs *valid_fault_handler(struct KBacktraceIterator* kbt)
 		}
 	}
 	if (EX1_PL(p->ex1) == KERNEL_PL &&
-	    __kernel_text_address(p->pc) &&
+	    in_kernel_text(p->pc) &&
 	    in_kernel_stack(kbt, p->sp) &&
 	    p->sp >= sp) {
 		if (kbt->verbose)
@@ -163,7 +153,7 @@ static struct pt_regs *valid_fault_handler(struct KBacktraceIterator* kbt)
 }
 
 /* Is the pc pointing to a sigreturn trampoline? */
-static int is_sigreturn(unsigned long pc)
+static int is_sigreturn(VirtualAddress pc)
 {
 	return (pc == VDSO_BASE);
 }
@@ -260,7 +250,7 @@ static void validate_stack(struct pt_regs *regs)
 void KBacktraceIterator_init(struct KBacktraceIterator *kbt,
 			     struct task_struct *t, struct pt_regs *regs)
 {
-	unsigned long pc, lr, sp, r52;
+	VirtualAddress pc, lr, sp, r52;
 	int is_current;
 
 	/*
@@ -331,7 +321,7 @@ EXPORT_SYMBOL(KBacktraceIterator_end);
 
 void KBacktraceIterator_next(struct KBacktraceIterator *kbt)
 {
-	unsigned long old_pc = kbt->it.pc, old_sp = kbt->it.sp;
+	VirtualAddress old_pc = kbt->it.pc, old_sp = kbt->it.sp;
 	kbt->new_context = 0;
 	if (!backtrace_next(&kbt->it) && !KBacktraceIterator_restart(kbt)) {
 		kbt->end = KBT_DONE;

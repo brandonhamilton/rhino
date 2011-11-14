@@ -18,7 +18,8 @@
 	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
-#include <media/rc-core.h>
+#include <linux/input.h>
+#include <media/ir-core.h>
 #include <linux/pci.h>
 
 #include "dmxdev.h"
@@ -32,9 +33,8 @@
 #include "mantis_uart.h"
 
 #define MODULE_NAME "mantis_core"
-#define RC_MAP_MANTIS "rc-mantis"
 
-static struct rc_map_table mantis_ir_table[] = {
+static struct ir_scancode mantis_ir_table[] = {
 	{ 0x29, KEY_POWER	},
 	{ 0x28, KEY_FAVORITES	},
 	{ 0x30, KEY_TEXT	},
@@ -95,65 +95,53 @@ static struct rc_map_table mantis_ir_table[] = {
 	{ 0x00, KEY_BLUE	},
 };
 
-static struct rc_map_list ir_mantis_map = {
-	.map = {
-		.scan = mantis_ir_table,
-		.size = ARRAY_SIZE(mantis_ir_table),
-		.rc_type = RC_TYPE_UNKNOWN,
-		.name = RC_MAP_MANTIS,
-	}
+struct ir_scancode_table ir_mantis = {
+	.scan = mantis_ir_table,
+	.size = ARRAY_SIZE(mantis_ir_table),
 };
+EXPORT_SYMBOL_GPL(ir_mantis);
 
 int mantis_input_init(struct mantis_pci *mantis)
 {
-	struct rc_dev *dev;
+	struct input_dev *rc;
+	char name[80], dev[80];
 	int err;
 
-	err = rc_map_register(&ir_mantis_map);
-	if (err)
-		goto out;
-
-	dev = rc_allocate_device();
-	if (!dev) {
-		dprintk(MANTIS_ERROR, 1, "Remote device allocation failed");
-		err = -ENOMEM;
-		goto out_map;
+	rc = input_allocate_device();
+	if (!rc) {
+		dprintk(MANTIS_ERROR, 1, "Input device allocate failed");
+		return -ENOMEM;
 	}
 
-	sprintf(mantis->input_name, "Mantis %s IR receiver", mantis->hwconfig->model_name);
-	sprintf(mantis->input_phys, "pci-%s/ir0", pci_name(mantis->pdev));
+	sprintf(name, "Mantis %s IR receiver", mantis->hwconfig->model_name);
+	sprintf(dev, "pci-%s/ir0", pci_name(mantis->pdev));
 
-	dev->input_name         = mantis->input_name;
-	dev->input_phys         = mantis->input_phys;
-	dev->input_id.bustype   = BUS_PCI;
-	dev->input_id.vendor    = mantis->vendor_id;
-	dev->input_id.product   = mantis->device_id;
-	dev->input_id.version   = 1;
-	dev->driver_name        = MODULE_NAME;
-	dev->map_name           = RC_MAP_MANTIS;
-	dev->dev.parent         = &mantis->pdev->dev;
+	rc->name = name;
+	rc->phys = dev;
 
-	err = rc_register_device(dev);
+	rc->id.bustype	= BUS_PCI;
+	rc->id.vendor	= mantis->vendor_id;
+	rc->id.product	= mantis->device_id;
+	rc->id.version	= 1;
+	rc->dev		= mantis->pdev->dev;
+
+	err = __ir_input_register(rc, &ir_mantis, NULL, MODULE_NAME);
 	if (err) {
 		dprintk(MANTIS_ERROR, 1, "IR device registration failed, ret = %d", err);
-		goto out_dev;
+		input_free_device(rc);
+		return -ENODEV;
 	}
 
-	mantis->rc = dev;
-	return 0;
+	mantis->rc = rc;
 
-out_dev:
-	rc_free_device(dev);
-out_map:
-	rc_map_unregister(&ir_mantis_map);
-out:
-	return err;
+	return 0;
 }
 
 int mantis_exit(struct mantis_pci *mantis)
 {
-	rc_unregister_device(mantis->rc);
-	rc_map_unregister(&ir_mantis_map);
+	struct input_dev *rc = mantis->rc;
+
+	ir_input_unregister(rc);
+
 	return 0;
 }
-

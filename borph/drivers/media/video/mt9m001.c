@@ -603,9 +603,13 @@ static int mt9m001_video_probe(struct soc_camera_device *icd,
 	unsigned long flags;
 	int ret;
 
-	/* We must have a parent by now. And it cannot be a wrong one. */
-	BUG_ON(!icd->parent ||
-	       to_soc_camera_host(icd->parent)->nr != icd->iface);
+	/*
+	 * We must have a parent by now. And it cannot be a wrong one.
+	 * So this entire test is completely redundant.
+	 */
+	if (!icd->dev.parent ||
+	    to_soc_camera_host(icd->dev.parent)->nr != icd->iface)
+		return -ENODEV;
 
 	/* Enable the chip */
 	data = reg_write(client, MT9M001_CHIP_ENABLE, 1);
@@ -671,8 +675,8 @@ static void mt9m001_video_remove(struct soc_camera_device *icd)
 {
 	struct soc_camera_link *icl = to_soc_camera_link(icd);
 
-	dev_dbg(icd->pdev, "Video removed: %p, %p\n",
-		icd->parent, icd->vdev);
+	dev_dbg(&icd->dev, "Video removed: %p, %p\n",
+		icd->dev.parent, icd->vdev);
 	if (icl->free_bus)
 		icl->free_bus(icl);
 }
@@ -794,6 +798,7 @@ static int mt9m001_remove(struct i2c_client *client)
 
 	icd->ops = NULL;
 	mt9m001_video_remove(icd);
+	client->driver = NULL;
 	kfree(mt9m001);
 
 	return 0;

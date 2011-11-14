@@ -388,11 +388,6 @@ static int mpc7450_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
 		[C(OP_WRITE)] = {	-1,		-1	},
 		[C(OP_PREFETCH)] = {	-1,		-1	},
 	},
-	[C(NODE)] = {		/* 	RESULT_ACCESS	RESULT_MISS */
-		[C(OP_READ)] = {	-1,		-1	},
-		[C(OP_WRITE)] = {	-1,		-1	},
-		[C(OP_PREFETCH)] = {	-1,		-1	},
-	},
 };
 
 struct power_pmu mpc7450_pmu = {
@@ -410,7 +405,7 @@ struct power_pmu mpc7450_pmu = {
 	.cache_events		= &mpc7450_cache_events,
 };
 
-static int __init init_mpc7450_pmu(void)
+static int init_mpc7450_pmu(void)
 {
 	if (!cur_cpu_spec->oprofile_cpu_type ||
 	    strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc/7450"))
@@ -419,4 +414,4 @@ static int __init init_mpc7450_pmu(void)
 	return register_power_pmu(&mpc7450_pmu);
 }
 
-early_initcall(init_mpc7450_pmu);
+arch_initcall(init_mpc7450_pmu);

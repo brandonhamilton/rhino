@@ -283,7 +283,8 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	}
 
 	/* reserve chip-select regions */
-	if (!request_mem_region(io->start, resource_size(io), driver_name)) {
+	if (!request_mem_region(io->start, io->end + 1 - io->start,
+				driver_name)) {
 		status = -ENXIO;
 		goto fail1;
 	}
@@ -307,7 +308,7 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	return 0;
 
 fail2:
-	release_mem_region(io->start, resource_size(io));
+	release_mem_region(io->start, io->end + 1 - io->start);
 fail1:
 	if (cf->socket.io_offset)
 		iounmap((void __iomem *) cf->socket.io_offset);
@@ -338,7 +339,7 @@ static int __exit at91_cf_remove(struct platform_device *pdev)
 	struct resource		*io = cf->socket.io[0].res;
 
 	pcmcia_unregister_socket(&cf->socket);
-	release_mem_region(io->start, resource_size(io));
+	release_mem_region(io->start, io->end + 1 - io->start);
 	iounmap((void __iomem *) cf->socket.io_offset);
 	if (board->irq_pin) {
 		free_irq(board->irq_pin, cf);

@@ -637,9 +637,15 @@ static struct snd_kcontrol_new snd_bt87x_capture_boost = {
 static int snd_bt87x_capture_source_info(struct snd_kcontrol *kcontrol,
 					 struct snd_ctl_elem_info *info)
 {
-	static const char *const texts[3] = {"TV Tuner", "FM", "Mic/Line"};
+	static char *texts[3] = {"TV Tuner", "FM", "Mic/Line"};
 
-	return snd_ctl_enum_info(info, 1, 3, texts);
+	info->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	info->count = 1;
+	info->value.enumerated.items = 3;
+	if (info->value.enumerated.item > 2)
+		info->value.enumerated.item = 2;
+	strcpy(info->value.enumerated.name, texts[info->value.enumerated.item]);
+	return 0;
 }
 
 static int snd_bt87x_capture_source_get(struct snd_kcontrol *kcontrol,
@@ -760,7 +766,7 @@ static int __devinit snd_bt87x_create(struct snd_card *card,
 	snd_bt87x_writel(chip, REG_INT_STAT, MY_INTERRUPTS);
 
 	err = request_irq(pci->irq, snd_bt87x_interrupt, IRQF_SHARED,
-			  KBUILD_MODNAME, chip);
+			  "Bt87x audio", chip);
 	if (err < 0) {
 		snd_printk(KERN_ERR "cannot grab irq %d\n", pci->irq);
 		goto fail;
@@ -965,7 +971,7 @@ static DEFINE_PCI_DEVICE_TABLE(snd_bt87x_default_ids) = {
 };
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Bt87x",
 	.id_table = snd_bt87x_ids,
 	.probe = snd_bt87x_probe,
 	.remove = __devexit_p(snd_bt87x_remove),

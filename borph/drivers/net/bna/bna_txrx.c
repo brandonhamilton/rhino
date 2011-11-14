@@ -16,7 +16,7 @@
  * www.brocade.com
  */
 #include "bna.h"
-#include "bfa_cs.h"
+#include "bfa_sm.h"
 #include "bfi.h"
 
 /**
@@ -569,7 +569,7 @@ bna_rxf_sm_stopped(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -627,7 +627,7 @@ bna_rxf_sm_start_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -678,7 +678,7 @@ bna_rxf_sm_cam_fltr_mod_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -724,7 +724,7 @@ bna_rxf_sm_started(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -734,7 +734,7 @@ bna_rxf_sm_cam_fltr_clr_wait_entry(struct bna_rxf *rxf)
 	/**
 	 *  Note: Do not add rxf_clear_packet_filter here.
 	 * It will overstep mbox when this transition happens:
-	 *	cam_fltr_mod_wait -> cam_fltr_clr_wait on RXF_E_STOP event
+	 * 	cam_fltr_mod_wait -> cam_fltr_clr_wait on RXF_E_STOP event
 	 */
 }
 
@@ -761,7 +761,7 @@ bna_rxf_sm_cam_fltr_clr_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -771,7 +771,7 @@ bna_rxf_sm_stop_wait_entry(struct bna_rxf *rxf)
 	/**
 	 * NOTE: Do not add  rxf_disable here.
 	 * It will overstep mbox when this transition happens:
-	 *	start_wait -> stop_wait on RXF_E_STOP event
+	 * 	start_wait -> stop_wait on RXF_E_STOP event
 	 */
 }
 
@@ -815,7 +815,7 @@ bna_rxf_sm_stop_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -851,7 +851,7 @@ bna_rxf_sm_pause_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 	 * any other event during these states
 	 */
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -887,7 +887,7 @@ bna_rxf_sm_resume_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 	 * any other event during these states
 	 */
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -907,7 +907,7 @@ bna_rxf_sm_stat_clr_wait(struct bna_rxf *rxf, enum bna_rxf_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rxf->rx->bna, event);
 	}
 }
 
@@ -1226,7 +1226,8 @@ rxf_process_packet_filter_vlan(struct bna_rxf *rxf)
 	/* Apply the VLAN filter */
 	if (rxf->rxf_flags & BNA_RXF_FL_VLAN_CONFIG_PENDING) {
 		rxf->rxf_flags &= ~BNA_RXF_FL_VLAN_CONFIG_PENDING;
-		if (!(rxf->rxmode_active & BNA_RXMODE_PROMISC))
+		if (!(rxf->rxmode_active & BNA_RXMODE_PROMISC) &&
+			!(rxf->rxmode_active & BNA_RXMODE_DEFAULT))
 			__rxf_vlan_filter_set(rxf, rxf->vlan_filter_status);
 	}
 
@@ -1273,6 +1274,9 @@ rxf_process_packet_filter(struct bna_rxf *rxf)
 		return 1;
 
 	if (rxf_process_packet_filter_promisc(rxf))
+		return 1;
+
+	if (rxf_process_packet_filter_default(rxf))
 		return 1;
 
 	if (rxf_process_packet_filter_allmulti(rxf))
@@ -1336,6 +1340,9 @@ rxf_clear_packet_filter(struct bna_rxf *rxf)
 	if (rxf_clear_packet_filter_promisc(rxf))
 		return 1;
 
+	if (rxf_clear_packet_filter_default(rxf))
+		return 1;
+
 	if (rxf_clear_packet_filter_allmulti(rxf))
 		return 1;
 
@@ -1381,6 +1388,8 @@ rxf_reset_packet_filter(struct bna_rxf *rxf)
 	rxf->ucast_pending_set = 0;
 
 	rxf_reset_packet_filter_promisc(rxf);
+
+	rxf_reset_packet_filter_default(rxf);
 
 	rxf_reset_packet_filter_allmulti(rxf);
 }
@@ -1432,16 +1441,12 @@ bna_rxf_init(struct bna_rxf *rxf,
 	memset(rxf->vlan_filter_table, 0,
 			(sizeof(u32) * ((BFI_MAX_VLAN + 1) / 32)));
 
-	/* Set up VLAN 0 for pure priority tagged packets */
-	rxf->vlan_filter_table[0] |= 1;
-
 	bfa_fsm_set_state(rxf, bna_rxf_sm_stopped);
 }
 
 static void
 bna_rxf_uninit(struct bna_rxf *rxf)
 {
-	struct bna *bna = rxf->rx->bna;
 	struct bna_mac *mac;
 
 	bna_rit_mod_seg_put(&rxf->rx->bna->rit_mod, rxf->rit_segment);
@@ -1467,27 +1472,6 @@ bna_rxf_uninit(struct bna_rxf *rxf)
 		bfa_q_qe_init(&mac->qe);
 		bna_mcam_mod_mac_put(&rxf->rx->bna->mcam_mod, mac);
 	}
-
-	/* Turn off pending promisc mode */
-	if (is_promisc_enable(rxf->rxmode_pending,
-				rxf->rxmode_pending_bitmask)) {
-		/* system promisc state should be pending */
-		BUG_ON(!(bna->rxf_promisc_id == rxf->rxf_id));
-		promisc_inactive(rxf->rxmode_pending,
-				rxf->rxmode_pending_bitmask);
-		 bna->rxf_promisc_id = BFI_MAX_RXF;
-	}
-	/* Promisc mode should not be active */
-	BUG_ON(rxf->rxmode_active & BNA_RXMODE_PROMISC);
-
-	/* Turn off pending all-multi mode */
-	if (is_allmulti_enable(rxf->rxmode_pending,
-				rxf->rxmode_pending_bitmask)) {
-		allmulti_inactive(rxf->rxmode_pending,
-				rxf->rxmode_pending_bitmask);
-	}
-	/* Allmulti mode should not be active */
-	BUG_ON(rxf->rxmode_active & BNA_RXMODE_ALLMULTI);
 
 	rxf->rx = NULL;
 }
@@ -1898,7 +1882,7 @@ static void bna_rx_sm_stopped(struct bna_rx *rx,
 		/* no-op */
 		break;
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rx->bna, event);
 		break;
 	}
 
@@ -1946,7 +1930,7 @@ static void bna_rx_sm_rxf_start_wait(struct bna_rx *rx,
 		bfa_fsm_set_state(rx, bna_rx_sm_started);
 		break;
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rx->bna, event);
 		break;
 	}
 }
@@ -1963,7 +1947,7 @@ bna_rx_sm_started_entry(struct bna_rx *rx)
 		bna_ib_ack(&rxp->cq.ib->door_bell, 0);
 	}
 
-	bna_llport_rx_started(&rx->bna->port.llport);
+	bna_llport_admin_up(&rx->bna->port.llport);
 }
 
 void
@@ -1971,17 +1955,17 @@ bna_rx_sm_started(struct bna_rx *rx, enum bna_rx_event event)
 {
 	switch (event) {
 	case RX_E_FAIL:
-		bna_llport_rx_stopped(&rx->bna->port.llport);
+		bna_llport_admin_down(&rx->bna->port.llport);
 		bfa_fsm_set_state(rx, bna_rx_sm_stopped);
 		rx_ib_fail(rx);
 		bna_rxf_fail(&rx->rxf);
 		break;
 	case RX_E_STOP:
-		bna_llport_rx_stopped(&rx->bna->port.llport);
+		bna_llport_admin_down(&rx->bna->port.llport);
 		bfa_fsm_set_state(rx, bna_rx_sm_rxf_stop_wait);
 		break;
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rx->bna, event);
 		break;
 	}
 }
@@ -2011,7 +1995,7 @@ bna_rx_sm_rxf_stop_wait(struct bna_rx *rx, enum bna_rx_event event)
 		bna_rxf_fail(&rx->rxf);
 		break;
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rx->bna, event);
 		break;
 	}
 
@@ -2064,7 +2048,7 @@ bna_rx_sm_rxq_stop_wait(struct bna_rx *rx, enum bna_rx_event event)
 		bfa_fsm_set_state(rx, bna_rx_sm_stopped);
 		break;
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(rx->bna, event);
 		break;
 	}
 }
@@ -2229,10 +2213,13 @@ void
 bna_rit_create(struct bna_rx *rx)
 {
 	struct list_head	*qe_rxp;
+	struct bna *bna;
 	struct bna_rxp *rxp;
 	struct bna_rxq *q0 = NULL;
 	struct bna_rxq *q1 = NULL;
 	int offset;
+
+	bna = rx->bna;
 
 	offset = 0;
 	list_for_each(qe_rxp, &rx->rxp_q) {
@@ -2827,7 +2814,7 @@ bna_rx_create(struct bna *bna, struct bnad *bnad,
 	struct bna_mem_descr *dsqpt_mem;	/* s/w qpt for data */
 	struct bna_mem_descr *hpage_mem;	/* hdr page mem */
 	struct bna_mem_descr *dpage_mem;	/* data page mem */
-	int i, cpage_idx = 0, dpage_idx = 0, hpage_idx = 0;
+	int i, cpage_idx = 0, dpage_idx = 0, hpage_idx = 0, ret;
 	int dpage_count, hpage_count, rcb_idx;
 	struct bna_ib_config ibcfg;
 	/* Fail if we don't have enough RXPs, RXQs */
@@ -2921,7 +2908,7 @@ bna_rx_create(struct bna *bna, struct bnad *bnad,
 		ibcfg.interpkt_timeo = BFI_RX_INTERPKT_TIMEO;
 		ibcfg.ctrl_flags = BFI_IB_CF_INT_ENABLE;
 
-		bna_ib_config(rxp->cq.ib, &ibcfg);
+		ret = bna_ib_config(rxp->cq.ib, &ibcfg);
 
 		/* Link rxqs to rxp */
 		_rxp_add_rxqs(rxp, q0, q1);
@@ -3216,7 +3203,7 @@ bna_tx_sm_stopped(struct bna_tx *tx, enum bna_tx_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(tx->bna, event);
 	}
 }
 
@@ -3261,7 +3248,7 @@ bna_tx_sm_started(struct bna_tx *tx, enum bna_tx_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(tx->bna, event);
 	}
 }
 
@@ -3294,7 +3281,7 @@ bna_tx_sm_txq_stop_wait(struct bna_tx *tx, enum bna_tx_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(tx->bna, event);
 	}
 }
 
@@ -3335,7 +3322,7 @@ bna_tx_sm_prio_stop_wait(struct bna_tx *tx, enum bna_tx_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(tx->bna, event);
 	}
 }
 
@@ -3355,7 +3342,7 @@ bna_tx_sm_stat_clr_wait(struct bna_tx *tx, enum bna_tx_event event)
 		break;
 
 	default:
-		bfa_sm_fault(event);
+		bfa_sm_fault(tx->bna, event);
 	}
 }
 
@@ -3386,7 +3373,7 @@ __bna_txq_start(struct bna_tx *tx, struct bna_txq *txq)
 
 	txq_cfg.cns_ptr2_n_q_state = BNA_Q_IDLE_STATE;
 	txq_cfg.nxt_qid_n_fid_n_pri = (((tx->txf.txf_id & 0x3f) << 3) |
-			(txq->priority & 0x7));
+			(txq->priority & 0x3));
 	txq_cfg.wvc_n_cquota_n_rquota =
 			((((u32)BFI_TX_MAX_WRR_QUOTA & 0xfff) << 12) |
 			(BFI_TX_MAX_WRR_QUOTA & 0xfff));

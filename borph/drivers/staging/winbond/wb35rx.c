@@ -14,6 +14,7 @@
 #include <linux/slab.h>
 
 #include "core.h"
+#include "sysdef.h"
 #include "wb35rx_f.h"
 
 static void packet_came(struct ieee80211_hw *hw, char *pRxBufferAddress, int PacketSize)
@@ -108,7 +109,10 @@ static u16 Wb35Rx_indicate(struct ieee80211_hw *hw)
 
 			/* Basic check for Rx length. Is length valid? */
 			if (PacketSize > MAX_PACKET_SIZE) {
-				pr_debug("Serious ERROR : Rx data size too long, size =%d\n", PacketSize);
+#ifdef _PE_RX_DUMP_
+				printk("Serious ERROR : Rx data size too long, size =%d\n", PacketSize);
+#endif
+
 				pWb35Rx->EP3vm_state = VM_STOP;
 				pWb35Rx->Ep3ErrorCount2++;
 				break;
@@ -170,7 +174,7 @@ static void Wb35Rx_Complete(struct urb *urb)
 	/* The IRP is completed */
 	pWb35Rx->EP3vm_state = VM_COMPLETED;
 
-	if (pHwData->SurpriseRemove) /* Must be here, or RxBufferId is invalid */
+	if (pHwData->SurpriseRemove || pHwData->HwStop) /* Must be here, or RxBufferId is invalid */
 		goto error;
 
 	if (pWb35Rx->rx_halt)
@@ -182,7 +186,9 @@ static void Wb35Rx_Complete(struct urb *urb)
 
 	/* The URB is completed, check the result */
 	if (pWb35Rx->EP3VM_status != 0) {
-		pr_debug("EP3 IoCompleteRoutine return error\n");
+#ifdef _PE_USB_STATE_DUMP_
+		printk("EP3 IoCompleteRoutine return error\n");
+#endif
 		pWb35Rx->EP3vm_state = VM_STOP;
 		goto error;
 	}
@@ -233,7 +239,7 @@ static void Wb35Rx(struct ieee80211_hw *hw)
 	u32			RxBufferId;
 
 	/* Issuing URB */
-	if (pHwData->SurpriseRemove)
+	if (pHwData->SurpriseRemove || pHwData->HwStop)
 		goto error;
 
 	if (pWb35Rx->rx_halt)
@@ -243,7 +249,9 @@ static void Wb35Rx(struct ieee80211_hw *hw)
 	RxBufferId = pWb35Rx->RxBufferId;
 	if (!pWb35Rx->RxOwner[RxBufferId]) {
 		/* It's impossible to run here. */
-		pr_debug("Rx driver fifo unavailable\n");
+#ifdef _PE_RX_DUMP_
+		printk("Rx driver fifo unavailable\n");
+#endif
 		goto error;
 	}
 
@@ -260,8 +268,8 @@ static void Wb35Rx(struct ieee80211_hw *hw)
 	}
 	pRxBufferAddress = pWb35Rx->pDRx;
 
-	usb_fill_bulk_urb(urb, pHwData->udev,
-			  usb_rcvbulkpipe(pHwData->udev, 3),
+	usb_fill_bulk_urb(urb, pHwData->WbUsb.udev,
+			  usb_rcvbulkpipe(pHwData->WbUsb.udev, 3),
 			  pRxBufferAddress, MAX_USB_RX_BUFFER,
 			  Wb35Rx_Complete, hw);
 
@@ -329,7 +337,9 @@ void Wb35Rx_stop(struct hw_data *pHwData)
 	/* Canceling the Irp if already sends it out. */
 	if (pWb35Rx->EP3vm_state == VM_RUNNING) {
 		usb_unlink_urb(pWb35Rx->RxUrb); /* Only use unlink, let Wb35Rx_destroy to free them */
-		pr_debug("EP3 Rx stop\n");
+#ifdef _PE_RX_DUMP_
+		printk("EP3 Rx stop\n");
+#endif
 	}
 }
 
@@ -345,6 +355,8 @@ void Wb35Rx_destroy(struct hw_data *pHwData)
 
 	if (pWb35Rx->RxUrb)
 		usb_free_urb(pWb35Rx->RxUrb);
-	pr_debug("Wb35Rx_destroy OK\n");
+#ifdef _PE_RX_DUMP_
+	printk("Wb35Rx_destroy OK\n");
+#endif
 }
 

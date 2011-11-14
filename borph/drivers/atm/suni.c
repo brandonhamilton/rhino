@@ -25,7 +25,7 @@
 #include <asm/system.h>
 #include <asm/param.h>
 #include <asm/uaccess.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "suni.h"
 

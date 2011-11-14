@@ -64,7 +64,7 @@ static struct fb_ops radeonfb_ops = {
 };
 
 
-int radeon_align_pitch(struct radeon_device *rdev, int width, int bpp, bool tiled)
+static int radeon_align_pitch(struct radeon_device *rdev, int width, int bpp, bool tiled)
 {
 	int aligned = width;
 	int align_large = (ASIC_IS_AVIVO(rdev)) || tiled;
@@ -90,7 +90,7 @@ int radeon_align_pitch(struct radeon_device *rdev, int width, int bpp, bool tile
 
 static void radeonfb_destroy_pinned_object(struct drm_gem_object *gobj)
 {
-	struct radeon_bo *rbo = gem_to_radeon_bo(gobj);
+	struct radeon_bo *rbo = gobj->driver_private;
 	int ret;
 
 	ret = radeon_bo_reserve(rbo, false);
@@ -113,14 +113,11 @@ static int radeonfb_create_pinned_object(struct radeon_fbdev *rfbdev,
 	u32 tiling_flags = 0;
 	int ret;
 	int aligned_size, size;
-	int height = mode_cmd->height;
 
 	/* need to align pitch with crtc limits */
 	mode_cmd->pitch = radeon_align_pitch(rdev, mode_cmd->width, mode_cmd->bpp, fb_tiled) * ((mode_cmd->bpp + 1) / 8);
 
-	if (rdev->family >= CHIP_R600)
-		height = ALIGN(mode_cmd->height, 8);
-	size = mode_cmd->pitch * height;
+	size = mode_cmd->pitch * mode_cmd->height;
 	aligned_size = ALIGN(size, PAGE_SIZE);
 	ret = radeon_gem_object_create(rdev, aligned_size, 0,
 				       RADEON_GEM_DOMAIN_VRAM,
@@ -131,7 +128,7 @@ static int radeonfb_create_pinned_object(struct radeon_fbdev *rfbdev,
 		       aligned_size);
 		return -ENOMEM;
 	}
-	rbo = gem_to_radeon_bo(gobj);
+	rbo = gobj->driver_private;
 
 	if (fb_tiled)
 		tiling_flags = RADEON_TILING_MACRO;
@@ -205,7 +202,7 @@ static int radeonfb_create(struct radeon_fbdev *rfbdev,
 	mode_cmd.depth = sizes->surface_depth;
 
 	ret = radeonfb_create_pinned_object(rfbdev, &mode_cmd, &gobj);
-	rbo = gem_to_radeon_bo(gobj);
+	rbo = gobj->driver_private;
 
 	/* okay we have an object now allocate the framebuffer */
 	info = framebuffer_alloc(0, device);
@@ -250,6 +247,8 @@ static int radeonfb_create(struct radeon_fbdev *rfbdev,
 	info->apertures->ranges[0].base = rdev->ddev->mode_config.fb_base;
 	info->apertures->ranges[0].size = rdev->mc.aper_size;
 
+	info->fix.mmio_start = 0;
+	info->fix.mmio_len = 0;
 	info->pixmap.size = 64*1024;
 	info->pixmap.buf_align = 8;
 	info->pixmap.access_align = 32;
@@ -406,14 +405,14 @@ int radeon_fbdev_total_size(struct radeon_device *rdev)
 	struct radeon_bo *robj;
 	int size = 0;
 
-	robj = gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj);
+	robj = rdev->mode_info.rfbdev->rfb.obj->driver_private;
 	size += radeon_bo_size(robj);
 	return size;
 }
 
 bool radeon_fbdev_robj_is_fb(struct radeon_device *rdev, struct radeon_bo *robj)
 {
-	if (robj == gem_to_radeon_bo(rdev->mode_info.rfbdev->rfb.obj))
+	if (robj == rdev->mode_info.rfbdev->rfb.obj->driver_private)
 		return true;
 	return false;
 }

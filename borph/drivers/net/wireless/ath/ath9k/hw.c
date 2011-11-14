@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2011 Atheros Communications Inc.
+ * Copyright (c) 2008-2010 Atheros Communications Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -54,6 +54,13 @@ static void ath9k_hw_init_mode_regs(struct ath_hw *ah)
 	ath9k_hw_private_ops(ah)->init_mode_regs(ah);
 }
 
+static bool ath9k_hw_macversion_supported(struct ath_hw *ah)
+{
+	struct ath_hw_private_ops *priv_ops = ath9k_hw_private_ops(ah);
+
+	return priv_ops->macversion_supported(ah->hw_version.macVersion);
+}
+
 static u32 ath9k_hw_compute_pll_control(struct ath_hw *ah,
 					struct ath9k_channel *chan)
 {
@@ -87,10 +94,7 @@ static void ath9k_hw_set_clockrate(struct ath_hw *ah)
 	struct ath_common *common = ath9k_hw_common(ah);
 	unsigned int clockrate;
 
-	/* AR9287 v1.3+ uses async FIFO and runs the MAC at 117 MHz */
-	if (AR_SREV_9287(ah) && AR_SREV_9287_13_OR_LATER(ah))
-		clockrate = 117;
-	else if (!ah->curchan) /* should really check for CCK instead */
+	if (!ah->curchan) /* should really check for CCK instead */
 		clockrate = ATH9K_CLOCK_RATE_CCK;
 	else if (conf->channel->band == IEEE80211_BAND_2GHZ)
 		clockrate = ATH9K_CLOCK_RATE_2GHZ_OFDM;
@@ -101,13 +105,6 @@ static void ath9k_hw_set_clockrate(struct ath_hw *ah)
 
 	if (conf_is_ht40(conf))
 		clockrate *= 2;
-
-	if (ah->curchan) {
-		if (IS_CHAN_HALF_RATE(ah->curchan))
-			clockrate /= 2;
-		if (IS_CHAN_QUARTER_RATE(ah->curchan))
-			clockrate /= 4;
-	}
 
 	common->clockrate = clockrate;
 }
@@ -132,27 +129,13 @@ bool ath9k_hw_wait(struct ath_hw *ah, u32 reg, u32 mask, u32 val, u32 timeout)
 		udelay(AH_TIME_QUANTUM);
 	}
 
-	ath_dbg(ath9k_hw_common(ah), ATH_DBG_ANY,
-		"timeout (%d us) on reg 0x%x: 0x%08x & 0x%08x != 0x%08x\n",
-		timeout, reg, REG_READ(ah, reg), mask, val);
+	ath_print(ath9k_hw_common(ah), ATH_DBG_ANY,
+		  "timeout (%d us) on reg 0x%x: 0x%08x & 0x%08x != 0x%08x\n",
+		  timeout, reg, REG_READ(ah, reg), mask, val);
 
 	return false;
 }
 EXPORT_SYMBOL(ath9k_hw_wait);
-
-void ath9k_hw_write_array(struct ath_hw *ah, struct ar5416IniArray *array,
-			  int column, unsigned int *writecnt)
-{
-	int r;
-
-	ENABLE_REGWRITE_BUFFER(ah);
-	for (r = 0; r < array->ia_rows; r++) {
-		REG_WRITE(ah, INI_RA(array, r, 0),
-			  INI_RA(array, r, column));
-		DO_DELAY(*writecnt);
-	}
-	REGWRITE_BUFFER_FLUSH(ah);
-}
 
 u32 ath9k_hw_reverse_bits(u32 val, u32 n)
 {
@@ -164,6 +147,25 @@ u32 ath9k_hw_reverse_bits(u32 val, u32 n)
 		val >>= 1;
 	}
 	return retval;
+}
+
+bool ath9k_get_channel_edges(struct ath_hw *ah,
+			     u16 flags, u16 *low,
+			     u16 *high)
+{
+	struct ath9k_hw_capabilities *pCap = &ah->caps;
+
+	if (flags & CHANNEL_5GHZ) {
+		*low = pCap->low_5ghz_chan;
+		*high = pCap->high_5ghz_chan;
+		return true;
+	}
+	if ((flags & CHANNEL_2GHZ)) {
+		*low = pCap->low_2ghz_chan;
+		*high = pCap->high_2ghz_chan;
+		return true;
+	}
+	return false;
 }
 
 u16 ath9k_hw_computetxtime(struct ath_hw *ah,
@@ -209,8 +211,8 @@ u16 ath9k_hw_computetxtime(struct ath_hw *ah,
 		}
 		break;
 	default:
-		ath_err(ath9k_hw_common(ah),
-			"Unknown phy %u (rate ix %u)\n", phy, rateix);
+		ath_print(ath9k_hw_common(ah), ATH_DBG_FATAL,
+			  "Unknown phy %u (rate ix %u)\n", phy, rateix);
 		txTime = 0;
 		break;
 	}
@@ -257,26 +259,6 @@ static void ath9k_hw_read_revisions(struct ath_hw *ah)
 {
 	u32 val;
 
-	switch (ah->hw_version.devid) {
-	case AR5416_AR9100_DEVID:
-		ah->hw_version.macVersion = AR_SREV_VERSION_9100;
-		break;
-	case AR9300_DEVID_AR9330:
-		ah->hw_version.macVersion = AR_SREV_VERSION_9330;
-		if (ah->get_mac_revision) {
-			ah->hw_version.macRev = ah->get_mac_revision();
-		} else {
-			val = REG_READ(ah, AR_SREV);
-			ah->hw_version.macRev = MS(val, AR_SREV_REVISION2);
-		}
-		return;
-	case AR9300_DEVID_AR9340:
-		ah->hw_version.macVersion = AR_SREV_VERSION_9340;
-		val = REG_READ(ah, AR_SREV);
-		ah->hw_version.macRev = MS(val, AR_SREV_REVISION2);
-		return;
-	}
-
 	val = REG_READ(ah, AR_SREV) & AR_SREV_ID;
 
 	if (val == 0xFF) {
@@ -302,8 +284,10 @@ static void ath9k_hw_read_revisions(struct ath_hw *ah)
 
 static void ath9k_hw_disablepcie(struct ath_hw *ah)
 {
-	if (!AR_SREV_5416(ah))
+	if (AR_SREV_9100(ah))
 		return;
+
+	ENABLE_REGWRITE_BUFFER(ah);
 
 	REG_WRITE(ah, AR_PCIE_SERDES, 0x9248fc00);
 	REG_WRITE(ah, AR_PCIE_SERDES, 0x24924924);
@@ -316,14 +300,8 @@ static void ath9k_hw_disablepcie(struct ath_hw *ah)
 	REG_WRITE(ah, AR_PCIE_SERDES, 0x000e1007);
 
 	REG_WRITE(ah, AR_PCIE_SERDES2, 0x00000000);
-}
 
-static void ath9k_hw_aspm_init(struct ath_hw *ah)
-{
-	struct ath_common *common = ath9k_hw_common(ah);
-
-	if (common->bus_ops->aspm_init)
-		common->bus_ops->aspm_init(common);
+	REGWRITE_BUFFER_FLUSH(ah);
 }
 
 /* This should work for all families including legacy */
@@ -332,9 +310,10 @@ static bool ath9k_hw_chip_test(struct ath_hw *ah)
 	struct ath_common *common = ath9k_hw_common(ah);
 	u32 regAddr[2] = { AR_STA_ID0 };
 	u32 regHold[2];
-	static const u32 patternData[4] = {
-		0x55555555, 0xaaaaaaaa, 0x66666666, 0x99999999
-	};
+	u32 patternData[4] = { 0x55555555,
+			       0xaaaaaaaa,
+			       0x66666666,
+			       0x99999999 };
 	int i, j, loop_max;
 
 	if (!AR_SREV_9300_20_OR_LATER(ah)) {
@@ -353,9 +332,11 @@ static bool ath9k_hw_chip_test(struct ath_hw *ah)
 			REG_WRITE(ah, addr, wrData);
 			rdData = REG_READ(ah, addr);
 			if (rdData != wrData) {
-				ath_err(common,
-					"address test failed addr: 0x%08x - wr:0x%08x != rd:0x%08x\n",
-					addr, wrData, rdData);
+				ath_print(common, ATH_DBG_FATAL,
+					  "address test failed "
+					  "addr: 0x%08x - wr:0x%08x != "
+					  "rd:0x%08x\n",
+					  addr, wrData, rdData);
 				return false;
 			}
 		}
@@ -364,9 +345,11 @@ static bool ath9k_hw_chip_test(struct ath_hw *ah)
 			REG_WRITE(ah, addr, wrData);
 			rdData = REG_READ(ah, addr);
 			if (wrData != rdData) {
-				ath_err(common,
-					"address test failed addr: 0x%08x - wr:0x%08x != rd:0x%08x\n",
-					addr, wrData, rdData);
+				ath_print(common, ATH_DBG_FATAL,
+					  "address test failed "
+					  "addr: 0x%08x - wr:0x%08x != "
+					  "rd:0x%08x\n",
+					  addr, wrData, rdData);
 				return false;
 			}
 		}
@@ -386,6 +369,7 @@ static void ath9k_hw_init_config(struct ath_hw *ah)
 	ah->config.additional_swba_backoff = 0;
 	ah->config.ack_6mb = 0x0;
 	ah->config.cwm_ignore_extcca = 0;
+	ah->config.pcie_powersave_enable = 0;
 	ah->config.pcie_clock_req = 0;
 	ah->config.pcie_waen = 0;
 	ah->config.analog_shiftreg = 1;
@@ -396,8 +380,10 @@ static void ath9k_hw_init_config(struct ath_hw *ah)
 		ah->config.spurchans[i][1] = AR_NO_SPUR;
 	}
 
-	/* PAPRD needs some more work to be enabled */
-	ah->config.paprd_disable = 1;
+	if (ah->hw_version.devid != AR2427_DEVID_PCIE)
+		ah->config.ht_enable = 1;
+	else
+		ah->config.ht_enable = 0;
 
 	ah->config.rx_intr_mitigation = true;
 	ah->config.pcieSerDesWrite = true;
@@ -433,14 +419,17 @@ static void ath9k_hw_init_defaults(struct ath_hw *ah)
 	ah->hw_version.magic = AR5416_MAGIC;
 	ah->hw_version.subvendorid = 0;
 
+	ah->ah_flags = 0;
+	if (!AR_SREV_9100(ah))
+		ah->ah_flags = AH_USE_EEPROM;
+
 	ah->atim_window = 0;
 	ah->sta_id1_defaults =
 		AR_STA_ID1_CRPT_MIC_ENABLE |
 		AR_STA_ID1_MCAST_KSRCH;
-	if (AR_SREV_9100(ah))
-		ah->sta_id1_defaults |= AR_STA_ID1_AR9100_BA_FIX;
+	ah->beacon_interval = 100;
 	ah->enable_32kHz_clock = DONT_USE_32KHZ;
-	ah->slottime = 20;
+	ah->slottime = (u32) -1;
 	ah->globaltxtimeout = (u32) -1;
 	ah->power_mode = ATH9K_PM_UNDEFINED;
 }
@@ -451,7 +440,7 @@ static int ath9k_hw_init_macaddr(struct ath_hw *ah)
 	u32 sum;
 	int i;
 	u16 eeval;
-	static const u32 EEP_MAC[] = { EEP_MAC_LSW, EEP_MAC_MID, EEP_MAC_MSW };
+	u32 EEP_MAC[] = { EEP_MAC_LSW, EEP_MAC_MID, EEP_MAC_MSW };
 
 	sum = 0;
 	for (i = 0; i < 3; i++) {
@@ -468,10 +457,9 @@ static int ath9k_hw_init_macaddr(struct ath_hw *ah)
 
 static int ath9k_hw_post_init(struct ath_hw *ah)
 {
-	struct ath_common *common = ath9k_hw_common(ah);
 	int ecode;
 
-	if (common->bus_ops->ath_bus_type != ATH_USB) {
+	if (!AR_SREV_9271(ah)) {
 		if (!ath9k_hw_chip_test(ah))
 			return -ENODEV;
 	}
@@ -486,20 +474,21 @@ static int ath9k_hw_post_init(struct ath_hw *ah)
 	if (ecode != 0)
 		return ecode;
 
-	ath_dbg(ath9k_hw_common(ah), ATH_DBG_CONFIG,
-		"Eeprom VER: %d, REV: %d\n",
-		ah->eep_ops->get_eeprom_ver(ah),
-		ah->eep_ops->get_eeprom_rev(ah));
+	ath_print(ath9k_hw_common(ah), ATH_DBG_CONFIG,
+		  "Eeprom VER: %d, REV: %d\n",
+		  ah->eep_ops->get_eeprom_ver(ah),
+		  ah->eep_ops->get_eeprom_rev(ah));
 
 	ecode = ath9k_hw_rf_alloc_ext_banks(ah);
 	if (ecode) {
-		ath_err(ath9k_hw_common(ah),
-			"Failed allocating banks for external radio\n");
+		ath_print(ath9k_hw_common(ah), ATH_DBG_FATAL,
+			  "Failed allocating banks for "
+			  "external radio\n");
 		ath9k_hw_rf_free_ext_banks(ah);
 		return ecode;
 	}
 
-	if (!AR_SREV_9100(ah) && !AR_SREV_9340(ah)) {
+	if (!AR_SREV_9100(ah)) {
 		ath9k_hw_ani_setup(ah);
 		ath9k_hw_ani_init(ah);
 	}
@@ -521,19 +510,12 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	struct ath_common *common = ath9k_hw_common(ah);
 	int r = 0;
 
-	ath9k_hw_read_revisions(ah);
-
-	/*
-	 * Read back AR_WA into a permanent copy and set bits 14 and 17.
-	 * We need to do this to avoid RMW of this register. We cannot
-	 * read the reg when chip is asleep.
-	 */
-	ah->WARegVal = REG_READ(ah, AR_WA);
-	ah->WARegVal |= (AR_WA_D3_L1_DISABLE |
-			 AR_WA_ASPM_TIMER_BASED_DISABLE);
+	if (ah->hw_version.devid == AR5416_AR9100_DEVID)
+		ah->hw_version.macVersion = AR_SREV_VERSION_9100;
 
 	if (!ath9k_hw_set_reset_reg(ah, ATH9K_RESET_POWER_ON)) {
-		ath_err(common, "Couldn't reset chip\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Couldn't reset chip\n");
 		return -EIO;
 	}
 
@@ -543,7 +525,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	ath9k_hw_attach_ops(ah);
 
 	if (!ath9k_hw_setpower(ah, ATH9K_PM_AWAKE)) {
-		ath_err(common, "Couldn't wakeup chip\n");
+		ath_print(common, ATH_DBG_FATAL, "Couldn't wakeup chip\n");
 		return -EIO;
 	}
 
@@ -559,7 +541,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 		}
 	}
 
-	ath_dbg(common, ATH_DBG_RESET, "serialize_regmode is %d\n",
+	ath_print(common, ATH_DBG_RESET, "serialize_regmode is %d\n",
 		ah->config.serialize_regmode);
 
 	if (AR_SREV_9285(ah) || AR_SREV_9271(ah))
@@ -567,29 +549,15 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	else
 		ah->config.max_txtrig_level = MAX_TX_FIFO_THRESHOLD;
 
-	switch (ah->hw_version.macVersion) {
-	case AR_SREV_VERSION_5416_PCI:
-	case AR_SREV_VERSION_5416_PCIE:
-	case AR_SREV_VERSION_9160:
-	case AR_SREV_VERSION_9100:
-	case AR_SREV_VERSION_9280:
-	case AR_SREV_VERSION_9285:
-	case AR_SREV_VERSION_9287:
-	case AR_SREV_VERSION_9271:
-	case AR_SREV_VERSION_9300:
-	case AR_SREV_VERSION_9330:
-	case AR_SREV_VERSION_9485:
-	case AR_SREV_VERSION_9340:
-		break;
-	default:
-		ath_err(common,
-			"Mac Chip Rev 0x%02x.%x is not supported by this driver\n",
-			ah->hw_version.macVersion, ah->hw_version.macRev);
+	if (!ath9k_hw_macversion_supported(ah)) {
+		ath_print(common, ATH_DBG_FATAL,
+			  "Mac Chip Rev 0x%02x.%x is not supported by "
+			  "this driver\n", ah->hw_version.macVersion,
+			  ah->hw_version.macRev);
 		return -EOPNOTSUPP;
 	}
 
-	if (AR_SREV_9271(ah) || AR_SREV_9100(ah) || AR_SREV_9340(ah) ||
-	    AR_SREV_9330(ah))
+	if (AR_SREV_9271(ah) || AR_SREV_9100(ah))
 		ah->is_pciexpress = false;
 
 	ah->hw_version.phyRev = REG_READ(ah, AR_PHY_CHIP_ID);
@@ -603,9 +571,17 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 
 	ath9k_hw_init_mode_regs(ah);
 
+	/*
+	 * Read back AR_WA into a permanent copy and set bits 14 and 17.
+	 * We need to do this to avoid RMW of this register. We cannot
+	 * read the reg when chip is asleep.
+	 */
+	ah->WARegVal = REG_READ(ah, AR_WA);
+	ah->WARegVal |= (AR_WA_D3_L1_DISABLE |
+			 AR_WA_ASPM_TIMER_BASED_DISABLE);
 
 	if (ah->is_pciexpress)
-		ath9k_hw_aspm_init(ah);
+		ath9k_hw_configpcipowersave(ah, 0, 0);
 	else
 		ath9k_hw_disablepcie(ah);
 
@@ -623,7 +599,8 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 
 	r = ath9k_hw_init_macaddr(ah);
 	if (r) {
-		ath_err(common, "Failed to initialize MAC address\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Failed to initialize MAC address\n");
 		return r;
 	}
 
@@ -632,10 +609,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	else
 		ah->tx_trig_level = (AR_FTRIG_512B >> AR_FTRIG_S);
 
-	if (AR_SREV_9330(ah))
-		ah->bb_watchdog_timeout_ms = 85;
-	else
-		ah->bb_watchdog_timeout_ms = 25;
+	ah->bb_watchdog_timeout_ms = 25;
 
 	common->state = ATH_HW_INITIALIZED;
 
@@ -660,23 +634,21 @@ int ath9k_hw_init(struct ath_hw *ah)
 	case AR9287_DEVID_PCIE:
 	case AR2427_DEVID_PCIE:
 	case AR9300_DEVID_PCIE:
-	case AR9300_DEVID_AR9485_PCIE:
-	case AR9300_DEVID_AR9330:
-	case AR9300_DEVID_AR9340:
 		break;
 	default:
 		if (common->bus_ops->ath_bus_type == ATH_USB)
 			break;
-		ath_err(common, "Hardware device ID 0x%04x not supported\n",
-			ah->hw_version.devid);
+		ath_print(common, ATH_DBG_FATAL,
+			  "Hardware device ID 0x%04x not supported\n",
+			  ah->hw_version.devid);
 		return -EOPNOTSUPP;
 	}
 
 	ret = __ath9k_hw_init(ah);
 	if (ret) {
-		ath_err(common,
-			"Unable to initialize hardware; initialization status: %d\n",
-			ret);
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to initialize hardware; "
+			  "initialization status: %d\n", ret);
 		return ret;
 	}
 
@@ -705,131 +677,12 @@ static void ath9k_hw_init_qos(struct ath_hw *ah)
 	REGWRITE_BUFFER_FLUSH(ah);
 }
 
-u32 ar9003_get_pll_sqsum_dvc(struct ath_hw *ah)
-{
-	REG_CLR_BIT(ah, PLL3, PLL3_DO_MEAS_MASK);
-	udelay(100);
-	REG_SET_BIT(ah, PLL3, PLL3_DO_MEAS_MASK);
-
-	while ((REG_READ(ah, PLL4) & PLL4_MEAS_DONE) == 0)
-		udelay(100);
-
-	return (REG_READ(ah, PLL3) & SQSUM_DVC_MASK) >> 3;
-}
-EXPORT_SYMBOL(ar9003_get_pll_sqsum_dvc);
-
 static void ath9k_hw_init_pll(struct ath_hw *ah,
 			      struct ath9k_channel *chan)
 {
-	u32 pll;
-
-	if (AR_SREV_9485(ah)) {
-
-		/* program BB PLL ki and kd value, ki=0x4, kd=0x40 */
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_BB_DPLL2_PLL_PWD, 0x1);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_DPLL2_KD, 0x40);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_DPLL2_KI, 0x4);
-
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL1,
-			      AR_CH0_BB_DPLL1_REFDIV, 0x5);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL1,
-			      AR_CH0_BB_DPLL1_NINI, 0x58);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL1,
-			      AR_CH0_BB_DPLL1_NFRAC, 0x0);
-
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_BB_DPLL2_OUTDIV, 0x1);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_BB_DPLL2_LOCAL_PLL, 0x1);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_BB_DPLL2_EN_NEGTRIG, 0x1);
-
-		/* program BB PLL phase_shift to 0x6 */
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL3,
-			      AR_CH0_BB_DPLL3_PHASE_SHIFT, 0x6);
-
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2,
-			      AR_CH0_BB_DPLL2_PLL_PWD, 0x0);
-		udelay(1000);
-	} else if (AR_SREV_9330(ah)) {
-		u32 ddr_dpll2, pll_control2, kd;
-
-		if (ah->is_clk_25mhz) {
-			ddr_dpll2 = 0x18e82f01;
-			pll_control2 = 0xe04a3d;
-			kd = 0x1d;
-		} else {
-			ddr_dpll2 = 0x19e82f01;
-			pll_control2 = 0x886666;
-			kd = 0x3d;
-		}
-
-		/* program DDR PLL ki and kd value */
-		REG_WRITE(ah, AR_CH0_DDR_DPLL2, ddr_dpll2);
-
-		/* program DDR PLL phase_shift */
-		REG_RMW_FIELD(ah, AR_CH0_DDR_DPLL3,
-			      AR_CH0_DPLL3_PHASE_SHIFT, 0x1);
-
-		REG_WRITE(ah, AR_RTC_PLL_CONTROL, 0x1142c);
-		udelay(1000);
-
-		/* program refdiv, nint, frac to RTC register */
-		REG_WRITE(ah, AR_RTC_PLL_CONTROL2, pll_control2);
-
-		/* program BB PLL kd and ki value */
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2, AR_CH0_DPLL2_KD, kd);
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL2, AR_CH0_DPLL2_KI, 0x06);
-
-		/* program BB PLL phase_shift */
-		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL3,
-			      AR_CH0_BB_DPLL3_PHASE_SHIFT, 0x1);
-	} else if (AR_SREV_9340(ah)) {
-		u32 regval, pll2_divint, pll2_divfrac, refdiv;
-
-		REG_WRITE(ah, AR_RTC_PLL_CONTROL, 0x1142c);
-		udelay(1000);
-
-		REG_SET_BIT(ah, AR_PHY_PLL_MODE, 0x1 << 16);
-		udelay(100);
-
-		if (ah->is_clk_25mhz) {
-			pll2_divint = 0x54;
-			pll2_divfrac = 0x1eb85;
-			refdiv = 3;
-		} else {
-			pll2_divint = 88;
-			pll2_divfrac = 0;
-			refdiv = 5;
-		}
-
-		regval = REG_READ(ah, AR_PHY_PLL_MODE);
-		regval |= (0x1 << 16);
-		REG_WRITE(ah, AR_PHY_PLL_MODE, regval);
-		udelay(100);
-
-		REG_WRITE(ah, AR_PHY_PLL_CONTROL, (refdiv << 27) |
-			  (pll2_divint << 18) | pll2_divfrac);
-		udelay(100);
-
-		regval = REG_READ(ah, AR_PHY_PLL_MODE);
-		regval = (regval & 0x80071fff) | (0x1 << 30) | (0x1 << 13) |
-			 (0x4 << 26) | (0x18 << 19);
-		REG_WRITE(ah, AR_PHY_PLL_MODE, regval);
-		REG_WRITE(ah, AR_PHY_PLL_MODE,
-			  REG_READ(ah, AR_PHY_PLL_MODE) & 0xfffeffff);
-		udelay(1000);
-	}
-
-	pll = ath9k_hw_compute_pll_control(ah, chan);
+	u32 pll = ath9k_hw_compute_pll_control(ah, chan);
 
 	REG_WRITE(ah, AR_RTC_PLL_CONTROL, pll);
-
-	if (AR_SREV_9485(ah) || AR_SREV_9340(ah) || AR_SREV_9330(ah))
-		udelay(1000);
 
 	/* Switch the core clock for ar9271 to 117Mhz */
 	if (AR_SREV_9271(ah)) {
@@ -840,33 +693,16 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 	udelay(RTC_PLL_SETTLE_DELAY);
 
 	REG_WRITE(ah, AR_RTC_SLEEP_CLK, AR_RTC_FORCE_DERIVED_CLK);
-
-	if (AR_SREV_9340(ah)) {
-		if (ah->is_clk_25mhz) {
-			REG_WRITE(ah, AR_RTC_DERIVED_CLK, 0x17c << 1);
-			REG_WRITE(ah, AR_SLP32_MODE, 0x0010f3d7);
-			REG_WRITE(ah,  AR_SLP32_INC, 0x0001e7ae);
-		} else {
-			REG_WRITE(ah, AR_RTC_DERIVED_CLK, 0x261 << 1);
-			REG_WRITE(ah, AR_SLP32_MODE, 0x0010f400);
-			REG_WRITE(ah,  AR_SLP32_INC, 0x0001e800);
-		}
-		udelay(100);
-	}
 }
 
 static void ath9k_hw_init_interrupt_masks(struct ath_hw *ah,
 					  enum nl80211_iftype opmode)
 {
-	u32 sync_default = AR_INTR_SYNC_DEFAULT;
 	u32 imr_reg = AR_IMR_TXERR |
 		AR_IMR_TXURN |
 		AR_IMR_RXERR |
 		AR_IMR_RXORN |
 		AR_IMR_BCNMISC;
-
-	if (AR_SREV_9340(ah))
-		sync_default &= ~AR_INTR_SYNC_HOST1_FATAL;
 
 	if (AR_SREV_9300_20_OR_LATER(ah)) {
 		imr_reg |= AR_IMR_RXOK_HP;
@@ -898,7 +734,7 @@ static void ath9k_hw_init_interrupt_masks(struct ath_hw *ah,
 
 	if (!AR_SREV_9100(ah)) {
 		REG_WRITE(ah, AR_INTR_SYNC_CAUSE, 0xFFFFFFFF);
-		REG_WRITE(ah, AR_INTR_SYNC_ENABLE, sync_default);
+		REG_WRITE(ah, AR_INTR_SYNC_ENABLE, AR_INTR_SYNC_DEFAULT);
 		REG_WRITE(ah, AR_INTR_SYNC_MASK, 0);
 	}
 
@@ -910,13 +746,6 @@ static void ath9k_hw_init_interrupt_masks(struct ath_hw *ah,
 		REG_WRITE(ah, AR_INTR_PRIO_SYNC_ENABLE, 0);
 		REG_WRITE(ah, AR_INTR_PRIO_SYNC_MASK, 0);
 	}
-}
-
-static void ath9k_hw_set_sifs_time(struct ath_hw *ah, u32 us)
-{
-	u32 val = ath9k_hw_mac_to_clks(ah, us - 2);
-	val = min(val, (u32) 0xFFFF);
-	REG_WRITE(ah, AR_D_GBL_IFS_SIFS, val);
 }
 
 static void ath9k_hw_setslottime(struct ath_hw *ah, u32 us)
@@ -943,8 +772,8 @@ static void ath9k_hw_set_cts_timeout(struct ath_hw *ah, u32 us)
 static bool ath9k_hw_set_global_txtimeout(struct ath_hw *ah, u32 tu)
 {
 	if (tu > 0xFFFF) {
-		ath_dbg(ath9k_hw_common(ah), ATH_DBG_XMIT,
-			"bad global tx timeout %u\n", tu);
+		ath_print(ath9k_hw_common(ah), ATH_DBG_XMIT,
+			  "bad global tx timeout %u\n", tu);
 		ah->globaltxtimeout = (u32) -1;
 		return false;
 	} else {
@@ -956,60 +785,26 @@ static bool ath9k_hw_set_global_txtimeout(struct ath_hw *ah, u32 tu)
 
 void ath9k_hw_init_global_settings(struct ath_hw *ah)
 {
-	struct ath_common *common = ath9k_hw_common(ah);
-	struct ieee80211_conf *conf = &common->hw->conf;
-	const struct ath9k_channel *chan = ah->curchan;
+	struct ieee80211_conf *conf = &ath9k_hw_common(ah)->hw->conf;
 	int acktimeout;
 	int slottime;
 	int sifstime;
-	int rx_lat = 0, tx_lat = 0, eifs = 0;
-	u32 reg;
 
-	ath_dbg(ath9k_hw_common(ah), ATH_DBG_RESET, "ah->misc_mode 0x%x\n",
-		ah->misc_mode);
-
-	if (!chan)
-		return;
+	ath_print(ath9k_hw_common(ah), ATH_DBG_RESET, "ah->misc_mode 0x%x\n",
+		  ah->misc_mode);
 
 	if (ah->misc_mode != 0)
-		REG_SET_BIT(ah, AR_PCU_MISC, ah->misc_mode);
+		REG_WRITE(ah, AR_PCU_MISC,
+			  REG_READ(ah, AR_PCU_MISC) | ah->misc_mode);
 
-	rx_lat = 37;
-	tx_lat = 54;
-
-	if (IS_CHAN_HALF_RATE(chan)) {
-		eifs = 175;
-		rx_lat *= 2;
-		tx_lat *= 2;
-		if (IS_CHAN_A_FAST_CLOCK(ah, chan))
-		    tx_lat += 11;
-
-		slottime = 13;
-		sifstime = 32;
-	} else if (IS_CHAN_QUARTER_RATE(chan)) {
-		eifs = 340;
-		rx_lat *= 4;
-		tx_lat *= 4;
-		if (IS_CHAN_A_FAST_CLOCK(ah, chan))
-		    tx_lat += 22;
-
-		slottime = 21;
-		sifstime = 64;
-	} else {
-		eifs = REG_READ(ah, AR_D_GBL_IFS_EIFS);
-		reg = REG_READ(ah, AR_USEC);
-		rx_lat = MS(reg, AR_USEC_RX_LAT);
-		tx_lat = MS(reg, AR_USEC_TX_LAT);
-
-		slottime = ah->slottime;
-		if (IS_CHAN_5GHZ(chan))
-			sifstime = 16;
-		else
-			sifstime = 10;
-	}
+	if (conf->channel && conf->channel->band == IEEE80211_BAND_5GHZ)
+		sifstime = 16;
+	else
+		sifstime = 10;
 
 	/* As defined by IEEE 802.11-2007 17.3.8.6 */
-	acktimeout = slottime + sifstime + 3 * ah->coverage_class;
+	slottime = ah->slottime + 3 * ah->coverage_class;
+	acktimeout = slottime + sifstime;
 
 	/*
 	 * Workaround for early ACK timeouts, add an offset to match the
@@ -1021,20 +816,11 @@ void ath9k_hw_init_global_settings(struct ath_hw *ah)
 	if (conf->channel && conf->channel->band == IEEE80211_BAND_2GHZ)
 		acktimeout += 64 - sifstime - ah->slottime;
 
-	ath9k_hw_set_sifs_time(ah, sifstime);
 	ath9k_hw_setslottime(ah, slottime);
 	ath9k_hw_set_ack_timeout(ah, acktimeout);
 	ath9k_hw_set_cts_timeout(ah, acktimeout);
 	if (ah->globaltxtimeout != (u32) -1)
 		ath9k_hw_set_global_txtimeout(ah, ah->globaltxtimeout);
-
-	REG_WRITE(ah, AR_D_GBL_IFS_EIFS, ath9k_hw_mac_to_clks(ah, eifs));
-	REG_RMW(ah, AR_USEC,
-		(common->clockrate - 1) |
-		SM(rx_lat, AR_USEC_RX_LAT) |
-		SM(tx_lat, AR_USEC_TX_LAT),
-		AR_USEC_TX_LAT | AR_USEC_RX_LAT | AR_USEC_USEC);
-
 }
 EXPORT_SYMBOL(ath9k_hw_init_global_settings);
 
@@ -1077,19 +863,23 @@ u32 ath9k_regd_get_ctl(struct ath_regulatory *reg, struct ath9k_channel *chan)
 static inline void ath9k_hw_set_dma(struct ath_hw *ah)
 {
 	struct ath_common *common = ath9k_hw_common(ah);
+	u32 regval;
 
 	ENABLE_REGWRITE_BUFFER(ah);
 
 	/*
 	 * set AHB_MODE not to do cacheline prefetches
 	*/
-	if (!AR_SREV_9300_20_OR_LATER(ah))
-		REG_SET_BIT(ah, AR_AHB_MODE, AR_AHB_PREFETCH_RD_EN);
+	if (!AR_SREV_9300_20_OR_LATER(ah)) {
+		regval = REG_READ(ah, AR_AHB_MODE);
+		REG_WRITE(ah, AR_AHB_MODE, regval | AR_AHB_PREFETCH_RD_EN);
+	}
 
 	/*
 	 * let mac dma reads be in 128 byte chunks
 	 */
-	REG_RMW(ah, AR_TXCFG, AR_TXCFG_DMASZ_128B, AR_TXCFG_DMASZ_MASK);
+	regval = REG_READ(ah, AR_TXCFG) & ~AR_TXCFG_DMASZ_MASK;
+	REG_WRITE(ah, AR_TXCFG, regval | AR_TXCFG_DMASZ_128B);
 
 	REGWRITE_BUFFER_FLUSH(ah);
 
@@ -1106,7 +896,8 @@ static inline void ath9k_hw_set_dma(struct ath_hw *ah)
 	/*
 	 * let mac dma writes be in 128 byte chunks
 	 */
-	REG_RMW(ah, AR_RXCFG, AR_RXCFG_DMASZ_128B, AR_RXCFG_DMASZ_MASK);
+	regval = REG_READ(ah, AR_RXCFG) & ~AR_RXCFG_DMASZ_MASK;
+	REG_WRITE(ah, AR_RXCFG, regval | AR_RXCFG_DMASZ_128B);
 
 	/*
 	 * Setup receive FIFO threshold to hold off TX activities
@@ -1145,27 +936,30 @@ static inline void ath9k_hw_set_dma(struct ath_hw *ah)
 
 static void ath9k_hw_set_operating_mode(struct ath_hw *ah, int opmode)
 {
-	u32 mask = AR_STA_ID1_STA_AP | AR_STA_ID1_ADHOC;
-	u32 set = AR_STA_ID1_KSRCH_MODE;
+	u32 val;
 
+	val = REG_READ(ah, AR_STA_ID1);
+	val &= ~(AR_STA_ID1_STA_AP | AR_STA_ID1_ADHOC);
 	switch (opmode) {
-	case NL80211_IFTYPE_ADHOC:
-	case NL80211_IFTYPE_MESH_POINT:
-		set |= AR_STA_ID1_ADHOC;
-		REG_SET_BIT(ah, AR_CFG, AR_CFG_AP_ADHOC_INDICATION);
-		break;
 	case NL80211_IFTYPE_AP:
-		set |= AR_STA_ID1_STA_AP;
-		/* fall through */
-	case NL80211_IFTYPE_STATION:
+		REG_WRITE(ah, AR_STA_ID1, val | AR_STA_ID1_STA_AP
+			  | AR_STA_ID1_KSRCH_MODE);
 		REG_CLR_BIT(ah, AR_CFG, AR_CFG_AP_ADHOC_INDICATION);
 		break;
+	case NL80211_IFTYPE_ADHOC:
+	case NL80211_IFTYPE_MESH_POINT:
+		REG_WRITE(ah, AR_STA_ID1, val | AR_STA_ID1_ADHOC
+			  | AR_STA_ID1_KSRCH_MODE);
+		REG_SET_BIT(ah, AR_CFG, AR_CFG_AP_ADHOC_INDICATION);
+		break;
+	case NL80211_IFTYPE_STATION:
+		REG_WRITE(ah, AR_STA_ID1, val | AR_STA_ID1_KSRCH_MODE);
+		break;
 	default:
-		if (!ah->is_monitoring)
-			set = 0;
+		if (ah->is_monitoring)
+			REG_WRITE(ah, AR_STA_ID1, val | AR_STA_ID1_KSRCH_MODE);
 		break;
 	}
-	REG_RMW(ah, AR_STA_ID1, set, mask);
 }
 
 void ath9k_hw_get_delta_slope_vals(struct ath_hw *ah, u32 coef_scaled,
@@ -1191,8 +985,10 @@ static bool ath9k_hw_set_reset(struct ath_hw *ah, int type)
 	u32 tmpReg;
 
 	if (AR_SREV_9100(ah)) {
-		REG_RMW_FIELD(ah, AR_RTC_DERIVED_CLK,
-			      AR_RTC_DERIVED_CLK_PERIOD, 1);
+		u32 val = REG_READ(ah, AR_RTC_DERIVED_CLK);
+		val &= ~AR_RTC_DERIVED_CLK_PERIOD;
+		val |= SM(1, AR_RTC_DERIVED_CLK_PERIOD);
+		REG_WRITE(ah, AR_RTC_DERIVED_CLK, val);
 		(void)REG_READ(ah, AR_RTC_DERIVED_CLK);
 	}
 
@@ -1230,41 +1026,6 @@ static bool ath9k_hw_set_reset(struct ath_hw *ah, int type)
 			rst_flags |= AR_RTC_RC_MAC_COLD;
 	}
 
-	if (AR_SREV_9330(ah)) {
-		int npend = 0;
-		int i;
-
-		/* AR9330 WAR:
-		 * call external reset function to reset WMAC if:
-		 * - doing a cold reset
-		 * - we have pending frames in the TX queues
-		 */
-
-		for (i = 0; i < AR_NUM_QCU; i++) {
-			npend = ath9k_hw_numtxpending(ah, i);
-			if (npend)
-				break;
-		}
-
-		if (ah->external_reset &&
-		    (npend || type == ATH9K_RESET_COLD)) {
-			int reset_err = 0;
-
-			ath_dbg(ath9k_hw_common(ah), ATH_DBG_RESET,
-				"reset MAC via external reset\n");
-
-			reset_err = ah->external_reset();
-			if (reset_err) {
-				ath_err(ath9k_hw_common(ah),
-					"External reset failed, err=%d\n",
-					reset_err);
-				return false;
-			}
-
-			REG_WRITE(ah, AR_RTC_RESET, 1);
-		}
-	}
-
 	REG_WRITE(ah, AR_RTC_RC, rst_flags);
 
 	REGWRITE_BUFFER_FLUSH(ah);
@@ -1273,8 +1034,8 @@ static bool ath9k_hw_set_reset(struct ath_hw *ah, int type)
 
 	REG_WRITE(ah, AR_RTC_RC, 0);
 	if (!ath9k_hw_wait(ah, AR_RTC_RC, AR_RTC_RC_M, 0, AH_WAIT_TIMEOUT)) {
-		ath_dbg(ath9k_hw_common(ah), ATH_DBG_RESET,
-			"RTC stuck in MAC reset\n");
+		ath_print(ath9k_hw_common(ah), ATH_DBG_RESET,
+			  "RTC stuck in MAC reset\n");
 		return false;
 	}
 
@@ -1303,6 +1064,7 @@ static bool ath9k_hw_set_reset_power_on(struct ath_hw *ah)
 		REG_WRITE(ah, AR_RC, AR_RC_AHB);
 
 	REG_WRITE(ah, AR_RTC_RESET, 0);
+	udelay(2);
 
 	REGWRITE_BUFFER_FLUSH(ah);
 
@@ -1319,10 +1081,12 @@ static bool ath9k_hw_set_reset_power_on(struct ath_hw *ah)
 			   AR_RTC_STATUS_M,
 			   AR_RTC_STATUS_ON,
 			   AH_WAIT_TIMEOUT)) {
-		ath_dbg(ath9k_hw_common(ah), ATH_DBG_RESET,
-			"RTC not waking up\n");
+		ath_print(ath9k_hw_common(ah), ATH_DBG_RESET,
+			  "RTC not waking up\n");
 		return false;
 	}
+
+	ath9k_hw_read_revisions(ah);
 
 	return ath9k_hw_set_reset(ah, ATH9K_RESET_WARM);
 }
@@ -1378,14 +1142,16 @@ static bool ath9k_hw_channel_change(struct ath_hw *ah,
 
 	for (qnum = 0; qnum < AR_NUM_QCU; qnum++) {
 		if (ath9k_hw_numtxpending(ah, qnum)) {
-			ath_dbg(common, ATH_DBG_QUEUE,
-				"Transmit frames pending on queue %d\n", qnum);
+			ath_print(common, ATH_DBG_QUEUE,
+				  "Transmit frames pending on "
+				  "queue %d\n", qnum);
 			return false;
 		}
 	}
 
 	if (!ath9k_hw_rfbus_req(ah)) {
-		ath_err(common, "Could not kill baseband RX\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Could not kill baseband RX\n");
 		return false;
 	}
 
@@ -1393,7 +1159,8 @@ static bool ath9k_hw_channel_change(struct ath_hw *ah,
 
 	r = ath9k_hw_rf_set_freq(ah, chan);
 	if (r) {
-		ath_err(common, "Failed to set channel\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Failed to set channel\n");
 		return false;
 	}
 	ath9k_hw_set_clockrate(ah);
@@ -1403,7 +1170,7 @@ static bool ath9k_hw_channel_change(struct ath_hw *ah,
 			     channel->max_antenna_gain * 2,
 			     channel->max_power * 2,
 			     min((u32) MAX_RATE_POWER,
-			     (u32) regulatory->power_limit), false);
+			     (u32) regulatory->power_limit));
 
 	ath9k_hw_rfbus_done(ah);
 
@@ -1413,20 +1180,6 @@ static bool ath9k_hw_channel_change(struct ath_hw *ah,
 	ath9k_hw_spur_mitigate_freq(ah, chan);
 
 	return true;
-}
-
-static void ath9k_hw_apply_gpio_override(struct ath_hw *ah)
-{
-	u32 gpio_mask = ah->gpio_mask;
-	int i;
-
-	for (i = 0; gpio_mask; i++, gpio_mask >>= 1) {
-		if (!(gpio_mask & 1))
-			continue;
-
-		ath9k_hw_cfg_output(ah, i, AR_GPIO_OUTPUT_MUX_AS_OUTPUT);
-		ath9k_hw_set_gpio(ah, i, !!(ah->gpio_val & BIT(i)));
-	}
 }
 
 bool ath9k_hw_check_alive(struct ath_hw *ah)
@@ -1470,6 +1223,15 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	ah->txchainmask = common->tx_chainmask;
 	ah->rxchainmask = common->rx_chainmask;
+
+	if (!ah->chip_fullsleep) {
+		ath9k_hw_abortpcurecv(ah);
+		if (!ath9k_hw_stopdmarecv(ah)) {
+			ath_print(common, ATH_DBG_XMIT,
+				"Failed to stop receive dma\n");
+			bChannelChange = false;
+		}
+	}
 
 	if (!ath9k_hw_setpower(ah, ATH9K_PM_AWAKE))
 		return -EIO;
@@ -1521,8 +1283,6 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	ath9k_hw_mark_phy_inactive(ah);
 
-	ah->paprd_table_write_done = false;
-
 	/* Only required on the first reset */
 	if (AR_SREV_9271(ah) && ah->htc_reset_init) {
 		REG_WRITE(ah,
@@ -1532,7 +1292,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	}
 
 	if (!ath9k_hw_chip_reset(ah, chan)) {
-		ath_err(common, "Chip reset failed\n");
+		ath_print(common, ATH_DBG_FATAL, "Chip reset failed\n");
 		return -EINVAL;
 	}
 
@@ -1593,6 +1353,8 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	ath9k_hw_spur_mitigate_freq(ah, chan);
 	ah->eep_ops->set_board_values(ah, chan);
 
+	ath9k_hw_set_operating_mode(ah, ah->opmode);
+
 	ENABLE_REGWRITE_BUFFER(ah);
 
 	REG_WRITE(ah, AR_STA_ID0, get_unaligned_le32(common->macaddr));
@@ -1610,8 +1372,6 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	REGWRITE_BUFFER_FLUSH(ah);
 
-	ath9k_hw_set_operating_mode(ah, ah->opmode);
-
 	r = ath9k_hw_rf_set_freq(ah, chan);
 	if (r)
 		return r;
@@ -1626,7 +1386,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	REGWRITE_BUFFER_FLUSH(ah);
 
 	ah->intr_txqs = 0;
-	for (i = 0; i < ATH9K_NUM_TX_QUEUES; i++)
+	for (i = 0; i < ah->caps.total_queues; i++)
 		ath9k_hw_resettxqueue(ah, i);
 
 	ath9k_hw_init_interrupt_masks(ah, ah->opmode);
@@ -1634,20 +1394,17 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	ath9k_hw_init_qos(ah);
 
 	if (ah->caps.hw_caps & ATH9K_HW_CAP_RFSILENT)
-		ath9k_hw_cfg_gpio_input(ah, ah->rfkill_gpio);
+		ath9k_enable_rfkill(ah);
 
 	ath9k_hw_init_global_settings(ah);
 
-	if (AR_SREV_9287(ah) && AR_SREV_9287_13_OR_LATER(ah)) {
-		REG_SET_BIT(ah, AR_MAC_PCU_LOGIC_ANALYZER,
-			    AR_MAC_PCU_LOGIC_ANALYZER_DISBUG20768);
-		REG_RMW_FIELD(ah, AR_AHB_MODE, AR_AHB_CUSTOM_BURST_EN,
-			      AR_AHB_CUSTOM_BURST_ASYNC_FIFO_VAL);
-		REG_SET_BIT(ah, AR_PCU_MISC_MODE2,
-			    AR_PCU_MISC_MODE2_ENABLE_AGGWEP);
+	if (!AR_SREV_9300_20_OR_LATER(ah)) {
+		ar9002_hw_update_async_fifo(ah);
+		ar9002_hw_enable_wep_aggregation(ah);
 	}
 
-	REG_SET_BIT(ah, AR_STA_ID1, AR_STA_ID1_PRESERVE_SEQNUM);
+	REG_WRITE(ah, AR_STA_ID1,
+		  REG_READ(ah, AR_STA_ID1) | AR_STA_ID1_PRESERVE_SEQNUM);
 
 	ath9k_hw_set_dma(ah);
 
@@ -1682,13 +1439,13 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 		u32 mask;
 		mask = REG_READ(ah, AR_CFG);
 		if (mask & (AR_CFG_SWRB | AR_CFG_SWTB | AR_CFG_SWRG)) {
-			ath_dbg(common, ATH_DBG_RESET,
+			ath_print(common, ATH_DBG_RESET,
 				"CFG Byte Swap Set 0x%x\n", mask);
 		} else {
 			mask =
 				INIT_CONFIG_STATUS | AR_CFG_SWRB | AR_CFG_SWTB;
 			REG_WRITE(ah, AR_CFG, mask);
-			ath_dbg(common, ATH_DBG_RESET,
+			ath_print(common, ATH_DBG_RESET,
 				"Setting CFG 0x%x\n", REG_READ(ah, AR_CFG));
 		}
 	} else {
@@ -1700,9 +1457,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 				REG_WRITE(ah, AR_CFG, AR_CFG_SWTD | AR_CFG_SWRD);
 		}
 #ifdef __BIG_ENDIAN
-		else if (AR_SREV_9330(ah) || AR_SREV_9340(ah))
-			REG_RMW(ah, AR_CFG, AR_CFG_SWRB | AR_CFG_SWTB, 0);
-		else
+                else
 			REG_WRITE(ah, AR_CFG, AR_CFG_SWTD | AR_CFG_SWRD);
 #endif
 	}
@@ -1710,13 +1465,8 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	if (ah->btcoex_hw.enabled)
 		ath9k_hw_btcoex_enable(ah);
 
-	if (AR_SREV_9300_20_OR_LATER(ah)) {
+	if (AR_SREV_9300_20_OR_LATER(ah))
 		ar9003_hw_bb_watchdog_config(ah);
-
-		ar9003_hw_disable_phy_restart(ah);
-	}
-
-	ath9k_hw_apply_gpio_override(ah);
 
 	return 0;
 }
@@ -1823,9 +1573,9 @@ static bool ath9k_hw_set_power_awake(struct ath_hw *ah, int setChip)
 				    AR_RTC_FORCE_WAKE_EN);
 		}
 		if (i == 0) {
-			ath_err(ath9k_hw_common(ah),
-				"Failed to wakeup in %uus\n",
-				POWER_UP_TIME / 20);
+			ath_print(ath9k_hw_common(ah), ATH_DBG_FATAL,
+				  "Failed to wakeup in %uus\n",
+				  POWER_UP_TIME / 20);
 			return false;
 		}
 	}
@@ -1849,8 +1599,8 @@ bool ath9k_hw_setpower(struct ath_hw *ah, enum ath9k_power_mode mode)
 	if (ah->power_mode == mode)
 		return status;
 
-	ath_dbg(common, ATH_DBG_RESET, "%s -> %s\n",
-		modes[ah->power_mode], modes[mode]);
+	ath_print(common, ATH_DBG_RESET, "%s -> %s\n",
+		  modes[ah->power_mode], modes[mode]);
 
 	switch (mode) {
 	case ATH9K_PM_AWAKE:
@@ -1864,19 +1614,11 @@ bool ath9k_hw_setpower(struct ath_hw *ah, enum ath9k_power_mode mode)
 		ath9k_set_power_network_sleep(ah, setChip);
 		break;
 	default:
-		ath_err(common, "Unknown power mode %u\n", mode);
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unknown power mode %u\n", mode);
 		return false;
 	}
 	ah->power_mode = mode;
-
-	/*
-	 * XXX: If this warning never comes up after a while then
-	 * simply keep the ATH_DBG_WARN_ON_ONCE() but make
-	 * ath9k_hw_setpower() return type void.
-	 */
-
-	if (!(ah->ah_flags & AH_UNPLUGGED))
-		ATH_DBG_WARN_ON_ONCE(!status);
 
 	return status;
 }
@@ -1890,39 +1632,66 @@ void ath9k_hw_beaconinit(struct ath_hw *ah, u32 next_beacon, u32 beacon_period)
 {
 	int flags = 0;
 
+	ah->beacon_interval = beacon_period;
+
 	ENABLE_REGWRITE_BUFFER(ah);
 
 	switch (ah->opmode) {
+	case NL80211_IFTYPE_STATION:
+		REG_WRITE(ah, AR_NEXT_TBTT_TIMER, TU_TO_USEC(next_beacon));
+		REG_WRITE(ah, AR_NEXT_DMA_BEACON_ALERT, 0xffff);
+		REG_WRITE(ah, AR_NEXT_SWBA, 0x7ffff);
+		flags |= AR_TBTT_TIMER_EN;
+		break;
 	case NL80211_IFTYPE_ADHOC:
 	case NL80211_IFTYPE_MESH_POINT:
 		REG_SET_BIT(ah, AR_TXCFG,
 			    AR_TXCFG_ADHOC_BEACON_ATIM_TX_POLICY);
-		REG_WRITE(ah, AR_NEXT_NDP_TIMER, next_beacon +
-			  TU_TO_USEC(ah->atim_window ? ah->atim_window : 1));
+		REG_WRITE(ah, AR_NEXT_NDP_TIMER,
+			  TU_TO_USEC(next_beacon +
+				     (ah->atim_window ? ah->
+				      atim_window : 1)));
 		flags |= AR_NDP_TIMER_EN;
 	case NL80211_IFTYPE_AP:
-		REG_WRITE(ah, AR_NEXT_TBTT_TIMER, next_beacon);
-		REG_WRITE(ah, AR_NEXT_DMA_BEACON_ALERT, next_beacon -
-			  TU_TO_USEC(ah->config.dma_beacon_response_time));
-		REG_WRITE(ah, AR_NEXT_SWBA, next_beacon -
-			  TU_TO_USEC(ah->config.sw_beacon_response_time));
+		REG_WRITE(ah, AR_NEXT_TBTT_TIMER, TU_TO_USEC(next_beacon));
+		REG_WRITE(ah, AR_NEXT_DMA_BEACON_ALERT,
+			  TU_TO_USEC(next_beacon -
+				     ah->config.
+				     dma_beacon_response_time));
+		REG_WRITE(ah, AR_NEXT_SWBA,
+			  TU_TO_USEC(next_beacon -
+				     ah->config.
+				     sw_beacon_response_time));
 		flags |=
 			AR_TBTT_TIMER_EN | AR_DBA_TIMER_EN | AR_SWBA_TIMER_EN;
 		break;
 	default:
-		ath_dbg(ath9k_hw_common(ah), ATH_DBG_BEACON,
-			"%s: unsupported opmode: %d\n",
-			__func__, ah->opmode);
+		if (ah->is_monitoring) {
+			REG_WRITE(ah, AR_NEXT_TBTT_TIMER,
+					TU_TO_USEC(next_beacon));
+			REG_WRITE(ah, AR_NEXT_DMA_BEACON_ALERT, 0xffff);
+			REG_WRITE(ah, AR_NEXT_SWBA, 0x7ffff);
+			flags |= AR_TBTT_TIMER_EN;
+			break;
+		}
+		ath_print(ath9k_hw_common(ah), ATH_DBG_BEACON,
+			  "%s: unsupported opmode: %d\n",
+			  __func__, ah->opmode);
 		return;
 		break;
 	}
 
-	REG_WRITE(ah, AR_BEACON_PERIOD, beacon_period);
-	REG_WRITE(ah, AR_DMA_BEACON_PERIOD, beacon_period);
-	REG_WRITE(ah, AR_SWBA_PERIOD, beacon_period);
-	REG_WRITE(ah, AR_NDP_PERIOD, beacon_period);
+	REG_WRITE(ah, AR_BEACON_PERIOD, TU_TO_USEC(beacon_period));
+	REG_WRITE(ah, AR_DMA_BEACON_PERIOD, TU_TO_USEC(beacon_period));
+	REG_WRITE(ah, AR_SWBA_PERIOD, TU_TO_USEC(beacon_period));
+	REG_WRITE(ah, AR_NDP_PERIOD, TU_TO_USEC(beacon_period));
 
 	REGWRITE_BUFFER_FLUSH(ah);
+
+	beacon_period &= ~ATH9K_BEACON_ENA;
+	if (beacon_period & ATH9K_BEACON_RESET_TSF) {
+		ath9k_hw_reset_tsf(ah);
+	}
 
 	REG_SET_BIT(ah, AR_TIMER_MODE, flags);
 }
@@ -1940,16 +1709,16 @@ void ath9k_hw_set_sta_beacon_timers(struct ath_hw *ah,
 	REG_WRITE(ah, AR_NEXT_TBTT_TIMER, TU_TO_USEC(bs->bs_nexttbtt));
 
 	REG_WRITE(ah, AR_BEACON_PERIOD,
-		  TU_TO_USEC(bs->bs_intval));
+		  TU_TO_USEC(bs->bs_intval & ATH9K_BEACON_PERIOD));
 	REG_WRITE(ah, AR_DMA_BEACON_PERIOD,
-		  TU_TO_USEC(bs->bs_intval));
+		  TU_TO_USEC(bs->bs_intval & ATH9K_BEACON_PERIOD));
 
 	REGWRITE_BUFFER_FLUSH(ah);
 
 	REG_RMW_FIELD(ah, AR_RSSI_THR,
 		      AR_RSSI_THR_BM_THR, bs->bs_bmissthreshold);
 
-	beaconintval = bs->bs_intval;
+	beaconintval = bs->bs_intval & ATH9K_BEACON_PERIOD;
 
 	if (bs->bs_sleepduration > beaconintval)
 		beaconintval = bs->bs_sleepduration;
@@ -1963,10 +1732,10 @@ void ath9k_hw_set_sta_beacon_timers(struct ath_hw *ah,
 	else
 		nextTbtt = bs->bs_nexttbtt;
 
-	ath_dbg(common, ATH_DBG_BEACON, "next DTIM %d\n", bs->bs_nextdtim);
-	ath_dbg(common, ATH_DBG_BEACON, "next beacon %d\n", nextTbtt);
-	ath_dbg(common, ATH_DBG_BEACON, "beacon period %d\n", beaconintval);
-	ath_dbg(common, ATH_DBG_BEACON, "DTIM period %d\n", dtimperiod);
+	ath_print(common, ATH_DBG_BEACON, "next DTIM %d\n", bs->bs_nextdtim);
+	ath_print(common, ATH_DBG_BEACON, "next beacon %d\n", nextTbtt);
+	ath_print(common, ATH_DBG_BEACON, "beacon period %d\n", beaconintval);
+	ath_print(common, ATH_DBG_BEACON, "DTIM period %d\n", dtimperiod);
 
 	ENABLE_REGWRITE_BUFFER(ah);
 
@@ -2004,25 +1773,15 @@ EXPORT_SYMBOL(ath9k_hw_set_sta_beacon_timers);
 /* HW Capabilities */
 /*******************/
 
-static u8 fixup_chainmask(u8 chip_chainmask, u8 eeprom_chainmask)
-{
-	eeprom_chainmask &= chip_chainmask;
-	if (eeprom_chainmask)
-		return eeprom_chainmask;
-	else
-		return chip_chainmask;
-}
-
 int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 {
 	struct ath9k_hw_capabilities *pCap = &ah->caps;
 	struct ath_regulatory *regulatory = ath9k_hw_regulatory(ah);
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath_btcoex_hw *btcoex_hw = &ah->btcoex_hw;
-	unsigned int chip_chainmask;
 
-	u16 eeval;
-	u8 ant_div_ctl1, tx_chainmask, rx_chainmask;
+	u16 capField = 0, eeval;
+	u8 ant_div_ctl1;
 
 	eeval = ah->eep_ops->get_eeprom(ah, EEP_REG_0);
 	regulatory->current_rd = eeval;
@@ -2032,6 +1791,8 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 		eeval |= AR9285_RDEXT_DEFAULT;
 	regulatory->current_rd_ext = eeval;
 
+	capField = ah->eep_ops->get_eeprom(ah, EEP_OP_CAP);
+
 	if (ah->opmode != NL80211_IFTYPE_AP &&
 	    ah->hw_version.subvendorid == AR_SUBVENDOR_ID_NEW_A) {
 		if (regulatory->current_rd == 0x64 ||
@@ -2039,14 +1800,14 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 			regulatory->current_rd += 5;
 		else if (regulatory->current_rd == 0x41)
 			regulatory->current_rd = 0x43;
-		ath_dbg(common, ATH_DBG_REGULATORY,
-			"regdomain mapped to 0x%x\n", regulatory->current_rd);
+		ath_print(common, ATH_DBG_REGULATORY,
+			  "regdomain mapped to 0x%x\n", regulatory->current_rd);
 	}
 
 	eeval = ah->eep_ops->get_eeprom(ah, EEP_OP_MODE);
 	if ((eeval & (AR5416_OPFLAGS_11G | AR5416_OPFLAGS_11A)) == 0) {
-		ath_err(common,
-			"no band has been marked as supported in EEPROM\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "no band has been marked as supported in EEPROM.\n");
 		return -EINVAL;
 	}
 
@@ -2055,15 +1816,6 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 
 	if (eeval & AR5416_OPFLAGS_11G)
 		pCap->hw_caps |= ATH9K_HW_CAP_2GHZ;
-
-	if (AR_SREV_9485(ah) || AR_SREV_9285(ah) || AR_SREV_9330(ah))
-		chip_chainmask = 1;
-	else if (!AR_SREV_9280_20_OR_LATER(ah))
-		chip_chainmask = 7;
-	else if (!AR_SREV_9300_20_OR_LATER(ah) || AR_SREV_9340(ah))
-		chip_chainmask = 3;
-	else
-		chip_chainmask = 7;
 
 	pCap->tx_chainmask = ah->eep_ops->get_eeprom(ah, EEP_TX_MASK);
 	/*
@@ -2075,27 +1827,41 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 	    !(AR_SREV_9271(ah)))
 		/* CB71: GPIO 0 is pulled down to indicate 3 rx chains */
 		pCap->rx_chainmask = ath9k_hw_gpio_get(ah, 0) ? 0x5 : 0x7;
-	else if (AR_SREV_9100(ah))
-		pCap->rx_chainmask = 0x7;
 	else
 		/* Use rx_chainmask from EEPROM. */
 		pCap->rx_chainmask = ah->eep_ops->get_eeprom(ah, EEP_RX_MASK);
 
-	pCap->tx_chainmask = fixup_chainmask(chip_chainmask, pCap->tx_chainmask);
-	pCap->rx_chainmask = fixup_chainmask(chip_chainmask, pCap->rx_chainmask);
-
 	ah->misc_mode |= AR_PCU_MIC_NEW_LOC_ENA;
 
-	/* enable key search for every frame in an aggregate */
-	if (AR_SREV_9300_20_OR_LATER(ah))
-		ah->misc_mode |= AR_PCU_ALWAYS_PERFORM_KEYSEARCH;
+	pCap->low_2ghz_chan = 2312;
+	pCap->high_2ghz_chan = 2732;
+
+	pCap->low_5ghz_chan = 4920;
+	pCap->high_5ghz_chan = 6100;
 
 	common->crypt_caps |= ATH_CRYPT_CAP_CIPHER_AESCCM;
 
-	if (ah->hw_version.devid != AR2427_DEVID_PCIE)
+	if (ah->config.ht_enable)
 		pCap->hw_caps |= ATH9K_HW_CAP_HT;
 	else
 		pCap->hw_caps &= ~ATH9K_HW_CAP_HT;
+
+	if (capField & AR_EEPROM_EEPCAP_MAXQCU)
+		pCap->total_queues =
+			MS(capField, AR_EEPROM_EEPCAP_MAXQCU);
+	else
+		pCap->total_queues = ATH9K_NUM_TX_QUEUES;
+
+	if (capField & AR_EEPROM_EEPCAP_KC_ENTRIES)
+		pCap->keycache_size =
+			1 << MS(capField, AR_EEPROM_EEPCAP_KC_ENTRIES);
+	else
+		pCap->keycache_size = AR_KEYTABLE_SIZE;
+
+	if (AR_SREV_9285(ah) || AR_SREV_9271(ah))
+		pCap->tx_triglevel_max = MAX_TX_FIFO_THRESHOLD >> 1;
+	else
+		pCap->tx_triglevel_max = MAX_TX_FIFO_THRESHOLD;
 
 	if (AR_SREV_9271(ah))
 		pCap->num_gpio_pins = AR9271_NUM_GPIO;
@@ -2114,6 +1880,8 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 	} else {
 		pCap->rts_aggr_limit = (8 * 1024);
 	}
+
+	pCap->hw_caps |= ATH9K_HW_CAP_ENHANCEDPM;
 
 #if defined(CONFIG_RFKILL) || defined(CONFIG_RFKILL_MODULE)
 	ah->rfsilent = ah->eep_ops->get_eeprom(ah, EEP_RF_SILENT);
@@ -2136,52 +1904,64 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 	else
 		pCap->hw_caps |= ATH9K_HW_CAP_4KB_SPLITTRANS;
 
-	if (common->btcoex_enabled) {
-		if (AR_SREV_9300_20_OR_LATER(ah)) {
-			btcoex_hw->scheme = ATH_BTCOEX_CFG_3WIRE;
-			btcoex_hw->btactive_gpio = ATH_BTACTIVE_GPIO_9300;
-			btcoex_hw->wlanactive_gpio = ATH_WLANACTIVE_GPIO_9300;
-			btcoex_hw->btpriority_gpio = ATH_BTPRIORITY_GPIO_9300;
-		} else if (AR_SREV_9280_20_OR_LATER(ah)) {
-			btcoex_hw->btactive_gpio = ATH_BTACTIVE_GPIO_9280;
-			btcoex_hw->wlanactive_gpio = ATH_WLANACTIVE_GPIO_9280;
+	if (regulatory->current_rd_ext & (1 << REG_EXT_JAPAN_MIDBAND)) {
+		pCap->reg_cap =
+			AR_EEPROM_EEREGCAP_EN_KK_NEW_11A |
+			AR_EEPROM_EEREGCAP_EN_KK_U1_EVEN |
+			AR_EEPROM_EEREGCAP_EN_KK_U2 |
+			AR_EEPROM_EEREGCAP_EN_KK_MIDBAND;
+	} else {
+		pCap->reg_cap =
+			AR_EEPROM_EEREGCAP_EN_KK_NEW_11A |
+			AR_EEPROM_EEREGCAP_EN_KK_U1_EVEN;
+	}
 
-			if (AR_SREV_9285(ah)) {
-				btcoex_hw->scheme = ATH_BTCOEX_CFG_3WIRE;
-				btcoex_hw->btpriority_gpio =
-						ATH_BTPRIORITY_GPIO_9285;
-			} else {
-				btcoex_hw->scheme = ATH_BTCOEX_CFG_2WIRE;
-			}
+	/* Advertise midband for AR5416 with FCC midband set in eeprom */
+	if (regulatory->current_rd_ext & (1 << REG_EXT_FCC_MIDBAND) &&
+	    AR_SREV_5416(ah))
+		pCap->reg_cap |= AR_EEPROM_EEREGCAP_EN_FCC_MIDBAND;
+
+	pCap->num_antcfg_5ghz =
+		ah->eep_ops->get_num_ant_config(ah, ATH9K_HAL_FREQ_BAND_5GHZ);
+	pCap->num_antcfg_2ghz =
+		ah->eep_ops->get_num_ant_config(ah, ATH9K_HAL_FREQ_BAND_2GHZ);
+
+	if (AR_SREV_9280_20_OR_LATER(ah) &&
+	    ath9k_hw_btcoex_supported(ah)) {
+		btcoex_hw->btactive_gpio = ATH_BTACTIVE_GPIO;
+		btcoex_hw->wlanactive_gpio = ATH_WLANACTIVE_GPIO;
+
+		if (AR_SREV_9285(ah)) {
+			btcoex_hw->scheme = ATH_BTCOEX_CFG_3WIRE;
+			btcoex_hw->btpriority_gpio = ATH_BTPRIORITY_GPIO;
+		} else {
+			btcoex_hw->scheme = ATH_BTCOEX_CFG_2WIRE;
 		}
 	} else {
 		btcoex_hw->scheme = ATH_BTCOEX_CFG_NONE;
 	}
 
 	if (AR_SREV_9300_20_OR_LATER(ah)) {
-		pCap->hw_caps |= ATH9K_HW_CAP_EDMA | ATH9K_HW_CAP_FASTCLOCK;
-		if (!AR_SREV_9330(ah) && !AR_SREV_9485(ah))
-			pCap->hw_caps |= ATH9K_HW_CAP_LDPC;
-
+		pCap->hw_caps |= ATH9K_HW_CAP_EDMA | ATH9K_HW_CAP_LDPC |
+				 ATH9K_HW_CAP_FASTCLOCK;
 		pCap->rx_hp_qdepth = ATH9K_HW_RX_HP_QDEPTH;
 		pCap->rx_lp_qdepth = ATH9K_HW_RX_LP_QDEPTH;
 		pCap->rx_status_len = sizeof(struct ar9003_rxs);
 		pCap->tx_desc_len = sizeof(struct ar9003_txc);
 		pCap->txs_len = sizeof(struct ar9003_txs);
-		if (!ah->config.paprd_disable &&
-		    ah->eep_ops->get_eeprom(ah, EEP_PAPRD))
+		if (ah->eep_ops->get_eeprom(ah, EEP_PAPRD))
 			pCap->hw_caps |= ATH9K_HW_CAP_PAPRD;
 	} else {
 		pCap->tx_desc_len = sizeof(struct ath_desc);
-		if (AR_SREV_9280_20(ah))
+		if (AR_SREV_9280_20(ah) &&
+		    ((ah->eep_ops->get_eeprom(ah, EEP_MINOR_REV) <=
+		      AR5416_EEP_MINOR_VER_16) ||
+		     ah->eep_ops->get_eeprom(ah, EEP_FSTCLK_5G)))
 			pCap->hw_caps |= ATH9K_HW_CAP_FASTCLOCK;
 	}
 
 	if (AR_SREV_9300_20_OR_LATER(ah))
 		pCap->hw_caps |= ATH9K_HW_CAP_RAC_SUPPORTED;
-
-	if (AR_SREV_9300_20_OR_LATER(ah))
-		ah->ent_mode = REG_READ(ah, AR_ENT_OTP);
 
 	if (AR_SREV_9287_11_OR_LATER(ah) || AR_SREV_9271(ah))
 		pCap->hw_caps |= ATH9K_HW_CAP_SGI_20;
@@ -2193,45 +1973,6 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 			if ((ant_div_ctl1 & 0x1) && ((ant_div_ctl1 >> 3) & 0x1))
 				pCap->hw_caps |= ATH9K_HW_CAP_ANT_DIV_COMB;
 		}
-	if (AR_SREV_9300_20_OR_LATER(ah)) {
-		if (ah->eep_ops->get_eeprom(ah, EEP_CHAIN_MASK_REDUCE))
-			pCap->hw_caps |= ATH9K_HW_CAP_APM;
-	}
-
-
-	if (AR_SREV_9330(ah) || AR_SREV_9485(ah)) {
-		ant_div_ctl1 = ah->eep_ops->get_eeprom(ah, EEP_ANT_DIV_CTL1);
-		/*
-		 * enable the diversity-combining algorithm only when
-		 * both enable_lna_div and enable_fast_div are set
-		 *		Table for Diversity
-		 * ant_div_alt_lnaconf		bit 0-1
-		 * ant_div_main_lnaconf		bit 2-3
-		 * ant_div_alt_gaintb		bit 4
-		 * ant_div_main_gaintb		bit 5
-		 * enable_ant_div_lnadiv	bit 6
-		 * enable_ant_fast_div		bit 7
-		 */
-		if ((ant_div_ctl1 >> 0x6) == 0x3)
-			pCap->hw_caps |= ATH9K_HW_CAP_ANT_DIV_COMB;
-	}
-
-	if (AR_SREV_9485_10(ah)) {
-		pCap->pcie_lcr_extsync_en = true;
-		pCap->pcie_lcr_offset = 0x80;
-	}
-
-	tx_chainmask = pCap->tx_chainmask;
-	rx_chainmask = pCap->rx_chainmask;
-	while (tx_chainmask || rx_chainmask) {
-		if (tx_chainmask & BIT(0))
-			pCap->max_txchains++;
-		if (rx_chainmask & BIT(0))
-			pCap->max_rxchains++;
-
-		tx_chainmask >>= 1;
-		rx_chainmask >>= 1;
-	}
 
 	return 0;
 }
@@ -2403,9 +2144,11 @@ void ath9k_hw_setrxfilter(struct ath_hw *ah, u32 bits)
 	REG_WRITE(ah, AR_PHY_ERR, phybits);
 
 	if (phybits)
-		REG_SET_BIT(ah, AR_RXCFG, AR_RXCFG_ZLFDMA);
+		REG_WRITE(ah, AR_RXCFG,
+			  REG_READ(ah, AR_RXCFG) | AR_RXCFG_ZLFDMA);
 	else
-		REG_CLR_BIT(ah, AR_RXCFG, AR_RXCFG_ZLFDMA);
+		REG_WRITE(ah, AR_RXCFG,
+			  REG_READ(ah, AR_RXCFG) & ~AR_RXCFG_ZLFDMA);
 
 	REGWRITE_BUFFER_FLUSH(ah);
 }
@@ -2434,7 +2177,7 @@ bool ath9k_hw_disable(struct ath_hw *ah)
 }
 EXPORT_SYMBOL(ath9k_hw_disable);
 
-void ath9k_hw_set_txpowerlimit(struct ath_hw *ah, u32 limit, bool test)
+void ath9k_hw_set_txpowerlimit(struct ath_hw *ah, u32 limit)
 {
 	struct ath_regulatory *regulatory = ath9k_hw_regulatory(ah);
 	struct ath9k_channel *chan = ah->curchan;
@@ -2447,7 +2190,7 @@ void ath9k_hw_set_txpowerlimit(struct ath_hw *ah, u32 limit, bool test)
 				 channel->max_antenna_gain * 2,
 				 channel->max_power * 2,
 				 min((u32) MAX_RATE_POWER,
-				 (u32) regulatory->power_limit), test);
+				 (u32) regulatory->power_limit));
 }
 EXPORT_SYMBOL(ath9k_hw_set_txpowerlimit);
 
@@ -2507,8 +2250,8 @@ void ath9k_hw_reset_tsf(struct ath_hw *ah)
 {
 	if (!ath9k_hw_wait(ah, AR_SLP32_MODE, AR_SLP32_TSF_WRITE_STATUS, 0,
 			   AH_TSF_WRITE_TIMEOUT))
-		ath_dbg(ath9k_hw_common(ah), ATH_DBG_RESET,
-			"AR_SLP32_TSF_WRITE_STATUS limit exceeded\n");
+		ath_print(ath9k_hw_common(ah), ATH_DBG_RESET,
+			  "AR_SLP32_TSF_WRITE_STATUS limit exceeded\n");
 
 	REG_WRITE(ah, AR_RESET_TSF, AR_RESET_TSF_ONCE);
 }
@@ -2599,9 +2342,9 @@ struct ath_gen_timer *ath_gen_timer_alloc(struct ath_hw *ah,
 	timer = kzalloc(sizeof(struct ath_gen_timer), GFP_KERNEL);
 
 	if (timer == NULL) {
-		ath_err(ath9k_hw_common(ah),
-			"Failed to allocate memory for hw timer[%d]\n",
-			timer_index);
+		ath_print(ath9k_hw_common(ah), ATH_DBG_FATAL,
+			  "Failed to allocate memory"
+			  "for hw timer[%d]\n", timer_index);
 		return NULL;
 	}
 
@@ -2618,11 +2361,11 @@ EXPORT_SYMBOL(ath_gen_timer_alloc);
 
 void ath9k_hw_gen_timer_start(struct ath_hw *ah,
 			      struct ath_gen_timer *timer,
-			      u32 trig_timeout,
+			      u32 timer_next,
 			      u32 timer_period)
 {
 	struct ath_gen_timer_table *timer_table = &ah->hw_gen_timers;
-	u32 tsf, timer_next;
+	u32 tsf;
 
 	BUG_ON(!timer_period);
 
@@ -2630,11 +2373,16 @@ void ath9k_hw_gen_timer_start(struct ath_hw *ah,
 
 	tsf = ath9k_hw_gettsf32(ah);
 
-	timer_next = tsf + trig_timeout;
+	ath_print(ath9k_hw_common(ah), ATH_DBG_HWTIMER,
+		  "curent tsf %x period %x"
+		  "timer_next %x\n", tsf, timer_period, timer_next);
 
-	ath_dbg(ath9k_hw_common(ah), ATH_DBG_HWTIMER,
-		"current tsf %x period %x timer_next %x\n",
-		tsf, timer_period, timer_next);
+	/*
+	 * Pull timer_next forward if the current TSF already passed it
+	 * because of software latency
+	 */
+	if (timer_next < tsf)
+		timer_next = tsf + timer_period;
 
 	/*
 	 * Program generic timer registers
@@ -2707,8 +2455,8 @@ void ath_gen_timer_isr(struct ath_hw *ah)
 		index = rightmost_index(timer_table, &thresh_mask);
 		timer = timer_table->timers[index];
 		BUG_ON(!timer);
-		ath_dbg(common, ATH_DBG_HWTIMER,
-			"TSF overflow for Gen timer %d\n", index);
+		ath_print(common, ATH_DBG_HWTIMER,
+			  "TSF overflow for Gen timer %d\n", index);
 		timer->overflow(timer->arg);
 	}
 
@@ -2716,8 +2464,8 @@ void ath_gen_timer_isr(struct ath_hw *ah)
 		index = rightmost_index(timer_table, &trigger_mask);
 		timer = timer_table->timers[index];
 		BUG_ON(!timer);
-		ath_dbg(common, ATH_DBG_HWTIMER,
-			"Gen timer[%d] trigger\n", index);
+		ath_print(common, ATH_DBG_HWTIMER,
+			  "Gen timer[%d] trigger\n", index);
 		timer->trigger(timer->arg);
 	}
 }
@@ -2748,8 +2496,6 @@ static struct {
 	{ AR_SREV_VERSION_9287,         "9287" },
 	{ AR_SREV_VERSION_9271,         "9271" },
 	{ AR_SREV_VERSION_9300,         "9300" },
-	{ AR_SREV_VERSION_9330,         "9330" },
-	{ AR_SREV_VERSION_9485,         "9485" },
 };
 
 /* For devices with external radios */

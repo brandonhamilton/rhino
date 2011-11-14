@@ -605,10 +605,8 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 			goto bad;
 		}
 		err = __decode_pool(p, end, pi);
-		if (err < 0) {
-			kfree(pi);
+		if (err < 0)
 			goto bad;
-		}
 		__insert_pg_pool(&map->pg_pools, pi);
 	}
 
@@ -765,7 +763,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 	}
 
 	map->epoch++;
-	map->modified = modified;
+	map->modified = map->modified;
 	if (newcrush) {
 		if (map->crush)
 			crush_destroy(map->crush);
@@ -830,20 +828,15 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 		map->osd_addr[osd] = addr;
 	}
 
-	/* new_state */
+	/* new_down */
 	ceph_decode_32_safe(p, end, len, bad);
 	while (len--) {
 		u32 osd;
-		u8 xorstate;
 		ceph_decode_32_safe(p, end, osd, bad);
-		xorstate = **(u8 **)p;
 		(*p)++;  /* clean flag */
-		if (xorstate == 0)
-			xorstate = CEPH_OSD_UP;
-		if (xorstate & CEPH_OSD_UP)
-			pr_info("osd%d down\n", osd);
+		pr_info("osd%d down\n", osd);
 		if (osd < map->max_osd)
-			map->osd_state[osd] ^= xorstate;
+			map->osd_state[osd] &= ~CEPH_OSD_UP;
 	}
 
 	/* new_weight */

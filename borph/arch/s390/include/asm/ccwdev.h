@@ -112,6 +112,7 @@ enum uc_todo {
 
 /**
  * struct ccw driver - device driver for channel attached devices
+ * @owner: owning module
  * @ids: ids supported by this driver
  * @probe: function called on probe
  * @remove: function called on remove
@@ -127,8 +128,10 @@ enum uc_todo {
  * @restore: callback for restoring after hibernation
  * @uc_handler: callback for unit check handler
  * @driver: embedded device driver structure
+ * @name: device driver name
  */
 struct ccw_driver {
+	struct module *owner;
 	struct ccw_device_id *ids;
 	int (*probe) (struct ccw_device *);
 	void (*remove) (struct ccw_device *);
@@ -144,6 +147,7 @@ struct ccw_driver {
 	int (*restore)(struct ccw_device *);
 	enum uc_todo (*uc_handler) (struct ccw_device *, struct irb *);
 	struct device_driver driver;
+	char *name;
 };
 
 extern struct ccw_device *get_ccwdev_by_busid(struct ccw_driver *cdrv,
@@ -199,8 +203,6 @@ int ccw_device_tm_start(struct ccw_device *, struct tcw *,
 int ccw_device_tm_start_timeout(struct ccw_device *, struct tcw *,
 			    unsigned long, u8, int);
 int ccw_device_tm_intrg(struct ccw_device *cdev);
-
-int ccw_device_get_mdc(struct ccw_device *cdev, u8 mask);
 
 extern int ccw_device_set_online(struct ccw_device *cdev);
 extern int ccw_device_set_offline(struct ccw_device *cdev);

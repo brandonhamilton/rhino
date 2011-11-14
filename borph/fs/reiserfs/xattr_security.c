@@ -54,7 +54,6 @@ static size_t security_list(struct dentry *dentry, char *list, size_t list_len,
  * of blocks needed for the transaction. If successful, reiserfs_security
  * must be released using reiserfs_security_free when the caller is done. */
 int reiserfs_security_init(struct inode *dir, struct inode *inode,
-			   const struct qstr *qstr,
 			   struct reiserfs_security_handle *sec)
 {
 	int blocks = 0;
@@ -66,7 +65,7 @@ int reiserfs_security_init(struct inode *dir, struct inode *inode,
 	if (IS_PRIVATE(dir))
 		return 0;
 
-	error = security_inode_init_security(inode, dir, qstr, &sec->name,
+	error = security_inode_init_security(inode, dir, &sec->name,
 					     &sec->value, &sec->length);
 	if (error) {
 		if (error == -EOPNOTSUPP)

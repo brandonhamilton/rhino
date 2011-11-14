@@ -17,7 +17,7 @@
 #include <linux/list.h>
 #include <linux/lockdep.h>
 #include <linux/kobject_ns.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct kobject;
 struct module;
@@ -176,6 +176,10 @@ struct sysfs_dirent *sysfs_get_dirent(struct sysfs_dirent *parent_sd,
 				      const unsigned char *name);
 struct sysfs_dirent *sysfs_get(struct sysfs_dirent *sd);
 void sysfs_put(struct sysfs_dirent *sd);
+void sysfs_printk_last_file(void);
+
+/* Called to clear a ns tag when it is no longer valid */
+void sysfs_exit_ns(enum kobj_ns_type type, const void *tag);
 
 int __must_check sysfs_init(void);
 
@@ -335,9 +339,17 @@ static inline void sysfs_put(struct sysfs_dirent *sd)
 {
 }
 
+static inline void sysfs_exit_ns(int type, const void *tag)
+{
+}
+
 static inline int __must_check sysfs_init(void)
 {
 	return 0;
+}
+
+static inline void sysfs_printk_last_file(void)
+{
 }
 
 #endif /* CONFIG_SYSFS */

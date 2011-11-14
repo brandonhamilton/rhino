@@ -56,6 +56,10 @@
  * Used by permission.
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "init.h"
 
 #ifdef CONFIG_FB_SIS_300
@@ -876,59 +880,59 @@ SiS_GetModeID_VGA2(int VGAEngine, unsigned int VBFlags, int HDisplay, int VDispl
 /*********************************************/
 
 void
-SiS_SetReg(SISIOADDRESS port, u8 index, u8 data)
+SiS_SetReg(SISIOADDRESS port, unsigned short index, unsigned short data)
 {
-	outb(index, port);
-	outb(data, port + 1);
+	outb((u8)index, port);
+	outb((u8)data, port + 1);
 }
 
 void
-SiS_SetRegByte(SISIOADDRESS port, u8 data)
+SiS_SetRegByte(SISIOADDRESS port, unsigned short data)
 {
-	outb(data, port);
+	outb((u8)data, port);
 }
 
 void
-SiS_SetRegShort(SISIOADDRESS port, u16 data)
+SiS_SetRegShort(SISIOADDRESS port, unsigned short data)
 {
-	outw(data, port);
+	outw((u16)data, port);
 }
 
 void
-SiS_SetRegLong(SISIOADDRESS port, u32 data)
+SiS_SetRegLong(SISIOADDRESS port, unsigned int data)
 {
-	outl(data, port);
+	outl((u32)data, port);
 }
 
-u8
-SiS_GetReg(SISIOADDRESS port, u8 index)
+unsigned char
+SiS_GetReg(SISIOADDRESS port, unsigned short index)
 {
-	outb(index, port);
+	outb((u8)index, port);
 	return inb(port + 1);
 }
 
-u8
+unsigned char
 SiS_GetRegByte(SISIOADDRESS port)
 {
 	return inb(port);
 }
 
-u16
+unsigned short
 SiS_GetRegShort(SISIOADDRESS port)
 {
 	return inw(port);
 }
 
-u32
+unsigned int
 SiS_GetRegLong(SISIOADDRESS port)
 {
 	return inl(port);
 }
 
 void
-SiS_SetRegANDOR(SISIOADDRESS Port, u8 Index, u8 DataAND, u8 DataOR)
+SiS_SetRegANDOR(SISIOADDRESS Port, unsigned short Index, unsigned short DataAND, unsigned short DataOR)
 {
-   u8 temp;
+   unsigned short temp;
 
    temp = SiS_GetReg(Port, Index);
    temp = (temp & (DataAND)) | DataOR;
@@ -936,9 +940,9 @@ SiS_SetRegANDOR(SISIOADDRESS Port, u8 Index, u8 DataAND, u8 DataOR)
 }
 
 void
-SiS_SetRegAND(SISIOADDRESS Port, u8 Index, u8 DataAND)
+SiS_SetRegAND(SISIOADDRESS Port, unsigned short Index, unsigned short DataAND)
 {
-   u8 temp;
+   unsigned short temp;
 
    temp = SiS_GetReg(Port, Index);
    temp &= DataAND;
@@ -946,9 +950,9 @@ SiS_SetRegAND(SISIOADDRESS Port, u8 Index, u8 DataAND)
 }
 
 void
-SiS_SetRegOR(SISIOADDRESS Port, u8 Index, u8 DataOR)
+SiS_SetRegOR(SISIOADDRESS Port, unsigned short Index, unsigned short DataOR)
 {
-   u8 temp;
+   unsigned short temp;
 
    temp = SiS_GetReg(Port, Index);
    temp |= DataOR;

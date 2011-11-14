@@ -154,7 +154,7 @@ static int tcpprobe_sprint(char *tbuf, int n)
 	struct timespec tv
 		= ktime_to_timespec(ktime_sub(p->tstamp, tcp_probe.start));
 
-	return scnprintf(tbuf, n,
+	return snprintf(tbuf, n,
 			"%lu.%09lu %pI4:%u %pI4:%u %d %#x %#x %u %u %u %u\n",
 			(unsigned long) tv.tv_sec,
 			(unsigned long) tv.tv_nsec,
@@ -174,7 +174,7 @@ static ssize_t tcpprobe_read(struct file *file, char __user *buf,
 		return -EINVAL;
 
 	while (cnt < len) {
-		char tbuf[164];
+		char tbuf[128];
 		int width;
 
 		/* Wait for data in buffer */

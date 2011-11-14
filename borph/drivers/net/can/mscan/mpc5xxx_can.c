@@ -247,11 +247,10 @@ static u32 __devinit mpc512x_can_get_clock(struct platform_device *ofdev,
 }
 #endif /* CONFIG_PPC_MPC512x */
 
-static struct of_device_id mpc5xxx_can_table[];
-static int __devinit mpc5xxx_can_probe(struct platform_device *ofdev)
+static int __devinit mpc5xxx_can_probe(struct platform_device *ofdev,
+				       const struct of_device_id *id)
 {
-	const struct of_device_id *match;
-	struct mpc5xxx_can_data *data;
+	struct mpc5xxx_can_data *data = (struct mpc5xxx_can_data *)id->data;
 	struct device_node *np = ofdev->dev.of_node;
 	struct net_device *dev;
 	struct mscan_priv *priv;
@@ -259,11 +258,6 @@ static int __devinit mpc5xxx_can_probe(struct platform_device *ofdev)
 	const char *clock_name = NULL;
 	int irq, mscan_clksrc = 0;
 	int err = -ENOMEM;
-
-	match = of_match_device(mpc5xxx_can_table, &ofdev->dev);
-	if (!match)
-		return -EINVAL;
-	data = match->data;
 
 	base = of_iomap(np, 0);
 	if (!base) {
@@ -397,7 +391,7 @@ static struct of_device_id __devinitdata mpc5xxx_can_table[] = {
 	{},
 };
 
-static struct platform_driver mpc5xxx_can_driver = {
+static struct of_platform_driver mpc5xxx_can_driver = {
 	.driver = {
 		.name = "mpc5xxx_can",
 		.owner = THIS_MODULE,
@@ -413,13 +407,13 @@ static struct platform_driver mpc5xxx_can_driver = {
 
 static int __init mpc5xxx_can_init(void)
 {
-	return platform_driver_register(&mpc5xxx_can_driver);
+	return of_register_platform_driver(&mpc5xxx_can_driver);
 }
 module_init(mpc5xxx_can_init);
 
 static void __exit mpc5xxx_can_exit(void)
 {
-	platform_driver_unregister(&mpc5xxx_can_driver);
+	return of_unregister_platform_driver(&mpc5xxx_can_driver);
 };
 module_exit(mpc5xxx_can_exit);
 

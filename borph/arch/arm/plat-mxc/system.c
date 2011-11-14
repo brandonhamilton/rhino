@@ -26,7 +26,6 @@
 #include <mach/common.h>
 #include <asm/proc-fns.h>
 #include <asm/system.h>
-#include <asm/mach-types.h>
 
 static void __iomem *wdog_base;
 
@@ -37,19 +36,18 @@ void arch_reset(char mode, const char *cmd)
 {
 	unsigned int wcr_enable;
 
-#ifdef CONFIG_MACH_MX51_EFIKAMX
-	if (machine_is_mx51_efikamx()) {
-		mx51_efikamx_reset();
+#ifdef CONFIG_ARCH_MXC91231
+	if (cpu_is_mxc91231()) {
+		mxc91231_arch_reset(mode, cmd);
 		return;
 	}
 #endif
-
 	if (cpu_is_mx1()) {
 		wcr_enable = (1 << 0);
 	} else {
 		struct clk *clk;
 
-		clk = clk_get_sys("imx2-wdt.0", NULL);
+		clk = clk_get_sys("imx-wdt.0", NULL);
 		if (!IS_ERR(clk))
 			clk_enable(clk);
 		wcr_enable = (1 << 2);

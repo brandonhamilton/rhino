@@ -13,7 +13,7 @@
 #ifndef __BNA_H__
 #define __BNA_H__
 
-#include "bfa_cs.h"
+#include "bfa_wc.h"
 #include "bfa_ioc.h"
 #include "cna.h"
 #include "bfi_ll.h"
@@ -31,6 +31,8 @@ extern const u32 bna_napi_dim_vector[][BNA_BIAS_T_MAX];
 
 /* Log string size */
 #define BNA_MESSAGE_SIZE		256
+
+#define bna_device_timer(_dev)		bfa_timer_beat(&((_dev)->timer_mod))
 
 /* MBOX API for PORT, TX, RX */
 #define bna_mbox_qe_fill(_qe, _cmd, _cmd_len, _cbfn, _cbarg)		\
@@ -88,7 +90,7 @@ do {								\
 } while (0)
 
 #define	containing_rec(addr, type, field)				\
-	((type *)((unsigned char *)(addr) -				\
+	((type *)((unsigned char *)(addr) - 				\
 	(unsigned char *)(&((type *)0)->field)))
 
 #define BNA_TXQ_WI_NEEDED(_vectors)	(((_vectors) + 3) >> 2)
@@ -101,8 +103,8 @@ do {								\
 {									\
 	unsigned int page_index;	/* index within a page */	\
 	void *page_addr;						\
-	page_index = (_qe_idx) & (BNA_TXQ_PAGE_INDEX_MAX - 1);		\
-	(_qe_ptr_range) = (BNA_TXQ_PAGE_INDEX_MAX - page_index);	\
+	page_index = (_qe_idx) & (BNA_TXQ_PAGE_INDEX_MAX - 1); 		\
+	(_qe_ptr_range) = (BNA_TXQ_PAGE_INDEX_MAX - page_index); 	\
 	page_addr = (_qpt_ptr)[((_qe_idx) >>  BNA_TXQ_PAGE_INDEX_MAX_SHIFT)];\
 	(_qe_ptr) = &((struct bna_txq_entry *)(page_addr))[page_index]; \
 }
@@ -166,25 +168,25 @@ do {								\
 		(((_q_ptr)->q.producer_index + (_num)) &		\
 		((_q_ptr)->q.q_depth - 1))
 
-#define BNA_Q_CI_ADD(_q_ptr, _num)					\
+#define BNA_Q_CI_ADD(_q_ptr, _num) 					\
 	(_q_ptr)->q.consumer_index =					\
-		(((_q_ptr)->q.consumer_index + (_num))			\
+		(((_q_ptr)->q.consumer_index + (_num))  		\
 		& ((_q_ptr)->q.q_depth - 1))
 
 #define BNA_Q_FREE_COUNT(_q_ptr)					\
 	(BNA_QE_FREE_CNT(&((_q_ptr)->q), (_q_ptr)->q.q_depth))
 
-#define BNA_Q_IN_USE_COUNT(_q_ptr)					\
+#define BNA_Q_IN_USE_COUNT(_q_ptr)  					\
 	(BNA_QE_IN_USE_CNT(&(_q_ptr)->q, (_q_ptr)->q.q_depth))
 
 /* These macros build the data portion of the TxQ/RxQ doorbell */
-#define BNA_DOORBELL_Q_PRD_IDX(_pi)	(0x80000000 | (_pi))
+#define BNA_DOORBELL_Q_PRD_IDX(_pi) 	(0x80000000 | (_pi))
 #define BNA_DOORBELL_Q_STOP		(0x40000000)
 
 /* These macros build the data portion of the IB doorbell */
 #define BNA_DOORBELL_IB_INT_ACK(_timeout, _events) \
 	(0x80000000 | ((_timeout) << 16) | (_events))
-#define BNA_DOORBELL_IB_INT_DISABLE	(0x40000000)
+#define BNA_DOORBELL_IB_INT_DISABLE 	(0x40000000)
 
 /* Set the coalescing timer for the given ib */
 #define bna_ib_coalescing_timer_set(_i_dbell, _cls_timer)		\
@@ -388,8 +390,8 @@ void bna_mbox_send(struct bna *bna, struct bna_mbox_qe *mbox_qe);
 
 /* API for RX */
 int bna_port_mtu_get(struct bna_port *port);
-void bna_llport_rx_started(struct bna_llport *llport);
-void bna_llport_rx_stopped(struct bna_llport *llport);
+void bna_llport_admin_up(struct bna_llport *llport);
+void bna_llport_admin_down(struct bna_llport *llport);
 
 /* API for BNAD */
 void bna_port_enable(struct bna_port *port);

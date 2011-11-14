@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2011 Intel Corporation.
+  Copyright(c) 2007-2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -194,10 +194,6 @@ struct e1000_adv_tx_context_desc {
 #define E1000_NVM_APME_82575          0x0400
 #define MAX_NUM_VFS                   8
 
-#define E1000_DTXSWC_MAC_SPOOF_MASK   0x000000FF /* Per VF MAC spoof control */
-#define E1000_DTXSWC_VLAN_SPOOF_MASK  0x0000FF00 /* Per VF VLAN spoof control */
-#define E1000_DTXSWC_LLE_MASK         0x00FF0000 /* Per VF Local LB enables */
-#define E1000_DTXSWC_VLAN_SPOOF_SHIFT 8
 #define E1000_DTXSWC_VMDQ_LOOPBACK_EN (1 << 31)  /* global VF LB enable */
 
 /* Easy defines for setting default pool, would normally be left a zero */
@@ -243,16 +239,12 @@ struct e1000_adv_tx_context_desc {
 #define E1000_DTXCTL_MDP_EN     0x0020
 #define E1000_DTXCTL_SPOOF_INT  0x0040
 
-#define E1000_EEPROM_PCS_AUTONEG_DISABLE_BIT	(1 << 14)
-
 #define ALL_QUEUES   0xFFFF
 
 /* RX packet buffer size defines */
 #define E1000_RXPBS_SIZE_MASK_82576  0x0000007F
-void igb_vmdq_set_anti_spoofing_pf(struct e1000_hw *, bool, int);
 void igb_vmdq_set_loopback_pf(struct e1000_hw *, bool);
 void igb_vmdq_set_replication_pf(struct e1000_hw *, bool);
 u16 igb_rxpbs_adjust_82580(u32 data);
-s32 igb_set_eee_i350(struct e1000_hw *);
 
 #endif

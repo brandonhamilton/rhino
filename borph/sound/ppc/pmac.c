@@ -881,7 +881,8 @@ static int snd_pmac_free(struct snd_pmac *chip)
 		for (i = 0; i < 3; i++) {
 			if (chip->requested & (1 << i))
 				release_mem_region(chip->rsrc[i].start,
-						   resource_size(&chip->rsrc[i]));
+						   chip->rsrc[i].end -
+						   chip->rsrc[i].start + 1);
 		}
 	}
 
@@ -1033,11 +1034,7 @@ static int __devinit snd_pmac_detect(struct snd_pmac *chip)
 	if (of_device_is_compatible(sound, "tumbler")) {
 		chip->model = PMAC_TUMBLER;
 		chip->can_capture = of_machine_is_compatible("PowerMac4,2")
-				|| of_machine_is_compatible("PowerBook3,2")
-				|| of_machine_is_compatible("PowerBook3,3")
-				|| of_machine_is_compatible("PowerBook4,1")
-				|| of_machine_is_compatible("PowerBook4,2")
-				|| of_machine_is_compatible("PowerBook4,3");
+				|| of_machine_is_compatible("PowerBook4,1");
 		chip->can_duplex = 0;
 		// chip->can_byte_swap = 0; /* FIXME: check this */
 		chip->num_freqs = ARRAY_SIZE(tumbler_freqs);
@@ -1227,7 +1224,8 @@ int __devinit snd_pmac_new(struct snd_card *card, struct snd_pmac **chip_return)
 				goto __error;
 			}
 			if (request_mem_region(chip->rsrc[i].start,
-					       resource_size(&chip->rsrc[i]),
+					       chip->rsrc[i].end -
+					       chip->rsrc[i].start + 1,
 					       rnames[i]) == NULL) {
 				printk(KERN_ERR "snd: can't request rsrc "
 				       " %d (%s: %pR)\n",
@@ -1252,7 +1250,8 @@ int __devinit snd_pmac_new(struct snd_card *card, struct snd_pmac **chip_return)
 				goto __error;
 			}
 			if (request_mem_region(chip->rsrc[i].start,
-					       resource_size(&chip->rsrc[i]),
+					       chip->rsrc[i].end -
+					       chip->rsrc[i].start + 1,
 					       rnames[i]) == NULL) {
 				printk(KERN_ERR "snd: can't request rsrc "
 				       " %d (%s: %pR)\n",

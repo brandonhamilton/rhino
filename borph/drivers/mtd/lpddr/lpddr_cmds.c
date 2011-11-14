@@ -3,7 +3,7 @@
  * erase, lock/unlock support for LPDDR flash memories
  * (C) 2008 Korolev Alexey <akorolev@infradead.org>
  * (C) 2008 Vasiliy Leonenko <vasiliy.leonenko@gmail.com>
- * Many thanks to Roman Borisov for initial enabling
+ * Many thanks to Roman Borisov for intial enabling
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -171,7 +171,7 @@ static int wait_for_ready(struct map_info *map, struct flchip *chip,
 			mutex_lock(&chip->mutex);
 		}
 		if (chip->erase_suspended || chip->write_suspended)  {
-			/* Suspend has occurred while sleep: reset timeout */
+			/* Suspend has occured while sleep: reset timeout */
 			timeo = reset_timeo;
 			chip->erase_suspended = chip->write_suspended = 0;
 		}
@@ -313,7 +313,12 @@ static int chip_ready(struct map_info *map, struct flchip *chip, int mode)
 		if (ret) {
 			/* Oops. something got wrong. */
 			/* Resume and pretend we weren't here.  */
-			put_chip(map, chip);
+			map_write(map, CMD(LPDDR_RESUME),
+				map->pfow_base + PFOW_COMMAND_CODE);
+			map_write(map, CMD(LPDDR_START_EXECUTION),
+				map->pfow_base + PFOW_COMMAND_EXECUTE);
+			chip->state = FL_ERASING;
+			chip->oldstate = FL_READY;
 			printk(KERN_ERR "%s: suspend operation failed."
 					"State may be wrong \n", map->name);
 			return -EIO;
@@ -378,6 +383,7 @@ static void put_chip(struct map_info *map, struct flchip *chip)
 
 	switch (chip->oldstate) {
 	case FL_ERASING:
+		chip->state = chip->oldstate;
 		map_write(map, CMD(LPDDR_RESUME),
 				map->pfow_base + PFOW_COMMAND_CODE);
 		map_write(map, CMD(LPDDR_START_EXECUTION),

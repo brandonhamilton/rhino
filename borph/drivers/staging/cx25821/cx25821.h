@@ -31,6 +31,7 @@
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/kdev_t.h>
+#include <linux/smp_lock.h>
 
 #include <media/v4l2-common.h>
 #include <media/v4l2-device.h>
@@ -444,8 +445,6 @@ static inline struct cx25821_dev *get_cx25821(struct v4l2_device *v4l2_dev)
 	v4l2_device_call_all(&dev->v4l2_dev, 0, o, f, ##args)
 
 extern struct list_head cx25821_devlist;
-extern struct mutex cx25821_devlist_mutex;
-
 extern struct cx25821_board cx25821_boards[];
 extern struct cx25821_subid cx25821_subids[];
 
@@ -520,12 +519,9 @@ extern struct sram_channel cx25821_sram_channels[];
 #define Set_GPIO_Bit(Bit)                       (1 << Bit)
 #define Clear_GPIO_Bit(Bit)                     (~(1 << Bit))
 
-#define CX25821_ERR(fmt, args...)			\
-	pr_err("(%d): " fmt, dev->board, ##args)
-#define CX25821_WARN(fmt, args...)			\
-	pr_warn("(%d): " fmt, dev->board, ##args)
-#define CX25821_INFO(fmt, args...)			\
-	pr_info("(%d): " fmt, dev->board, ##args)
+#define CX25821_ERR(fmt, args...)      printk(KERN_ERR  "cx25821(%d): " fmt, dev->board, ## args)
+#define CX25821_WARN(fmt, args...)     printk(KERN_WARNING "cx25821(%d): " fmt, dev->board , ## args)
+#define CX25821_INFO(fmt, args...)     printk(KERN_INFO "cx25821(%d): " fmt, dev->board , ## args)
 
 extern int cx25821_i2c_register(struct cx25821_i2c *bus);
 extern void cx25821_card_setup(struct cx25821_dev *dev);

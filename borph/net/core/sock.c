@@ -128,8 +128,6 @@
 
 #include <linux/filter.h>
 
-#include <trace/events/sock.h>
-
 #ifdef CONFIG_INET
 #include <net/tcp.h>
 #endif
@@ -159,8 +157,8 @@ static const char *const af_family_key_strings[AF_MAX+1] = {
   "sk_lock-27"       , "sk_lock-28"          , "sk_lock-AF_CAN"      ,
   "sk_lock-AF_TIPC"  , "sk_lock-AF_BLUETOOTH", "sk_lock-IUCV"        ,
   "sk_lock-AF_RXRPC" , "sk_lock-AF_ISDN"     , "sk_lock-AF_PHONET"   ,
-  "sk_lock-AF_IEEE802154", "sk_lock-AF_CAIF" , "sk_lock-AF_ALG"      ,
-  "sk_lock-AF_NFC"   , "sk_lock-AF_MAX"
+  "sk_lock-AF_IEEE802154", "sk_lock-AF_CAIF" ,
+  "sk_lock-AF_MAX"
 };
 static const char *const af_family_slock_key_strings[AF_MAX+1] = {
   "slock-AF_UNSPEC", "slock-AF_UNIX"     , "slock-AF_INET"     ,
@@ -175,8 +173,8 @@ static const char *const af_family_slock_key_strings[AF_MAX+1] = {
   "slock-27"       , "slock-28"          , "slock-AF_CAN"      ,
   "slock-AF_TIPC"  , "slock-AF_BLUETOOTH", "slock-AF_IUCV"     ,
   "slock-AF_RXRPC" , "slock-AF_ISDN"     , "slock-AF_PHONET"   ,
-  "slock-AF_IEEE802154", "slock-AF_CAIF" , "slock-AF_ALG"      ,
-  "slock-AF_NFC"   , "slock-AF_MAX"
+  "slock-AF_IEEE802154", "slock-AF_CAIF" ,
+  "slock-AF_MAX"
 };
 static const char *const af_family_clock_key_strings[AF_MAX+1] = {
   "clock-AF_UNSPEC", "clock-AF_UNIX"     , "clock-AF_INET"     ,
@@ -191,8 +189,8 @@ static const char *const af_family_clock_key_strings[AF_MAX+1] = {
   "clock-27"       , "clock-28"          , "clock-AF_CAN"      ,
   "clock-AF_TIPC"  , "clock-AF_BLUETOOTH", "clock-AF_IUCV"     ,
   "clock-AF_RXRPC" , "clock-AF_ISDN"     , "clock-AF_PHONET"   ,
-  "clock-AF_IEEE802154", "clock-AF_CAIF" , "clock-AF_ALG"      ,
-  "clock-AF_NFC"   , "clock-AF_MAX"
+  "clock-AF_IEEE802154", "clock-AF_CAIF" ,
+  "clock-AF_MAX"
 };
 
 /*
@@ -217,7 +215,7 @@ __u32 sysctl_rmem_max __read_mostly = SK_RMEM_MAX;
 __u32 sysctl_wmem_default __read_mostly = SK_WMEM_MAX;
 __u32 sysctl_rmem_default __read_mostly = SK_RMEM_MAX;
 
-/* Maximal space eaten by iovec or ancillary data plus some space */
+/* Maximal space eaten by iovec or ancilliary data plus some space */
 int sysctl_optmem_max __read_mostly = sizeof(unsigned long)*(2*UIO_MAXIOV+512);
 EXPORT_SYMBOL(sysctl_optmem_max);
 
@@ -294,7 +292,6 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	if (atomic_read(&sk->sk_rmem_alloc) + skb->truesize >=
 	    (unsigned)sk->sk_rcvbuf) {
 		atomic_inc(&sk->sk_drops);
-		trace_sock_rcvqueue_full(sk, skb);
 		return -ENOMEM;
 	}
 
@@ -995,18 +992,17 @@ static inline void sock_lock_init(struct sock *sk)
 /*
  * Copy all fields from osk to nsk but nsk->sk_refcnt must not change yet,
  * even temporarly, because of RCU lookups. sk_node should also be left as is.
- * We must not copy fields between sk_dontcopy_begin and sk_dontcopy_end
  */
 static void sock_copy(struct sock *nsk, const struct sock *osk)
 {
 #ifdef CONFIG_SECURITY_NETWORK
 	void *sptr = nsk->sk_security;
 #endif
-	memcpy(nsk, osk, offsetof(struct sock, sk_dontcopy_begin));
-
-	memcpy(&nsk->sk_dontcopy_end, &osk->sk_dontcopy_end,
-	       osk->sk_prot->obj_size - offsetof(struct sock, sk_dontcopy_end));
-
+	BUILD_BUG_ON(offsetof(struct sock, sk_copy_start) !=
+		     sizeof(osk->sk_node) + sizeof(osk->sk_refcnt) +
+		     sizeof(osk->sk_tx_queue_mapping));
+	memcpy(&nsk->sk_copy_start, &osk->sk_copy_start,
+	       osk->sk_prot->obj_size - offsetof(struct sock, sk_copy_start));
 #ifdef CONFIG_SECURITY_NETWORK
 	nsk->sk_security = sptr;
 	security_sk_clone(osk, nsk);
@@ -1178,7 +1174,7 @@ static void __sk_free(struct sock *sk)
 void sk_free(struct sock *sk)
 {
 	/*
-	 * We subtract one from sk_wmem_alloc and can know if
+	 * We substract one from sk_wmem_alloc and can know if
 	 * some packets are still in some tx queue.
 	 * If not null, sock_wfree() will call __sk_free(sk) later
 	 */
@@ -1188,10 +1184,10 @@ void sk_free(struct sock *sk)
 EXPORT_SYMBOL(sk_free);
 
 /*
- * Last sock_put should drop reference to sk->sk_net. It has already
- * been dropped in sk_change_net. Taking reference to stopping namespace
+ * Last sock_put should drop referrence to sk->sk_net. It has already
+ * been dropped in sk_change_net. Taking referrence to stopping namespace
  * is not an option.
- * Take reference to a socket to remove it from hash _alive_ and after that
+ * Take referrence to a socket to remove it from hash _alive_ and after that
  * destroy it in the context of init_net.
  */
 void sk_release_kernel(struct sock *sk)
@@ -1739,8 +1735,6 @@ suppress_allocation:
 			return 1;
 	}
 
-	trace_sock_exceed_buf_limit(sk, prot, allocated);
-
 	/* Alas. Undo changes. */
 	sk->sk_forward_alloc -= amt * SK_MEM_QUANTUM;
 	atomic_long_sub(amt, prot->memory_allocated);
@@ -1913,7 +1907,7 @@ static void sock_def_readable(struct sock *sk, int len)
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);
 	if (wq_has_sleeper(wq))
-		wake_up_interruptible_sync_poll(&wq->wait, POLLIN | POLLPRI |
+		wake_up_interruptible_sync_poll(&wq->wait, POLLIN |
 						POLLRDNORM | POLLRDBAND);
 	sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_IN);
 	rcu_read_unlock();

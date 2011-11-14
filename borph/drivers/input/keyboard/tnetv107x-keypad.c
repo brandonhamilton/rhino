@@ -14,7 +14,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/input.h>
 #include <linux/platform_device.h>
@@ -220,9 +219,9 @@ static int __devinit keypad_probe(struct platform_device *pdev)
 	}
 
 	kp->clk = clk_get(dev, NULL);
-	if (IS_ERR(kp->clk)) {
+	if (!kp->clk) {
 		dev_err(dev, "cannot claim device clock\n");
-		error = PTR_ERR(kp->clk);
+		error = -EINVAL;
 		goto error_clk;
 	}
 
@@ -337,5 +336,5 @@ module_exit(keypad_exit);
 
 MODULE_AUTHOR("Cyril Chemparathy");
 MODULE_DESCRIPTION("TNETV107X Keypad Driver");
-MODULE_ALIAS("platform:tnetv107x-keypad");
+MODULE_ALIAS("platform: tnetv107x-keypad");
 MODULE_LICENSE("GPL");

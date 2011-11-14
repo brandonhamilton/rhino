@@ -2,7 +2,7 @@
 *******************************************************************************
 **        O.S   : Linux
 **   FILE NAME  : arcmsr_attr.c
-**        BY    : Nick Cheng
+**        BY    : Erich Chen
 **   Description: attributes exported to sysfs and device host
 *******************************************************************************
 ** Copyright (C) 2002 - 2005, Areca Technology Corporation All rights reserved

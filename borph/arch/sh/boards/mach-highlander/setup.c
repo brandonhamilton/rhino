@@ -24,10 +24,10 @@
 #include <linux/interrupt.h>
 #include <linux/usb/r8a66597.h>
 #include <linux/usb/m66592.h>
-#include <linux/clkdev.h>
 #include <net/ax88796.h>
 #include <asm/machvec.h>
 #include <mach/highlander.h>
+#include <asm/clkdev.h>
 #include <asm/clock.h>
 #include <asm/heartbeat.h>
 #include <asm/io.h>
@@ -334,6 +334,8 @@ static struct clk ivdr_clk = {
 static struct clk *r7780rp_clocks[] = {
 	&ivdr_clk,
 };
+
+#define CLKDEV_CON_ID(_id, _clk) { .con_id = _id, .clk = _clk }
 
 static struct clk_lookup lookups[] = {
 	/* main clocks */

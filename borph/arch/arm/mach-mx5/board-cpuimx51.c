@@ -23,11 +23,13 @@
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/fsl_devices.h>
 
 #include <mach/eukrea-baseboards.h>
 #include <mach/common.h>
 #include <mach/hardware.h>
 #include <mach/iomux-mx51.h>
+#include <mach/mxc_ehci.h>
 
 #include <asm/irq.h>
 #include <asm/setup.h>
@@ -38,11 +40,15 @@
 #include "devices-imx51.h"
 #include "devices.h"
 
-#define CPUIMX51_USBH1_STP	IMX_GPIO_NR(1, 27)
-#define CPUIMX51_QUARTA_GPIO	IMX_GPIO_NR(3, 28)
-#define CPUIMX51_QUARTB_GPIO	IMX_GPIO_NR(3, 25)
-#define CPUIMX51_QUARTC_GPIO	IMX_GPIO_NR(3, 26)
-#define CPUIMX51_QUARTD_GPIO	IMX_GPIO_NR(3, 27)
+#define CPUIMX51_USBH1_STP	(0*32 + 27)
+#define CPUIMX51_QUARTA_GPIO	(2*32 + 28)
+#define CPUIMX51_QUARTB_GPIO	(2*32 + 25)
+#define CPUIMX51_QUARTC_GPIO	(2*32 + 26)
+#define CPUIMX51_QUARTD_GPIO	(2*32 + 27)
+#define CPUIMX51_QUARTA_IRQ	(MXC_INTERNAL_IRQS + CPUIMX51_QUARTA_GPIO)
+#define CPUIMX51_QUARTB_IRQ	(MXC_INTERNAL_IRQS + CPUIMX51_QUARTB_GPIO)
+#define CPUIMX51_QUARTC_IRQ	(MXC_INTERNAL_IRQS + CPUIMX51_QUARTC_GPIO)
+#define CPUIMX51_QUARTD_IRQ	(MXC_INTERNAL_IRQS + CPUIMX51_QUARTD_GPIO)
 #define CPUIMX51_QUART_XTAL	14745600
 #define CPUIMX51_QUART_REGSHIFT	17
 
@@ -54,10 +60,11 @@
 #define	MX51_USB_PLL_DIV_19_2_MHZ	0x01
 #define	MX51_USB_PLL_DIV_24_MHZ		0x02
 
+#if defined(CONFIG_SERIAL_8250) || defined(CONFIG_SERIAL_8250_MODULE)
 static struct plat_serial8250_port serial_platform_data[] = {
 	{
 		.mapbase = (unsigned long)(MX51_CS1_BASE_ADDR + 0x400000),
-		.irq = gpio_to_irq(CPUIMX51_QUARTA_GPIO),
+		.irq = CPUIMX51_QUARTA_IRQ,
 		.irqflags = IRQF_TRIGGER_HIGH,
 		.uartclk = CPUIMX51_QUART_XTAL,
 		.regshift = CPUIMX51_QUART_REGSHIFT,
@@ -65,7 +72,7 @@ static struct plat_serial8250_port serial_platform_data[] = {
 		.flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_IOREMAP,
 	}, {
 		.mapbase = (unsigned long)(MX51_CS1_BASE_ADDR + 0x800000),
-		.irq = gpio_to_irq(CPUIMX51_QUARTB_GPIO),
+		.irq = CPUIMX51_QUARTB_IRQ,
 		.irqflags = IRQF_TRIGGER_HIGH,
 		.uartclk = CPUIMX51_QUART_XTAL,
 		.regshift = CPUIMX51_QUART_REGSHIFT,
@@ -73,7 +80,7 @@ static struct plat_serial8250_port serial_platform_data[] = {
 		.flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_IOREMAP,
 	}, {
 		.mapbase = (unsigned long)(MX51_CS1_BASE_ADDR + 0x1000000),
-		.irq = gpio_to_irq(CPUIMX51_QUARTC_GPIO),
+		.irq = CPUIMX51_QUARTC_IRQ,
 		.irqflags = IRQF_TRIGGER_HIGH,
 		.uartclk = CPUIMX51_QUART_XTAL,
 		.regshift = CPUIMX51_QUART_REGSHIFT,
@@ -81,7 +88,7 @@ static struct plat_serial8250_port serial_platform_data[] = {
 		.flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_IOREMAP,
 	}, {
 		.mapbase = (unsigned long)(MX51_CS1_BASE_ADDR + 0x2000000),
-		.irq = irq_to_gpio(CPUIMX51_QUARTD_GPIO),
+		.irq = CPUIMX51_QUARTD_IRQ,
 		.irqflags = IRQF_TRIGGER_HIGH,
 		.uartclk = CPUIMX51_QUART_XTAL,
 		.regshift = CPUIMX51_QUART_REGSHIFT,
@@ -98,12 +105,15 @@ static struct platform_device serial_device = {
 		.platform_data = serial_platform_data,
 	},
 };
+#endif
 
 static struct platform_device *devices[] __initdata = {
+#if defined(CONFIG_SERIAL_8250) || defined(CONFIG_SERIAL_8250_MODULE)
 	&serial_device,
+#endif
 };
 
-static iomux_v3_cfg_t eukrea_cpuimx51_pads[] = {
+static struct pad_desc eukrea_cpuimx51_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -111,15 +121,15 @@ static iomux_v3_cfg_t eukrea_cpuimx51_pads[] = {
 	MX51_PAD_UART1_CTS__UART1_CTS,
 
 	/* I2C2 */
-	MX51_PAD_GPIO1_2__I2C2_SCL,
-	MX51_PAD_GPIO1_3__I2C2_SDA,
-	MX51_PAD_NANDF_D10__GPIO3_30,
+	MX51_PAD_GPIO_1_2__I2C2_SCL,
+	MX51_PAD_GPIO_1_3__I2C2_SDA,
+	MX51_PAD_NANDF_D10__GPIO_3_30,
 
 	/* QUART IRQ */
-	MX51_PAD_NANDF_D15__GPIO3_25,
-	MX51_PAD_NANDF_D14__GPIO3_26,
-	MX51_PAD_NANDF_D13__GPIO3_27,
-	MX51_PAD_NANDF_D12__GPIO3_28,
+	MX51_PAD_NANDF_D15__GPIO_3_25,
+	MX51_PAD_NANDF_D14__GPIO_3_26,
+	MX51_PAD_NANDF_D13__GPIO_3_27,
+	MX51_PAD_NANDF_D12__GPIO_3_28,
 
 	/* USB HOST1 */
 	MX51_PAD_USBH1_CLK__USBH1_CLK,
@@ -168,8 +178,6 @@ static int initialize_otg_port(struct platform_device *pdev)
 	void __iomem *usbother_base;
 
 	usb_base = ioremap(MX51_OTG_BASE_ADDR, SZ_4K);
-	if (!usb_base)
-		return -ENOMEM;
 	usbother_base = usb_base + MX5_USBOTHER_REGS_OFFSET;
 
 	/* Set the PHY clock to 19.2MHz */
@@ -178,10 +186,7 @@ static int initialize_otg_port(struct platform_device *pdev)
 	v |= MX51_USB_PLL_DIV_19_2_MHZ;
 	__raw_writel(v, usbother_base + MXC_USB_PHY_CTR_FUNC2_OFFSET);
 	iounmap(usb_base);
-
-	mdelay(10);
-
-	return mx51_initialize_usb_hw(0, MXC_EHCI_INTERNAL_PHY);
+	return 0;
 }
 
 static int initialize_usbh1_port(struct platform_device *pdev)
@@ -191,24 +196,19 @@ static int initialize_usbh1_port(struct platform_device *pdev)
 	void __iomem *usbother_base;
 
 	usb_base = ioremap(MX51_OTG_BASE_ADDR, SZ_4K);
-	if (!usb_base)
-		return -ENOMEM;
 	usbother_base = usb_base + MX5_USBOTHER_REGS_OFFSET;
 
 	/* The clock for the USBH1 ULPI port will come externally from the PHY. */
 	v = __raw_readl(usbother_base + MX51_USB_CTRL_1_OFFSET);
 	__raw_writel(v | MX51_USB_CTRL_UH1_EXT_CLK_EN, usbother_base + MX51_USB_CTRL_1_OFFSET);
 	iounmap(usb_base);
-
-	mdelay(10);
-
-	return mx51_initialize_usb_hw(1, MXC_EHCI_POWER_PINS_ENABLED |
-			MXC_EHCI_ITC_NO_THRESHOLD);
+	return 0;
 }
 
 static struct mxc_usbh_platform_data dr_utmi_config = {
 	.init		= initialize_otg_port,
 	.portsc	= MXC_EHCI_UTMI_16BIT,
+	.flags	= MXC_EHCI_INTERNAL_PHY,
 };
 
 static struct fsl_usb2_platform_data usb_pdata = {
@@ -219,6 +219,7 @@ static struct fsl_usb2_platform_data usb_pdata = {
 static struct mxc_usbh_platform_data usbh1_config = {
 	.init		= initialize_usbh1_port,
 	.portsc	= MXC_EHCI_MODE_ULPI,
+	.flags	= (MXC_EHCI_POWER_PINS_ENABLED | MXC_EHCI_ITC_NO_THRESHOLD),
 };
 
 static int otg_mode_host;
@@ -241,8 +242,6 @@ __setup("otg_mode=", eukrea_cpuimx51_otg_mode);
  */
 static void __init eukrea_cpuimx51_init(void)
 {
-	imx51_soc_init();
-
 	mxc_iomux_v3_setup_multiple_pads(eukrea_cpuimx51_pads,
 					ARRAY_SIZE(eukrea_cpuimx51_pads));
 
@@ -293,10 +292,9 @@ static struct sys_timer mxc_timer = {
 
 MACHINE_START(EUKREA_CPUIMX51, "Eukrea CPUIMX51 Module")
 	/* Maintainer: Eric Bénard <eric@eukrea.com> */
-	.boot_params = MX51_PHYS_OFFSET + 0x100,
+	.boot_params = PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
-	.init_early = imx51_init_early,
 	.init_irq = mx51_init_irq,
-	.timer = &mxc_timer,
 	.init_machine = eukrea_cpuimx51_init,
+	.timer = &mxc_timer,
 MACHINE_END

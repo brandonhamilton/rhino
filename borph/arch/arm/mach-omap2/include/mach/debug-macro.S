@@ -19,9 +19,6 @@
 
 #define UART_OFFSET(addr)	((addr) & 0x00ffffff)
 
-#define omap_uart_v2p(x)	((x) - PAGE_OFFSET + PLAT_PHYS_OFFSET)
-#define omap_uart_p2v(x)	((x) - PLAT_PHYS_OFFSET + PAGE_OFFSET)
-
 		.pushsection .data
 omap_uart_phys:	.word	0
 omap_uart_virt:	.word	0
@@ -39,7 +36,7 @@ omap_uart_lsr:	.word	0
 		/* Use omap_uart_phys/virt if already configured */
 10:		mrc	p15, 0, \rp, c1, c0
 		tst	\rp, #1			@ MMU enabled?
-		ldreq	\rp, =omap_uart_v2p(omap_uart_phys)	@ MMU disabled
+		ldreq	\rp, =__virt_to_phys(omap_uart_phys)	@ MMU not enabled
 		ldrne	\rp, =omap_uart_phys	@ MMU enabled
 		add	\rv, \rp, #4		@ omap_uart_virt
 		ldr	\rp, [\rp, #0]
@@ -52,7 +49,7 @@ omap_uart_lsr:	.word	0
 		mrc	p15, 0, \rp, c1, c0
 		tst	\rp, #1			@ MMU enabled?
 		ldreq	\rp, =OMAP_UART_INFO	@ MMU not enabled
-		ldrne	\rp, =omap_uart_p2v(OMAP_UART_INFO)	@ MMU enabled
+		ldrne	\rp, =__phys_to_virt(OMAP_UART_INFO)	@ MMU enabled
 		ldr	\rp, [\rp, #0]
 
 		/* Select the UART to use based on the UART1 scratchpad value */
@@ -72,11 +69,11 @@ omap_uart_lsr:	.word	0
 		beq	34f			@ configure OMAP3UART4
 		cmp	\rp, #OMAP4UART4	@ only on 44xx
 		beq	44f			@ configure OMAP4UART4
-		cmp	\rp, #TI816XUART1	@ ti816x UART offsets different
+		cmp	\rp, #TI81XXUART1	@ ti81xx UART offsets different
 		beq	81f			@ configure UART1
-		cmp	\rp, #TI816XUART2	@ ti816x UART offsets different
+		cmp	\rp, #TI81XXUART2	@ ti81xx UART offsets different
 		beq	82f			@ configure UART2
-		cmp	\rp, #TI816XUART3	@ ti816x UART offsets different
+		cmp	\rp, #TI81XXUART3	@ ti81xx UART offsets different
 		beq	83f			@ configure UART3
 		cmp	\rp, #ZOOM_UART		@ only on zoom2/3
 		beq	95f			@ configure ZOOM_UART
@@ -100,16 +97,16 @@ omap_uart_lsr:	.word	0
 		b	98f
 44:		mov	\rp, #UART_OFFSET(OMAP4_UART4_BASE)
 		b	98f
-81:		mov	\rp, #UART_OFFSET(TI816X_UART1_BASE)
+81:		mov	\rp, #UART_OFFSET(TI81XX_UART1_BASE)
 		b	98f
-82:		mov	\rp, #UART_OFFSET(TI816X_UART2_BASE)
+82:		mov	\rp, #UART_OFFSET(TI81XX_UART2_BASE)
 		b	98f
-83:		mov	\rp, #UART_OFFSET(TI816X_UART3_BASE)
+83:		mov	\rp, #UART_OFFSET(TI81XX_UART3_BASE)
 		b	98f
 95:		ldr	\rp, =ZOOM_UART_BASE
 		mrc	p15, 0, \rv, c1, c0
 		tst	\rv, #1			@ MMU enabled?
-		ldreq	\rv, =omap_uart_v2p(omap_uart_phys)	@ MMU disabled
+		ldreq	\rv, =__virt_to_phys(omap_uart_phys)	@ MMU not enabled
 		ldrne	\rv, =omap_uart_phys	@ MMU enabled
 		str	\rp, [\rv, #0]
 		ldr	\rp, =ZOOM_UART_VIRT
@@ -124,7 +121,7 @@ omap_uart_lsr:	.word	0
 98:		add	\rp, \rp, #0x48000000	@ phys base
 		mrc	p15, 0, \rv, c1, c0
 		tst	\rv, #1			@ MMU enabled?
-		ldreq	\rv, =omap_uart_v2p(omap_uart_phys)	@ MMU disabled
+		ldreq	\rv, =__virt_to_phys(omap_uart_phys)	@ MMU not enabled
 		ldrne	\rv, =omap_uart_phys	@ MMU enabled
 		str	\rp, [\rv, #0]
 		sub	\rp, \rp, #0x48000000	@ phys base
@@ -146,7 +143,7 @@ omap_uart_lsr:	.word	0
 		.macro	busyuart,rd,rx
 1001:		mrc	p15, 0, \rd, c1, c0
 		tst	\rd, #1			@ MMU enabled?
-		ldreq	\rd, =omap_uart_v2p(omap_uart_lsr)	@ MMU disabled
+		ldreq	\rd, =__virt_to_phys(omap_uart_lsr)	@ MMU not enabled
 		ldrne	\rd, =omap_uart_lsr	@ MMU enabled
 		ldr	\rd, [\rd, #0]
 		ldrb	\rd, [\rx, \rd]

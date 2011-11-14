@@ -22,17 +22,16 @@
 #include <linux/mmc/host.h>
 #include <linux/delay.h>
 #include <linux/i2c/twl.h>
-#include <linux/regulator/machine.h>
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/gpio.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
+#include <mach/gpio.h>
 #include <plat/board.h>
 #include <plat/common.h>
 #include <plat/gpmc.h>
@@ -41,7 +40,6 @@
 
 #include "mux.h"
 #include "hsmmc.h"
-#include "common-board-devices.h"
 
 #define SDP2430_CS0_BASE	0x04000000
 #define SECONDARY_LCD_GPIO		147
@@ -141,30 +139,15 @@ static struct omap_board_config_kernel sdp2430_config[] __initdata = {
 	{OMAP_TAG_LCD, &sdp2430_lcd_config},
 };
 
-static void __init omap_2430sdp_init_early(void)
+static void __init omap_2430sdp_init_irq(void)
 {
+	omap_board_config = sdp2430_config;
+	omap_board_config_size = ARRAY_SIZE(sdp2430_config);
 	omap2_init_common_infrastructure();
 	omap2_init_common_devices(NULL, NULL);
+	omap_init_irq();
+	gpmc_init();
 }
-
-static struct regulator_consumer_supply sdp2430_vmmc1_supplies[] = {
-	REGULATOR_SUPPLY("vmmc", "omap_hsmmc.0"),
-};
-
-/* VMMC1 for OMAP VDD_MMC1 (i/o) and MMC1 card */
-static struct regulator_init_data sdp2430_vmmc1 = {
-	.constraints = {
-		.min_uV			= 1850000,
-		.max_uV			= 3150000,
-		.valid_modes_mask	= REGULATOR_MODE_NORMAL
-					| REGULATOR_MODE_STANDBY,
-		.valid_ops_mask		= REGULATOR_CHANGE_VOLTAGE
-					| REGULATOR_CHANGE_MODE
-					| REGULATOR_CHANGE_STATUS,
-	},
-	.num_consumer_supplies	= ARRAY_SIZE(sdp2430_vmmc1_supplies),
-	.consumer_supplies	= &sdp2430_vmmc1_supplies[0],
-};
 
 static struct twl4030_gpio_platform_data sdp2430_gpio_data = {
 	.gpio_base	= OMAP_MAX_GPIO_LINES,
@@ -178,7 +161,15 @@ static struct twl4030_platform_data sdp2430_twldata = {
 
 	/* platform_data for children goes here */
 	.gpio		= &sdp2430_gpio_data,
-	.vmmc1		= &sdp2430_vmmc1,
+};
+
+static struct i2c_board_info __initdata sdp2430_i2c_boardinfo[] = {
+	{
+		I2C_BOARD_INFO("twl4030", 0x48),
+		.flags = I2C_CLIENT_WAKE,
+		.irq = INT_24XX_SYS_NIRQ,
+		.platform_data = &sdp2430_twldata,
+	},
 };
 
 static struct i2c_board_info __initdata sdp2430_i2c1_boardinfo[] = {
@@ -193,7 +184,8 @@ static int __init omap2430_i2c_init(void)
 {
 	omap_register_i2c_bus(1, 100, sdp2430_i2c1_boardinfo,
 			ARRAY_SIZE(sdp2430_i2c1_boardinfo));
-	omap2_pmic_init("twl4030", &sdp2430_twldata);
+	omap_register_i2c_bus(2, 2600, sdp2430_i2c_boardinfo,
+			ARRAY_SIZE(sdp2430_i2c_boardinfo));
 	return 0;
 }
 
@@ -208,6 +200,11 @@ static struct omap2_hsmmc_info mmc[] __initdata = {
 	{}	/* Terminator */
 };
 
+static struct omap_musb_board_data musb_board_data = {
+	.interface_type		= MUSB_INTERFACE_ULPI,
+	.mode			= MUSB_OTG,
+	.power			= 100,
+};
 static struct omap_usb_config sdp2430_usb_config __initdata = {
 	.otg		= 1,
 #ifdef  CONFIG_USB_GADGET_OMAP
@@ -226,10 +223,9 @@ static struct omap_board_mux board_mux[] __initdata = {
 
 static void __init omap_2430sdp_init(void)
 {
-	omap2430_mux_init(board_mux, OMAP_PACKAGE_ZAC);
+	int ret;
 
-	omap_board_config = sdp2430_config;
-	omap_board_config_size = ARRAY_SIZE(sdp2430_config);
+	omap2430_mux_init(board_mux, OMAP_PACKAGE_ZAC);
 
 	omap2430_i2c_init();
 
@@ -239,13 +235,14 @@ static void __init omap_2430sdp_init(void)
 	omap2_usbfs_init(&sdp2430_usb_config);
 
 	omap_mux_init_signal("usb0hs_stp", OMAP_PULL_ENA | OMAP_PULL_UP);
-	usb_musb_init(NULL);
+	usb_musb_init(&musb_board_data);
 
 	board_smc91x_init();
 
 	/* Turn off secondary LCD backlight */
-	gpio_request_one(SECONDARY_LCD_GPIO, GPIOF_OUT_INIT_LOW,
-			 "Secondary LCD backlight");
+	ret = gpio_request(SECONDARY_LCD_GPIO, "Secondary LCD backlight");
+	if (ret == 0)
+		gpio_direction_output(SECONDARY_LCD_GPIO, 0);
 }
 
 static void __init omap_2430sdp_map_io(void)
@@ -257,10 +254,9 @@ static void __init omap_2430sdp_map_io(void)
 MACHINE_START(OMAP_2430SDP, "OMAP2430 sdp2430 board")
 	/* Maintainer: Syed Khasim - Texas Instruments Inc */
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= omap_2430sdp_map_io,
-	.init_early	= omap_2430sdp_init_early,
-	.init_irq	= omap2_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= omap_2430sdp_init_irq,
 	.init_machine	= omap_2430sdp_init,
-	.timer		= &omap2_timer,
+	.timer		= &omap_timer,
 MACHINE_END

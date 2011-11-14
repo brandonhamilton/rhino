@@ -40,8 +40,7 @@ asmlinkage long microblaze_vfork(struct pt_regs *regs)
 						regs, 0, NULL, NULL);
 }
 
-asmlinkage long microblaze_clone(int flags, unsigned long stack,
-							struct pt_regs *regs)
+asmlinkage long microblaze_clone(int flags, unsigned long stack, struct pt_regs *regs)
 {
 	if (!stack)
 		stack = regs->r1;

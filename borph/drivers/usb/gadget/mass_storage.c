@@ -102,7 +102,7 @@ static struct fsg_module_parameters mod_data = {
 };
 FSG_MODULE_PARAMETERS(/* no prefix */, mod_data);
 
-static unsigned long msg_registered;
+static unsigned long msg_registered = 0;
 static void msg_cleanup(void);
 
 static int msg_thread_exits(struct fsg_common *common)
@@ -169,7 +169,6 @@ static struct usb_composite_driver msg_driver = {
 	.name		= "g_mass_storage",
 	.dev		= &msg_device_desc,
 	.iProduct	= DRIVER_DESC,
-	.max_speed	= USB_SPEED_HIGH,
 	.needs_serial	= 1,
 };
 

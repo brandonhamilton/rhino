@@ -49,7 +49,6 @@
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/rtnetlink.h>
 #include <linux/serial_reg.h>
 #include <linux/dma-mapping.h>
@@ -377,7 +376,7 @@ MODULE_DEVICE_TABLE(pnp, smsc_ircc_pnp_table);
 static int pnp_driver_registered;
 
 #ifdef CONFIG_PNP
-static int __devinit smsc_ircc_pnp_probe(struct pnp_dev *dev,
+static int __init smsc_ircc_pnp_probe(struct pnp_dev *dev,
 				      const struct pnp_device_id *dev_id)
 {
 	unsigned int firbase, sirbase;
@@ -516,7 +515,7 @@ static const struct net_device_ops smsc_ircc_netdev_ops = {
  *    Try to open driver instance
  *
  */
-static int __devinit smsc_ircc_open(unsigned int fir_base, unsigned int sir_base, u8 dma, u8 irq)
+static int __init smsc_ircc_open(unsigned int fir_base, unsigned int sir_base, u8 dma, u8 irq)
 {
 	struct smsc_ircc_cb *self;
 	struct net_device *dev;
@@ -1583,7 +1582,7 @@ static irqreturn_t smsc_ircc_interrupt_sir(struct net_device *dev)
 	int iobase;
 	int iir, lsr;
 
-	/* Already locked coming here in smsc_ircc_interrupt() */
+	/* Already locked comming here in smsc_ircc_interrupt() */
 	/*spin_lock(&self->lock);*/
 
 	iobase = self->io.sir_base;
@@ -2405,6 +2404,8 @@ static int __init smsc_superio_lpc(unsigned short cfg_base)
  * addresses making a subsystem device table necessary.
  */
 #ifdef CONFIG_PCI
+#define PCIID_VENDOR_INTEL 0x8086
+#define PCIID_VENDOR_ALI 0x10b9
 static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __initdata = {
 	/*
 	 * Subsystems needing entries:
@@ -2414,7 +2415,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	 */
 	{
 		/* Guessed entry */
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x08bc,
@@ -2427,7 +2428,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nx5000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x088c,
@@ -2441,7 +2442,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nc8000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x0890,
@@ -2454,7 +2455,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nc6000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x0e11,
 		.subdevice = 0x0860,
@@ -2469,7 +2470,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* Intel 82801DB/DBL (ICH4/ICH4-L) LPC Interface Bridge */
-		.vendor = PCI_VENDOR_ID_INTEL,
+		.vendor = PCIID_VENDOR_INTEL,
 		.device = 0x24c0,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2482,7 +2483,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "Toshiba laptop with Intel 82801DB/DBL LPC bridge",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801CAM ISA bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801CAM ISA bridge */
 		.device = 0x248c,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2496,7 +2497,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* 82801DBM (ICH4-M) LPC Interface Bridge */
-		.vendor = PCI_VENDOR_ID_INTEL,
+		.vendor = PCIID_VENDOR_INTEL,
 		.device = 0x24cc,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2510,7 +2511,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* ALi M1533/M1535 PCI to ISA Bridge [Aladdin IV/V/V+] */
-		.vendor = PCI_VENDOR_ID_AL,
+		.vendor = PCIID_VENDOR_ALI,
 		.device = 0x1533,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */

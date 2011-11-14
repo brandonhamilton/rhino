@@ -893,7 +893,8 @@ static void ffb_init_fix(struct fb_info *info)
 	info->fix.accel = FB_ACCEL_SUN_CREATOR;
 }
 
-static int __devinit ffb_probe(struct platform_device *op)
+static int __devinit ffb_probe(struct platform_device *op,
+			       const struct of_device_id *match)
 {
 	struct device_node *dp = op->dev.of_node;
 	struct ffb_fbc __iomem *fbc;
@@ -1010,7 +1011,7 @@ out_dealloc_cmap:
 	fb_dealloc_cmap(&info->cmap);
 
 out_unmap_dac:
-	of_iounmap(&op->resource[1], par->dac, sizeof(struct ffb_dac));
+	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
 
 out_unmap_fbc:
 	of_iounmap(&op->resource[2], par->fbc, sizeof(struct ffb_fbc));
@@ -1051,7 +1052,7 @@ static const struct of_device_id ffb_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ffb_match);
 
-static struct platform_driver ffb_driver = {
+static struct of_platform_driver ffb_driver = {
 	.driver = {
 		.name = "ffb",
 		.owner = THIS_MODULE,
@@ -1066,12 +1067,12 @@ static int __init ffb_init(void)
 	if (fb_get_options("ffb", NULL))
 		return -ENODEV;
 
-	return platform_driver_register(&ffb_driver);
+	return of_register_platform_driver(&ffb_driver);
 }
 
 static void __exit ffb_exit(void)
 {
-	platform_driver_unregister(&ffb_driver);
+	of_unregister_platform_driver(&ffb_driver);
 }
 
 module_init(ffb_init);

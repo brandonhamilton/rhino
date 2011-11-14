@@ -53,7 +53,7 @@ int ft1000ReadProc(char *page, char **start, off_t off,
 	struct net_device *dev;
 	int len;
 	int i;
-	struct ft1000_info *info;
+	FT1000_INFO *info;
 	char *status[] =
 		{ "Idle (Disconnect)", "Searching", "Active (Connected)",
 		"Waiting for L2", "Sleep", "No Coverage", "", ""
@@ -65,7 +65,7 @@ int ft1000ReadProc(char *page, char **start, off_t off,
 	time_t delta;
 
 	dev = (struct net_device *)data;
-	info = netdev_priv(dev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
 	if (off > 0) {
 		*eof = 1;
@@ -75,14 +75,16 @@ int ft1000ReadProc(char *page, char **start, off_t off,
 	/* Wrap-around */
 
 	if (info->AsicID == ELECTRABUZZ_ID) {
-		if (info->ProgConStat != 0xFF) {
-			info->LedStat =
-				ft1000_read_dpram(dev, FT1000_DSP_LED);
-			info->ConStat =
-				ft1000_read_dpram(dev,
-						  FT1000_DSP_CON_STATE);
-		} else {
-			info->ConStat = 0xf;
+		if (info->DspHibernateFlag == 0) {
+			if (info->ProgConStat != 0xFF) {
+				info->LedStat =
+					ft1000_read_dpram(dev, FT1000_DSP_LED);
+				info->ConStat =
+					ft1000_read_dpram(dev,
+							  FT1000_DSP_CON_STATE);
+			} else {
+				info->ConStat = 0xf;
+			}
 		}
 	} else {
 		if (info->ProgConStat != 0xFF) {
@@ -170,9 +172,9 @@ static int ft1000NotifyProc(struct notifier_block *this, unsigned long event,
 				void *ptr)
 {
 	struct net_device *dev = ptr;
-	struct ft1000_info *info;
+	FT1000_INFO *info;
 
-	info = netdev_priv(dev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
 	switch (event) {
 	case NETDEV_CHANGENAME:
@@ -191,9 +193,9 @@ static struct notifier_block ft1000_netdev_notifier = {
 
 void ft1000InitProc(struct net_device *dev)
 {
-	struct ft1000_info *info;
+	FT1000_INFO *info;
 
-	info = netdev_priv(dev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
 	info->proc_ft1000 = proc_mkdir(FT1000_PROC, init_net.proc_net);
 	create_proc_read_entry(dev->name, 0644, info->proc_ft1000,
@@ -204,11 +206,14 @@ void ft1000InitProc(struct net_device *dev)
 
 void ft1000CleanupProc(struct net_device *dev)
 {
-	struct ft1000_info *info;
+	FT1000_INFO *info;
 
-	info = netdev_priv(dev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
 	remove_proc_entry(dev->name, info->proc_ft1000);
 	remove_proc_entry(FT1000_PROC, init_net.proc_net);
 	unregister_netdevice_notifier(&ft1000_netdev_notifier);
 }
+
+EXPORT_SYMBOL(ft1000InitProc);
+EXPORT_SYMBOL(ft1000CleanupProc);

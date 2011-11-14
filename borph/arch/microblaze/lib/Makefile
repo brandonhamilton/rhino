@@ -2,12 +2,6 @@
 # Makefile
 #
 
-ifdef CONFIG_FUNCTION_TRACER
-CFLAGS_REMOVE_ashldi3.o = -pg
-CFLAGS_REMOVE_ashrdi3.o = -pg
-CFLAGS_REMOVE_lshrdi3.o = -pg
-endif
-
 lib-y :=  memset.o
 
 ifeq ($(CONFIG_OPT_LIB_ASM),y)

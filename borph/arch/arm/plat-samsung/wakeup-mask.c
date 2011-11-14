@@ -22,7 +22,7 @@
 void samsung_sync_wakemask(void __iomem *reg,
 			   struct samsung_wakeup_mask *mask, int nr_mask)
 {
-	struct irq_data *data;
+	struct irq_desc *desc;
 	u32 val;
 
 	val = __raw_readl(reg);
@@ -33,10 +33,10 @@ void samsung_sync_wakemask(void __iomem *reg,
 			continue;
 		}
 
-		data = irq_get_irq_data(mask->irq);
+		desc = irq_to_desc(mask->irq);
 
-		/* bit of a liberty to read this directly from irq_data. */
-		if (irqd_is_wakeup_set(data))
+		/* bit of a liberty to read this directly from irq_desc. */
+		if (desc->wake_depth > 0)
 			val &= ~mask->bit;
 		else
 			val |= mask->bit;

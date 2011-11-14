@@ -75,14 +75,14 @@ static VOID UpdateTokenCount(register PMINI_ADAPTER Adapter)
 * Returns     - The number of bytes allowed for transmission.
 *
 ***********************************************************************/
-static ULONG GetSFTokenCount(PMINI_ADAPTER Adapter, PacketInfo *psSF)
+static __inline ULONG GetSFTokenCount(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 {
 	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IsPacketAllowedForFlow ===>");
 	/* Validate the parameters */
 	if(NULL == Adapter || (psSF < Adapter->PackInfo &&
 		(uintptr_t)psSF > (uintptr_t) &Adapter->PackInfo[HiPriority]))
 	{
-		BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IPAFF: Got wrong Parameters:Adapter: %p, QIndex: %zd\n", Adapter, (psSF-Adapter->PackInfo));
+		BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IPAFF: Got wrong Parameters:Adapter: %p, QIndex: %ld\n", Adapter, (psSF-Adapter->PackInfo));
 		return 0;
 	}
 
@@ -94,27 +94,51 @@ static ULONG GetSFTokenCount(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 		}
 		else
 		{
-			BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "Not enough tokens in queue %zd Available %u\n",
+			BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "Not enough tokens in queue %ld Available %u\n",
 				psSF-Adapter->PackInfo, psSF->uiCurrentTokenCount);
 			psSF->uiPendedLast = 1;
 		}
 	}
 	else
 	{
-		BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IPAFF: Queue %zd not valid\n", psSF-Adapter->PackInfo);
+		BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IPAFF: Queue %ld not valid\n", psSF-Adapter->PackInfo);
 	}
 	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TOKEN_COUNTS, DBG_LVL_ALL, "IsPacketAllowedForFlow <===");
 	return 0;
 }
 
+static __inline void RemovePacketFromQueue(PacketInfo *pPackInfo , struct sk_buff *Packet)
+{
+	struct sk_buff *psQueueCurrent=NULL, *psLastQueueNode=NULL;
+	psQueueCurrent = pPackInfo->FirstTxQueue;
+	while(psQueueCurrent)
+	{
+		if(Packet == psQueueCurrent)
+		{
+			if(psQueueCurrent == pPackInfo->FirstTxQueue)
+			{
+				pPackInfo->FirstTxQueue=psQueueCurrent->next;
+				if(psQueueCurrent==pPackInfo->LastTxQueue)
+					pPackInfo->LastTxQueue=NULL;
+			}
+			else
+			{
+				psLastQueueNode->next=psQueueCurrent->next;
+			}
+			break;
+		}
+		psLastQueueNode = psQueueCurrent;
+		psQueueCurrent=psQueueCurrent->next;
+	}
+}
 /**
 @ingroup tx_functions
 This function despatches packet from the specified queue.
 @return Zero(success) or Negative value(failure)
 */
-static INT SendPacketFromQueue(PMINI_ADAPTER Adapter,/**<Logical Adapter*/
-			       PacketInfo *psSF,		/**<Queue identifier*/
-			       struct sk_buff*  Packet)	/**<Pointer to the packet to be sent*/
+static __inline INT SendPacketFromQueue(PMINI_ADAPTER Adapter,/**<Logical Adapter*/
+								PacketInfo *psSF,		/**<Queue identifier*/
+								struct sk_buff*  Packet)	/**<Pointer to the packet to be sent*/
 {
 	INT  	Status=STATUS_FAILURE;
 	UINT uiIndex =0,PktLen = 0;
@@ -156,7 +180,8 @@ static INT SendPacketFromQueue(PMINI_ADAPTER Adapter,/**<Logical Adapter*/
 * Returns     - None.
 *
 ****************************************************************************/
-static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
+static __inline VOID CheckAndSendPacketFromIndex
+(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 {
 	struct sk_buff	*QueuePacket=NULL;
 	char 			*pControlPacket = NULL;
@@ -164,7 +189,7 @@ static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 	int				iPacketLen=0;
 
 
-	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "%zd ====>", (psSF-Adapter->PackInfo));
+	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "%ld ====>", (psSF-Adapter->PackInfo));
 	if((psSF != &Adapter->PackInfo[HiPriority]) && Adapter->LinkUpStatus && atomic_read(&psSF->uiPerSFTxResourceCount))//Get data packet
   	{
 		if(!psSF->ucDirection )
@@ -172,8 +197,10 @@ static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 
 		BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "UpdateTokenCount ");
 		if(Adapter->IdleMode || Adapter->bPreparingForLowPowerMode)
-			return;	/* in idle mode */
-
+		{
+			BCM_DEBUG_PRINT(Adapter,DBG_TYPE_PRINTK, 0, 0,"Device is in Idle Mode..Hence blocking Data Packets..\n");
+			return;
+		}
 		// Check for Free Descriptors
 		if(atomic_read(&Adapter->CurrNumFreeTxDesc) <= MINIMUM_PENDING_DESCRIPTORS)
 		{
@@ -181,6 +208,9 @@ static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 			return ;
 		}
 
+#if 0
+		PruneQueue(Adapter,(psSF-Adapter->PackInfo));
+#endif
 		spin_lock_bh(&psSF->SFQueueLock);
 		QueuePacket=psSF->FirstTxQueue;
 
@@ -210,10 +240,10 @@ static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 			}
 			else
 			{
-				BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "For Queue: %zd\n", psSF-Adapter->PackInfo);
+				BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "For Queue: %ld\n", psSF-Adapter->PackInfo);
 				BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "\nAvailable Tokens = %d required = %d\n",
 					psSF->uiCurrentTokenCount, iPacketLen);
-				//this part indicates that because of non-availability of the tokens
+				//this part indicates that becuase of non-availability of the tokens
 				//pkt has not been send out hence setting the pending flag indicating the host to send it out
 				//first next iteration  .
 				psSF->uiPendedLast = TRUE;
@@ -260,6 +290,17 @@ static VOID CheckAndSendPacketFromIndex(PMINI_ADAPTER Adapter, PacketInfo *psSF)
 			}
 	   	}
 	}
+
+	if(Status != STATUS_SUCCESS)	//Tx of data packet to device Failed
+	{
+		if(Adapter->bcm_jiffies == 0)
+			Adapter->bcm_jiffies = jiffies;
+	}
+	else
+	{
+		Adapter->bcm_jiffies = 0;
+	}
+	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "<=====");
 }
 
 
@@ -346,7 +387,12 @@ VOID transmit_packets(PMINI_ADAPTER Adapter)
 		if(exit_flag == TRUE )
 		    break ;
 	}/* end of inner while loop */
-
+	if(Adapter->bcm_jiffies == 0 &&
+		atomic_read(&Adapter->TotalPacketCount) != 0 &&
+	   	uiPrevTotalCount == atomic_read(&Adapter->TotalPacketCount))
+	{
+		Adapter->bcm_jiffies = jiffies;
+	}
 	update_per_cid_rx  (Adapter);
 	Adapter->txtransmit_running = 0;
 	BCM_DEBUG_PRINT(Adapter,DBG_TYPE_TX, TX_PACKETS, DBG_LVL_ALL, "<======");

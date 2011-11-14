@@ -42,6 +42,7 @@
 #include "interrupt.h"
 #include "pervasive.h"
 #include "ras.h"
+#include "io-workarounds.h"
 
 static void qpace_show_cpuinfo(struct seq_file *m)
 {
@@ -144,4 +145,9 @@ define_machine(qpace) {
 	.calibrate_decr		= generic_calibrate_decr,
 	.progress		= qpace_progress,
 	.init_IRQ		= iic_init_IRQ,
+#ifdef CONFIG_KEXEC
+	.machine_kexec		= default_machine_kexec,
+	.machine_kexec_prepare	= default_machine_kexec_prepare,
+	.machine_crash_shutdown	= default_machine_crash_shutdown,
+#endif
 };

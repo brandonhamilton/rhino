@@ -29,7 +29,6 @@
 #include <linux/clk.h>
 #include <linux/gfp.h>
 #include <linux/delay.h>
-#include <linux/err.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -131,7 +130,9 @@ struct mpc5121_nfc_prv {
 
 static void mpc5121_nfc_done(struct mtd_info *mtd);
 
+#ifdef CONFIG_MTD_PARTITIONS
 static const char *mpc5121_nfc_pprobes[] = { "cmdlinepart", NULL };
+#endif
 
 /* Read NFC register */
 static inline u16 nfc_read(struct mtd_info *mtd, uint reg)
@@ -649,14 +650,17 @@ static void mpc5121_nfc_free(struct device *dev, struct mtd_info *mtd)
 		iounmap(prv->csreg);
 }
 
-static int __devinit mpc5121_nfc_probe(struct platform_device *op)
+static int __devinit mpc5121_nfc_probe(struct platform_device *op,
+					const struct of_device_id *match)
 {
 	struct device_node *rootnode, *dn = op->dev.of_node;
 	struct device *dev = &op->dev;
 	struct mpc5121_nfc_prv *prv;
 	struct resource res;
 	struct mtd_info *mtd;
+#ifdef CONFIG_MTD_PARTITIONS
 	struct mtd_partition *parts;
+#endif
 	struct nand_chip *chip;
 	unsigned long regs_paddr, regs_size;
 	const __be32 *chips_no;
@@ -713,7 +717,7 @@ static int __devinit mpc5121_nfc_probe(struct platform_device *op)
 	}
 
 	regs_paddr = res.start;
-	regs_size = resource_size(&res);
+	regs_size = res.end - res.start + 1;
 
 	if (!devm_request_mem_region(dev, regs_paddr, regs_size, DRV_NAME)) {
 		dev_err(dev, "Error requesting memory region!\n");
@@ -754,9 +758,9 @@ static int __devinit mpc5121_nfc_probe(struct platform_device *op)
 
 	/* Enable NFC clock */
 	prv->clk = clk_get(dev, "nfc_clk");
-	if (IS_ERR(prv->clk)) {
+	if (!prv->clk) {
 		dev_err(dev, "Unable to acquire NFC clock!\n");
-		retval = PTR_ERR(prv->clk);
+		retval = -ENODEV;
 		goto error;
 	}
 
@@ -837,6 +841,7 @@ static int __devinit mpc5121_nfc_probe(struct platform_device *op)
 	dev_set_drvdata(dev, mtd);
 
 	/* Register device in MTD */
+#ifdef CONFIG_MTD_PARTITIONS
 	retval = parse_mtd_partitions(mtd, mpc5121_nfc_pprobes, &parts, 0);
 #ifdef CONFIG_MTD_OF_PARTS
 	if (retval == 0)
@@ -849,7 +854,12 @@ static int __devinit mpc5121_nfc_probe(struct platform_device *op)
 		goto error;
 	}
 
-	retval = mtd_device_register(mtd, parts, retval);
+	if (retval > 0)
+		retval = add_mtd_partitions(mtd, parts, retval);
+	else
+#endif
+		retval = add_mtd_device(mtd);
+
 	if (retval) {
 		dev_err(dev, "Error adding MTD device!\n");
 		devm_free_irq(dev, prv->irq, mtd);
@@ -881,7 +891,7 @@ static struct of_device_id mpc5121_nfc_match[] __devinitdata = {
 	{},
 };
 
-static struct platform_driver mpc5121_nfc_driver = {
+static struct of_platform_driver mpc5121_nfc_driver = {
 	.probe		= mpc5121_nfc_probe,
 	.remove		= __devexit_p(mpc5121_nfc_remove),
 	.driver		= {
@@ -893,14 +903,14 @@ static struct platform_driver mpc5121_nfc_driver = {
 
 static int __init mpc5121_nfc_init(void)
 {
-	return platform_driver_register(&mpc5121_nfc_driver);
+	return of_register_platform_driver(&mpc5121_nfc_driver);
 }
 
 module_init(mpc5121_nfc_init);
 
 static void __exit mpc5121_nfc_cleanup(void)
 {
-	platform_driver_unregister(&mpc5121_nfc_driver);
+	of_unregister_platform_driver(&mpc5121_nfc_driver);
 }
 
 module_exit(mpc5121_nfc_cleanup);

@@ -97,7 +97,7 @@
 #include <net/xfrm.h>
 
 #include <asm/byteorder.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "l2tp_core.h"
 

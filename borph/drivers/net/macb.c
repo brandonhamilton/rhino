@@ -15,7 +15,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/dma-mapping.h>
@@ -261,7 +260,7 @@ static int macb_mii_init(struct macb *bp)
 	for (i = 0; i < PHY_MAX_ADDR; i++)
 		bp->mii_bus->irq[i] = PHY_POLL;
 
-	dev_set_drvdata(&bp->dev->dev, bp->mii_bus);
+	platform_set_drvdata(bp->dev, bp->mii_bus);
 
 	if (mdiobus_register(bp->mii_bus))
 		goto err_out_free_mdio_irq;
@@ -321,9 +320,6 @@ static void macb_tx(struct macb *bp)
 		/*Mark all the buffer as used to avoid sending a lost buffer*/
 		for (i = 0; i < TX_RING_SIZE; i++)
 			bp->tx_ring[i].ctrl = MACB_BIT(TX_USED);
-
-		/* Add wrap bit */
-		bp->tx_ring[TX_RING_SIZE - 1].ctrl |= MACB_BIT(TX_WRAP);
 
 		/* free transmit buffer in upper layer*/
 		for (tail = bp->tx_tail; tail != head; tail = NEXT_TX(tail)) {
@@ -580,11 +576,6 @@ static irqreturn_t macb_interrupt(int irq, void *dev_id)
 		 * add that if/when we get our hands on a full-blown MII PHY.
 		 */
 
-		if (status & MACB_BIT(ISR_ROVR)) {
-			/* We missed at least one packet */
-			bp->hw_stats.rx_overruns++;
-		}
-
 		if (status & MACB_BIT(HRESP)) {
 			/*
 			 * TODO: Reset the hardware, and maybe move the printk
@@ -672,8 +663,6 @@ static int macb_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	entry = NEXT_TX(entry);
 	bp->tx_head = entry;
-
-	skb_tx_timestamp(skb);
 
 	macb_writel(bp, NCR, macb_readl(bp, NCR) | MACB_BIT(TSTART));
 
@@ -1035,8 +1024,7 @@ static struct net_device_stats *macb_get_stats(struct net_device *dev)
 				   hwstat->rx_jabbers +
 				   hwstat->rx_undersize_pkts +
 				   hwstat->rx_length_mismatch);
-	nstat->rx_over_errors = hwstat->rx_resource_errors +
-				   hwstat->rx_overruns;
+	nstat->rx_over_errors = hwstat->rx_resource_errors;
 	nstat->rx_crc_errors = hwstat->rx_fcs_errors;
 	nstat->rx_frame_errors = hwstat->rx_align_errors;
 	nstat->rx_fifo_errors = hwstat->rx_overruns;
@@ -1175,7 +1163,7 @@ static int __init macb_probe(struct platform_device *pdev)
 	clk_enable(bp->hclk);
 #endif
 
-	bp->regs = ioremap(regs->start, resource_size(regs));
+	bp->regs = ioremap(regs->start, regs->end - regs->start + 1);
 	if (!bp->regs) {
 		dev_err(&pdev->dev, "failed to map registers, aborting.\n");
 		err = -ENOMEM;
@@ -1183,7 +1171,8 @@ static int __init macb_probe(struct platform_device *pdev)
 	}
 
 	dev->irq = platform_get_irq(pdev, 0);
-	err = request_irq(dev->irq, macb_interrupt, 0, dev->name, dev);
+	err = request_irq(dev->irq, macb_interrupt, IRQF_SAMPLE_RANDOM,
+			  dev->name, dev);
 	if (err) {
 		printk(KERN_ERR
 		       "%s: Unable to request IRQ %d (error %d)\n",
@@ -1362,5 +1351,5 @@ module_exit(macb_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Atmel MACB Ethernet driver");
-MODULE_AUTHOR("Haavard Skinnemoen (Atmel)");
+MODULE_AUTHOR("Haavard Skinnemoen <hskinnemoen@atmel.com>");
 MODULE_ALIAS("platform:macb");

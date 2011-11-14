@@ -272,7 +272,7 @@ void irlan_eth_flow_indication(void *instance, void *sap, LOCAL_FLOW flow)
 	struct irlan_cb *self;
 	struct net_device *dev;
 
-	self = instance;
+	self = (struct irlan_cb *) instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRLAN_MAGIC, return;);

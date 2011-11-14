@@ -47,7 +47,7 @@ static unsigned long flint_pin_config[] __initdata = {
 	GPIO113_SMC_RDY,
 
 	/*Ethernet*/
-	GPIO155_GPIO,
+	GPIO155_GPIO155,
 
 	/* DFI */
 	GPIO168_DFI_D0,

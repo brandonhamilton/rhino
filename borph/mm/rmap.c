@@ -21,24 +21,25 @@
  * Lock ordering in mm:
  *
  * inode->i_mutex	(while writing or truncating, not reading or faulting)
+ *   inode->i_alloc_sem (vmtruncate_range)
  *   mm->mmap_sem
  *     page->flags PG_locked (lock_page)
- *       mapping->i_mmap_mutex
- *         anon_vma->mutex
+ *       mapping->i_mmap_lock
+ *         anon_vma->lock
  *           mm->page_table_lock or pte_lock
  *             zone->lru_lock (in mark_page_accessed, isolate_lru_page)
  *             swap_lock (in swap_duplicate, swap_info_get)
  *               mmlist_lock (in mmput, drain_mmlist and others)
  *               mapping->private_lock (in __set_page_dirty_buffers)
- *               inode->i_lock (in set_page_dirty's __mark_inode_dirty)
- *               bdi.wb->list_lock (in set_page_dirty's __mark_inode_dirty)
+ *               inode_lock (in set_page_dirty's __mark_inode_dirty)
  *                 sb_lock (within inode_lock in fs/fs-writeback.c)
  *                 mapping->tree_lock (widely used, in set_page_dirty,
  *                           in arch-dependent flush_dcache_mmap_lock,
- *                           within bdi.wb->list_lock in __sync_single_inode)
+ *                           within inode_lock in __sync_single_inode)
  *
- * anon_vma->mutex,mapping->i_mutex      (memory_failure, collect_procs_anon)
- *   ->tasklist_lock
+ * (code doesn't rely on that order so it could be switched around)
+ * ->tasklist_lock
+ *   anon_vma->lock      (memory_failure, collect_procs_anon)
  *     pte map lock
  */
 
@@ -66,53 +67,17 @@ static struct kmem_cache *anon_vma_chain_cachep;
 
 static inline struct anon_vma *anon_vma_alloc(void)
 {
-	struct anon_vma *anon_vma;
-
-	anon_vma = kmem_cache_alloc(anon_vma_cachep, GFP_KERNEL);
-	if (anon_vma) {
-		atomic_set(&anon_vma->refcount, 1);
-		/*
-		 * Initialise the anon_vma root to point to itself. If called
-		 * from fork, the root will be reset to the parents anon_vma.
-		 */
-		anon_vma->root = anon_vma;
-	}
-
-	return anon_vma;
+	return kmem_cache_alloc(anon_vma_cachep, GFP_KERNEL);
 }
 
-static inline void anon_vma_free(struct anon_vma *anon_vma)
+void anon_vma_free(struct anon_vma *anon_vma)
 {
-	VM_BUG_ON(atomic_read(&anon_vma->refcount));
-
-	/*
-	 * Synchronize against page_lock_anon_vma() such that
-	 * we can safely hold the lock without the anon_vma getting
-	 * freed.
-	 *
-	 * Relies on the full mb implied by the atomic_dec_and_test() from
-	 * put_anon_vma() against the acquire barrier implied by
-	 * mutex_trylock() from page_lock_anon_vma(). This orders:
-	 *
-	 * page_lock_anon_vma()		VS	put_anon_vma()
-	 *   mutex_trylock()			  atomic_dec_and_test()
-	 *   LOCK				  MB
-	 *   atomic_read()			  mutex_is_locked()
-	 *
-	 * LOCK should suffice since the actual taking of the lock must
-	 * happen _before_ what follows.
-	 */
-	if (mutex_is_locked(&anon_vma->root->mutex)) {
-		anon_vma_lock(anon_vma);
-		anon_vma_unlock(anon_vma);
-	}
-
 	kmem_cache_free(anon_vma_cachep, anon_vma);
 }
 
-static inline struct anon_vma_chain *anon_vma_chain_alloc(gfp_t gfp)
+static inline struct anon_vma_chain *anon_vma_chain_alloc(void)
 {
-	return kmem_cache_alloc(anon_vma_chain_cachep, gfp);
+	return kmem_cache_alloc(anon_vma_chain_cachep, GFP_KERNEL);
 }
 
 static void anon_vma_chain_free(struct anon_vma_chain *anon_vma_chain)
@@ -129,7 +94,7 @@ static void anon_vma_chain_free(struct anon_vma_chain *anon_vma_chain)
  * anonymous pages mapped into it with that anon_vma.
  *
  * The common case will be that we already have one, but if
- * not we either need to find an adjacent mapping that we
+ * if not we either need to find an adjacent mapping that we
  * can re-use the anon_vma from (very common when the only
  * reason for splitting a vma has been mprotect()), or we
  * allocate a new one.
@@ -157,7 +122,7 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 		struct mm_struct *mm = vma->vm_mm;
 		struct anon_vma *allocated;
 
-		avc = anon_vma_chain_alloc(GFP_KERNEL);
+		avc = anon_vma_chain_alloc();
 		if (!avc)
 			goto out_enomem;
 
@@ -168,6 +133,11 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 			if (unlikely(!anon_vma))
 				goto out_enomem_free_avc;
 			allocated = anon_vma;
+			/*
+			 * This VMA had no anon_vma yet.  This anon_vma is
+			 * the root of any anon_vma tree that might form.
+			 */
+			anon_vma->root = anon_vma;
 		}
 
 		anon_vma_lock(anon_vma);
@@ -186,7 +156,7 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 		anon_vma_unlock(anon_vma);
 
 		if (unlikely(allocated))
-			put_anon_vma(allocated);
+			anon_vma_free(allocated);
 		if (unlikely(avc))
 			anon_vma_chain_free(avc);
 	}
@@ -198,32 +168,6 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 	return -ENOMEM;
 }
 
-/*
- * This is a useful helper function for locking the anon_vma root as
- * we traverse the vma->anon_vma_chain, looping over anon_vma's that
- * have the same vma.
- *
- * Such anon_vma's should have the same root, so you'd expect to see
- * just a single mutex_lock for the whole traversal.
- */
-static inline struct anon_vma *lock_anon_vma_root(struct anon_vma *root, struct anon_vma *anon_vma)
-{
-	struct anon_vma *new_root = anon_vma->root;
-	if (new_root != root) {
-		if (WARN_ON_ONCE(root))
-			mutex_unlock(&root->mutex);
-		root = new_root;
-		mutex_lock(&root->mutex);
-	}
-	return root;
-}
-
-static inline void unlock_anon_vma_root(struct anon_vma *root)
-{
-	if (root)
-		mutex_unlock(&root->mutex);
-}
-
 static void anon_vma_chain_link(struct vm_area_struct *vma,
 				struct anon_vma_chain *avc,
 				struct anon_vma *anon_vma)
@@ -232,11 +176,9 @@ static void anon_vma_chain_link(struct vm_area_struct *vma,
 	avc->anon_vma = anon_vma;
 	list_add(&avc->same_vma, &vma->anon_vma_chain);
 
-	/*
-	 * It's critical to add new vmas to the tail of the anon_vma,
-	 * see comment in huge_memory.c:__split_huge_page().
-	 */
+	anon_vma_lock(anon_vma);
 	list_add_tail(&avc->same_anon_vma, &anon_vma->head);
+	anon_vma_unlock(anon_vma);
 }
 
 /*
@@ -246,24 +188,13 @@ static void anon_vma_chain_link(struct vm_area_struct *vma,
 int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
 {
 	struct anon_vma_chain *avc, *pavc;
-	struct anon_vma *root = NULL;
 
 	list_for_each_entry_reverse(pavc, &src->anon_vma_chain, same_vma) {
-		struct anon_vma *anon_vma;
-
-		avc = anon_vma_chain_alloc(GFP_NOWAIT | __GFP_NOWARN);
-		if (unlikely(!avc)) {
-			unlock_anon_vma_root(root);
-			root = NULL;
-			avc = anon_vma_chain_alloc(GFP_KERNEL);
-			if (!avc)
-				goto enomem_failure;
-		}
-		anon_vma = pavc->anon_vma;
-		root = lock_anon_vma_root(root, anon_vma);
-		anon_vma_chain_link(dst, avc, anon_vma);
+		avc = anon_vma_chain_alloc();
+		if (!avc)
+			goto enomem_failure;
+		anon_vma_chain_link(dst, avc, pavc->anon_vma);
 	}
-	unlock_anon_vma_root(root);
 	return 0;
 
  enomem_failure:
@@ -296,7 +227,7 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	anon_vma = anon_vma_alloc();
 	if (!anon_vma)
 		goto out_error;
-	avc = anon_vma_chain_alloc(GFP_KERNEL);
+	avc = anon_vma_chain_alloc();
 	if (!avc)
 		goto out_error_free_anon_vma;
 
@@ -306,63 +237,58 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	 */
 	anon_vma->root = pvma->anon_vma->root;
 	/*
-	 * With refcounts, an anon_vma can stay around longer than the
-	 * process it belongs to. The root anon_vma needs to be pinned until
-	 * this anon_vma is freed, because the lock lives in the root.
+	 * With KSM refcounts, an anon_vma can stay around longer than the
+	 * process it belongs to.  The root anon_vma needs to be pinned
+	 * until this anon_vma is freed, because the lock lives in the root.
 	 */
 	get_anon_vma(anon_vma->root);
 	/* Mark this anon_vma as the one where our new (COWed) pages go. */
 	vma->anon_vma = anon_vma;
-	anon_vma_lock(anon_vma);
 	anon_vma_chain_link(vma, avc, anon_vma);
-	anon_vma_unlock(anon_vma);
 
 	return 0;
 
  out_error_free_anon_vma:
-	put_anon_vma(anon_vma);
+	anon_vma_free(anon_vma);
  out_error:
 	unlink_anon_vmas(vma);
 	return -ENOMEM;
 }
 
+static void anon_vma_unlink(struct anon_vma_chain *anon_vma_chain)
+{
+	struct anon_vma *anon_vma = anon_vma_chain->anon_vma;
+	int empty;
+
+	/* If anon_vma_fork fails, we can get an empty anon_vma_chain. */
+	if (!anon_vma)
+		return;
+
+	anon_vma_lock(anon_vma);
+	list_del(&anon_vma_chain->same_anon_vma);
+
+	/* We must garbage collect the anon_vma if it's empty */
+	empty = list_empty(&anon_vma->head) && !anonvma_external_refcount(anon_vma);
+	anon_vma_unlock(anon_vma);
+
+	if (empty) {
+		/* We no longer need the root anon_vma */
+		if (anon_vma->root != anon_vma)
+			drop_anon_vma(anon_vma->root);
+		anon_vma_free(anon_vma);
+	}
+}
+
 void unlink_anon_vmas(struct vm_area_struct *vma)
 {
 	struct anon_vma_chain *avc, *next;
-	struct anon_vma *root = NULL;
 
 	/*
 	 * Unlink each anon_vma chained to the VMA.  This list is ordered
 	 * from newest to oldest, ensuring the root anon_vma gets freed last.
 	 */
 	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
-		struct anon_vma *anon_vma = avc->anon_vma;
-
-		root = lock_anon_vma_root(root, anon_vma);
-		list_del(&avc->same_anon_vma);
-
-		/*
-		 * Leave empty anon_vmas on the list - we'll need
-		 * to free them outside the lock.
-		 */
-		if (list_empty(&anon_vma->head))
-			continue;
-
-		list_del(&avc->same_vma);
-		anon_vma_chain_free(avc);
-	}
-	unlock_anon_vma_root(root);
-
-	/*
-	 * Iterate the list once more, it now only contains empty and unlinked
-	 * anon_vmas, destroy them. Could not do before due to __put_anon_vma()
-	 * needing to acquire the anon_vma->root->mutex.
-	 */
-	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
-		struct anon_vma *anon_vma = avc->anon_vma;
-
-		put_anon_vma(anon_vma);
-
+		anon_vma_unlink(avc);
 		list_del(&avc->same_vma);
 		anon_vma_chain_free(avc);
 	}
@@ -372,8 +298,8 @@ static void anon_vma_ctor(void *data)
 {
 	struct anon_vma *anon_vma = data;
 
-	mutex_init(&anon_vma->mutex);
-	atomic_set(&anon_vma->refcount, 0);
+	spin_lock_init(&anon_vma->lock);
+	anonvma_external_refcount_init(anon_vma);
 	INIT_LIST_HEAD(&anon_vma->head);
 }
 
@@ -385,74 +311,12 @@ void __init anon_vma_init(void)
 }
 
 /*
- * Getting a lock on a stable anon_vma from a page off the LRU is tricky!
- *
- * Since there is no serialization what so ever against page_remove_rmap()
- * the best this function can do is return a locked anon_vma that might
- * have been relevant to this page.
- *
- * The page might have been remapped to a different anon_vma or the anon_vma
- * returned may already be freed (and even reused).
- *
- * In case it was remapped to a different anon_vma, the new anon_vma will be a
- * child of the old anon_vma, and the anon_vma lifetime rules will therefore
- * ensure that any anon_vma obtained from the page will still be valid for as
- * long as we observe page_mapped() [ hence all those page_mapped() tests ].
- *
- * All users of this function must be very careful when walking the anon_vma
- * chain and verify that the page in question is indeed mapped in it
- * [ something equivalent to page_mapped_in_vma() ].
- *
- * Since anon_vma's slab is DESTROY_BY_RCU and we know from page_remove_rmap()
- * that the anon_vma pointer from page->mapping is valid if there is a
- * mapcount, we can dereference the anon_vma after observing those.
+ * Getting a lock on a stable anon_vma from a page off the LRU is
+ * tricky: page_lock_anon_vma rely on RCU to guard against the races.
  */
-struct anon_vma *page_get_anon_vma(struct page *page)
+struct anon_vma *__page_lock_anon_vma(struct page *page)
 {
-	struct anon_vma *anon_vma = NULL;
-	unsigned long anon_mapping;
-
-	rcu_read_lock();
-	anon_mapping = (unsigned long) ACCESS_ONCE(page->mapping);
-	if ((anon_mapping & PAGE_MAPPING_FLAGS) != PAGE_MAPPING_ANON)
-		goto out;
-	if (!page_mapped(page))
-		goto out;
-
-	anon_vma = (struct anon_vma *) (anon_mapping - PAGE_MAPPING_ANON);
-	if (!atomic_inc_not_zero(&anon_vma->refcount)) {
-		anon_vma = NULL;
-		goto out;
-	}
-
-	/*
-	 * If this page is still mapped, then its anon_vma cannot have been
-	 * freed.  But if it has been unmapped, we have no security against the
-	 * anon_vma structure being freed and reused (for another anon_vma:
-	 * SLAB_DESTROY_BY_RCU guarantees that - so the atomic_inc_not_zero()
-	 * above cannot corrupt).
-	 */
-	if (!page_mapped(page)) {
-		put_anon_vma(anon_vma);
-		anon_vma = NULL;
-	}
-out:
-	rcu_read_unlock();
-
-	return anon_vma;
-}
-
-/*
- * Similar to page_get_anon_vma() except it locks the anon_vma.
- *
- * Its a little more complex as it tries to keep the fast path to a single
- * atomic op -- the trylock. If we fail the trylock, we fall back to getting a
- * reference like with page_get_anon_vma() and then block on the mutex.
- */
-struct anon_vma *page_lock_anon_vma(struct page *page)
-{
-	struct anon_vma *anon_vma = NULL;
-	struct anon_vma *root_anon_vma;
+	struct anon_vma *anon_vma, *root_anon_vma;
 	unsigned long anon_mapping;
 
 	rcu_read_lock();
@@ -464,56 +328,31 @@ struct anon_vma *page_lock_anon_vma(struct page *page)
 
 	anon_vma = (struct anon_vma *) (anon_mapping - PAGE_MAPPING_ANON);
 	root_anon_vma = ACCESS_ONCE(anon_vma->root);
-	if (mutex_trylock(&root_anon_vma->mutex)) {
-		/*
-		 * If the page is still mapped, then this anon_vma is still
-		 * its anon_vma, and holding the mutex ensures that it will
-		 * not go away, see anon_vma_free().
-		 */
-		if (!page_mapped(page)) {
-			mutex_unlock(&root_anon_vma->mutex);
-			anon_vma = NULL;
-		}
-		goto out;
-	}
+	spin_lock(&root_anon_vma->lock);
 
-	/* trylock failed, we got to sleep */
-	if (!atomic_inc_not_zero(&anon_vma->refcount)) {
-		anon_vma = NULL;
-		goto out;
-	}
+	/*
+	 * If this page is still mapped, then its anon_vma cannot have been
+	 * freed.  But if it has been unmapped, we have no security against
+	 * the anon_vma structure being freed and reused (for another anon_vma:
+	 * SLAB_DESTROY_BY_RCU guarantees that - so the spin_lock above cannot
+	 * corrupt): with anon_vma_prepare() or anon_vma_fork() redirecting
+	 * anon_vma->root before page_unlock_anon_vma() is called to unlock.
+	 */
+	if (page_mapped(page))
+		return anon_vma;
 
-	if (!page_mapped(page)) {
-		put_anon_vma(anon_vma);
-		anon_vma = NULL;
-		goto out;
-	}
-
-	/* we pinned the anon_vma, its safe to sleep */
-	rcu_read_unlock();
-	anon_vma_lock(anon_vma);
-
-	if (atomic_dec_and_test(&anon_vma->refcount)) {
-		/*
-		 * Oops, we held the last refcount, release the lock
-		 * and bail -- can't simply use put_anon_vma() because
-		 * we'll deadlock on the anon_vma_lock() recursion.
-		 */
-		anon_vma_unlock(anon_vma);
-		__put_anon_vma(anon_vma);
-		anon_vma = NULL;
-	}
-
-	return anon_vma;
-
+	spin_unlock(&root_anon_vma->lock);
 out:
 	rcu_read_unlock();
-	return anon_vma;
+	return NULL;
 }
 
 void page_unlock_anon_vma(struct anon_vma *anon_vma)
+	__releases(&anon_vma->root->lock)
+	__releases(RCU)
 {
 	anon_vma_unlock(anon_vma);
+	rcu_read_unlock();
 }
 
 /*
@@ -521,7 +360,7 @@ void page_unlock_anon_vma(struct anon_vma *anon_vma)
  * Returns virtual address or -EFAULT if page's index/offset is not
  * within the range mapped the @vma.
  */
-inline unsigned long
+static inline unsigned long
 vma_address(struct page *page, struct vm_area_struct *vma)
 {
 	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
@@ -596,8 +435,6 @@ pte_t *__page_check_address(struct page *page, struct mm_struct *mm,
 	pmd = pmd_offset(pud, address);
 	if (!pmd_present(*pmd))
 		return NULL;
-	if (pmd_trans_huge(*pmd))
-		return NULL;
 
 	pte = pte_offset_map(pmd, address);
 	/* Make a quick check before getting the lock */
@@ -652,65 +489,35 @@ int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			unsigned long *vm_flags)
 {
 	struct mm_struct *mm = vma->vm_mm;
+	pte_t *pte;
+	spinlock_t *ptl;
 	int referenced = 0;
 
-	if (unlikely(PageTransHuge(page))) {
-		pmd_t *pmd;
+	pte = page_check_address(page, mm, address, &ptl, 0);
+	if (!pte)
+		goto out;
 
-		spin_lock(&mm->page_table_lock);
+	/*
+	 * Don't want to elevate referenced for mlocked page that gets this far,
+	 * in order that it progresses to try_to_unmap and is moved to the
+	 * unevictable list.
+	 */
+	if (vma->vm_flags & VM_LOCKED) {
+		*mapcount = 1;	/* break early from loop */
+		*vm_flags |= VM_LOCKED;
+		goto out_unmap;
+	}
+
+	if (ptep_clear_flush_young_notify(vma, address, pte)) {
 		/*
-		 * rmap might return false positives; we must filter
-		 * these out using page_check_address_pmd().
+		 * Don't treat a reference through a sequentially read
+		 * mapping as such.  If the page has been used in
+		 * another mapping, we will catch it; if this other
+		 * mapping is already gone, the unmap path will have
+		 * set PG_referenced or activated the page.
 		 */
-		pmd = page_check_address_pmd(page, mm, address,
-					     PAGE_CHECK_ADDRESS_PMD_FLAG);
-		if (!pmd) {
-			spin_unlock(&mm->page_table_lock);
-			goto out;
-		}
-
-		if (vma->vm_flags & VM_LOCKED) {
-			spin_unlock(&mm->page_table_lock);
-			*mapcount = 0;	/* break early from loop */
-			*vm_flags |= VM_LOCKED;
-			goto out;
-		}
-
-		/* go ahead even if the pmd is pmd_trans_splitting() */
-		if (pmdp_clear_flush_young_notify(vma, address, pmd))
+		if (likely(!VM_SequentialReadHint(vma)))
 			referenced++;
-		spin_unlock(&mm->page_table_lock);
-	} else {
-		pte_t *pte;
-		spinlock_t *ptl;
-
-		/*
-		 * rmap might return false positives; we must filter
-		 * these out using page_check_address().
-		 */
-		pte = page_check_address(page, mm, address, &ptl, 0);
-		if (!pte)
-			goto out;
-
-		if (vma->vm_flags & VM_LOCKED) {
-			pte_unmap_unlock(pte, ptl);
-			*mapcount = 0;	/* break early from loop */
-			*vm_flags |= VM_LOCKED;
-			goto out;
-		}
-
-		if (ptep_clear_flush_young_notify(vma, address, pte)) {
-			/*
-			 * Don't treat a reference through a sequentially read
-			 * mapping as such.  If the page has been used in
-			 * another mapping, we will catch it; if this other
-			 * mapping is already gone, the unmap path will have
-			 * set PG_referenced or activated the page.
-			 */
-			if (likely(!VM_SequentialReadHint(vma)))
-				referenced++;
-		}
-		pte_unmap_unlock(pte, ptl);
 	}
 
 	/* Pretend the page is referenced if the task has the
@@ -719,7 +526,9 @@ int page_referenced_one(struct page *page, struct vm_area_struct *vma,
 			rwsem_is_locked(&mm->mmap_sem))
 		referenced++;
 
+out_unmap:
 	(*mapcount)--;
+	pte_unmap_unlock(pte, ptl);
 
 	if (referenced)
 		*vm_flags |= vma->vm_flags;
@@ -798,14 +607,14 @@ static int page_referenced_file(struct page *page,
 	 * The page lock not only makes sure that page->mapping cannot
 	 * suddenly be NULLified by truncation, it makes sure that the
 	 * structure at mapping cannot be freed and reused yet,
-	 * so we can safely take mapping->i_mmap_mutex.
+	 * so we can safely take mapping->i_mmap_lock.
 	 */
 	BUG_ON(!PageLocked(page));
 
-	mutex_lock(&mapping->i_mmap_mutex);
+	spin_lock(&mapping->i_mmap_lock);
 
 	/*
-	 * i_mmap_mutex does not stabilize mapcount at all, but mapcount
+	 * i_mmap_lock does not stabilize mapcount at all, but mapcount
 	 * is more likely to be accurate if we note it after spinning.
 	 */
 	mapcount = page_mapcount(page);
@@ -827,7 +636,7 @@ static int page_referenced_file(struct page *page,
 			break;
 	}
 
-	mutex_unlock(&mapping->i_mmap_mutex);
+	spin_unlock(&mapping->i_mmap_lock);
 	return referenced;
 }
 
@@ -869,11 +678,11 @@ int page_referenced(struct page *page,
 								vm_flags);
 		if (we_locked)
 			unlock_page(page);
-
-		if (page_test_and_clear_young(page_to_pfn(page)))
-			referenced++;
 	}
 out:
+	if (page_test_and_clear_young(page))
+		referenced++;
+
 	return referenced;
 }
 
@@ -914,7 +723,7 @@ static int page_mkclean_file(struct address_space *mapping, struct page *page)
 
 	BUG_ON(PageAnon(page));
 
-	mutex_lock(&mapping->i_mmap_mutex);
+	spin_lock(&mapping->i_mmap_lock);
 	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, pgoff, pgoff) {
 		if (vma->vm_flags & VM_SHARED) {
 			unsigned long address = vma_address(page, vma);
@@ -923,7 +732,7 @@ static int page_mkclean_file(struct address_space *mapping, struct page *page)
 			ret += page_mkclean_one(page, vma, address);
 		}
 	}
-	mutex_unlock(&mapping->i_mmap_mutex);
+	spin_unlock(&mapping->i_mmap_lock);
 	return ret;
 }
 
@@ -937,8 +746,10 @@ int page_mkclean(struct page *page)
 		struct address_space *mapping = page_mapping(page);
 		if (mapping) {
 			ret = page_mkclean_file(mapping, page);
-			if (page_test_and_clear_dirty(page_to_pfn(page), 1))
+			if (page_test_dirty(page)) {
+				page_clear_dirty(page, 1);
 				ret = 1;
+			}
 		}
 	}
 
@@ -1053,18 +864,13 @@ void do_page_add_anon_rmap(struct page *page,
 	struct vm_area_struct *vma, unsigned long address, int exclusive)
 {
 	int first = atomic_inc_and_test(&page->_mapcount);
-	if (first) {
-		if (!PageTransHuge(page))
-			__inc_zone_page_state(page, NR_ANON_PAGES);
-		else
-			__inc_zone_page_state(page,
-					      NR_ANON_TRANSPARENT_HUGEPAGES);
-	}
+	if (first)
+		__inc_zone_page_state(page, NR_ANON_PAGES);
 	if (unlikely(PageKsm(page)))
 		return;
 
 	VM_BUG_ON(!PageLocked(page));
-	/* address might be in next vma when migration races vma_adjust */
+	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	if (first)
 		__page_set_anon_rmap(page, vma, address, exclusive);
 	else
@@ -1087,10 +893,7 @@ void page_add_new_anon_rmap(struct page *page,
 	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	SetPageSwapBacked(page);
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
-	if (!PageTransHuge(page))
-		__inc_zone_page_state(page, NR_ANON_PAGES);
-	else
-		__inc_zone_page_state(page, NR_ANON_TRANSPARENT_HUGEPAGES);
+	__inc_zone_page_state(page, NR_ANON_PAGES);
 	__page_set_anon_rmap(page, vma, address, 1);
 	if (page_evictable(page, vma))
 		lru_cache_add_lru(page, LRU_ACTIVE_ANON);
@@ -1108,7 +911,7 @@ void page_add_file_rmap(struct page *page)
 {
 	if (atomic_inc_and_test(&page->_mapcount)) {
 		__inc_zone_page_state(page, NR_FILE_MAPPED);
-		mem_cgroup_inc_page_stat(page, MEMCG_NR_FILE_MAPPED);
+		mem_cgroup_update_file_mapped(page, 1);
 	}
 }
 
@@ -1131,9 +934,10 @@ void page_remove_rmap(struct page *page)
 	 * not if it's in swapcache - there might be another pte slot
 	 * containing the swap entry, but page not yet written to swap.
 	 */
-	if ((!PageAnon(page) || PageSwapCache(page)) &&
-	    page_test_and_clear_dirty(page_to_pfn(page), 1))
+	if ((!PageAnon(page) || PageSwapCache(page)) && page_test_dirty(page)) {
+		page_clear_dirty(page, 1);
 		set_page_dirty(page);
+	}
 	/*
 	 * Hugepages are not counted in NR_ANON_PAGES nor NR_FILE_MAPPED
 	 * and not charged by memcg for now.
@@ -1142,14 +946,10 @@ void page_remove_rmap(struct page *page)
 		return;
 	if (PageAnon(page)) {
 		mem_cgroup_uncharge_page(page);
-		if (!PageTransHuge(page))
-			__dec_zone_page_state(page, NR_ANON_PAGES);
-		else
-			__dec_zone_page_state(page,
-					      NR_ANON_TRANSPARENT_HUGEPAGES);
+		__dec_zone_page_state(page, NR_ANON_PAGES);
 	} else {
 		__dec_zone_page_state(page, NR_FILE_MAPPED);
-		mem_cgroup_dec_page_stat(page, MEMCG_NR_FILE_MAPPED);
+		mem_cgroup_update_file_mapped(page, -1);
 	}
 	/*
 	 * It would be tidy to reset the PageAnon mapping here,
@@ -1271,7 +1071,7 @@ out_mlock:
 	/*
 	 * We need mmap_sem locking, Otherwise VM_LOCKED check makes
 	 * unstable result and race. Plus, We can't wait here because
-	 * we now hold anon_vma->mutex or mapping->i_mmap_mutex.
+	 * we now hold anon_vma->lock or mapping->i_mmap_lock.
 	 * if trylock failed, the page remain in evictable lru and later
 	 * vmscan could retry to move the page to unevictable lru if the
 	 * page is actually mlocked.
@@ -1402,7 +1202,7 @@ static int try_to_unmap_cluster(unsigned long cursor, unsigned int *mapcount,
 	return ret;
 }
 
-bool is_vma_temporary_stack(struct vm_area_struct *vma)
+static bool is_vma_temporary_stack(struct vm_area_struct *vma)
 {
 	int maybe_stack = vma->vm_flags & (VM_GROWSDOWN | VM_GROWSUP);
 
@@ -1497,7 +1297,7 @@ static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
 	unsigned long max_nl_size = 0;
 	unsigned int mapcount;
 
-	mutex_lock(&mapping->i_mmap_mutex);
+	spin_lock(&mapping->i_mmap_lock);
 	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long address = vma_address(page, vma);
 		if (address == -EFAULT)
@@ -1543,7 +1343,7 @@ static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
 	mapcount = page_mapcount(page);
 	if (!mapcount)
 		goto out;
-	cond_resched();
+	cond_resched_lock(&mapping->i_mmap_lock);
 
 	max_nl_size = (max_nl_size + CLUSTER_SIZE - 1) & CLUSTER_MASK;
 	if (max_nl_cursor == 0)
@@ -1565,7 +1365,7 @@ static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
 			}
 			vma->vm_private_data = (void *) max_nl_cursor;
 		}
-		cond_resched();
+		cond_resched_lock(&mapping->i_mmap_lock);
 		max_nl_cursor += CLUSTER_SIZE;
 	} while (max_nl_cursor <= max_nl_size);
 
@@ -1577,7 +1377,7 @@ static int try_to_unmap_file(struct page *page, enum ttu_flags flags)
 	list_for_each_entry(vma, &mapping->i_mmap_nonlinear, shared.vm_set.list)
 		vma->vm_private_data = NULL;
 out:
-	mutex_unlock(&mapping->i_mmap_mutex);
+	spin_unlock(&mapping->i_mmap_lock);
 	return ret;
 }
 
@@ -1600,7 +1400,6 @@ int try_to_unmap(struct page *page, enum ttu_flags flags)
 	int ret;
 
 	BUG_ON(!PageLocked(page));
-	VM_BUG_ON(!PageHuge(page) && PageTransHuge(page));
 
 	if (unlikely(PageKsm(page)))
 		ret = try_to_unmap_ksm(page, flags);
@@ -1640,15 +1439,41 @@ int try_to_munlock(struct page *page)
 		return try_to_unmap_file(page, TTU_MUNLOCK);
 }
 
-void __put_anon_vma(struct anon_vma *anon_vma)
+#if defined(CONFIG_KSM) || defined(CONFIG_MIGRATION)
+/*
+ * Drop an anon_vma refcount, freeing the anon_vma and anon_vma->root
+ * if necessary.  Be careful to do all the tests under the lock.  Once
+ * we know we are the last user, nobody else can get a reference and we
+ * can do the freeing without the lock.
+ */
+void drop_anon_vma(struct anon_vma *anon_vma)
 {
-	struct anon_vma *root = anon_vma->root;
+	BUG_ON(atomic_read(&anon_vma->external_refcount) <= 0);
+	if (atomic_dec_and_lock(&anon_vma->external_refcount, &anon_vma->root->lock)) {
+		struct anon_vma *root = anon_vma->root;
+		int empty = list_empty(&anon_vma->head);
+		int last_root_user = 0;
+		int root_empty = 0;
 
-	if (root != anon_vma && atomic_dec_and_test(&root->refcount))
-		anon_vma_free(root);
+		/*
+		 * The refcount on a non-root anon_vma got dropped.  Drop
+		 * the refcount on the root and check if we need to free it.
+		 */
+		if (empty && anon_vma != root) {
+			BUG_ON(atomic_read(&root->external_refcount) <= 0);
+			last_root_user = atomic_dec_and_test(&root->external_refcount);
+			root_empty = list_empty(&root->head);
+		}
+		anon_vma_unlock(anon_vma);
 
-	anon_vma_free(anon_vma);
+		if (empty) {
+			anon_vma_free(anon_vma);
+			if (root_empty && last_root_user)
+				anon_vma_free(root);
+		}
+	}
 }
+#endif
 
 #ifdef CONFIG_MIGRATION
 /*
@@ -1696,7 +1521,7 @@ static int rmap_walk_file(struct page *page, int (*rmap_one)(struct page *,
 
 	if (!mapping)
 		return ret;
-	mutex_lock(&mapping->i_mmap_mutex);
+	spin_lock(&mapping->i_mmap_lock);
 	vma_prio_tree_foreach(vma, &iter, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long address = vma_address(page, vma);
 		if (address == -EFAULT)
@@ -1710,7 +1535,7 @@ static int rmap_walk_file(struct page *page, int (*rmap_one)(struct page *,
 	 * never contain migration ptes.  Decide what to do about this
 	 * limitation to linear when we need rmap_walk() on nonlinear.
 	 */
-	mutex_unlock(&mapping->i_mmap_mutex);
+	spin_unlock(&mapping->i_mmap_lock);
 	return ret;
 }
 
@@ -1759,7 +1584,7 @@ void hugepage_add_anon_rmap(struct page *page,
 
 	BUG_ON(!PageLocked(page));
 	BUG_ON(!anon_vma);
-	/* address might be in next vma when migration races vma_adjust */
+	BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	first = atomic_inc_and_test(&page->_mapcount);
 	if (first)
 		__hugepage_set_anon_rmap(page, vma, address, 0);

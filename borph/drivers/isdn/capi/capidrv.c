@@ -2297,7 +2297,6 @@ static int __init capidrv_init(void)
 
 	errcode = capi20_get_profile(0, &profile);
 	if (errcode != CAPI_NOERROR) {
-		unregister_capictr_notifier(&capictr_nb);
 		capi20_release(&global.ap);
 		return -EIO;
 	}

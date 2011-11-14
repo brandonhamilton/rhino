@@ -243,8 +243,7 @@ static struct pf_unit units[PF_UNITS];
 static int pf_identify(struct pf_unit *pf);
 static void pf_lock(struct pf_unit *pf, int func);
 static void pf_eject(struct pf_unit *pf);
-static unsigned int pf_check_events(struct gendisk *disk,
-				    unsigned int clearing);
+static int pf_check_media(struct gendisk *disk);
 
 static char pf_scratch[512];	/* scratch block buffer */
 
@@ -271,7 +270,7 @@ static const struct block_device_operations pf_fops = {
 	.release	= pf_release,
 	.ioctl		= pf_ioctl,
 	.getgeo		= pf_getgeo,
-	.check_events	= pf_check_events,
+	.media_changed	= pf_check_media,
 };
 
 static void __init pf_init_units(void)
@@ -378,9 +377,9 @@ static int pf_release(struct gendisk *disk, fmode_t mode)
 
 }
 
-static unsigned int pf_check_events(struct gendisk *disk, unsigned int clearing)
+static int pf_check_media(struct gendisk *disk)
 {
-	return DISK_EVENT_MEDIA_CHANGE;
+	return 1;
 }
 
 static inline int status_reg(struct pf_unit *pf)

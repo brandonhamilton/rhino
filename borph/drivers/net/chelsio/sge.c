@@ -54,7 +54,6 @@
 #include <linux/in.h>
 #include <linux/if_arp.h>
 #include <linux/slab.h>
-#include <linux/prefetch.h>
 
 #include "cpl5_cmd.h"
 #include "sge.h"
@@ -272,10 +271,6 @@ struct sge {
 	struct sge_port_stats __percpu *port_stats[MAX_NPORTS];
 	struct sched	*tx_sched;
 	struct cmdQ cmdQ[SGE_CMDQ_N] ____cacheline_aligned_in_smp;
-};
-
-static const u8 ch_mac_addr[ETH_ALEN] = {
-	0x0, 0x7, 0x43, 0x0, 0x0, 0x0
 };
 
 /*
@@ -742,14 +737,13 @@ static inline void setup_ring_params(struct adapter *adapter, u64 addr,
 /*
  * Enable/disable VLAN acceleration.
  */
-void t1_vlan_mode(struct adapter *adapter, u32 features)
+void t1_set_vlan_accel(struct adapter *adapter, int on_off)
 {
 	struct sge *sge = adapter->sge;
 
-	if (features & NETIF_F_HW_VLAN_RX)
+	sge->sge_control &= ~F_VLAN_XTRACT;
+	if (on_off)
 		sge->sge_control |= F_VLAN_XTRACT;
-	else
-		sge->sge_control &= ~F_VLAN_XTRACT;
 	if (adapter->open_device_map) {
 		writel(sge->sge_control, adapter->regs + A_SG_CONTROL);
 		readl(adapter->regs + A_SG_CONTROL);   /* flush */
@@ -931,7 +925,7 @@ void t1_sge_intr_enable(struct sge *sge)
 	u32 en = SGE_INT_ENABLE;
 	u32 val = readl(sge->adapter->regs + A_PL_ENABLE);
 
-	if (sge->adapter->port[0].dev->hw_features & NETIF_F_TSO)
+	if (sge->adapter->flags & TSO_CAPABLE)
 		en &= ~F_PACKET_TOO_BIG;
 	writel(en, sge->adapter->regs + A_SG_INT_ENABLE);
 	writel(val | SGE_PL_INTR_MASK, sge->adapter->regs + A_PL_ENABLE);
@@ -954,7 +948,7 @@ int t1_sge_intr_error_handler(struct sge *sge)
 	struct adapter *adapter = sge->adapter;
 	u32 cause = readl(adapter->regs + A_SG_INT_CAUSE);
 
-	if (adapter->port[0].dev->hw_features & NETIF_F_TSO)
+	if (adapter->flags & TSO_CAPABLE)
 		cause &= ~F_PACKET_TOO_BIG;
 	if (cause & F_RESPQ_EXHAUSTED)
 		sge->stats.respQ_empty++;
@@ -1371,7 +1365,6 @@ static void sge_rx(struct sge *sge, struct freelQ *fl, unsigned int len)
 	const struct cpl_rx_pkt *p;
 	struct adapter *adapter = sge->adapter;
 	struct sge_port_stats *st;
-	struct net_device *dev;
 
 	skb = get_packet(adapter->pdev, fl, len - sge->rx_pkt_pad);
 	if (unlikely(!skb)) {
@@ -1387,10 +1380,9 @@ static void sge_rx(struct sge *sge, struct freelQ *fl, unsigned int len)
 	__skb_pull(skb, sizeof(*p));
 
 	st = this_cpu_ptr(sge->port_stats[p->iff]);
-	dev = adapter->port[p->iff].dev;
 
-	skb->protocol = eth_type_trans(skb, dev);
-	if ((dev->features & NETIF_F_RXCSUM) && p->csum == 0xffff &&
+	skb->protocol = eth_type_trans(skb, adapter->port[p->iff].dev);
+	if ((adapter->flags & RX_CSUM_ENABLED) && p->csum == 0xffff &&
 	    skb->protocol == htons(ETH_P_IP) &&
 	    (skb->data[9] == IPPROTO_TCP || skb->data[9] == IPPROTO_UDP)) {
 		++st->rx_cso_good;
@@ -1398,11 +1390,12 @@ static void sge_rx(struct sge *sge, struct freelQ *fl, unsigned int len)
 	} else
 		skb_checksum_none_assert(skb);
 
-	if (p->vlan_valid) {
+	if (unlikely(adapter->vlan_grp && p->vlan_valid)) {
 		st->vlan_xtract++;
-		__vlan_hwaccel_put_tag(skb, ntohs(p->vlan));
-	}
-	netif_receive_skb(skb);
+		vlan_hwaccel_receive_skb(skb, adapter->vlan_grp,
+					 ntohs(p->vlan));
+	} else
+		netif_receive_skb(skb);
 }
 
 /*
@@ -1665,7 +1658,7 @@ irqreturn_t t1_interrupt(int irq, void *data)
  * The code figures out how many entries the sk_buff will require in the
  * cmdQ and updates the cmdQ data structure with the state once the enqueue
  * has complete. Then, it doesn't access the global structure anymore, but
- * uses the corresponding fields on the stack. In conjunction with a spinlock
+ * uses the corresponding fields on the stack. In conjuction with a spinlock
  * around that code, we can make the function reentrant without holding the
  * lock when we actually enqueue (which might be expensive, especially on
  * architectures with IO MMUs).
@@ -1841,7 +1834,8 @@ netdev_tx_t t1_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			return NETDEV_TX_OK;
 		}
 
-		if (skb->ip_summed == CHECKSUM_PARTIAL &&
+		if (!(adapter->flags & UDP_CSUM_CAPABLE) &&
+		    skb->ip_summed == CHECKSUM_PARTIAL &&
 		    ip_hdr(skb)->protocol == IPPROTO_UDP) {
 			if (unlikely(skb_checksum_help(skb))) {
 				pr_debug("%s: unable to do udp checksum\n", dev->name);
@@ -1875,11 +1869,13 @@ netdev_tx_t t1_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 	cpl->iff = dev->if_port;
 
+#if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
 	if (vlan_tx_tag_present(skb)) {
 		cpl->vlan_valid = 1;
 		cpl->vlan = htons(vlan_tx_tag_get(skb));
 		st->vlan_insert++;
 	} else
+#endif
 		cpl->vlan_valid = 0;
 
 send:
@@ -2016,6 +2012,10 @@ static void espibug_workaround_t204(unsigned long data)
 				continue;
 
 			if (!skb->cb[0]) {
+				u8 ch_mac_addr[ETH_ALEN] = {
+					0x0, 0x7, 0x43, 0x0, 0x0, 0x0
+				};
+
 				skb_copy_to_linear_data_offset(skb,
 						    sizeof(struct cpl_tx_pkt),
 							       ch_mac_addr,
@@ -2048,6 +2048,8 @@ static void espibug_workaround(unsigned long data)
 
 	        if ((seop & 0xfff0fff) == 0xfff && skb) {
 	                if (!skb->cb[0]) {
+	                        u8 ch_mac_addr[ETH_ALEN] =
+	                            {0x0, 0x7, 0x43, 0x0, 0x0, 0x0};
 	                        skb_copy_to_linear_data_offset(skb,
 						     sizeof(struct cpl_tx_pkt),
 							       ch_mac_addr,

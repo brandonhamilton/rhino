@@ -107,7 +107,6 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 	struct net *net = dev_net(skb->dev);
 	int err;
 	__be32 seq;
-	__be32 seq_hi;
 	struct xfrm_state *x;
 	xfrm_address_t *daddr;
 	struct xfrm_mode *inner_mode;
@@ -119,7 +118,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 	if (encap_type < 0) {
 		async = 1;
 		x = xfrm_input_state(skb);
-		seq = XFRM_SKB_CB(skb)->seq.input.low;
+		seq = XFRM_SKB_CB(skb)->seq.input;
 		goto resume;
 	}
 
@@ -173,7 +172,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 			goto drop_unlock;
 		}
 
-		if (x->repl->check(x, skb, seq)) {
+		if (x->props.replay_window && xfrm_replay_check(x, skb, seq)) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR);
 			goto drop_unlock;
 		}
@@ -185,12 +184,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 
 		spin_unlock(&x->lock);
 
-		seq_hi = htonl(xfrm_replay_seqhi(x, seq));
-
-		XFRM_SKB_CB(skb)->seq.input.low = seq;
-		XFRM_SKB_CB(skb)->seq.input.hi = seq_hi;
-
-		skb_dst_force(skb);
+		XFRM_SKB_CB(skb)->seq.input = seq;
 
 		nexthdr = x->type->input(x, skb);
 
@@ -212,7 +206,8 @@ resume:
 		/* only the first xfrm gets the encap type */
 		encap_type = 0;
 
-		x->repl->advance(x, seq);
+		if (x->props.replay_window)
+			xfrm_replay_advance(x, seq);
 
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;

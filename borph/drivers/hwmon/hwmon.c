@@ -10,8 +10,6 @@
     the Free Software Foundation; version 2 of the License.
 */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/err.h>
@@ -121,7 +119,7 @@ static int __init hwmon_init(void)
 
 	hwmon_class = class_create(THIS_MODULE, "hwmon");
 	if (IS_ERR(hwmon_class)) {
-		pr_err("couldn't create sysfs class\n");
+		printk(KERN_ERR "hwmon.c: couldn't create sysfs class\n");
 		return PTR_ERR(hwmon_class);
 	}
 	return 0;

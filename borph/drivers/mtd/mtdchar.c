@@ -166,23 +166,10 @@ static int mtd_close(struct inode *inode, struct file *file)
 	return 0;
 } /* mtd_close */
 
-/* Back in June 2001, dwmw2 wrote:
- *
- *   FIXME: This _really_ needs to die. In 2.5, we should lock the
- *   userspace buffer down and use it directly with readv/writev.
- *
- * The implementation below, using mtd_kmalloc_up_to, mitigates
- * allocation failures when the system is under low-memory situations
- * or if memory is highly fragmented at the cost of reducing the
- * performance of the requested transfer due to a smaller buffer size.
- *
- * A more complex but more memory-efficient implementation based on
- * get_user_pages and iovecs to cover extents of those pages is a
- * longer-term goal, as intimated by dwmw2 above. However, for the
- * write case, this requires yet more complex head and tail transfer
- * handling when those head and tail offsets and sizes are such that
- * alignment requirements are not met in the NAND subdriver.
- */
+/* FIXME: This _really_ needs to die. In 2.5, we should lock the
+   userspace buffer down and use it directly with readv/writev.
+*/
+#define MAX_KMALLOC_SIZE 0x20000
 
 static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t *ppos)
 {
@@ -192,7 +179,6 @@ static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t
 	size_t total_retlen=0;
 	int ret=0;
 	int len;
-	size_t size = count;
 	char *kbuf;
 
 	DEBUG(MTD_DEBUG_LEVEL0,"MTD_read\n");
@@ -203,12 +189,23 @@ static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t
 	if (!count)
 		return 0;
 
-	kbuf = mtd_kmalloc_up_to(mtd, &size);
+	/* FIXME: Use kiovec in 2.5 to lock down the user's buffers
+	   and pass them directly to the MTD functions */
+
+	if (count > MAX_KMALLOC_SIZE)
+		kbuf=kmalloc(MAX_KMALLOC_SIZE, GFP_KERNEL);
+	else
+		kbuf=kmalloc(count, GFP_KERNEL);
+
 	if (!kbuf)
 		return -ENOMEM;
 
 	while (count) {
-		len = min_t(size_t, count, size);
+
+		if (count > MAX_KMALLOC_SIZE)
+			len = MAX_KMALLOC_SIZE;
+		else
+			len = count;
 
 		switch (mfi->mode) {
 		case MTD_MODE_OTP_FACTORY:
@@ -237,7 +234,7 @@ static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t
 		 * the data. For our userspace tools it is important
 		 * to dump areas with ecc errors !
 		 * For kernel internal usage it also might return -EUCLEAN
-		 * to signal the caller that a bitflip has occurred and has
+		 * to signal the caller that a bitflip has occured and has
 		 * been corrected by the ECC algorithm.
 		 * Userspace software which accesses NAND this way
 		 * must be aware of the fact that it deals with NAND
@@ -271,7 +268,6 @@ static ssize_t mtd_write(struct file *file, const char __user *buf, size_t count
 {
 	struct mtd_file_info *mfi = file->private_data;
 	struct mtd_info *mtd = mfi->mtd;
-	size_t size = count;
 	char *kbuf;
 	size_t retlen;
 	size_t total_retlen=0;
@@ -289,12 +285,20 @@ static ssize_t mtd_write(struct file *file, const char __user *buf, size_t count
 	if (!count)
 		return 0;
 
-	kbuf = mtd_kmalloc_up_to(mtd, &size);
+	if (count > MAX_KMALLOC_SIZE)
+		kbuf=kmalloc(MAX_KMALLOC_SIZE, GFP_KERNEL);
+	else
+		kbuf=kmalloc(count, GFP_KERNEL);
+
 	if (!kbuf)
 		return -ENOMEM;
 
 	while (count) {
-		len = min_t(size_t, count, size);
+
+		if (count > MAX_KMALLOC_SIZE)
+			len = MAX_KMALLOC_SIZE;
+		else
+			len = count;
 
 		if (copy_from_user(kbuf, buf, len)) {
 			kfree(kbuf);
@@ -508,6 +512,7 @@ static int shrink_ecclayout(const struct nand_ecclayout *from,
 	return 0;
 }
 
+#ifdef CONFIG_MTD_PARTITIONS
 static int mtd_blkpg_ioctl(struct mtd_info *mtd,
 			   struct blkpg_ioctl_arg __user *arg)
 {
@@ -517,6 +522,10 @@ static int mtd_blkpg_ioctl(struct mtd_info *mtd,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
+	/* Only master mtd device must be used to control partitions */
+	if (!mtd_is_master(mtd))
+		return -EINVAL;
+
 	if (copy_from_user(&a, arg, sizeof(struct blkpg_ioctl_arg)))
 		return -EFAULT;
 
@@ -525,10 +534,6 @@ static int mtd_blkpg_ioctl(struct mtd_info *mtd,
 
 	switch (a.op) {
 	case BLKPG_ADD_PARTITION:
-
-		/* Only master mtd device must be used to add partitions */
-		if (mtd_is_partition(mtd))
-			return -EINVAL;
 
 		return mtd_add_partition(mtd, p.devname, p.start, p.length);
 
@@ -543,6 +548,8 @@ static int mtd_blkpg_ioctl(struct mtd_info *mtd,
 		return -EINVAL;
 	}
 }
+#endif
+
 
 static int mtd_ioctl(struct file *file, u_int cmd, u_long arg)
 {
@@ -594,7 +601,6 @@ static int mtd_ioctl(struct file *file, u_int cmd, u_long arg)
 	}
 
 	case MEMGETINFO:
-		memset(&info, 0, sizeof(info));
 		info.type	= mtd->type;
 		info.flags	= mtd->flags;
 		info.size	= mtd->size;
@@ -603,6 +609,7 @@ static int mtd_ioctl(struct file *file, u_int cmd, u_long arg)
 		info.oobsize	= mtd->oobsize;
 		/* The below fields are obsolete */
 		info.ecctype	= -1;
+		info.eccsize	= 0;
 		if (copy_to_user(argp, &info, sizeof(struct mtd_info_user)))
 			return -EFAULT;
 		break;
@@ -934,6 +941,7 @@ static int mtd_ioctl(struct file *file, u_int cmd, u_long arg)
 		break;
 	}
 
+#ifdef CONFIG_MTD_PARTITIONS
 	case BLKPG:
 	{
 		ret = mtd_blkpg_ioctl(mtd,
@@ -947,6 +955,7 @@ static int mtd_ioctl(struct file *file, u_int cmd, u_long arg)
 		ret = 0;
 		break;
 	}
+#endif
 
 	default:
 		ret = -ENOTTY;
@@ -1125,7 +1134,7 @@ static const struct file_operations mtd_fops = {
 static struct dentry *mtd_inodefs_mount(struct file_system_type *fs_type,
 				int flags, const char *dev_name, void *data)
 {
-	return mount_pseudo(fs_type, "mtd_inode:", NULL, NULL, MTD_INODE_FS_MAGIC);
+	return mount_pseudo(fs_type, "mtd_inode:", NULL, MTD_INODE_FS_MAGIC);
 }
 
 static struct file_system_type mtd_inodefs_type = {
@@ -1192,7 +1201,7 @@ err_unregister_chdev:
 static void __exit cleanup_mtdchar(void)
 {
 	unregister_mtd_user(&mtdchar_notifier);
-	kern_unmount(mtd_inode_mnt);
+	mntput(mtd_inode_mnt);
 	unregister_filesystem(&mtd_inodefs_type);
 	__unregister_chrdev(MTD_CHAR_MAJOR, 0, 1 << MINORBITS, "mtd");
 }

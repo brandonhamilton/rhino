@@ -301,9 +301,6 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x1199, 0x68A3), 	/* Sierra Wireless Direct IP modems */
 	  .driver_info = (kernel_ulong_t)&direct_ip_interface_blacklist
 	},
-	{ USB_DEVICE(0x0f3d, 0x68A3), 	/* Airprime/Sierra Wireless Direct IP modems */
-	  .driver_info = (kernel_ulong_t)&direct_ip_interface_blacklist
-	},
        { USB_DEVICE(0x413C, 0x08133) }, /* Dell Computer Corp. Wireless 5720 VZW Mobile Broadband (EVDO Rev-A) Minicard GPS Port */
 
 	{ }
@@ -376,10 +373,7 @@ static int sierra_send_setup(struct usb_serial_port *port)
 	if (!do_send)
 		return 0;
 
-	retval = usb_autopm_get_interface(serial->interface);
-	if (retval < 0)
-		return retval;
-
+	usb_autopm_get_interface(serial->interface);
 	retval = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
 		0x22, 0x21, val, interface, NULL, 0, USB_CTRL_SET_TIMEOUT);
 	usb_autopm_put_interface(serial->interface);
@@ -395,7 +389,7 @@ static void sierra_set_termios(struct tty_struct *tty,
 	sierra_send_setup(port);
 }
 
-static int sierra_tiocmget(struct tty_struct *tty)
+static int sierra_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	unsigned int value;
@@ -414,7 +408,7 @@ static int sierra_tiocmget(struct tty_struct *tty)
 	return value;
 }
 
-static int sierra_tiocmset(struct tty_struct *tty,
+static int sierra_tiocmset(struct tty_struct *tty, struct file *file,
 			unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -814,12 +808,8 @@ static void sierra_close(struct usb_serial_port *port)
 		mutex_lock(&serial->disc_mutex);
 		if (!serial->disconnected) {
 			serial->interface->needs_remote_wakeup = 0;
-			/* odd error handling due to pm counters */
-			if (!usb_autopm_get_interface(serial->interface))
-				sierra_send_setup(port);
-			else
-				usb_autopm_get_interface_no_resume(serial->interface);
-				
+			usb_autopm_get_interface(serial->interface);
+			sierra_send_setup(port);
 		}
 		mutex_unlock(&serial->disc_mutex);
 		spin_lock_irq(&intfdata->susp_lock);
@@ -872,8 +862,7 @@ static int sierra_open(struct tty_struct *tty, struct usb_serial_port *port)
 		/* get rid of everything as in close */
 		sierra_close(port);
 		/* restore balance for autopm */
-		if (!serial->disconnected)
-			usb_autopm_put_interface(serial->interface);
+		usb_autopm_put_interface(serial->interface);
 		return err;
 	}
 	sierra_send_setup(port);

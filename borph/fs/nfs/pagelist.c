@@ -20,16 +20,18 @@
 #include <linux/nfs_mount.h>
 
 #include "internal.h"
-#include "pnfs.h"
 
 static struct kmem_cache *nfs_page_cachep;
 
 static inline struct nfs_page *
 nfs_page_alloc(void)
 {
-	struct nfs_page	*p = kmem_cache_zalloc(nfs_page_cachep, GFP_KERNEL);
-	if (p)
+	struct nfs_page	*p;
+	p = kmem_cache_alloc(nfs_page_cachep, GFP_KERNEL);
+	if (p) {
+		memset(p, 0, sizeof(*p));
 		INIT_LIST_HEAD(&p->wb_list);
+	}
 	return p;
 }
 
@@ -114,7 +116,7 @@ int nfs_set_page_tag_locked(struct nfs_page *req)
 	if (!nfs_lock_request_dontget(req))
 		return 0;
 	if (test_bit(PG_MAPPED, &req->wb_flags))
-		radix_tree_tag_set(&NFS_I(req->wb_context->dentry->d_inode)->nfs_page_tree, req->wb_index, NFS_PAGE_TAG_LOCKED);
+		radix_tree_tag_set(&NFS_I(req->wb_context->path.dentry->d_inode)->nfs_page_tree, req->wb_index, NFS_PAGE_TAG_LOCKED);
 	return 1;
 }
 
@@ -124,7 +126,7 @@ int nfs_set_page_tag_locked(struct nfs_page *req)
 void nfs_clear_page_tag_locked(struct nfs_page *req)
 {
 	if (test_bit(PG_MAPPED, &req->wb_flags)) {
-		struct inode *inode = req->wb_context->dentry->d_inode;
+		struct inode *inode = req->wb_context->path.dentry->d_inode;
 		struct nfs_inode *nfsi = NFS_I(inode);
 
 		spin_lock(&inode->i_lock);
@@ -135,14 +137,14 @@ void nfs_clear_page_tag_locked(struct nfs_page *req)
 		nfs_unlock_request(req);
 }
 
-/*
+/**
  * nfs_clear_request - Free up all resources allocated to the request
  * @req:
  *
  * Release page and open context resources associated with a read/write
  * request after it has completed.
  */
-static void nfs_clear_request(struct nfs_page *req)
+void nfs_clear_request(struct nfs_page *req)
 {
 	struct page *page = req->wb_page;
 	struct nfs_open_context *ctx = req->wb_context;
@@ -204,22 +206,6 @@ nfs_wait_on_request(struct nfs_page *req)
 			TASK_UNINTERRUPTIBLE);
 }
 
-bool nfs_generic_pg_test(struct nfs_pageio_descriptor *desc, struct nfs_page *prev, struct nfs_page *req)
-{
-	/*
-	 * FIXME: ideally we should be able to coalesce all requests
-	 * that are not block boundary aligned, but currently this
-	 * is problematic for the case of bsize < PAGE_CACHE_SIZE,
-	 * since nfs_flush_multi and nfs_pagein_multi assume you
-	 * can have only one struct nfs_page.
-	 */
-	if (desc->pg_bsize < PAGE_SIZE)
-		return 0;
-
-	return desc->pg_count + req->wb_bytes <= desc->pg_bsize;
-}
-EXPORT_SYMBOL_GPL(nfs_generic_pg_test);
-
 /**
  * nfs_pageio_init - initialise a page io descriptor
  * @desc: pointer to descriptor
@@ -230,7 +216,7 @@ EXPORT_SYMBOL_GPL(nfs_generic_pg_test);
  */
 void nfs_pageio_init(struct nfs_pageio_descriptor *desc,
 		     struct inode *inode,
-		     const struct nfs_pageio_ops *pg_ops,
+		     int (*doio)(struct inode *, struct list_head *, unsigned int, size_t, int),
 		     size_t bsize,
 		     int io_flags)
 {
@@ -239,13 +225,10 @@ void nfs_pageio_init(struct nfs_pageio_descriptor *desc,
 	desc->pg_count = 0;
 	desc->pg_bsize = bsize;
 	desc->pg_base = 0;
-	desc->pg_moreio = 0;
-	desc->pg_recoalesce = 0;
 	desc->pg_inode = inode;
-	desc->pg_ops = pg_ops;
+	desc->pg_doio = doio;
 	desc->pg_ioflags = io_flags;
 	desc->pg_error = 0;
-	desc->pg_lseg = NULL;
 }
 
 /**
@@ -259,23 +242,22 @@ void nfs_pageio_init(struct nfs_pageio_descriptor *desc,
  *
  * Return 'true' if this is the case, else return 'false'.
  */
-static bool nfs_can_coalesce_requests(struct nfs_page *prev,
-				      struct nfs_page *req,
-				      struct nfs_pageio_descriptor *pgio)
+static int nfs_can_coalesce_requests(struct nfs_page *prev,
+				     struct nfs_page *req)
 {
 	if (req->wb_context->cred != prev->wb_context->cred)
-		return false;
+		return 0;
 	if (req->wb_lock_context->lockowner != prev->wb_lock_context->lockowner)
-		return false;
+		return 0;
 	if (req->wb_context->state != prev->wb_context->state)
-		return false;
+		return 0;
 	if (req->wb_index != (prev->wb_index + 1))
-		return false;
+		return 0;
 	if (req->wb_pgbase != 0)
-		return false;
+		return 0;
 	if (prev->wb_pgbase + prev->wb_bytes != PAGE_CACHE_SIZE)
-		return false;
-	return pgio->pg_ops->pg_test(pgio, prev, req);
+		return 0;
+	return 1;
 }
 
 /**
@@ -289,20 +271,31 @@ static bool nfs_can_coalesce_requests(struct nfs_page *prev,
 static int nfs_pageio_do_add_request(struct nfs_pageio_descriptor *desc,
 				     struct nfs_page *req)
 {
+	size_t newlen = req->wb_bytes;
+
 	if (desc->pg_count != 0) {
 		struct nfs_page *prev;
 
-		prev = nfs_list_entry(desc->pg_list.prev);
-		if (!nfs_can_coalesce_requests(prev, req, desc))
+		/*
+		 * FIXME: ideally we should be able to coalesce all requests
+		 * that are not block boundary aligned, but currently this
+		 * is problematic for the case of bsize < PAGE_CACHE_SIZE,
+		 * since nfs_flush_multi and nfs_pagein_multi assume you
+		 * can have only one struct nfs_page.
+		 */
+		if (desc->pg_bsize < PAGE_SIZE)
 			return 0;
-	} else {
-		if (desc->pg_ops->pg_init)
-			desc->pg_ops->pg_init(desc, req);
+		newlen += desc->pg_count;
+		if (newlen > desc->pg_bsize)
+			return 0;
+		prev = nfs_list_entry(desc->pg_list.prev);
+		if (!nfs_can_coalesce_requests(prev, req))
+			return 0;
+	} else
 		desc->pg_base = req->wb_pgbase;
-	}
 	nfs_list_remove_request(req);
 	nfs_list_add_request(req, &desc->pg_list);
-	desc->pg_count += req->wb_bytes;
+	desc->pg_count = newlen;
 	return 1;
 }
 
@@ -312,7 +305,12 @@ static int nfs_pageio_do_add_request(struct nfs_pageio_descriptor *desc,
 static void nfs_pageio_doio(struct nfs_pageio_descriptor *desc)
 {
 	if (!list_empty(&desc->pg_list)) {
-		int error = desc->pg_ops->pg_doio(desc);
+		int error = desc->pg_doio(desc->pg_inode,
+					  &desc->pg_list,
+					  nfs_page_array_len(desc->pg_base,
+							     desc->pg_count),
+					  desc->pg_count,
+					  desc->pg_ioflags);
 		if (error < 0)
 			desc->pg_error = error;
 		else
@@ -332,61 +330,15 @@ static void nfs_pageio_doio(struct nfs_pageio_descriptor *desc)
  * Returns true if the request 'req' was successfully coalesced into the
  * existing list of pages 'desc'.
  */
-static int __nfs_pageio_add_request(struct nfs_pageio_descriptor *desc,
+int nfs_pageio_add_request(struct nfs_pageio_descriptor *desc,
 			   struct nfs_page *req)
 {
 	while (!nfs_pageio_do_add_request(desc, req)) {
-		desc->pg_moreio = 1;
 		nfs_pageio_doio(desc);
 		if (desc->pg_error < 0)
 			return 0;
-		desc->pg_moreio = 0;
-		if (desc->pg_recoalesce)
-			return 0;
 	}
 	return 1;
-}
-
-static int nfs_do_recoalesce(struct nfs_pageio_descriptor *desc)
-{
-	LIST_HEAD(head);
-
-	do {
-		list_splice_init(&desc->pg_list, &head);
-		desc->pg_bytes_written -= desc->pg_count;
-		desc->pg_count = 0;
-		desc->pg_base = 0;
-		desc->pg_recoalesce = 0;
-
-		while (!list_empty(&head)) {
-			struct nfs_page *req;
-
-			req = list_first_entry(&head, struct nfs_page, wb_list);
-			nfs_list_remove_request(req);
-			if (__nfs_pageio_add_request(desc, req))
-				continue;
-			if (desc->pg_error < 0)
-				return 0;
-			break;
-		}
-	} while (desc->pg_recoalesce);
-	return 1;
-}
-
-int nfs_pageio_add_request(struct nfs_pageio_descriptor *desc,
-		struct nfs_page *req)
-{
-	int ret;
-
-	do {
-		ret = __nfs_pageio_add_request(desc, req);
-		if (ret)
-			break;
-		if (desc->pg_error < 0)
-			break;
-		ret = nfs_do_recoalesce(desc);
-	} while (ret);
-	return ret;
 }
 
 /**
@@ -395,13 +347,7 @@ int nfs_pageio_add_request(struct nfs_pageio_descriptor *desc,
  */
 void nfs_pageio_complete(struct nfs_pageio_descriptor *desc)
 {
-	for (;;) {
-		nfs_pageio_doio(desc);
-		if (!desc->pg_recoalesce)
-			break;
-		if (!nfs_do_recoalesce(desc))
-			break;
-	}
+	nfs_pageio_doio(desc);
 }
 
 /**
@@ -420,7 +366,7 @@ void nfs_pageio_cond_complete(struct nfs_pageio_descriptor *desc, pgoff_t index)
 	if (!list_empty(&desc->pg_list)) {
 		struct nfs_page *prev = nfs_list_entry(desc->pg_list.prev);
 		if (index != prev->wb_index + 1)
-			nfs_pageio_complete(desc);
+			nfs_pageio_doio(desc);
 	}
 }
 
@@ -448,7 +394,6 @@ int nfs_scan_list(struct nfs_inode *nfsi,
 	pgoff_t idx_end;
 	int found, i;
 	int res;
-	struct list_head *list;
 
 	res = 0;
 	if (npages == 0)
@@ -469,10 +414,10 @@ int nfs_scan_list(struct nfs_inode *nfsi,
 			idx_start = req->wb_index + 1;
 			if (nfs_set_page_tag_locked(req)) {
 				kref_get(&req->wb_kref);
+				nfs_list_remove_request(req);
 				radix_tree_tag_clear(&nfsi->nfs_page_tree,
 						req->wb_index, tag);
-				list = pnfs_choose_commit_list(req, dst);
-				nfs_list_add_request(req, list);
+				nfs_list_add_request(req, dst);
 				res++;
 				if (res == INT_MAX)
 					goto out;

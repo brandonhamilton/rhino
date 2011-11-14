@@ -222,7 +222,7 @@ int opp_get_opp_count(struct device *dev)
  * opp_find_freq_exact() - search for an exact frequency
  * @dev:		device for which we do this operation
  * @freq:		frequency to search for
- * @available:		true/false - match for available opp
+ * @is_available:	true/false - match for available opp
  *
  * Searches for exact match in the opp list and returns pointer to the matching
  * opp if found, else returns ERR_PTR in case of error and should be handled
@@ -354,6 +354,34 @@ struct opp *opp_find_freq_floor(struct device *dev, unsigned long *freq)
 }
 
 /**
+ * opp_find_voltage() - search for an exact voltage
+ * @dev:	device pointer associated with the opp type
+ * @volt:	voltage to search for
+ *
+ * Searches for exact match in the opp list and returns handle to the matching
+ * opp if found, else returns ERR_PTR in case of error and should be handled
+ * using IS_ERR.
+ */
+struct opp *opp_find_voltage(struct device *dev, unsigned long volt)
+{
+	struct device_opp *dev_opp;
+	struct opp *temp_opp, *opp = ERR_PTR(-ENODEV);
+
+	dev_opp = find_device_opp(dev);
+	if (IS_ERR(dev_opp))
+		return opp;
+
+	list_for_each_entry_rcu(temp_opp, &dev_opp->opp_list, node) {
+		if (temp_opp->available && temp_opp->u_volt == volt) {
+			opp = temp_opp;
+			break;
+		}
+	}
+
+	return opp;
+}
+
+/**
  * opp_add()  - Add an OPP table from a table definitions
  * @dev:	device for which we do this operation
  * @freq:	Frequency in Hz for this OPP
@@ -453,7 +481,7 @@ int opp_add(struct device *dev, unsigned long freq, unsigned long u_volt)
 static int opp_set_availability(struct device *dev, unsigned long freq,
 		bool availability_req)
 {
-	struct device_opp *tmp_dev_opp, *dev_opp = ERR_PTR(-ENODEV);
+	struct device_opp *tmp_dev_opp, *dev_opp = NULL;
 	struct opp *new_opp, *tmp_opp, *opp = ERR_PTR(-ENODEV);
 	int r = 0;
 
@@ -624,22 +652,5 @@ int opp_init_cpufreq_table(struct device *dev,
 	*table = &freq_table[0];
 
 	return 0;
-}
-
-/**
- * opp_free_cpufreq_table() - free the cpufreq table
- * @dev:	device for which we do this operation
- * @table:	table to free
- *
- * Free up the table allocated by opp_init_cpufreq_table
- */
-void opp_free_cpufreq_table(struct device *dev,
-				struct cpufreq_frequency_table **table)
-{
-	if (!table)
-		return;
-
-	kfree(*table);
-	*table = NULL;
 }
 #endif		/* CONFIG_CPU_FREQ */

@@ -14,27 +14,10 @@ static inline int pci_xen_hvm_init(void)
 }
 #endif
 #if defined(CONFIG_XEN_DOM0)
-int __init pci_xen_initial_domain(void);
-int xen_find_device_domain_owner(struct pci_dev *dev);
-int xen_register_device_domain_owner(struct pci_dev *dev, uint16_t domain);
-int xen_unregister_device_domain_owner(struct pci_dev *dev);
+void __init xen_setup_pirqs(void);
 #else
-static inline int __init pci_xen_initial_domain(void)
+static inline void __init xen_setup_pirqs(void)
 {
-	return -1;
-}
-static inline int xen_find_device_domain_owner(struct pci_dev *dev)
-{
-	return -1;
-}
-static inline int xen_register_device_domain_owner(struct pci_dev *dev,
-						   uint16_t domain)
-{
-	return -1;
-}
-static inline int xen_unregister_device_domain_owner(struct pci_dev *dev)
-{
-	return -1;
 }
 #endif
 
@@ -44,16 +27,16 @@ static inline int xen_unregister_device_domain_owner(struct pci_dev *dev)
  * its own functions.
  */
 struct xen_pci_frontend_ops {
-	int (*enable_msi)(struct pci_dev *dev, int vectors[]);
+	int (*enable_msi)(struct pci_dev *dev, int **vectors);
 	void (*disable_msi)(struct pci_dev *dev);
-	int (*enable_msix)(struct pci_dev *dev, int vectors[], int nvec);
+	int (*enable_msix)(struct pci_dev *dev, int **vectors, int nvec);
 	void (*disable_msix)(struct pci_dev *dev);
 };
 
 extern struct xen_pci_frontend_ops *xen_pci_frontend;
 
 static inline int xen_pci_frontend_enable_msi(struct pci_dev *dev,
-					      int vectors[])
+					      int **vectors)
 {
 	if (xen_pci_frontend && xen_pci_frontend->enable_msi)
 		return xen_pci_frontend->enable_msi(dev, vectors);
@@ -65,7 +48,7 @@ static inline void xen_pci_frontend_disable_msi(struct pci_dev *dev)
 			xen_pci_frontend->disable_msi(dev);
 }
 static inline int xen_pci_frontend_enable_msix(struct pci_dev *dev,
-					       int vectors[], int nvec)
+					       int **vectors, int nvec)
 {
 	if (xen_pci_frontend && xen_pci_frontend->enable_msix)
 		return xen_pci_frontend->enable_msix(dev, vectors, nvec);

@@ -19,8 +19,6 @@
 #include <mach/irqs.h>
 #include <mach/map.h>
 
-#include <plat/devs.h>
-
 static struct resource s3c64xx_onenand1_resources[] = {
 	[0] = {
 		.start	= S3C64XX_PA_ONENAND1,
@@ -48,6 +46,10 @@ struct platform_device s3c64xx_device_onenand1 = {
 
 void s3c64xx_onenand1_set_platdata(struct onenand_platform_data *pdata)
 {
-	s3c_set_platdata(pdata, sizeof(struct onenand_platform_data),
-			 &s3c64xx_device_onenand1);
+	struct onenand_platform_data *pd;
+
+	pd = kmemdup(pdata, sizeof(struct onenand_platform_data), GFP_KERNEL);
+	if (!pd)
+		printk(KERN_ERR "%s: no memory for platform data\n", __func__);
+	s3c64xx_device_onenand1.dev.platform_data = pd;
 }

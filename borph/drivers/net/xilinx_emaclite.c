@@ -24,9 +24,7 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/of_mdio.h>
-#include <linux/of_net.h>
 #include <linux/phy.h>
-#include <linux/interrupt.h>
 
 #define DRIVER_NAME "xilinx_emaclite"
 
@@ -252,11 +250,11 @@ static void xemaclite_aligned_write(void *src_ptr, u32 *dest_ptr,
 	u16 *from_u16_ptr, *to_u16_ptr;
 
 	to_u32_ptr = dest_ptr;
-	from_u16_ptr = src_ptr;
+	from_u16_ptr = (u16 *) src_ptr;
 	align_buffer = 0;
 
 	for (; length > 3; length -= 4) {
-		to_u16_ptr = (u16 *)&align_buffer;
+		to_u16_ptr = (u16 *) ((void *) &align_buffer);
 		*to_u16_ptr++ = *from_u16_ptr++;
 		*to_u16_ptr++ = *from_u16_ptr++;
 
@@ -517,7 +515,7 @@ static void xemaclite_update_address(struct net_local *drvdata,
  */
 static int xemaclite_set_mac_address(struct net_device *dev, void *address)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	struct sockaddr *addr = address;
 
 	if (netif_running(dev))
@@ -536,7 +534,7 @@ static int xemaclite_set_mac_address(struct net_device *dev, void *address)
  */
 static void xemaclite_tx_timeout(struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	unsigned long flags;
 
 	dev_err(&lp->ndev->dev, "Exceeded transmit timeout of %lu ms\n",
@@ -580,7 +578,7 @@ static void xemaclite_tx_timeout(struct net_device *dev)
  */
 static void xemaclite_tx_handler(struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 
 	dev->stats.tx_packets++;
 	if (lp->deferred_skb) {
@@ -607,7 +605,7 @@ static void xemaclite_tx_handler(struct net_device *dev)
  */
 static void xemaclite_rx_handler(struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	struct sk_buff *skb;
 	unsigned int align;
 	u32 len;
@@ -648,8 +646,7 @@ static void xemaclite_rx_handler(struct net_device *dev)
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += len;
 
-	if (!skb_defer_rx_timestamp(skb))
-		netif_rx(skb);	/* Send the packet upstream */
+	netif_rx(skb);		/* Send the packet upstream */
 }
 
 /**
@@ -664,7 +661,7 @@ static irqreturn_t xemaclite_interrupt(int irq, void *dev_id)
 {
 	bool tx_complete = 0;
 	struct net_device *dev = dev_id;
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	void __iomem *base_addr = lp->base_addr;
 	u32 tx_status;
 
@@ -788,7 +785,7 @@ static int xemaclite_mdio_read(struct mii_bus *bus, int phy_id, int reg)
  * @reg:	register number to write to
  * @val:	value to write to the register number specified by reg
  *
- * This function waits till the device is ready to accept a new MDIO
+ * This fucntion waits till the device is ready to accept a new MDIO
  * request and then writes the val to the MDIO Write Data register.
  */
 static int xemaclite_mdio_write(struct mii_bus *bus, int phy_id, int reg,
@@ -921,7 +918,7 @@ void xemaclite_adjust_link(struct net_device *ndev)
  */
 static int xemaclite_open(struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	int retval;
 
 	/* Just to be safe, stop the device first */
@@ -990,7 +987,7 @@ static int xemaclite_open(struct net_device *dev)
  */
 static int xemaclite_close(struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 
 	netif_stop_queue(dev);
 	xemaclite_disable_interrupts(lp);
@@ -1001,6 +998,21 @@ static int xemaclite_close(struct net_device *dev)
 	lp->phy_dev = NULL;
 
 	return 0;
+}
+
+/**
+ * xemaclite_get_stats - Get the stats for the net_device
+ * @dev:	Pointer to the network device
+ *
+ * This function returns the address of the 'net_device_stats' structure for the
+ * given network device. This structure holds usage statistics for the network
+ * device.
+ *
+ * Return:	Pointer to the net_device_stats structure.
+ */
+static struct net_device_stats *xemaclite_get_stats(struct net_device *dev)
+{
+	return &dev->stats;
 }
 
 /**
@@ -1019,7 +1031,7 @@ static int xemaclite_close(struct net_device *dev)
  */
 static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 {
-	struct net_local *lp = netdev_priv(dev);
+	struct net_local *lp = (struct net_local *) netdev_priv(dev);
 	struct sk_buff *new_skb;
 	unsigned int len;
 	unsigned long flags;
@@ -1031,18 +1043,14 @@ static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 	spin_lock_irqsave(&lp->reset_lock, flags);
 	if (xemaclite_send_data(lp, (u8 *) new_skb->data, len) != 0) {
 		/* If the Emaclite Tx buffer is busy, stop the Tx queue and
-		 * defer the skb for transmission during the ISR, after the
+		 * defer the skb for transmission at a later point when the
 		 * current transmission is complete */
 		netif_stop_queue(dev);
 		lp->deferred_skb = new_skb;
-		/* Take the time stamp now, since we can't do this in an ISR. */
-		skb_tx_timestamp(new_skb);
 		spin_unlock_irqrestore(&lp->reset_lock, flags);
 		return 0;
 	}
 	spin_unlock_irqrestore(&lp->reset_lock, flags);
-
-	skb_tx_timestamp(new_skb);
 
 	dev->stats.tx_bytes += len;
 	dev_kfree_skb(new_skb);
@@ -1060,7 +1068,7 @@ static int xemaclite_send(struct sk_buff *orig_skb, struct net_device *dev)
 static void xemaclite_remove_ndev(struct net_device *ndev)
 {
 	if (ndev) {
-		struct net_local *lp = netdev_priv(ndev);
+		struct net_local *lp = (struct net_local *) netdev_priv(ndev);
 
 		if (lp->base_addr)
 			iounmap((void __iomem __force *) (lp->base_addr));
@@ -1107,7 +1115,8 @@ static struct net_device_ops xemaclite_netdev_ops;
  * Return:	0, if the driver is bound to the Emaclite device, or
  *		a negative error if there is failure.
  */
-static int __devinit xemaclite_of_probe(struct platform_device *ofdev)
+static int __devinit xemaclite_of_probe(struct platform_device *ofdev,
+					const struct of_device_id *match)
 {
 	struct resource r_irq; /* Interrupt resources */
 	struct resource r_mem; /* IO mem resources */
@@ -1236,7 +1245,7 @@ static int __devexit xemaclite_of_remove(struct platform_device *of_dev)
 	struct device *dev = &of_dev->dev;
 	struct net_device *ndev = dev_get_drvdata(dev);
 
-	struct net_local *lp = netdev_priv(ndev);
+	struct net_local *lp = (struct net_local *) netdev_priv(ndev);
 
 	/* Un-register the mii_bus, if configured */
 	if (lp->has_mdio) {
@@ -1276,6 +1285,7 @@ static struct net_device_ops xemaclite_netdev_ops = {
 	.ndo_start_xmit		= xemaclite_send,
 	.ndo_set_mac_address	= xemaclite_set_mac_address,
 	.ndo_tx_timeout		= xemaclite_tx_timeout,
+	.ndo_get_stats		= xemaclite_get_stats,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller = xemaclite_poll_controller,
 #endif
@@ -1293,7 +1303,7 @@ static struct of_device_id xemaclite_of_match[] __devinitdata = {
 };
 MODULE_DEVICE_TABLE(of, xemaclite_of_match);
 
-static struct platform_driver xemaclite_of_driver = {
+static struct of_platform_driver xemaclite_of_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
@@ -1311,7 +1321,7 @@ static struct platform_driver xemaclite_of_driver = {
 static int __init xemaclite_init(void)
 {
 	/* No kernel boot options used, we just need to register the driver */
-	return platform_driver_register(&xemaclite_of_driver);
+	return of_register_platform_driver(&xemaclite_of_driver);
 }
 
 /**
@@ -1319,7 +1329,7 @@ static int __init xemaclite_init(void)
  */
 static void __exit xemaclite_cleanup(void)
 {
-	platform_driver_unregister(&xemaclite_of_driver);
+	of_unregister_platform_driver(&xemaclite_of_driver);
 }
 
 module_init(xemaclite_init);

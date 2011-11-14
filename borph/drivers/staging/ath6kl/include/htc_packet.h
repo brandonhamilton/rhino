@@ -42,37 +42,37 @@ typedef enum
     ENDPOINT_MAX,
 } HTC_ENDPOINT_ID;
 
-struct htc_packet;
+struct _HTC_PACKET;
 
-typedef void (* HTC_PACKET_COMPLETION)(void *,struct htc_packet *);
+typedef void (* HTC_PACKET_COMPLETION)(void *,struct _HTC_PACKET *);
 
-typedef u16 HTC_TX_TAG;
+typedef A_UINT16 HTC_TX_TAG;
 
-struct htc_tx_packet_info {
+typedef struct _HTC_TX_PACKET_INFO {
     HTC_TX_TAG    Tag;            /* tag used to selective flush packets */
     int           CreditsUsed;    /* number of credits used for this TX packet (HTC internal) */
-    u8 SendFlags;      /* send flags (HTC internal) */
+    A_UINT8       SendFlags;      /* send flags (HTC internal) */
     int           SeqNo;          /* internal seq no for debugging (HTC internal) */
-};
+} HTC_TX_PACKET_INFO;
 
 #define HTC_TX_PACKET_TAG_ALL          0    /* a tag of zero is reserved and used to flush ALL packets */
 #define HTC_TX_PACKET_TAG_INTERNAL     1                                /* internal tags start here */
 #define HTC_TX_PACKET_TAG_USER_DEFINED (HTC_TX_PACKET_TAG_INTERNAL + 9) /* user-defined tags start here */
 
-struct htc_rx_packet_info {
-    u32 ExpectedHdr;        /* HTC internal use */
-    u32 HTCRxFlags;         /* HTC internal use */
-    u32 IndicationFlags;    /* indication flags set on each RX packet indication */
-};
+typedef struct _HTC_RX_PACKET_INFO {
+    A_UINT32    ExpectedHdr;        /* HTC internal use */
+    A_UINT32    HTCRxFlags;         /* HTC internal use */
+    A_UINT32    IndicationFlags;    /* indication flags set on each RX packet indication */
+} HTC_RX_PACKET_INFO;
 
 #define HTC_RX_FLAGS_INDICATE_MORE_PKTS  (1 << 0)   /* more packets on this endpoint are being fetched */
 
 /* wrapper around endpoint-specific packets */
-struct htc_packet {
-    struct dl_list         ListLink;       /* double link */
+typedef struct _HTC_PACKET {
+    DL_LIST         ListLink;       /* double link */
     void            *pPktContext;   /* caller's per packet specific context */
 
-    u8 *pBufferStart;  /* the true buffer start , the caller can
+    A_UINT8         *pBufferStart;  /* the true buffer start , the caller can
                                        store the real buffer start here.  In
                                        receive callbacks, the HTC layer sets pBuffer
                                        to the start of the payload past the header. This
@@ -85,20 +85,20 @@ struct htc_packet {
      * points to the start of the HTC header but when returned
      * to the caller points to the start of the payload
      */
-    u8 *pBuffer;       /* payload start (RX/TX) */
-    u32 BufferLength;   /* length of buffer */
-    u32 ActualLength;   /* actual length of payload */
+    A_UINT8         *pBuffer;       /* payload start (RX/TX) */
+    A_UINT32        BufferLength;   /* length of buffer */
+    A_UINT32        ActualLength;   /* actual length of payload */
     HTC_ENDPOINT_ID Endpoint;       /* endpoint that this packet was sent/recv'd from */
-    int        Status;         /* completion status */
+    A_STATUS        Status;         /* completion status */
     union {
-        struct htc_tx_packet_info  AsTx;   /* Tx Packet specific info */
-        struct htc_rx_packet_info  AsRx;   /* Rx Packet specific info */
+        HTC_TX_PACKET_INFO  AsTx;   /* Tx Packet specific info */
+        HTC_RX_PACKET_INFO  AsRx;   /* Rx Packet specific info */
     } PktInfo;
 
     /* the following fields are for internal HTC use */
     HTC_PACKET_COMPLETION Completion;   /* completion */
     void                  *pContext;    /* HTC private completion context */
-};
+} HTC_PACKET;
 
 
 
@@ -139,10 +139,10 @@ struct htc_packet {
 }
 
 /* HTC Packet Queueing Macros */
-struct htc_packet_queue {
-    struct dl_list     QueueHead;
+typedef struct _HTC_PACKET_QUEUE {
+    DL_LIST     QueueHead;
     int         Depth;    
-};
+} HTC_PACKET_QUEUE;
  
 /* initialize queue */
 #define INIT_HTC_PACKET_QUEUE(pQ)   \
@@ -165,11 +165,11 @@ struct htc_packet_queue {
 /* test if a queue is empty */
 #define HTC_QUEUE_EMPTY(pQ)       ((pQ)->Depth == 0)
 /* get packet at head without removing it */
-static INLINE struct htc_packet *HTC_GET_PKT_AT_HEAD(struct htc_packet_queue *queue)   {
+static INLINE HTC_PACKET *HTC_GET_PKT_AT_HEAD(HTC_PACKET_QUEUE *queue)   {
     if (queue->Depth == 0) {
         return NULL; 
     }  
-    return A_CONTAINING_STRUCT((DL_LIST_GET_ITEM_AT_HEAD(&queue->QueueHead)),struct htc_packet,ListLink);
+    return A_CONTAINING_STRUCT((DL_LIST_GET_ITEM_AT_HEAD(&queue->QueueHead)),HTC_PACKET,ListLink);
 }
 /* remove a packet from a queue, where-ever it is in the queue */
 #define HTC_PACKET_REMOVE(pQ,p)     \
@@ -179,21 +179,21 @@ static INLINE struct htc_packet *HTC_GET_PKT_AT_HEAD(struct htc_packet_queue *qu
 }
 
 /* dequeue an HTC packet from the head of the queue */
-static INLINE struct htc_packet *HTC_PACKET_DEQUEUE(struct htc_packet_queue *queue) {
-    struct dl_list    *pItem = DL_ListRemoveItemFromHead(&queue->QueueHead);
+static INLINE HTC_PACKET *HTC_PACKET_DEQUEUE(HTC_PACKET_QUEUE *queue) {
+    DL_LIST    *pItem = DL_ListRemoveItemFromHead(&queue->QueueHead);
     if (pItem != NULL) {
         queue->Depth--;
-        return A_CONTAINING_STRUCT(pItem, struct htc_packet, ListLink);
+        return A_CONTAINING_STRUCT(pItem, HTC_PACKET, ListLink);
     }
     return NULL;
 }
 
 /* dequeue an HTC packet from the tail of the queue */
-static INLINE struct htc_packet *HTC_PACKET_DEQUEUE_TAIL(struct htc_packet_queue *queue) {
-    struct dl_list    *pItem = DL_ListRemoveItemFromTail(&queue->QueueHead);
+static INLINE HTC_PACKET *HTC_PACKET_DEQUEUE_TAIL(HTC_PACKET_QUEUE *queue) {
+    DL_LIST    *pItem = DL_ListRemoveItemFromTail(&queue->QueueHead);
     if (pItem != NULL) {
         queue->Depth--;
-        return A_CONTAINING_STRUCT(pItem, struct htc_packet, ListLink);
+        return A_CONTAINING_STRUCT(pItem, HTC_PACKET, ListLink);
     }
     return NULL;
 }
@@ -220,7 +220,7 @@ static INLINE struct htc_packet *HTC_PACKET_DEQUEUE_TAIL(struct htc_packet_queue
 }
     
 #define HTC_PACKET_QUEUE_ITERATE_ALLOW_REMOVE(pQ, pPTemp) \
-    ITERATE_OVER_LIST_ALLOW_REMOVE(&(pQ)->QueueHead,(pPTemp), struct htc_packet, ListLink) 
+    ITERATE_OVER_LIST_ALLOW_REMOVE(&(pQ)->QueueHead,(pPTemp), HTC_PACKET, ListLink) 
 
 #define HTC_PACKET_QUEUE_ITERATE_END ITERATE_END
         

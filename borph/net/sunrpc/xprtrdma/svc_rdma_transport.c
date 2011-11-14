@@ -42,7 +42,6 @@
 #include <linux/sunrpc/svc_xprt.h>
 #include <linux/sunrpc/debug.h>
 #include <linux/sunrpc/rpc_rdma.h>
-#include <linux/interrupt.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -334,7 +333,7 @@ static void rq_cq_reap(struct svcxprt_rdma *xprt)
 }
 
 /*
- * Process a completion context
+ * Processs a completion context
  */
 static void process_context(struct svcxprt_rdma *xprt,
 			    struct svc_rdma_op_ctxt *ctxt)
@@ -696,8 +695,7 @@ static struct svc_xprt *svc_rdma_create(struct svc_serv *serv,
 		return ERR_PTR(-ENOMEM);
 	xprt = &cma_xprt->sc_xprt;
 
-	listen_id = rdma_create_id(rdma_listen_handler, cma_xprt, RDMA_PS_TCP,
-				   IB_QPT_RC);
+	listen_id = rdma_create_id(rdma_listen_handler, cma_xprt, RDMA_PS_TCP);
 	if (IS_ERR(listen_id)) {
 		ret = PTR_ERR(listen_id);
 		dprintk("svcrdma: rdma_create_id failed = %d\n", ret);
@@ -1337,7 +1335,6 @@ void svc_rdma_send_error(struct svcxprt_rdma *xprt, struct rpcrdma_msg *rmsgp,
 					    p, 0, length, DMA_FROM_DEVICE);
 	if (ib_dma_mapping_error(xprt->sc_cm_id->device, ctxt->sge[0].addr)) {
 		put_page(p);
-		svc_rdma_put_context(ctxt, 1);
 		return;
 	}
 	atomic_inc(&xprt->sc_dma_used);

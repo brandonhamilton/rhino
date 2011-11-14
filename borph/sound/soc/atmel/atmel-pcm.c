@@ -364,11 +364,9 @@ static struct snd_pcm_ops atmel_pcm_ops = {
 \*--------------------------------------------------------------------------*/
 static u64 atmel_pcm_dmamask = 0xffffffff;
 
-static int atmel_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int atmel_pcm_new(struct snd_card *card,
+	struct snd_soc_dai *dai, struct snd_pcm *pcm)
 {
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_soc_dai *dai = rtd->cpu_dai;
-	struct snd_pcm *pcm = rtd->pcm;
 	int ret = 0;
 
 	if (!card->dev->dma_mask)
@@ -384,7 +382,7 @@ static int atmel_pcm_new(struct snd_soc_pcm_runtime *rtd)
 	}
 
 	if (dai->driver->capture.channels_min) {
-		pr_debug("atmel-pcm:"
+		pr_debug("at32-pcm:"
 				"Allocating PCM capture DMA buffer\n");
 		ret = atmel_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_CAPTURE);

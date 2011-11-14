@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/pcieport_if.h>
 #include <linux/aer.h>
+#include <linux/pci-aspm.h>
 
 #include "../pci.h"
 #include "portdrv.h"
@@ -240,17 +241,17 @@ static int get_port_device_capability(struct pci_dev *dev)
 	int cap_mask;
 	int err;
 
-	if (pcie_ports_disabled)
-		return 0;
-
 	err = pcie_port_platform_notify(dev, &cap_mask);
-	if (!pcie_ports_auto) {
+	if (pcie_ports_auto) {
+		if (err) {
+			pcie_no_aspm();
+			return 0;
+		}
+	} else {
 		cap_mask = PCIE_PORT_SERVICE_PME | PCIE_PORT_SERVICE_HP
 				| PCIE_PORT_SERVICE_VC;
 		if (pci_aer_available())
 			cap_mask |= PCIE_PORT_SERVICE_AER;
-	} else if (err) {
-			return 0;
 	}
 
 	pos = pci_pcie_cap(dev);
@@ -348,16 +349,15 @@ int pcie_port_device_register(struct pci_dev *dev)
 	int status, capabilities, i, nr_service;
 	int irqs[PCIE_PORT_DEVICE_MAXSERVICES];
 
+	/* Get and check PCI Express port services */
+	capabilities = get_port_device_capability(dev);
+	if (!capabilities)
+		return -ENODEV;
+
 	/* Enable PCI Express port device */
 	status = pci_enable_device(dev);
 	if (status)
 		return status;
-
-	/* Get and check PCI Express port services */
-	capabilities = get_port_device_capability(dev);
-	if (!capabilities)
-		return 0;
-
 	pci_set_master(dev);
 	/*
 	 * Initialize service irqs. Don't use service devices that

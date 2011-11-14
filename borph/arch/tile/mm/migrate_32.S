@@ -18,7 +18,6 @@
 #include <linux/linkage.h>
 #include <linux/threads.h>
 #include <asm/page.h>
-#include <asm/thread_info.h>
 #include <asm/types.h>
 #include <asm/asm-offsets.h>
 #include <hv/hypervisor.h>

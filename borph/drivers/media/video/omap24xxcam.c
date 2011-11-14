@@ -31,18 +31,18 @@
 #include <linux/interrupt.h>
 #include <linux/videodev2.h>
 #include <linux/pci.h>		/* needed for videobufs */
+#include <linux/version.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
 
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 
 #include "omap24xxcam.h"
 
-#define OMAP24XXCAM_VERSION "0.0.1"
+#define OMAP24XXCAM_VERSION KERNEL_VERSION(0, 0, 0)
 
 #define RESET_TIMEOUT_NS 10000
 
@@ -308,11 +308,11 @@ static int omap24xxcam_vbq_alloc_mmap_buffer(struct videobuf_buffer *vb)
 			order--;
 
 		/* try to allocate as many contiguous pages as possible */
-		page = alloc_pages(GFP_KERNEL, order);
+		page = alloc_pages(GFP_KERNEL | GFP_DMA, order);
 		/* if allocation fails, try to allocate smaller amount */
 		while (page == NULL) {
 			order--;
-			page = alloc_pages(GFP_KERNEL, order);
+			page = alloc_pages(GFP_KERNEL | GFP_DMA, order);
 			if (page == NULL && !order) {
 				err = -ENOMEM;
 				goto out;
@@ -992,6 +992,7 @@ static int vidioc_querycap(struct file *file, void *fh,
 
 	strlcpy(cap->driver, CAM_NAME, sizeof(cap->driver));
 	strlcpy(cap->card, cam->vfd->name, sizeof(cap->card));
+	cap->version = OMAP24XXCAM_VERSION;
 	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
 
 	return 0;
@@ -1197,7 +1198,7 @@ static int vidioc_streamoff(struct file *file, void *fh, enum v4l2_buf_type i)
 
 	atomic_inc(&cam->reset_disable);
 
-	flush_work_sync(&cam->sensor_reset_work);
+	flush_scheduled_work();
 
 	rval = videobuf_streamoff(q);
 	if (!rval) {
@@ -1511,7 +1512,7 @@ static int omap24xxcam_release(struct file *file)
 
 	atomic_inc(&cam->reset_disable);
 
-	flush_work_sync(&cam->sensor_reset_work);
+	flush_scheduled_work();
 
 	/* stop streaming capture */
 	videobuf_streamoff(&fh->vbq);
@@ -1535,7 +1536,7 @@ static int omap24xxcam_release(struct file *file)
 	 * not be scheduled anymore since streaming is already
 	 * disabled.)
 	 */
-	flush_work_sync(&cam->sensor_reset_work);
+	flush_scheduled_work();
 
 	mutex_lock(&cam->mutex);
 	if (atomic_dec_return(&cam->users) == 0) {
@@ -1766,13 +1767,14 @@ static int __devinit omap24xxcam_probe(struct platform_device *pdev)
 		dev_err(cam->dev, "no mem resource?\n");
 		goto err;
 	}
-	if (!request_mem_region(mem->start, resource_size(mem), pdev->name)) {
+	if (!request_mem_region(mem->start, (mem->end - mem->start) + 1,
+				pdev->name)) {
 		dev_err(cam->dev,
 			"cannot reserve camera register I/O region\n");
 		goto err;
 	}
 	cam->mmio_base_phys = mem->start;
-	cam->mmio_size = resource_size(mem);
+	cam->mmio_size = (mem->end - mem->start) + 1;
 
 	/* map the region */
 	cam->mmio_base = (unsigned long)
@@ -1886,7 +1888,6 @@ static void __exit omap24xxcam_cleanup(void)
 MODULE_AUTHOR("Sakari Ailus <sakari.ailus@nokia.com>");
 MODULE_DESCRIPTION("OMAP24xx Video for Linux camera driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(OMAP24XXCAM_VERSION);
 module_param(video_nr, int, 0);
 MODULE_PARM_DESC(video_nr,
 		 "Minor number for video device (-1 ==> auto assign)");

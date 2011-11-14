@@ -912,11 +912,10 @@ void show_regs(struct pt_regs *fp)
 	/* if no interrupts are going off, don't print this out */
 	if (fp->ipend & ~0x3F) {
 		for (i = 0; i < (NR_IRQS - 1); i++) {
-			struct irq_desc *desc = irq_to_desc(i);
 			if (!in_atomic)
-				raw_spin_lock_irqsave(&desc->lock, flags);
+				raw_spin_lock_irqsave(&irq_desc[i].lock, flags);
 
-			action = desc->action;
+			action = irq_desc[i].action;
 			if (!action)
 				goto unlock;
 
@@ -929,7 +928,7 @@ void show_regs(struct pt_regs *fp)
 			pr_cont("\n");
 unlock:
 			if (!in_atomic)
-				raw_spin_unlock_irqrestore(&desc->lock, flags);
+				raw_spin_unlock_irqrestore(&irq_desc[i].lock, flags);
 		}
 	}
 

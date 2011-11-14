@@ -8,8 +8,6 @@
 */
 #ifndef _IPT_ECN_TARGET_H
 #define _IPT_ECN_TARGET_H
-
-#include <linux/types.h>
 #include <linux/netfilter/xt_DSCP.h>
 
 #define IPT_ECN_IP_MASK	(~XT_DSCP_MASK)
@@ -21,11 +19,11 @@
 #define IPT_ECN_OP_MASK		0xce
 
 struct ipt_ECN_info {
-	__u8 operation;	/* bitset of operations */
-	__u8 ip_ect;	/* ECT codepoint of IPv4 header, pre-shifted */
+	u_int8_t operation;	/* bitset of operations */
+	u_int8_t ip_ect;	/* ECT codepoint of IPv4 header, pre-shifted */
 	union {
 		struct {
-			__u8 ece:1, cwr:1; /* TCP ECT bits */
+			u_int8_t ece:1, cwr:1; /* TCP ECT bits */
 		} tcp;
 	} proto;
 };

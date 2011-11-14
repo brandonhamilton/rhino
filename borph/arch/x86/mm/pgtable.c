@@ -121,12 +121,14 @@ static void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
 
 static void pgd_dtor(pgd_t *pgd)
 {
+	unsigned long flags; /* can be called from interrupt context */
+
 	if (SHARED_KERNEL_PMD)
 		return;
 
-	spin_lock(&pgd_lock);
+	spin_lock_irqsave(&pgd_lock, flags);
 	pgd_list_del(pgd);
-	spin_unlock(&pgd_lock);
+	spin_unlock_irqrestore(&pgd_lock, flags);
 }
 
 /*
@@ -168,7 +170,8 @@ void pud_populate(struct mm_struct *mm, pud_t *pudp, pmd_t *pmd)
 	 * section 8.1: in PAE mode we explicitly have to flush the
 	 * TLB via cr3 if the top-level pgd is changed...
 	 */
-	flush_tlb_mm(mm);
+	if (mm == current->active_mm)
+		write_cr3(read_cr3());
 }
 #else  /* !CONFIG_X86_PAE */
 
@@ -257,6 +260,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 {
 	pgd_t *pgd;
 	pmd_t *pmds[PREALLOCATED_PMDS];
+	unsigned long flags;
 
 	pgd = (pgd_t *)__get_free_page(PGALLOC_GFP);
 
@@ -276,12 +280,12 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 * respect to anything walking the pgd_list, so that they
 	 * never see a partially populated pgd.
 	 */
-	spin_lock(&pgd_lock);
+	spin_lock_irqsave(&pgd_lock, flags);
 
 	pgd_ctor(mm, pgd);
 	pgd_prepopulate_pmd(mm, pgd, pmds);
 
-	spin_unlock(&pgd_lock);
+	spin_unlock_irqrestore(&pgd_lock, flags);
 
 	return pgd;
 
@@ -316,25 +320,6 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 	return changed;
 }
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-int pmdp_set_access_flags(struct vm_area_struct *vma,
-			  unsigned long address, pmd_t *pmdp,
-			  pmd_t entry, int dirty)
-{
-	int changed = !pmd_same(*pmdp, entry);
-
-	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
-
-	if (changed && dirty) {
-		*pmdp = entry;
-		pmd_update_defer(vma->vm_mm, address, pmdp);
-		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
-	}
-
-	return changed;
-}
-#endif
-
 int ptep_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pte_t *ptep)
 {
@@ -350,23 +335,6 @@ int ptep_test_and_clear_young(struct vm_area_struct *vma,
 	return ret;
 }
 
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-int pmdp_test_and_clear_young(struct vm_area_struct *vma,
-			      unsigned long addr, pmd_t *pmdp)
-{
-	int ret = 0;
-
-	if (pmd_young(*pmdp))
-		ret = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-					 (unsigned long *)pmdp);
-
-	if (ret)
-		pmd_update(vma->vm_mm, addr, pmdp);
-
-	return ret;
-}
-#endif
-
 int ptep_clear_flush_young(struct vm_area_struct *vma,
 			   unsigned long address, pte_t *ptep)
 {
@@ -378,36 +346,6 @@ int ptep_clear_flush_young(struct vm_area_struct *vma,
 
 	return young;
 }
-
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-int pmdp_clear_flush_young(struct vm_area_struct *vma,
-			   unsigned long address, pmd_t *pmdp)
-{
-	int young;
-
-	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
-
-	young = pmdp_test_and_clear_young(vma, address, pmdp);
-	if (young)
-		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
-
-	return young;
-}
-
-void pmdp_splitting_flush(struct vm_area_struct *vma,
-			  unsigned long address, pmd_t *pmdp)
-{
-	int set;
-	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
-	set = !test_and_set_bit(_PAGE_BIT_SPLITTING,
-				(unsigned long *)pmdp);
-	if (set) {
-		pmd_update(vma->vm_mm, address, pmdp);
-		/* need tlb flush only to serialize against gup-fast */
-		flush_tlb_range(vma, address, address + HPAGE_PMD_SIZE);
-	}
-}
-#endif
 
 /**
  * reserve_top_address - reserves a hole in the top of kernel address space

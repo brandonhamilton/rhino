@@ -12,8 +12,8 @@
 
 #include <linux/irq.h>
 #include <linux/platform_device.h>
+#include <linux/input/matrix_keypad.h>
 #include <linux/spi/spi.h>
-#include <linux/gpio.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -27,10 +27,10 @@
 #include "devices-imx51.h"
 #include "devices.h"
 
-#define EXPIO_PARENT_INT	gpio_to_irq(IMX_GPIO_NR(1, 6))
+#define EXPIO_PARENT_INT	(MXC_INTERNAL_IRQS + GPIO_PORTA + 6)
 #define MX51_3DS_ECSPI2_CS	(GPIO_PORTC + 28)
 
-static iomux_v3_cfg_t mx51_3ds_pads[] = {
+static struct pad_desc mx51_3ds_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -50,7 +50,7 @@ static iomux_v3_cfg_t mx51_3ds_pads[] = {
 	MX51_PAD_EIM_D27__UART3_RTS,
 
 	/* CPLD PARENT IRQ PIN */
-	MX51_PAD_GPIO1_6__GPIO1_6,
+	MX51_PAD_GPIO_1_6__GPIO_1_6,
 
 	/* KPP */
 	MX51_PAD_KEY_ROW0__KEY_ROW0,
@@ -68,14 +68,28 @@ static iomux_v3_cfg_t mx51_3ds_pads[] = {
 	MX51_PAD_NANDF_RB2__ECSPI2_SCLK,
 	MX51_PAD_NANDF_RB3__ECSPI2_MISO,
 	MX51_PAD_NANDF_D15__ECSPI2_MOSI,
-	MX51_PAD_NANDF_D12__GPIO3_28,
+	MX51_PAD_NANDF_D12__GPIO_3_28,
 };
 
 /* Serial ports */
+#if defined(CONFIG_SERIAL_IMX) || defined(CONFIG_SERIAL_IMX_MODULE)
 static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
 
+static inline void mxc_init_imx_uart(void)
+{
+	imx51_add_imx_uart(0, &uart_pdata);
+	imx51_add_imx_uart(1, &uart_pdata);
+	imx51_add_imx_uart(2, &uart_pdata);
+}
+#else /* !SERIAL_IMX */
+static inline void mxc_init_imx_uart(void)
+{
+}
+#endif /* SERIAL_IMX */
+
+#if defined(CONFIG_KEYBOARD_IMX) || defined(CONFIG_KEYBOARD_IMX_MODULE)
 static int mx51_3ds_board_keymap[] = {
 	KEY(0, 0, KEY_1),
 	KEY(0, 1, KEY_2),
@@ -106,10 +120,20 @@ static int mx51_3ds_board_keymap[] = {
 	KEY(3, 5, KEY_BACK)
 };
 
-static const struct matrix_keymap_data mx51_3ds_map_data __initconst = {
+static struct matrix_keymap_data mx51_3ds_map_data = {
 	.keymap		= mx51_3ds_board_keymap,
 	.keymap_size	= ARRAY_SIZE(mx51_3ds_board_keymap),
 };
+
+static void mxc_init_keypad(void)
+{
+	mxc_register_device(&mxc_keypad_device, &mx51_3ds_map_data);
+}
+#else
+static inline void mxc_init_keypad(void)
+{
+}
+#endif
 
 static int mx51_3ds_spi2_cs[] = {
 	MXC_SPI_CS(0),
@@ -134,16 +158,11 @@ static struct spi_board_info mx51_3ds_spi_nor_device[] = {
 /*
  * Board specific initialization.
  */
-static void __init mx51_3ds_init(void)
+static void __init mxc_board_init(void)
 {
-	imx51_soc_init();
-
 	mxc_iomux_v3_setup_multiple_pads(mx51_3ds_pads,
 					ARRAY_SIZE(mx51_3ds_pads));
-
-	imx51_add_imx_uart(0, &uart_pdata);
-	imx51_add_imx_uart(1, &uart_pdata);
-	imx51_add_imx_uart(2, &uart_pdata);
+	mxc_init_imx_uart();
 
 	imx51_add_ecspi(1, &mx51_3ds_ecspi2_pdata);
 	spi_register_board_info(mx51_3ds_spi_nor_device,
@@ -153,9 +172,7 @@ static void __init mx51_3ds_init(void)
 		printk(KERN_WARNING "Init of the debugboard failed, all "
 				    "devices on the board are unusable.\n");
 
-	imx51_add_sdhci_esdhc_imx(0, NULL);
-	imx51_add_imx_keypad(&mx51_3ds_map_data);
-	imx51_add_imx2_wdt(0, NULL);
+	mxc_init_keypad();
 }
 
 static void __init mx51_3ds_timer_init(void)
@@ -163,16 +180,15 @@ static void __init mx51_3ds_timer_init(void)
 	mx51_clocks_init(32768, 24000000, 22579200, 0);
 }
 
-static struct sys_timer mx51_3ds_timer = {
-	.init = mx51_3ds_timer_init,
+static struct sys_timer mxc_timer = {
+	.init	= mx51_3ds_timer_init,
 };
 
 MACHINE_START(MX51_3DS, "Freescale MX51 3-Stack Board")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.boot_params = MX51_PHYS_OFFSET + 0x100,
+	.boot_params = PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
-	.init_early = imx51_init_early,
 	.init_irq = mx51_init_irq,
-	.timer = &mx51_3ds_timer,
-	.init_machine = mx51_3ds_init,
+	.init_machine = mxc_board_init,
+	.timer = &mxc_timer,
 MACHINE_END

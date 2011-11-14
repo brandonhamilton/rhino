@@ -708,11 +708,11 @@ static int __init depca_hw_init (struct net_device *dev, struct device *device)
 
 	/* Tx & Rx descriptors (aligned to a quadword boundary) */
 	offset = (offset + DEPCA_ALIGN) & ~DEPCA_ALIGN;
-	lp->rx_ring = lp->sh_mem + offset;
+	lp->rx_ring = (struct depca_rx_desc __iomem *) (lp->sh_mem + offset);
 	lp->rx_ring_offset = offset;
 
 	offset += (sizeof(struct depca_rx_desc) * NUM_RX_DESC);
-	lp->tx_ring = lp->sh_mem + offset;
+	lp->tx_ring = (struct depca_tx_desc __iomem *) (lp->sh_mem + offset);
 	lp->tx_ring_offset = offset;
 
 	offset += (sizeof(struct depca_tx_desc) * NUM_TX_DESC);
@@ -1073,13 +1073,13 @@ static int depca_rx(struct net_device *dev)
 							i = DEPCA_PKT_STAT_SZ;
 						}
 					}
-					if (is_multicast_ether_addr(buf)) {
-						if (is_broadcast_ether_addr(buf)) {
+					if (buf[0] & 0x01) {	/* Multicast/Broadcast */
+						if ((*(s16 *) & buf[0] == -1) && (*(s16 *) & buf[2] == -1) && (*(s16 *) & buf[4] == -1)) {
 							lp->pktStats.broadcast++;
 						} else {
 							lp->pktStats.multicast++;
 						}
-					} else if (compare_ether_addr(buf, dev->dev_addr) == 0) {
+					} else if ((*(s16 *) & buf[0] == *(s16 *) & dev->dev_addr[0]) && (*(s16 *) & buf[2] == *(s16 *) & dev->dev_addr[2]) && (*(s16 *) & buf[4] == *(s16 *) & dev->dev_addr[4])) {
 						lp->pktStats.unicast++;
 					}
 
@@ -1094,7 +1094,7 @@ static int depca_rx(struct net_device *dev)
 				}
 			}
 			/* Change buffer ownership for this last frame, back to the adapter */
-			for (; lp->rx_old != entry; lp->rx_old = (lp->rx_old + 1) & lp->rxRingMask) {
+			for (; lp->rx_old != entry; lp->rx_old = (++lp->rx_old) & lp->rxRingMask) {
 				writel(readl(&lp->rx_ring[lp->rx_old].base) | R_OWN, &lp->rx_ring[lp->rx_old].base);
 			}
 			writel(readl(&lp->rx_ring[entry].base) | R_OWN, &lp->rx_ring[entry].base);
@@ -1103,7 +1103,7 @@ static int depca_rx(struct net_device *dev)
 		/*
 		   ** Update entry information
 		 */
-		lp->rx_new = (lp->rx_new + 1) & lp->rxRingMask;
+		lp->rx_new = (++lp->rx_new) & lp->rxRingMask;
 	}
 
 	return 0;
@@ -1148,7 +1148,7 @@ static int depca_tx(struct net_device *dev)
 		}
 
 		/* Update all the pointers */
-		lp->tx_old = (lp->tx_old + 1) & lp->txRingMask;
+		lp->tx_old = (++lp->tx_old) & lp->txRingMask;
 	}
 
 	return 0;
@@ -1270,6 +1270,7 @@ static void SetMulticastFilter(struct net_device *dev)
 {
 	struct depca_private *lp = netdev_priv(dev);
 	struct netdev_hw_addr *ha;
+	char *addrs;
 	int i, j, bit, byte;
 	u16 hashcode;
 	u32 crc;
@@ -1284,15 +1285,19 @@ static void SetMulticastFilter(struct net_device *dev)
 		}
 		/* Add multicast addresses */
 		netdev_for_each_mc_addr(ha, dev) {
-			crc = ether_crc(ETH_ALEN, ha->addr);
-			hashcode = (crc & 1);	/* hashcode is 6 LSb of CRC ... */
-			for (j = 0; j < 5; j++) {	/* ... in reverse order. */
-				hashcode = (hashcode << 1) | ((crc >>= 1) & 1);
-			}
+			addrs = ha->addr;
+			if ((*addrs & 0x01) == 1) {	/* multicast address? */
+				crc = ether_crc(ETH_ALEN, addrs);
+				hashcode = (crc & 1);	/* hashcode is 6 LSb of CRC ... */
+				for (j = 0; j < 5; j++) {	/* ... in reverse order. */
+					hashcode = (hashcode << 1) | ((crc >>= 1) & 1);
+				}
 
-			byte = hashcode >> 3;	/* bit[3-5] -> byte in filter */
-			bit = 1 << (hashcode & 0x07);	/* bit[0-2] -> bit in byte */
-			lp->init_block.mcast_table[byte] |= bit;
+
+				byte = hashcode >> 3;	/* bit[3-5] -> byte in filter */
+				bit = 1 << (hashcode & 0x07);	/* bit[0-2] -> bit in byte */
+				lp->init_block.mcast_table[byte] |= bit;
+			}
 		}
 	}
 }
@@ -1508,7 +1513,7 @@ static enum depca_type __init depca_shmem_probe (ulong *mem_start)
 	return adapter;
 }
 
-static int __devinit depca_isa_probe (struct platform_device *device)
+static int __init depca_isa_probe (struct platform_device *device)
 {
 	struct net_device *dev;
 	struct depca_private *lp;

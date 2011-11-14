@@ -39,7 +39,6 @@
 #include "xfs_dfrag.h"
 #include "xfs_fsops.h"
 #include "xfs_vnodeops.h"
-#include "xfs_discard.h"
 #include "xfs_quota.h"
 #include "xfs_inode_item.h"
 #include "xfs_export.h"
@@ -265,7 +264,7 @@ xfs_open_by_handle(
 		return PTR_ERR(filp);
 	}
 
-	if (S_ISREG(inode->i_mode)) {
+	if (inode->i_mode & S_IFREG) {
 		filp->f_flags |= O_NOATIME;
 		filp->f_mode |= FMODE_NOCMTIME;
 	}
@@ -624,10 +623,6 @@ xfs_ioc_space(
 
 	if (filp->f_flags & (O_NDELAY|O_NONBLOCK))
 		attr_flags |= XFS_ATTR_NONBLOCK;
-
-	if (filp->f_flags & O_DSYNC)
-		attr_flags |= XFS_ATTR_SYNC;
-
 	if (ioflags & IO_INVIS)
 		attr_flags |= XFS_ATTR_DMI;
 
@@ -699,19 +694,14 @@ xfs_ioc_fsgeometry_v1(
 	xfs_mount_t		*mp,
 	void			__user *arg)
 {
-	xfs_fsop_geom_t         fsgeo;
+	xfs_fsop_geom_v1_t	fsgeo;
 	int			error;
 
-	error = xfs_fs_geometry(mp, &fsgeo, 3);
+	error = xfs_fs_geometry(mp, (xfs_fsop_geom_t *)&fsgeo, 3);
 	if (error)
 		return -error;
 
-	/*
-	 * Caller should have passed an argument of type
-	 * xfs_fsop_geom_v1_t.  This is a proper subset of the
-	 * xfs_fsop_geom_t that xfs_fs_geometry() fills in.
-	 */
-	if (copy_to_user(arg, &fsgeo, sizeof(xfs_fsop_geom_v1_t)))
+	if (copy_to_user(arg, &fsgeo, sizeof(fsgeo)))
 		return -XFS_ERROR(EFAULT);
 	return 0;
 }
@@ -850,14 +840,14 @@ xfs_set_diflags(
 		di_flags |= XFS_DIFLAG_NODEFRAG;
 	if (xflags & XFS_XFLAG_FILESTREAM)
 		di_flags |= XFS_DIFLAG_FILESTREAM;
-	if (S_ISDIR(ip->i_d.di_mode)) {
+	if ((ip->i_d.di_mode & S_IFMT) == S_IFDIR) {
 		if (xflags & XFS_XFLAG_RTINHERIT)
 			di_flags |= XFS_DIFLAG_RTINHERIT;
 		if (xflags & XFS_XFLAG_NOSYMLINKS)
 			di_flags |= XFS_DIFLAG_NOSYMLINKS;
 		if (xflags & XFS_XFLAG_EXTSZINHERIT)
 			di_flags |= XFS_DIFLAG_EXTSZINHERIT;
-	} else if (S_ISREG(ip->i_d.di_mode)) {
+	} else if ((ip->i_d.di_mode & S_IFMT) == S_IFREG) {
 		if (xflags & XFS_XFLAG_REALTIME)
 			di_flags |= XFS_DIFLAG_REALTIME;
 		if (xflags & XFS_XFLAG_EXTSIZE)
@@ -994,22 +984,10 @@ xfs_ioctl_setattr(
 
 		/*
 		 * Extent size must be a multiple of the appropriate block
-		 * size, if set at all. It must also be smaller than the
-		 * maximum extent size supported by the filesystem.
-		 *
-		 * Also, for non-realtime files, limit the extent size hint to
-		 * half the size of the AGs in the filesystem so alignment
-		 * doesn't result in extents larger than an AG.
+		 * size, if set at all.
 		 */
 		if (fa->fsx_extsize != 0) {
-			xfs_extlen_t    size;
-			xfs_fsblock_t   extsize_fsb;
-
-			extsize_fsb = XFS_B_TO_FSB(mp, fa->fsx_extsize);
-			if (extsize_fsb > MAXEXTLEN) {
-				code = XFS_ERROR(EINVAL);
-				goto error_return;
-			}
+			xfs_extlen_t	size;
 
 			if (XFS_IS_REALTIME_INODE(ip) ||
 			    ((mask & FSX_XFLAGS) &&
@@ -1018,10 +996,6 @@ xfs_ioctl_setattr(
 				       mp->m_sb.sb_blocklog;
 			} else {
 				size = mp->m_sb.sb_blocksize;
-				if (extsize_fsb > mp->m_sb.sb_agblocks / 2) {
-					code = XFS_ERROR(EINVAL);
-					goto error_return;
-				}
 			}
 
 			if (fa->fsx_extsize % size) {
@@ -1320,8 +1294,6 @@ xfs_file_ioctl(
 	trace_xfs_file_ioctl(ip);
 
 	switch (cmd) {
-	case FITRIM:
-		return xfs_ioc_trim(mp, arg);
 	case XFS_IOC_ALLOCSP:
 	case XFS_IOC_FREESP:
 	case XFS_IOC_RESVSP:

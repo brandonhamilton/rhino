@@ -8,13 +8,12 @@
 
 #include <linux/atm.h>
 #include <linux/atmdev.h>
-#include <linux/interrupt.h>
 #include <linux/sonet.h>
 #include <linux/skbuff.h>
 #include <linux/time.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "midway.h"
 

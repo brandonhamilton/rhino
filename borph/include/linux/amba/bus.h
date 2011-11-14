@@ -18,7 +18,6 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/resource.h>
-#include <linux/regulator/consumer.h>
 
 #define AMBA_NR_IRQS	2
 #define AMBA_CID	0xb105f00d
@@ -29,7 +28,6 @@ struct amba_device {
 	struct device		dev;
 	struct resource		res;
 	struct clk		*pclk;
-	struct regulator	*vcore;
 	u64			dma_mask;
 	unsigned int		periphid;
 	unsigned int		irq[AMBA_NR_IRQS];
@@ -43,22 +41,18 @@ struct amba_id {
 
 struct amba_driver {
 	struct device_driver	drv;
-	int			(*probe)(struct amba_device *, const struct amba_id *);
+	int			(*probe)(struct amba_device *, struct amba_id *);
 	int			(*remove)(struct amba_device *);
 	void			(*shutdown)(struct amba_device *);
 	int			(*suspend)(struct amba_device *, pm_message_t);
 	int			(*resume)(struct amba_device *);
-	const struct amba_id	*id_table;
+	struct amba_id		*id_table;
 };
 
 enum amba_vendor {
 	AMBA_VENDOR_ARM = 0x41,
 	AMBA_VENDOR_ST = 0x80,
 };
-
-extern struct bus_type amba_bustype;
-
-#define to_amba_device(d)	container_of(d, struct amba_device, dev)
 
 #define amba_get_drvdata(d)	dev_get_drvdata(&d->dev)
 #define amba_set_drvdata(d,p)	dev_set_drvdata(&d->dev, p)
@@ -76,12 +70,6 @@ void amba_release_regions(struct amba_device *);
 
 #define amba_pclk_disable(d)	\
 	do { if (!IS_ERR((d)->pclk)) clk_disable((d)->pclk); } while (0)
-
-#define amba_vcore_enable(d)	\
-	(IS_ERR((d)->vcore) ? 0 : regulator_enable((d)->vcore))
-
-#define amba_vcore_disable(d)	\
-	do { if (!IS_ERR((d)->vcore)) regulator_disable((d)->vcore); } while (0)
 
 /* Some drivers don't use the struct amba_device */
 #define AMBA_CONFIG_BITS(a) (((a) >> 24) & 0xff)

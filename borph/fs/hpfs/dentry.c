@@ -12,8 +12,7 @@
  * Note: the dentry argument is the parent dentry.
  */
 
-static int hpfs_hash_dentry(const struct dentry *dentry, const struct inode *inode,
-		struct qstr *qstr)
+static int hpfs_hash_dentry(struct dentry *dentry, struct qstr *qstr)
 {
 	unsigned long	 hash;
 	int		 i;
@@ -35,30 +34,29 @@ static int hpfs_hash_dentry(const struct dentry *dentry, const struct inode *ino
 	return 0;
 }
 
-static int hpfs_compare_dentry(const struct dentry *parent,
-		const struct inode *pinode,
-		const struct dentry *dentry, const struct inode *inode,
-		unsigned int len, const char *str, const struct qstr *name)
+static int hpfs_compare_dentry(struct dentry *dentry, struct qstr *a, struct qstr *b)
 {
-	unsigned al = len;
-	unsigned bl = name->len;
-
-	hpfs_adjust_length(str, &al);
+	unsigned al=a->len;
+	unsigned bl=b->len;
+	hpfs_adjust_length(a->name, &al);
 	/*hpfs_adjust_length(b->name, &bl);*/
-
-	/*
-	 * 'str' is the nane of an already existing dentry, so the name
-	 * must be valid. 'name' must be validated first.
+	/* 'a' is the qstr of an already existing dentry, so the name
+	 * must be valid. 'b' must be validated first.
 	 */
 
-	if (hpfs_chk_name(name->name, &bl))
+	if (hpfs_chk_name(b->name, &bl))
 		return 1;
-	if (hpfs_compare_names(parent->d_sb, str, al, name->name, bl, 0))
+	if (hpfs_compare_names(dentry->d_sb, a->name, al, b->name, bl, 0))
 		return 1;
 	return 0;
 }
 
-const struct dentry_operations hpfs_dentry_operations = {
+static const struct dentry_operations hpfs_dentry_operations = {
 	.d_hash		= hpfs_hash_dentry,
 	.d_compare	= hpfs_compare_dentry,
 };
+
+void hpfs_set_dentry_operations(struct dentry *dentry)
+{
+	dentry->d_op = &hpfs_dentry_operations;
+}

@@ -109,30 +109,30 @@
 void EnablePhyComa(struct et131x_adapter *etdev)
 {
 	unsigned long flags;
-	u32 pmcsr;
+	u32 GlobalPmCSR;
 
-	pmcsr = readl(&etdev->regs->global.pm_csr);
+	GlobalPmCSR = readl(&etdev->regs->global.pm_csr);
 
 	/* Save the GbE PHY speed and duplex modes. Need to restore this
 	 * when cable is plugged back in
 	 */
-	etdev->pdown_speed = etdev->AiForceSpeed;
-	etdev->pdown_duplex = etdev->AiForceDpx;
+	etdev->PoMgmt.PowerDownSpeed = etdev->AiForceSpeed;
+	etdev->PoMgmt.PowerDownDuplex = etdev->AiForceDpx;
 
 	/* Stop sending packets. */
-	spin_lock_irqsave(&etdev->send_hw_lock, flags);
-	etdev->flags |= fMP_ADAPTER_LOWER_POWER;
-	spin_unlock_irqrestore(&etdev->send_hw_lock, flags);
+	spin_lock_irqsave(&etdev->SendHWLock, flags);
+	etdev->Flags |= fMP_ADAPTER_LOWER_POWER;
+	spin_unlock_irqrestore(&etdev->SendHWLock, flags);
 
 	/* Wait for outstanding Receive packets */
 
 	/* Gate off JAGCore 3 clock domains */
-	pmcsr &= ~ET_PMCSR_INIT;
-	writel(pmcsr, &etdev->regs->global.pm_csr);
+	GlobalPmCSR &= ~ET_PMCSR_INIT;
+	writel(GlobalPmCSR, &etdev->regs->global.pm_csr);
 
 	/* Program gigE PHY in to Coma mode */
-	pmcsr |= ET_PM_PHY_SW_COMA;
-	writel(pmcsr, &etdev->regs->global.pm_csr);
+	GlobalPmCSR |= ET_PM_PHY_SW_COMA;
+	writel(GlobalPmCSR, &etdev->regs->global.pm_csr);
 }
 
 /**
@@ -141,20 +141,20 @@ void EnablePhyComa(struct et131x_adapter *etdev)
  */
 void DisablePhyComa(struct et131x_adapter *etdev)
 {
-	u32 pmcsr;
+	u32 GlobalPmCSR;
 
-	pmcsr = readl(&etdev->regs->global.pm_csr);
+	GlobalPmCSR = readl(&etdev->regs->global.pm_csr);
 
 	/* Disable phy_sw_coma register and re-enable JAGCore clocks */
-	pmcsr |= ET_PMCSR_INIT;
-	pmcsr &= ~ET_PM_PHY_SW_COMA;
-	writel(pmcsr, &etdev->regs->global.pm_csr);
+	GlobalPmCSR |= ET_PMCSR_INIT;
+	GlobalPmCSR &= ~ET_PM_PHY_SW_COMA;
+	writel(GlobalPmCSR, &etdev->regs->global.pm_csr);
 
 	/* Restore the GbE PHY speed and duplex modes;
 	 * Reset JAGCore; re-configure and initialize JAGCore and gigE PHY
 	 */
-	etdev->AiForceSpeed = etdev->pdown_speed;
-	etdev->AiForceDpx = etdev->pdown_duplex;
+	etdev->AiForceSpeed = etdev->PoMgmt.PowerDownSpeed;
+	etdev->AiForceDpx = etdev->PoMgmt.PowerDownDuplex;
 
 	/* Re-initialize the send structures */
 	et131x_init_send(etdev);
@@ -172,7 +172,7 @@ void DisablePhyComa(struct et131x_adapter *etdev)
 	et131x_adapter_setup(etdev);
 
 	/* Allow Tx to restart */
-	etdev->flags &= ~fMP_ADAPTER_LOWER_POWER;
+	etdev->Flags &= ~fMP_ADAPTER_LOWER_POWER;
 
 	/* Need to re-enable Rx. */
 	et131x_rx_dma_enable(etdev);

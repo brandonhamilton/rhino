@@ -77,21 +77,21 @@ void __weak arch_irq_work_raise(void)
  */
 static void __irq_work_queue(struct irq_work *entry)
 {
-	struct irq_work *next;
+	struct irq_work **head, *next;
 
-	preempt_disable();
+	head = &get_cpu_var(irq_work_list);
 
 	do {
-		next = __this_cpu_read(irq_work_list);
+		next = *head;
 		/* Can assign non-atomic because we keep the flags set. */
 		entry->next = next_flags(next, IRQ_WORK_FLAGS);
-	} while (this_cpu_cmpxchg(irq_work_list, next, entry) != next);
+	} while (cmpxchg(head, next, entry) != next);
 
 	/* The list was empty, raise self-interrupt to start processing. */
 	if (!irq_work_next(entry))
 		arch_irq_work_raise();
 
-	preempt_enable();
+	put_cpu_var(irq_work_list);
 }
 
 /*
@@ -120,16 +120,16 @@ EXPORT_SYMBOL_GPL(irq_work_queue);
  */
 void irq_work_run(void)
 {
-	struct irq_work *list;
+	struct irq_work *list, **head;
 
-	if (this_cpu_read(irq_work_list) == NULL)
+	head = &__get_cpu_var(irq_work_list);
+	if (*head == NULL)
 		return;
 
 	BUG_ON(!in_irq());
 	BUG_ON(!irqs_disabled());
 
-	list = this_cpu_xchg(irq_work_list, NULL);
-
+	list = xchg(head, NULL);
 	while (list != NULL) {
 		struct irq_work *entry = list;
 

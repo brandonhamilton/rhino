@@ -37,7 +37,7 @@
 #include <linux/uaccess.h>
 #include <asm/byteorder.h> /* for htons etc. */
 #include <asm/system.h> /* save/restore_flags */
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "common.h"
 #include "resources.h"
@@ -271,8 +271,10 @@ static const struct neigh_ops clip_neigh_ops = {
 	.family =		AF_INET,
 	.solicit =		clip_neigh_solicit,
 	.error_report =		clip_neigh_error,
-	.output =		neigh_direct_output,
-	.connected_output =	neigh_direct_output,
+	.output =		dev_queue_xmit,
+	.connected_output =	dev_queue_xmit,
+	.hh_output =		dev_queue_xmit,
+	.queue_xmit =		dev_queue_xmit,
 };
 
 static int clip_constructor(struct neighbour *neigh)
@@ -362,37 +364,33 @@ static netdev_tx_t clip_start_xmit(struct sk_buff *skb,
 				   struct net_device *dev)
 {
 	struct clip_priv *clip_priv = PRIV(dev);
-	struct dst_entry *dst = skb_dst(skb);
 	struct atmarp_entry *entry;
-	struct neighbour *n;
 	struct atm_vcc *vcc;
 	int old;
 	unsigned long flags;
 
 	pr_debug("(skb %p)\n", skb);
-	if (!dst) {
+	if (!skb_dst(skb)) {
 		pr_err("skb_dst(skb) == NULL\n");
 		dev_kfree_skb(skb);
 		dev->stats.tx_dropped++;
 		return NETDEV_TX_OK;
 	}
-	n = dst_get_neighbour(dst);
-	if (!n) {
+	if (!skb_dst(skb)->neighbour) {
 #if 0
-		n = clip_find_neighbour(skb_dst(skb), 1);
-		if (!n) {
+		skb_dst(skb)->neighbour = clip_find_neighbour(skb_dst(skb), 1);
+		if (!skb_dst(skb)->neighbour) {
 			dev_kfree_skb(skb);	/* lost that one */
 			dev->stats.tx_dropped++;
 			return 0;
 		}
-		dst_set_neighbour(dst, n);
 #endif
 		pr_err("NO NEIGHBOUR !\n");
 		dev_kfree_skb(skb);
 		dev->stats.tx_dropped++;
 		return NETDEV_TX_OK;
 	}
-	entry = NEIGH2ENTRY(n);
+	entry = NEIGH2ENTRY(skb_dst(skb)->neighbour);
 	if (!entry->vccs) {
 		if (time_after(jiffies, entry->expires)) {
 			/* should be resolved */
@@ -409,7 +407,7 @@ static netdev_tx_t clip_start_xmit(struct sk_buff *skb,
 	}
 	pr_debug("neigh %p, vccs %p\n", entry, entry->vccs);
 	ATM_SKB(skb)->vcc = vcc = entry->vccs->vcc;
-	pr_debug("using neighbour %p, vcc %p\n", n, vcc);
+	pr_debug("using neighbour %p, vcc %p\n", skb_dst(skb)->neighbour, vcc);
 	if (entry->vccs->encap) {
 		void *here;
 
@@ -504,6 +502,7 @@ static int clip_setentry(struct atm_vcc *vcc, __be32 ip)
 	struct atmarp_entry *entry;
 	int error;
 	struct clip_vcc *clip_vcc;
+	struct flowi fl = { .nl_u = { .ip4_u = { .daddr = ip, .tos = 1}} };
 	struct rtable *rt;
 
 	if (vcc->push != clip_push) {
@@ -520,9 +519,9 @@ static int clip_setentry(struct atm_vcc *vcc, __be32 ip)
 		unlink_clip_vcc(clip_vcc);
 		return 0;
 	}
-	rt = ip_route_output(&init_net, ip, 0, 1, 0);
-	if (IS_ERR(rt))
-		return PTR_ERR(rt);
+	error = ip_route_output_key(&init_net, &rt, &fl);
+	if (error)
+		return error;
 	neigh = __neigh_lookup(&clip_tbl, &ip, rt->dst.dev, 1);
 	ip_rt_put(rt);
 	if (!neigh)

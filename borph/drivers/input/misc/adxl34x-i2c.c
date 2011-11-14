@@ -11,7 +11,6 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/pm.h>
 #include "adxl34x.h"
 
 static int adxl34x_smbus_read(struct device *dev, unsigned char reg)
@@ -106,9 +105,8 @@ static int __devexit adxl34x_i2c_remove(struct i2c_client *client)
 }
 
 #ifdef CONFIG_PM
-static int adxl34x_i2c_suspend(struct device *dev)
+static int adxl34x_i2c_suspend(struct i2c_client *client, pm_message_t message)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct adxl34x *ac = i2c_get_clientdata(client);
 
 	adxl34x_suspend(ac);
@@ -116,19 +114,18 @@ static int adxl34x_i2c_suspend(struct device *dev)
 	return 0;
 }
 
-static int adxl34x_i2c_resume(struct device *dev)
+static int adxl34x_i2c_resume(struct i2c_client *client)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct adxl34x *ac = i2c_get_clientdata(client);
 
 	adxl34x_resume(ac);
 
 	return 0;
 }
+#else
+# define adxl34x_i2c_suspend NULL
+# define adxl34x_i2c_resume  NULL
 #endif
-
-static SIMPLE_DEV_PM_OPS(adxl34x_i2c_pm, adxl34x_i2c_suspend,
-			 adxl34x_i2c_resume);
 
 static const struct i2c_device_id adxl34x_id[] = {
 	{ "adxl34x", 0 },
@@ -141,10 +138,11 @@ static struct i2c_driver adxl34x_driver = {
 	.driver = {
 		.name = "adxl34x",
 		.owner = THIS_MODULE,
-		.pm = &adxl34x_i2c_pm,
 	},
 	.probe    = adxl34x_i2c_probe,
 	.remove   = __devexit_p(adxl34x_i2c_remove),
+	.suspend  = adxl34x_i2c_suspend,
+	.resume   = adxl34x_i2c_resume,
 	.id_table = adxl34x_id,
 };
 

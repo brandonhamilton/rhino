@@ -26,7 +26,7 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <pcmcia/ss.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 
 /*
@@ -56,7 +56,7 @@ struct pcmcia_driver {
 	int (*resume)		(struct pcmcia_device *dev);
 
 	struct module		*owner;
-	const struct pcmcia_device_id	*id_table;
+	struct pcmcia_device_id	*id_table;
 	struct device_driver	drv;
 	struct pcmcia_dynids	dynids;
 };
@@ -261,7 +261,6 @@ void pcmcia_disable_device(struct pcmcia_device *p_dev);
 #define CONF_ENABLE_ESR         0x0008
 #define CONF_ENABLE_IOCARD	0x0010 /* auto-enabled if IO resources or IRQ
 					* (CONF_ENABLE_IRQ) in use */
-#define CONF_ENABLE_ZVCARD	0x0020
 
 /* flags used by pcmcia_loop_config() autoconfiguration */
 #define CONF_AUTO_CHECK_VCC	0x0100 /* check for matching Vcc? */

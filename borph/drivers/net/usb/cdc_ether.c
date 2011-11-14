@@ -99,7 +99,9 @@ int usbnet_generic_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 		 */
 		buf = dev->udev->actconfig->extra;
 		len = dev->udev->actconfig->extralen;
-		dev_dbg(&intf->dev, "CDC descriptors on config\n");
+		if (len)
+			dev_dbg(&intf->dev,
+				"CDC descriptors on config\n");
 	}
 
 	/* Maybe CDC descriptors are after the endpoint?  This bug has
@@ -378,7 +380,7 @@ static void dumpspeed(struct usbnet *dev, __le32 *speeds)
 		   __le32_to_cpu(speeds[1]) / 1000);
 }
 
-void usbnet_cdc_status(struct usbnet *dev, struct urb *urb)
+static void cdc_status(struct usbnet *dev, struct urb *urb)
 {
 	struct usb_cdc_notification	*event;
 
@@ -418,9 +420,8 @@ void usbnet_cdc_status(struct usbnet *dev, struct urb *urb)
 		break;
 	}
 }
-EXPORT_SYMBOL_GPL(usbnet_cdc_status);
 
-int usbnet_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
+static int cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 {
 	int				status;
 	struct cdc_state		*info = (void *) &dev->data;
@@ -442,7 +443,6 @@ int usbnet_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 	 */
 	return 0;
 }
-EXPORT_SYMBOL_GPL(usbnet_cdc_bind);
 
 static int cdc_manage_power(struct usbnet *dev, int on)
 {
@@ -452,26 +452,25 @@ static int cdc_manage_power(struct usbnet *dev, int on)
 
 static const struct driver_info	cdc_info = {
 	.description =	"CDC Ethernet Device",
-	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT,
+	.flags =	FLAG_ETHER,
 	// .check_connect = cdc_check_connect,
-	.bind =		usbnet_cdc_bind,
+	.bind =		cdc_bind,
 	.unbind =	usbnet_cdc_unbind,
-	.status =	usbnet_cdc_status,
+	.status =	cdc_status,
 	.manage_power =	cdc_manage_power,
 };
 
-static const struct driver_info wwan_info = {
+static const struct driver_info mbm_info = {
 	.description =	"Mobile Broadband Network Device",
 	.flags =	FLAG_WWAN,
-	.bind =		usbnet_cdc_bind,
+	.bind = 	cdc_bind,
 	.unbind =	usbnet_cdc_unbind,
-	.status =	usbnet_cdc_status,
+	.status =	cdc_status,
 	.manage_power =	cdc_manage_power,
 };
 
 /*-------------------------------------------------------------------------*/
 
-#define HUAWEI_VENDOR_ID	0x12D1
 
 static const struct usb_device_id	products [] = {
 /*
@@ -563,13 +562,6 @@ static const struct usb_device_id	products [] = {
 	.driver_info		= 0,
 },
 
-/* LG Electronics VL600 wants additional headers on every frame */
-{
-	USB_DEVICE_AND_INTERFACE_INFO(0x1004, 0x61aa, USB_CLASS_COMM,
-			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long)&wwan_info,
-},
-
 /*
  * WHITELIST!!!
  *
@@ -588,17 +580,8 @@ static const struct usb_device_id	products [] = {
 }, {
 	USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_MDLM,
 			USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long)&wwan_info,
+	.driver_info = (unsigned long)&mbm_info,
 
-}, {
-	/* Various Huawei modems with a network port like the UMG1831 */
-	.match_flags    =   USB_DEVICE_ID_MATCH_VENDOR
-		 | USB_DEVICE_ID_MATCH_INT_INFO,
-	.idVendor               = HUAWEI_VENDOR_ID,
-	.bInterfaceClass	= USB_CLASS_COMM,
-	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET,
-	.bInterfaceProtocol	= 255,
-	.driver_info = (unsigned long)&wwan_info,
 },
 	{ },		// END
 };

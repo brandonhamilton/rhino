@@ -12,6 +12,7 @@
 
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
+#include <linux/gpio.h>
 #include <mach/hardware.h>
 #include <mach/imx-uart.h>
 #include <mach/irqs.h>
@@ -96,25 +97,72 @@ struct platform_device mxc_usbh1_device = {
 	},
 };
 
-static struct resource usbh2_resources[] = {
+static struct resource mxc_wdt_resources[] = {
 	{
-		.start = MX51_OTG_BASE_ADDR + 0x400,
-		.end = MX51_OTG_BASE_ADDR + 0x400 + 0x1ff,
+		.start = MX51_WDOG_BASE_ADDR,
+		.end = MX51_WDOG_BASE_ADDR + SZ_16K - 1,
 		.flags = IORESOURCE_MEM,
-	},
-	{
-		.start = MX51_MXC_INT_USB_H2,
-		.flags = IORESOURCE_IRQ,
 	},
 };
 
-struct platform_device mxc_usbh2_device = {
-	.name = "mxc-ehci",
-	.id = 2,
-	.num_resources = ARRAY_SIZE(usbh2_resources),
-	.resource = usbh2_resources,
-	.dev = {
-		.dma_mask = &usb_dma_mask,
-		.coherent_dma_mask = DMA_BIT_MASK(32),
+struct platform_device mxc_wdt = {
+	.name = "imx2-wdt",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(mxc_wdt_resources),
+	.resource = mxc_wdt_resources,
+};
+
+static struct resource mxc_kpp_resources[] = {
+	{
+		.start = MX51_MXC_INT_KPP,
+		.end = MX51_MXC_INT_KPP,
+		.flags = IORESOURCE_IRQ,
+	} , {
+		.start = MX51_KPP_BASE_ADDR,
+		.end = MX51_KPP_BASE_ADDR + 0x8 - 1,
+		.flags = IORESOURCE_MEM,
 	},
 };
+
+struct platform_device mxc_keypad_device = {
+	.name = "imx-keypad",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(mxc_kpp_resources),
+	.resource = mxc_kpp_resources,
+};
+
+static struct mxc_gpio_port mxc_gpio_ports[] = {
+	{
+		.chip.label = "gpio-0",
+		.base = MX51_IO_ADDRESS(MX51_GPIO1_BASE_ADDR),
+		.irq = MX51_MXC_INT_GPIO1_LOW,
+		.irq_high = MX51_MXC_INT_GPIO1_HIGH,
+		.virtual_irq_start = MXC_GPIO_IRQ_START
+	},
+	{
+		.chip.label = "gpio-1",
+		.base = MX51_IO_ADDRESS(MX51_GPIO2_BASE_ADDR),
+		.irq = MX51_MXC_INT_GPIO2_LOW,
+		.irq_high = MX51_MXC_INT_GPIO2_HIGH,
+		.virtual_irq_start = MXC_GPIO_IRQ_START + 32 * 1
+	},
+	{
+		.chip.label = "gpio-2",
+		.base = MX51_IO_ADDRESS(MX51_GPIO3_BASE_ADDR),
+		.irq = MX51_MXC_INT_GPIO3_LOW,
+		.irq_high = MX51_MXC_INT_GPIO3_HIGH,
+		.virtual_irq_start = MXC_GPIO_IRQ_START + 32 * 2
+	},
+	{
+		.chip.label = "gpio-3",
+		.base = MX51_IO_ADDRESS(MX51_GPIO4_BASE_ADDR),
+		.irq = MX51_MXC_INT_GPIO4_LOW,
+		.irq_high = MX51_MXC_INT_GPIO4_HIGH,
+		.virtual_irq_start = MXC_GPIO_IRQ_START + 32 * 3
+	},
+};
+
+int __init imx51_register_gpios(void)
+{
+	return mxc_gpio_init(mxc_gpio_ports, ARRAY_SIZE(mxc_gpio_ports));
+}

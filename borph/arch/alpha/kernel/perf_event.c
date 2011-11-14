@@ -14,10 +14,9 @@
 #include <linux/kernel.h>
 #include <linux/kdebug.h>
 #include <linux/mutex.h>
-#include <linux/init.h>
 
 #include <asm/hwrpb.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/irq.h>
 #include <asm/irq_regs.h>
 #include <asm/pal.h>
@@ -847,7 +846,7 @@ static void alpha_perf_event_irq_handler(unsigned long la_ptr,
 	data.period = event->hw.last_period;
 
 	if (alpha_perf_event_set_period(event, hwc, idx)) {
-		if (perf_event_overflow(event, &data, regs)) {
+		if (perf_event_overflow(event, 1, &data, regs)) {
 			/* Interrupts coming too quickly; "throttle" the
 			 * counter, i.e., disable it for a little while.
 			 */
@@ -864,13 +863,13 @@ static void alpha_perf_event_irq_handler(unsigned long la_ptr,
 /*
  * Init call to initialise performance events at kernel startup.
  */
-int __init init_hw_perf_events(void)
+void __init init_hw_perf_events(void)
 {
 	pr_info("Performance events: ");
 
 	if (!supported_cpu()) {
 		pr_cont("No support for your CPU.\n");
-		return 0;
+		return;
 	}
 
 	pr_cont("Supported CPU type!\n");
@@ -882,8 +881,6 @@ int __init init_hw_perf_events(void)
 	/* And set up PMU specification */
 	alpha_pmu = &ev67_pmu;
 
-	perf_pmu_register(&pmu, "cpu", PERF_TYPE_RAW);
-
-	return 0;
+	perf_pmu_register(&pmu);
 }
-early_initcall(init_hw_perf_events);
+

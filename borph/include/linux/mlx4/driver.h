@@ -34,7 +34,6 @@
 #define MLX4_DRIVER_H
 
 #include <linux/device.h>
-#include <linux/mlx4/device.h>
 
 struct mlx4_dev;
 
@@ -43,6 +42,11 @@ enum mlx4_dev_event {
 	MLX4_DEV_EVENT_PORT_UP,
 	MLX4_DEV_EVENT_PORT_DOWN,
 	MLX4_DEV_EVENT_PORT_REINIT,
+};
+
+enum mlx4_protocol {
+	MLX4_PROTOCOL_IB,
+	MLX4_PROTOCOL_EN,
 };
 
 struct mlx4_interface {

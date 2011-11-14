@@ -77,7 +77,7 @@ struct  seminfo {
 #define SEMUSZ  20		/* sizeof struct sem_undo */
 
 #ifdef __KERNEL__
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/rcupdate.h>
 #include <linux/cache.h>
 

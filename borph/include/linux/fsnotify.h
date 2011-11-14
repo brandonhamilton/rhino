@@ -17,6 +17,7 @@
 
 /*
  * fsnotify_d_instantiate - instantiate a dentry for inode
+ * Called with dcache_lock held.
  */
 static inline void fsnotify_d_instantiate(struct dentry *dentry,
 					  struct inode *inode)
@@ -61,6 +62,7 @@ static inline int fsnotify_perm(struct file *file, int mask)
 
 /*
  * fsnotify_d_move - dentry has been moved
+ * Called with dcache_lock and dentry->d_lock held.
  */
 static inline void fsnotify_d_move(struct dentry *dentry)
 {

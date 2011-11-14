@@ -24,12 +24,14 @@
 //==============================================================================
 #include <a_config.h>
 #include <athdefs.h>
+#include <a_types.h>
 #include <a_osapi.h>
 
 /*
  * converts ieee channel number to frequency
  */
-u16 wlan_ieee2freq(int chan)
+A_UINT16
+wlan_ieee2freq(int chan)
 {
     if (chan == 14) {
         return 2484;
@@ -46,7 +48,8 @@ u16 wlan_ieee2freq(int chan)
 /*
  * Converts MHz frequency to IEEE channel number.
  */
-u32 wlan_freq2ieee(u16 freq)
+A_UINT32
+wlan_freq2ieee(A_UINT16 freq)
 {
     if (freq == 2484)
         return 14;

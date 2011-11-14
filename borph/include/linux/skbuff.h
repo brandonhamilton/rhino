@@ -20,7 +20,7 @@
 #include <linux/time.h>
 #include <linux/cache.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/types.h>
 #include <linux/spinlock.h>
 #include <linux/net.h>
@@ -122,14 +122,8 @@ struct sk_buff_head {
 
 struct sk_buff;
 
-/* To allow 64K frame to be packed as single skb without frag_list. Since
- * GRO uses frags we allocate at least 16 regardless of page size.
- */
-#if (65536/PAGE_SIZE + 2) < 16
-#define MAX_SKB_FRAGS 16UL
-#else
+/* To allow 64K frame to be packed as single skb without frag_list */
 #define MAX_SKB_FRAGS (65536/PAGE_SIZE + 2)
-#endif
 
 typedef struct skb_frag_struct skb_frag_t;
 
@@ -187,20 +181,6 @@ enum {
 
 	/* ensure the originating sk reference is available on driver level */
 	SKBTX_DRV_NEEDS_SK_REF = 1 << 3,
-
-	/* device driver supports TX zero-copy buffers */
-	SKBTX_DEV_ZEROCOPY = 1 << 4,
-};
-
-/*
- * The callback notifies userspace to release buffers when skb DMA is done in
- * lower device, the skb last reference should be 0 when calling this.
- * The desc is used to track userspace buffer index.
- */
-struct ubuf_info {
-	void (*callback)(void *);
-	void *arg;
-	unsigned long desc;
 };
 
 /* This data is invariant across clones and lives at
@@ -225,7 +205,6 @@ struct skb_shared_info {
 	/* Intermediate layers must ensure that destructor_arg
 	 * remains valid until skb destructor */
 	void *		destructor_arg;
-
 	/* must be last field, see pskb_expand_head() */
 	skb_frag_t	frags[MAX_SKB_FRAGS];
 };
@@ -276,21 +255,19 @@ typedef unsigned int sk_buff_data_t;
 typedef unsigned char *sk_buff_data_t;
 #endif
 
-#if defined(CONFIG_NF_DEFRAG_IPV4) || defined(CONFIG_NF_DEFRAG_IPV4_MODULE) || \
-    defined(CONFIG_NF_DEFRAG_IPV6) || defined(CONFIG_NF_DEFRAG_IPV6_MODULE)
-#define NET_SKBUFF_NF_DEFRAG_NEEDED 1
-#endif
-
 /** 
  *	struct sk_buff - socket buffer
  *	@next: Next buffer in list
  *	@prev: Previous buffer in list
- *	@tstamp: Time we arrived
  *	@sk: Socket we are owned by
+ *	@tstamp: Time we arrived
  *	@dev: Device we arrived on/are leaving by
- *	@cb: Control buffer. Free for use by every layer. Put private vars here
+ *	@transport_header: Transport layer header
+ *	@network_header: Network layer header
+ *	@mac_header: Link layer header
  *	@_skb_refdst: destination entry (with norefcount bit)
  *	@sp: the security path, used for xfrm
+ *	@cb: Control buffer. Free for use by every layer. Put private vars here
  *	@len: Length of actual data
  *	@data_len: Data length
  *	@mac_len: Length of link layer header
@@ -298,45 +275,40 @@ typedef unsigned char *sk_buff_data_t;
  *	@csum: Checksum (must include start/offset pair)
  *	@csum_start: Offset from skb->head where checksumming should start
  *	@csum_offset: Offset from csum_start where checksum should be stored
- *	@priority: Packet queueing priority
  *	@local_df: allow local fragmentation
  *	@cloned: Head may be cloned (check refcnt to be sure)
- *	@ip_summed: Driver fed us an IP checksum
  *	@nohdr: Payload reference only, must not modify header
- *	@nfctinfo: Relationship of this skb to the connection
  *	@pkt_type: Packet class
  *	@fclone: skbuff clone status
+ *	@ip_summed: Driver fed us an IP checksum
+ *	@priority: Packet queueing priority
+ *	@users: User count - see {datagram,tcp}.c
+ *	@protocol: Packet protocol from driver
+ *	@truesize: Buffer size 
+ *	@head: Head of buffer
+ *	@data: Data head pointer
+ *	@tail: Tail pointer
+ *	@end: End pointer
+ *	@destructor: Destruct function
+ *	@mark: Generic packet mark
+ *	@nfct: Associated connection, if any
  *	@ipvs_property: skbuff is owned by ipvs
  *	@peeked: this packet has been seen already, so stats have been
  *		done for it, don't do them again
  *	@nf_trace: netfilter packet trace flag
- *	@protocol: Packet protocol from driver
- *	@destructor: Destruct function
- *	@nfct: Associated connection, if any
+ *	@nfctinfo: Relationship of this skb to the connection
  *	@nfct_reasm: netfilter conntrack re-assembly pointer
  *	@nf_bridge: Saved data about a bridged frame - see br_netfilter.c
  *	@skb_iif: ifindex of device we arrived on
- *	@tc_index: Traffic control index
- *	@tc_verd: traffic control verdict
  *	@rxhash: the packet hash computed on receive
  *	@queue_mapping: Queue mapping for multiqueue devices
+ *	@tc_index: Traffic control index
+ *	@tc_verd: traffic control verdict
  *	@ndisc_nodetype: router type (from link layer)
- *	@ooo_okay: allow the mapping of a socket to a queue to be changed
  *	@dma_cookie: a cookie to one of several possible DMA operations
  *		done by skb DMA functions
  *	@secmark: security marking
- *	@mark: Generic packet mark
- *	@dropcount: total number of sk_receive_queue overflows
  *	@vlan_tci: vlan tag control information
- *	@transport_header: Transport layer header
- *	@network_header: Network layer header
- *	@mac_header: Link layer header
- *	@tail: Tail pointer
- *	@end: End pointer
- *	@head: Head of buffer
- *	@data: Data head pointer
- *	@truesize: Buffer size
- *	@users: User count - see {datagram,tcp}.c
  */
 
 struct sk_buff {
@@ -390,8 +362,6 @@ struct sk_buff {
 	void			(*destructor)(struct sk_buff *skb);
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	struct nf_conntrack	*nfct;
-#endif
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	struct sk_buff		*nfct_reasm;
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
@@ -408,15 +378,17 @@ struct sk_buff {
 
 	__u32			rxhash;
 
-	__u16			queue_mapping;
 	kmemcheck_bitfield_begin(flags2);
+	__u16			queue_mapping:16;
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
-	__u8			ndisc_nodetype:2;
+	__u8			ndisc_nodetype:2,
+				deliver_no_wcard:1;
+#else
+	__u8			deliver_no_wcard:1;
 #endif
-	__u8			ooo_okay:1;
 	kmemcheck_bitfield_end(flags2);
 
-	/* 0/13 bit hole */
+	/* 0/14 bit hole */
 
 #ifdef CONFIG_NET_DMA
 	dma_cookie_t		dma_cookie;
@@ -491,7 +463,7 @@ static inline void skb_dst_set(struct sk_buff *skb, struct dst_entry *dst)
 extern void skb_dst_set_noref(struct sk_buff *skb, struct dst_entry *dst);
 
 /**
- * skb_dst_is_noref - Test if skb dst isn't refcounted
+ * skb_dst_is_noref - Test if skb dst isnt refcounted
  * @skb: buffer
  */
 static inline bool skb_dst_is_noref(const struct sk_buff *skb)
@@ -1273,11 +1245,6 @@ static inline void skb_reserve(struct sk_buff *skb, int len)
 	skb->tail += len;
 }
 
-static inline void skb_reset_mac_len(struct sk_buff *skb)
-{
-	skb->mac_len = skb->network_header - skb->mac_header;
-}
-
 #ifdef NET_SKBUFF_DATA_USES_OFFSET
 static inline unsigned char *skb_transport_header(const struct sk_buff *skb)
 {
@@ -1387,11 +1354,6 @@ static inline void skb_set_mac_header(struct sk_buff *skb, const int offset)
 }
 #endif /* NET_SKBUFF_DATA_USES_OFFSET */
 
-static inline int skb_checksum_start_offset(const struct sk_buff *skb)
-{
-	return skb->csum_start - skb_headroom(skb);
-}
-
 static inline int skb_transport_offset(const struct sk_buff *skb)
 {
 	return skb_transport_header(skb) - skb->data;
@@ -1464,7 +1426,7 @@ extern int ___pskb_trim(struct sk_buff *skb, unsigned int len);
 
 static inline void __skb_trim(struct sk_buff *skb, unsigned int len)
 {
-	if (unlikely(skb_is_nonlinear(skb))) {
+	if (unlikely(skb->data_len)) {
 		WARN_ON(1);
 		return;
 	}
@@ -1579,20 +1541,14 @@ static inline struct sk_buff *netdev_alloc_skb(struct net_device *dev,
 	return __netdev_alloc_skb(dev, length, GFP_ATOMIC);
 }
 
-static inline struct sk_buff *__netdev_alloc_skb_ip_align(struct net_device *dev,
-		unsigned int length, gfp_t gfp)
+static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
+		unsigned int length)
 {
-	struct sk_buff *skb = __netdev_alloc_skb(dev, length + NET_IP_ALIGN, gfp);
+	struct sk_buff *skb = netdev_alloc_skb(dev, length + NET_IP_ALIGN);
 
 	if (NET_IP_ALIGN && skb)
 		skb_reserve(skb, NET_IP_ALIGN);
 	return skb;
-}
-
-static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
-		unsigned int length)
-{
-	return __netdev_alloc_skb_ip_align(dev, length, GFP_ATOMIC);
 }
 
 /**
@@ -1810,7 +1766,7 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
 
 #define skb_queue_walk(queue, skb) \
 		for (skb = (queue)->next;					\
-		     skb != (struct sk_buff *)(queue);				\
+		     prefetch(skb->next), (skb != (struct sk_buff *)(queue));	\
 		     skb = skb->next)
 
 #define skb_queue_walk_safe(queue, skb, tmp)					\
@@ -1819,7 +1775,7 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
 		     skb = tmp, tmp = skb->next)
 
 #define skb_queue_walk_from(queue, skb)						\
-		for (; skb != (struct sk_buff *)(queue);			\
+		for (; prefetch(skb->next), (skb != (struct sk_buff *)(queue));	\
 		     skb = skb->next)
 
 #define skb_queue_walk_from_safe(queue, skb, tmp)				\
@@ -1829,18 +1785,9 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
 
 #define skb_queue_reverse_walk(queue, skb) \
 		for (skb = (queue)->prev;					\
-		     skb != (struct sk_buff *)(queue);				\
+		     prefetch(skb->prev), (skb != (struct sk_buff *)(queue));	\
 		     skb = skb->prev)
 
-#define skb_queue_reverse_walk_safe(queue, skb, tmp)				\
-		for (skb = (queue)->prev, tmp = skb->prev;			\
-		     skb != (struct sk_buff *)(queue);				\
-		     skb = tmp, tmp = skb->prev)
-
-#define skb_queue_reverse_walk_from_safe(queue, skb, tmp)			\
-		for (tmp = skb->prev;						\
-		     skb != (struct sk_buff *)(queue);				\
-		     skb = tmp, tmp = skb->prev)
 
 static inline bool skb_has_frag_list(const struct sk_buff *skb)
 {
@@ -1908,7 +1855,7 @@ extern void	       skb_split(struct sk_buff *skb,
 extern int	       skb_shift(struct sk_buff *tgt, struct sk_buff *skb,
 				 int shiftlen);
 
-extern struct sk_buff *skb_segment(struct sk_buff *skb, u32 features);
+extern struct sk_buff *skb_segment(struct sk_buff *skb, int features);
 
 static inline void *skb_header_pointer(const struct sk_buff *skb, int offset,
 				       int len, void *buffer)
@@ -2051,7 +1998,8 @@ static inline void sw_tx_timestamp(struct sk_buff *skb)
  * skb_tx_timestamp() - Driver hook for transmit timestamping
  *
  * Ethernet MAC Drivers should call this function in their hard_xmit()
- * function immediately before giving the sk_buff to the MAC hardware.
+ * function as soon as possible after giving the sk_buff to the MAC
+ * hardware, but before freeing the sk_buff.
  *
  * @skb: A socket buffer.
  */
@@ -2103,8 +2051,6 @@ static inline void nf_conntrack_get(struct nf_conntrack *nfct)
 	if (nfct)
 		atomic_inc(&nfct->use);
 }
-#endif
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 static inline void nf_conntrack_get_reasm(struct sk_buff *skb)
 {
 	if (skb)
@@ -2133,8 +2079,6 @@ static inline void nf_reset(struct sk_buff *skb)
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	nf_conntrack_put(skb->nfct);
 	skb->nfct = NULL;
-#endif
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	nf_conntrack_put_reasm(skb->nfct_reasm);
 	skb->nfct_reasm = NULL;
 #endif
@@ -2151,8 +2095,6 @@ static inline void __nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 	dst->nfct = src->nfct;
 	nf_conntrack_get(src->nfct);
 	dst->nfctinfo = src->nfctinfo;
-#endif
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	dst->nfct_reasm = src->nfct_reasm;
 	nf_conntrack_get_reasm(src->nfct_reasm);
 #endif
@@ -2166,8 +2108,6 @@ static inline void nf_copy(struct sk_buff *dst, const struct sk_buff *src)
 {
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	nf_conntrack_put(dst->nfct);
-#endif
-#ifdef NET_SKBUFF_NF_DEFRAG_NEEDED
 	nf_conntrack_put_reasm(dst->nfct_reasm);
 #endif
 #ifdef CONFIG_BRIDGE_NETFILTER
@@ -2224,9 +2164,8 @@ static inline bool skb_rx_queue_recorded(const struct sk_buff *skb)
 	return skb->queue_mapping != 0;
 }
 
-extern u16 __skb_tx_hash(const struct net_device *dev,
-			 const struct sk_buff *skb,
-			 unsigned int num_tx_queues);
+extern u16 skb_tx_hash(const struct net_device *dev,
+		       const struct sk_buff *skb);
 
 #ifdef CONFIG_XFRM
 static inline struct sec_path *skb_sec_path(struct sk_buff *skb)
@@ -2288,6 +2227,5 @@ static inline void skb_checksum_none_assert(struct sk_buff *skb)
 }
 
 bool skb_partial_csum_set(struct sk_buff *skb, u16 start, u16 off);
-
 #endif	/* __KERNEL__ */
 #endif	/* _LINUX_SKBUFF_H */

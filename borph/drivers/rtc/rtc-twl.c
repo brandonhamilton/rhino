@@ -213,6 +213,18 @@ static int twl_rtc_alarm_irq_enable(struct device *dev, unsigned enabled)
 	return ret;
 }
 
+static int twl_rtc_update_irq_enable(struct device *dev, unsigned enabled)
+{
+	int ret;
+
+	if (enabled)
+		ret = set_rtc_irq_bit(BIT_RTC_INTERRUPTS_REG_IT_TIMER_M);
+	else
+		ret = mask_rtc_irq_bit(BIT_RTC_INTERRUPTS_REG_IT_TIMER_M);
+
+	return ret;
+}
+
 /*
  * Gets current TWL RTC time and date parameters.
  *
@@ -275,7 +287,7 @@ static int twl_rtc_set_time(struct device *dev, struct rtc_time *tm)
 		goto out;
 
 	save_control &= ~BIT_RTC_CTRL_REG_STOP_RTC_M;
-	ret = twl_rtc_write_u8(save_control, REG_RTC_CTRL_REG);
+	twl_rtc_write_u8(save_control, REG_RTC_CTRL_REG);
 	if (ret < 0)
 		goto out;
 
@@ -421,6 +433,7 @@ static struct rtc_class_ops twl_rtc_ops = {
 	.read_alarm	= twl_rtc_read_alarm,
 	.set_alarm	= twl_rtc_set_alarm,
 	.alarm_irq_enable = twl_rtc_alarm_irq_enable,
+	.update_irq_enable = twl_rtc_update_irq_enable,
 };
 
 /*----------------------------------------------------------------------*/

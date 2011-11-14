@@ -103,7 +103,9 @@ static void cisco_keepalive_send(struct net_device *dev, u32 type,
 	skb = dev_alloc_skb(sizeof(struct hdlc_header) +
 			    sizeof(struct cisco_packet));
 	if (!skb) {
-		netdev_warn(dev, "Memory squeeze on cisco_keepalive_send()\n");
+		printk(KERN_WARNING
+		       "%s: Memory squeeze on cisco_keepalive_send()\n",
+		       dev->name);
 		return;
 	}
 	skb_reserve(skb, 4);
@@ -179,8 +181,8 @@ static int cisco_rx(struct sk_buff *skb)
 		     CISCO_PACKET_LEN) &&
 		    (skb->len != sizeof(struct hdlc_header) +
 		     CISCO_BIG_PACKET_LEN)) {
-			netdev_info(dev, "Invalid length of Cisco control packet (%d bytes)\n",
-				    skb->len);
+			printk(KERN_INFO "%s: Invalid length of Cisco control"
+			       " packet (%d bytes)\n", dev->name, skb->len);
 			goto rx_error;
 		}
 
@@ -215,7 +217,8 @@ static int cisco_rx(struct sk_buff *skb)
 			return NET_RX_SUCCESS;
 
 		case CISCO_ADDR_REPLY:
-			netdev_info(dev, "Unexpected Cisco IP address reply\n");
+			printk(KERN_INFO "%s: Unexpected Cisco IP address "
+			       "reply\n", dev->name);
 			goto rx_error;
 
 		case CISCO_KEEPALIVE_REQ:
@@ -232,8 +235,9 @@ static int cisco_rx(struct sk_buff *skb)
 					min = sec / 60; sec -= min * 60;
 					hrs = min / 60; min -= hrs * 60;
 					days = hrs / 24; hrs -= days * 24;
-					netdev_info(dev, "Link up (peer uptime %ud%uh%um%us)\n",
-						    days, hrs, min, sec);
+					printk(KERN_INFO "%s: Link up (peer "
+					       "uptime %ud%uh%um%us)\n",
+					       dev->name, days, hrs, min, sec);
 					netif_dormant_off(dev);
 					st->up = 1;
 				}
@@ -245,7 +249,8 @@ static int cisco_rx(struct sk_buff *skb)
 		} /* switch (keepalive type) */
 	} /* switch (protocol) */
 
-	netdev_info(dev, "Unsupported protocol %x\n", ntohs(data->protocol));
+	printk(KERN_INFO "%s: Unsupported protocol %x\n", dev->name,
+	       ntohs(data->protocol));
 	dev_kfree_skb_any(skb);
 	return NET_RX_DROP;
 
@@ -267,7 +272,7 @@ static void cisco_timer(unsigned long arg)
 	if (st->up &&
 	    time_after(jiffies, st->last_poll + st->settings.timeout * HZ)) {
 		st->up = 0;
-		netdev_info(dev, "Link down\n");
+		printk(KERN_INFO "%s: Link down\n", dev->name);
 		netif_dormant_on(dev);
 	}
 

@@ -22,7 +22,6 @@
 struct wm831x_backup {
 	struct wm831x *wm831x;
 	struct power_supply backup;
-	char name[20];
 };
 
 static int wm831x_backup_read_voltage(struct wm831x *wm831x,
@@ -164,7 +163,6 @@ static enum power_supply_property wm831x_backup_props[] = {
 static __devinit int wm831x_backup_probe(struct platform_device *pdev)
 {
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
-	struct wm831x_pdata *wm831x_pdata = wm831x->dev->platform_data;
 	struct wm831x_backup *devdata;
 	struct power_supply *backup;
 	int ret;
@@ -184,14 +182,7 @@ static __devinit int wm831x_backup_probe(struct platform_device *pdev)
 	 */
 	wm831x_config_backup(wm831x);
 
-	if (wm831x_pdata && wm831x_pdata->wm831x_num)
-		snprintf(devdata->name, sizeof(devdata->name),
-			 "wm831x-backup.%d", wm831x_pdata->wm831x_num);
-	else
-		snprintf(devdata->name, sizeof(devdata->name),
-			 "wm831x-backup");
-
-	backup->name = devdata->name;
+	backup->name = "wm831x-backup";
 	backup->type = POWER_SUPPLY_TYPE_BATTERY;
 	backup->properties = wm831x_backup_props;
 	backup->num_properties = ARRAY_SIZE(wm831x_backup_props);
@@ -212,7 +203,6 @@ static __devexit int wm831x_backup_remove(struct platform_device *pdev)
 	struct wm831x_backup *devdata = platform_get_drvdata(pdev);
 
 	power_supply_unregister(&devdata->backup);
-	kfree(devdata->backup.name);
 	kfree(devdata);
 
 	return 0;

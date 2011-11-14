@@ -488,6 +488,7 @@ static sector_t sysv_bmap(struct address_space *mapping, sector_t block)
 const struct address_space_operations sysv_aops = {
 	.readpage = sysv_readpage,
 	.writepage = sysv_writepage,
+	.sync_page = block_sync_page,
 	.write_begin = sysv_write_begin,
 	.write_end = generic_write_end,
 	.bmap = sysv_bmap

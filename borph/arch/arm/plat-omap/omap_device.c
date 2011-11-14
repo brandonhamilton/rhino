@@ -83,12 +83,11 @@
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/clk.h>
-#include <linux/clkdev.h>
-#include <linux/pm_runtime.h>
+#include <linux/opp.h>
 
 #include <plat/omap_device.h>
 #include <plat/omap_hwmod.h>
-#include <plat/clock.h>
+#include <plat/voltage.h>
 
 /* These parameters are passed to _omap_device_{de,}activate() */
 #define USE_WAKEUP_LAT			0
@@ -236,71 +235,47 @@ static int _omap_device_deactivate(struct omap_device *od, u8 ignore_lat)
 	return 0;
 }
 
-static void _add_clkdev(struct omap_device *od, const char *clk_alias,
-		       const char *clk_name)
+static inline struct omap_device *_find_by_pdev(struct platform_device *pdev)
 {
-	struct clk *r;
-	struct clk_lookup *l;
-
-	if (!clk_alias || !clk_name)
-		return;
-
-	pr_debug("omap_device: %s: Creating %s -> %s\n",
-		 dev_name(&od->pdev.dev), clk_alias, clk_name);
-
-	r = clk_get_sys(dev_name(&od->pdev.dev), clk_alias);
-	if (!IS_ERR(r)) {
-		pr_warning("omap_device: %s: alias %s already exists\n",
-			   dev_name(&od->pdev.dev), clk_alias);
-		clk_put(r);
-		return;
-	}
-
-	r = omap_clk_get_by_name(clk_name);
-	if (IS_ERR(r)) {
-		pr_err("omap_device: %s: omap_clk_get_by_name for %s failed\n",
-		       dev_name(&od->pdev.dev), clk_name);
-		return;
-	}
-
-	l = clkdev_alloc(r, clk_alias, dev_name(&od->pdev.dev));
-	if (!l) {
-		pr_err("omap_device: %s: clkdev_alloc for %s failed\n",
-		       dev_name(&od->pdev.dev), clk_alias);
-		return;
-	}
-
-	clkdev_add(l);
+	return container_of(pdev, struct omap_device, pdev);
 }
 
 /**
- * _add_hwmod_clocks_clkdev - Add clkdev entry for hwmod optional clocks
- * and main clock
+ * _add_optional_clock_alias - Add clock alias for hwmod optional clocks
  * @od: struct omap_device *od
- * @oh: struct omap_hwmod *oh
  *
- * For the main clock and every optional clock present per hwmod per
- * omap_device, this function adds an entry in the clkdev table of the
- * form <dev-id=dev_name, con-id=role> if it does not exist already.
+ * For every optional clock present per hwmod per omap_device, this function
+ * adds an entry in the clocks list of the form <dev-id=dev_name, con-id=role>
+ * if an entry is already present in it with the form <dev-id=NULL, con-id=role>
  *
  * The function is called from inside omap_device_build_ss(), after
  * omap_device_register.
  *
  * This allows drivers to get a pointer to its optional clocks based on its role
  * by calling clk_get(<dev*>, <role>).
- * In the case of the main clock, a "fck" alias is used.
  *
  * No return value.
  */
-static void _add_hwmod_clocks_clkdev(struct omap_device *od,
-				     struct omap_hwmod *oh)
+static void _add_optional_clock_alias(struct omap_device *od,
+				      struct omap_hwmod *oh)
 {
 	int i;
 
-	_add_clkdev(od, "fck", oh->main_clk);
+	for (i = 0; i < oh->opt_clks_cnt; i++) {
+		struct omap_hwmod_opt_clk *oc;
+		int r;
 
-	for (i = 0; i < oh->opt_clks_cnt; i++)
-		_add_clkdev(od, oh->opt_clks[i].role, oh->opt_clks[i].clk);
+		oc = &oh->opt_clks[i];
+
+		if (!oc->_clk)
+			continue;
+
+		r = clk_add_alias(oc->role, dev_name(&od->pdev.dev),
+				  (char *)oc->clk, &od->pdev.dev);
+		if (r)
+			pr_err("omap_device: %s: clk_add_alias for %s failed\n",
+			       dev_name(&od->pdev.dev), oc->role);
+	}
 }
 
 
@@ -326,7 +301,7 @@ u32 omap_device_get_context_loss_count(struct platform_device *pdev)
 	struct omap_device *od;
 	u32 ret = 0;
 
-	od = to_omap_device(pdev);
+	od = _find_by_pdev(pdev);
 
 	if (od->hwmods_cnt)
 		ret = omap_hwmod_get_context_loss_count(od->hwmods[0]);
@@ -507,7 +482,18 @@ struct omap_device *omap_device_build_ss(const char *pdev_name, int pdev_id,
 
 	for (i = 0; i < oh_cnt; i++) {
 		hwmods[i]->od = od;
-		_add_hwmod_clocks_clkdev(od, hwmods[i]);
+		_add_optional_clock_alias(od, hwmods[i]);
+		if (hwmods[i]->vdd_name) {
+			struct omap_hwmod *oh = hwmods[i];
+			struct voltagedomain *voltdm;
+
+			if (is_early_device)
+				continue;
+
+			voltdm = omap_voltage_domain_lookup(oh->vdd_name);
+			if (!omap_voltage_add_dev(voltdm, &od->pdev.dev))
+				oh->voltdm = voltdm;
+		}
 	}
 
 	if (ret)
@@ -547,85 +533,6 @@ int omap_early_device_register(struct omap_device *od)
 	return 0;
 }
 
-#ifdef CONFIG_PM_RUNTIME
-static int _od_runtime_suspend(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	int ret;
-
-	ret = pm_generic_runtime_suspend(dev);
-
-	if (!ret)
-		omap_device_idle(pdev);
-
-	return ret;
-}
-
-static int _od_runtime_idle(struct device *dev)
-{
-	return pm_generic_runtime_idle(dev);
-}
-
-static int _od_runtime_resume(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-
-	omap_device_enable(pdev);
-
-	return pm_generic_runtime_resume(dev);
-}
-#endif
-
-#ifdef CONFIG_SUSPEND
-static int _od_suspend_noirq(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct omap_device *od = to_omap_device(pdev);
-	int ret;
-
-	if (od->flags & OMAP_DEVICE_NO_IDLE_ON_SUSPEND)
-		return pm_generic_suspend_noirq(dev);
-
-	ret = pm_generic_suspend_noirq(dev);
-
-	if (!ret && !pm_runtime_status_suspended(dev)) {
-		if (pm_generic_runtime_suspend(dev) == 0) {
-			omap_device_idle(pdev);
-			od->flags |= OMAP_DEVICE_SUSPENDED;
-		}
-	}
-
-	return ret;
-}
-
-static int _od_resume_noirq(struct device *dev)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct omap_device *od = to_omap_device(pdev);
-
-	if (od->flags & OMAP_DEVICE_NO_IDLE_ON_SUSPEND)
-		return pm_generic_resume_noirq(dev);
-
-	if ((od->flags & OMAP_DEVICE_SUSPENDED) &&
-	    !pm_runtime_status_suspended(dev)) {
-		od->flags &= ~OMAP_DEVICE_SUSPENDED;
-		omap_device_enable(pdev);
-		pm_generic_runtime_resume(dev);
-	}
-
-	return pm_generic_resume_noirq(dev);
-}
-#endif
-
-static struct dev_pm_domain omap_device_pm_domain = {
-	.ops = {
-		SET_RUNTIME_PM_OPS(_od_runtime_suspend, _od_runtime_resume,
-				   _od_runtime_idle)
-		USE_PLATFORM_PM_SLEEP_OPS
-		SET_SYSTEM_SLEEP_PM_OPS(_od_suspend_noirq, _od_resume_noirq)
-	}
-};
-
 /**
  * omap_device_register - register an omap_device with one omap_hwmod
  * @od: struct omap_device * to register
@@ -639,7 +546,6 @@ int omap_device_register(struct omap_device *od)
 	pr_debug("omap_device: %s: registering\n", od->pdev.name);
 
 	od->pdev.dev.parent = &omap_device_parent;
-	od->pdev.dev.pm_domain = &omap_device_pm_domain;
 	return platform_device_register(&od->pdev);
 }
 
@@ -664,7 +570,7 @@ int omap_device_enable(struct platform_device *pdev)
 	int ret;
 	struct omap_device *od;
 
-	od = to_omap_device(pdev);
+	od = _find_by_pdev(pdev);
 
 	if (od->_state == OMAP_DEVICE_STATE_ENABLED) {
 		WARN(1, "omap_device: %s.%d: %s() called from invalid state %d\n",
@@ -703,7 +609,7 @@ int omap_device_idle(struct platform_device *pdev)
 	int ret;
 	struct omap_device *od;
 
-	od = to_omap_device(pdev);
+	od = _find_by_pdev(pdev);
 
 	if (od->_state != OMAP_DEVICE_STATE_ENABLED) {
 		WARN(1, "omap_device: %s.%d: %s() called from invalid state %d\n",
@@ -734,7 +640,7 @@ int omap_device_shutdown(struct platform_device *pdev)
 	int ret, i;
 	struct omap_device *od;
 
-	od = to_omap_device(pdev);
+	od = _find_by_pdev(pdev);
 
 	if (od->_state != OMAP_DEVICE_STATE_ENABLED &&
 	    od->_state != OMAP_DEVICE_STATE_IDLE) {
@@ -775,7 +681,7 @@ int omap_device_align_pm_lat(struct platform_device *pdev,
 	int ret = -EINVAL;
 	struct omap_device *od;
 
-	od = to_omap_device(pdev);
+	od = _find_by_pdev(pdev);
 
 	if (new_wakeup_lat_limit == od->dev_wakeup_lat)
 		return 0;
@@ -907,6 +813,132 @@ int omap_device_enable_clocks(struct omap_device *od)
 	/* XXX pass along return value here? */
 	return 0;
 }
+
+int omap_device_set_rate(struct device *dev, unsigned long freq)
+{
+	struct platform_device *pdev;
+	struct omap_device *od;
+
+	pdev = container_of(dev, struct platform_device, dev);
+	od = _find_by_pdev(pdev);
+
+	if (!od->set_rate) {
+		dev_err(dev, "%s: No set_rate API for scaling device\n",
+			__func__);
+		return -ENODATA;
+	}
+
+	return od->set_rate(dev, freq);
+}
+
+unsigned long omap_device_get_rate(struct device *dev)
+{
+	struct platform_device *pdev;
+	struct omap_device *od;
+
+	pdev = container_of(dev, struct platform_device, dev);
+	od = _find_by_pdev(pdev);
+
+
+	if (!od->get_rate) {
+		dev_err(dev, "%s: No get rate API for the device\n",
+			__func__);
+		return 0;
+	}
+
+	return od->get_rate(dev);
+}
+
+void omap_device_populate_rate_fns(struct device *dev,
+		int (*set_rate)(struct device *dev, unsigned long rate),
+		unsigned long (*get_rate) (struct device *dev))
+{
+	struct platform_device *pdev;
+	struct omap_device *od;
+
+	pdev = container_of(dev, struct platform_device, dev);
+	od = _find_by_pdev(pdev);
+
+	od->set_rate = set_rate;
+	od->get_rate = get_rate;
+}
+
+/**
+ * omap_device_scale() - Set a new rate at which the device is to operate
+ * @req_dev:	pointer to the device requesting the scaling.
+ * @dev:	pointer to the device that is to be scaled
+ * @rate:	the rnew rate for the device.
+ *
+ * This API gets the device opp table associated with this device and
+ * tries putting the device to the requested rate and the voltage domain
+ * associated with the device to the voltage corresponding to the
+ * requested rate. Since multiple devices can be assocciated with a
+ * voltage domain this API finds out the possible voltage the
+ * voltage domain can enter and then decides on the final device
+ * rate. Return 0 on success else the error value
+ */
+int omap_device_scale(struct device *req_dev, struct device *dev,
+			unsigned long rate)
+{
+	struct opp *opp;
+	unsigned long volt, freq, min_freq, max_freq;
+	struct voltagedomain *voltdm;
+	struct platform_device *pdev;
+	struct omap_device *od;
+	int ret;
+
+	pdev = container_of(dev, struct platform_device, dev);
+	od = _find_by_pdev(pdev);
+
+	/*
+	 * Figure out if the desired frquency lies between the
+	 * maximum and minimum possible for the particular device
+	 */
+	min_freq = 0;
+	if (IS_ERR(opp_find_freq_ceil(dev, &min_freq))) {
+		dev_err(dev, "%s: Unable to find lowest opp\n", __func__);
+		return -ENODEV;
+	}
+
+	max_freq = ULONG_MAX;
+	if (IS_ERR(opp_find_freq_floor(dev, &max_freq))) {
+		dev_err(dev, "%s: Unable to find highest opp\n", __func__);
+		return -ENODEV;
+	}
+
+	if (rate < min_freq)
+		freq = min_freq;
+	else if (rate > max_freq)
+		freq = max_freq;
+	else
+		freq = rate;
+
+	opp = opp_find_freq_ceil(dev, &freq);
+	if (IS_ERR(opp)) {
+		dev_err(dev, "%s: Unable to find OPP for freq%ld\n",
+			__func__, rate);
+		return -ENODEV;
+	}
+
+	/* Get the voltage corresponding to the requested frequency */
+	volt = opp_get_voltage(opp);
+
+	/*
+	 * Call into the voltage layer to get the final voltage possible
+	 * for the voltage domain associated with the device.
+	 */
+	voltdm = od->hwmods[0]->voltdm;
+	ret = omap_voltage_add_request(voltdm, req_dev, &volt);
+	if (ret) {
+		dev_err(dev, "%s: Unable to get the final volt for scaling\n",
+			__func__);
+		return ret;
+	}
+
+	/* Do the actual scaling */
+	return omap_voltage_scale(voltdm, volt);
+}
+EXPORT_SYMBOL(omap_device_scale);
 
 struct device omap_device_parent = {
 	.init_name	= "omap",

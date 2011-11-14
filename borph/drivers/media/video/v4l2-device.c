@@ -36,8 +36,6 @@ int v4l2_device_register(struct device *dev, struct v4l2_device *v4l2_dev)
 	INIT_LIST_HEAD(&v4l2_dev->subdevs);
 	spin_lock_init(&v4l2_dev->lock);
 	mutex_init(&v4l2_dev->ioctl_lock);
-	v4l2_prio_init(&v4l2_dev->prio);
-	kref_init(&v4l2_dev->ref);
 	v4l2_dev->dev = dev;
 	if (dev == NULL) {
 		/* If dev == NULL, then name must be filled in by the caller */
@@ -54,21 +52,6 @@ int v4l2_device_register(struct device *dev, struct v4l2_device *v4l2_dev)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(v4l2_device_register);
-
-static void v4l2_device_release(struct kref *ref)
-{
-	struct v4l2_device *v4l2_dev =
-		container_of(ref, struct v4l2_device, ref);
-
-	if (v4l2_dev->release)
-		v4l2_dev->release(v4l2_dev);
-}
-
-int v4l2_device_put(struct v4l2_device *v4l2_dev)
-{
-	return kref_put(&v4l2_dev->ref, v4l2_device_release);
-}
-EXPORT_SYMBOL_GPL(v4l2_device_put);
 
 int v4l2_device_set_name(struct v4l2_device *v4l2_dev, const char *basename,
 						atomic_t *instance)
@@ -118,7 +101,6 @@ void v4l2_device_unregister(struct v4l2_device *v4l2_dev)
 			   is a platform bus, then it is never deleted. */
 			if (client)
 				i2c_unregister_device(client);
-			continue;
 		}
 #endif
 #if defined(CONFIG_SPI)
@@ -127,7 +109,6 @@ void v4l2_device_unregister(struct v4l2_device *v4l2_dev)
 
 			if (spi)
 				spi_unregister_device(spi);
-			continue;
 		}
 #endif
 	}
@@ -140,6 +121,7 @@ int v4l2_device_register_subdev(struct v4l2_device *v4l2_dev,
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	struct media_entity *entity = &sd->entity;
 #endif
+	struct video_device *vdev;
 	int err;
 
 	/* Check for valid input */
@@ -152,76 +134,46 @@ int v4l2_device_register_subdev(struct v4l2_device *v4l2_dev,
 	if (!try_module_get(sd->owner))
 		return -ENODEV;
 
-	sd->v4l2_dev = v4l2_dev;
-	if (sd->internal_ops && sd->internal_ops->registered) {
-		err = sd->internal_ops->registered(sd);
-		if (err) {
-			module_put(sd->owner);
-			return err;
-		}
-	}
-
 	/* This just returns 0 if either of the two args is NULL */
 	err = v4l2_ctrl_add_handler(v4l2_dev->ctrl_handler, sd->ctrl_handler);
-	if (err) {
-		if (sd->internal_ops && sd->internal_ops->unregistered)
-			sd->internal_ops->unregistered(sd);
-		module_put(sd->owner);
+	if (err)
 		return err;
-	}
-
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	/* Register the entity. */
 	if (v4l2_dev->mdev) {
 		err = media_device_register_entity(v4l2_dev->mdev, entity);
 		if (err < 0) {
-			if (sd->internal_ops && sd->internal_ops->unregistered)
-				sd->internal_ops->unregistered(sd);
 			module_put(sd->owner);
 			return err;
 		}
 	}
 #endif
-
+	sd->v4l2_dev = v4l2_dev;
 	spin_lock(&v4l2_dev->lock);
 	list_add_tail(&sd->list, &v4l2_dev->subdevs);
 	spin_unlock(&v4l2_dev->lock);
 
+	/* Register the device node. */
+	vdev = &sd->devnode;
+	strlcpy(vdev->name, sd->name, sizeof(vdev->name));
+	vdev->parent = v4l2_dev->dev;
+	vdev->fops = &v4l2_subdev_fops;
+	vdev->release = video_device_release_empty;
+	if (sd->flags & V4L2_SUBDEV_FL_HAS_DEVNODE) {
+		err = __video_register_device(vdev, VFL_TYPE_SUBDEV, -1, 1,
+					      sd->owner);
+		if (err < 0) {
+			v4l2_device_unregister_subdev(sd);
+			return err;
+		}
+	}
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	entity->v4l.major = VIDEO_MAJOR;
+	entity->v4l.minor = vdev->minor;
+#endif
 	return 0;
 }
 EXPORT_SYMBOL_GPL(v4l2_device_register_subdev);
-
-int v4l2_device_register_subdev_nodes(struct v4l2_device *v4l2_dev)
-{
-	struct video_device *vdev;
-	struct v4l2_subdev *sd;
-	int err;
-
-	/* Register a device node for every subdev marked with the
-	 * V4L2_SUBDEV_FL_HAS_DEVNODE flag.
-	 */
-	list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
-		if (!(sd->flags & V4L2_SUBDEV_FL_HAS_DEVNODE))
-			continue;
-
-		vdev = &sd->devnode;
-		strlcpy(vdev->name, sd->name, sizeof(vdev->name));
-		vdev->v4l2_dev = v4l2_dev;
-		vdev->fops = &v4l2_subdev_fops;
-		vdev->release = video_device_release_empty;
-		vdev->ctrl_handler = sd->ctrl_handler;
-		err = __video_register_device(vdev, VFL_TYPE_SUBDEV, -1, 1,
-					      sd->owner);
-		if (err < 0)
-			return err;
-#if defined(CONFIG_MEDIA_CONTROLLER)
-		sd->entity.v4l.major = VIDEO_MAJOR;
-		sd->entity.v4l.minor = vdev->minor;
-#endif
-	}
-	return 0;
-}
-EXPORT_SYMBOL_GPL(v4l2_device_register_subdev_nodes);
 
 void v4l2_device_unregister_subdev(struct v4l2_subdev *sd)
 {
@@ -236,16 +188,13 @@ void v4l2_device_unregister_subdev(struct v4l2_subdev *sd)
 	spin_lock(&v4l2_dev->lock);
 	list_del(&sd->list);
 	spin_unlock(&v4l2_dev->lock);
-
-	if (sd->internal_ops && sd->internal_ops->unregistered)
-		sd->internal_ops->unregistered(sd);
 	sd->v4l2_dev = NULL;
 
+	module_put(sd->owner);
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	if (v4l2_dev->mdev)
 		media_device_unregister_entity(&sd->entity);
 #endif
 	video_unregister_device(&sd->devnode);
-	module_put(sd->owner);
 }
 EXPORT_SYMBOL_GPL(v4l2_device_unregister_subdev);

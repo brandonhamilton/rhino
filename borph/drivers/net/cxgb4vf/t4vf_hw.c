@@ -33,6 +33,7 @@
  * SOFTWARE.
  */
 
+#include <linux/version.h>
 #include <linux/pci.h>
 
 #include "t4vf_common.h"
@@ -115,7 +116,7 @@ static void dump_mbox(struct adapter *adapter, const char *tag, u32 mbox_data)
 int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 		      void *rpl, bool sleep_ok)
 {
-	static const int delay[] = {
+	static int delay[] = {
 		1, 1, 3, 5, 10, 10, 20, 50, 100
 	};
 
@@ -146,20 +147,9 @@ int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 	/*
 	 * Write the command array into the Mailbox Data register array and
 	 * transfer ownership of the mailbox to the firmware.
-	 *
-	 * For the VFs, the Mailbox Data "registers" are actually backed by
-	 * T4's "MA" interface rather than PL Registers (as is the case for
-	 * the PFs).  Because these are in different coherency domains, the
-	 * write to the VF's PL-register-backed Mailbox Control can race in
-	 * front of the writes to the MA-backed VF Mailbox Data "registers".
-	 * So we need to do a read-back on at least one byte of the VF Mailbox
-	 * Data registers before doing the write to the VF Mailbox Control
-	 * register.
 	 */
 	for (i = 0, p = cmd; i < size; i += 8)
 		t4_write_reg64(adapter, mbox_data + i, be64_to_cpu(*p++));
-	t4_read_reg(adapter, mbox_data);         /* flush write */
-
 	t4_write_reg(adapter, mbox_ctl,
 		     MBMSGVALID | MBOWNER(MBOX_OWNER_FW));
 	t4_read_reg(adapter, mbox_ctl);          /* flush write */
@@ -170,7 +160,7 @@ int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 	delay_idx = 0;
 	ms = delay[0];
 
-	for (i = 0; i < FW_CMD_MAX_TIMEOUT; i += ms) {
+	for (i = 0; i < 500; i += ms) {
 		if (sleep_ok) {
 			ms = delay[delay_idx];
 			if (delay_idx < ARRAY_SIZE(delay) - 1)
@@ -1310,7 +1300,7 @@ int t4vf_eth_eq_free(struct adapter *adapter, unsigned int eqid)
  */
 int t4vf_handle_fw_rpl(struct adapter *adapter, const __be64 *rpl)
 {
-	const struct fw_cmd_hdr *cmd_hdr = (const struct fw_cmd_hdr *)rpl;
+	struct fw_cmd_hdr *cmd_hdr = (struct fw_cmd_hdr *)rpl;
 	u8 opcode = FW_CMD_OP_GET(be32_to_cpu(cmd_hdr->hi));
 
 	switch (opcode) {
@@ -1318,8 +1308,7 @@ int t4vf_handle_fw_rpl(struct adapter *adapter, const __be64 *rpl)
 		/*
 		 * Link/module state change message.
 		 */
-		const struct fw_port_cmd *port_cmd =
-			(const struct fw_port_cmd *)rpl;
+		const struct fw_port_cmd *port_cmd = (void *)rpl;
 		u32 word;
 		int action, port_id, link_ok, speed, fc, pidx;
 

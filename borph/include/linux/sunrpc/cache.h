@@ -15,7 +15,7 @@
 
 #include <linux/kref.h>
 #include <linux/slab.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/proc_fs.h>
 
 /*
@@ -35,10 +35,10 @@
  * Each cache must be registered so that it can be cleaned regularly.
  * When the cache is unregistered, it is flushed completely.
  *
- * Entries have a ref count and a 'hashed' flag which counts the existence
+ * Entries have a ref count and a 'hashed' flag which counts the existance
  * in the hash table.
  * We only expire entries when refcount is zero.
- * Existence in the cache is counted  the refcount.
+ * Existance in the cache is counted  the refcount.
  */
 
 /* Every cache item has a common header that is used
@@ -256,4 +256,10 @@ static inline time_t get_expiry(char **bpp)
 	return rv - boot.tv_sec;
 }
 
+static inline void sunrpc_invalidate(struct cache_head *h,
+				     struct cache_detail *detail)
+{
+	h->expiry_time = seconds_since_boot() - 1;
+	detail->nextcheck = seconds_since_boot();
+}
 #endif /*  _LINUX_SUNRPC_CACHE_H_ */

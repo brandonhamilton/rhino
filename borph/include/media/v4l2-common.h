@@ -80,15 +80,30 @@
 
 /* ------------------------------------------------------------------------- */
 
+/* Priority helper functions */
+
+struct v4l2_prio_state {
+	atomic_t prios[4];
+};
+void v4l2_prio_init(struct v4l2_prio_state *global);
+int v4l2_prio_change(struct v4l2_prio_state *global, enum v4l2_priority *local,
+		     enum v4l2_priority new);
+void v4l2_prio_open(struct v4l2_prio_state *global, enum v4l2_priority *local);
+void v4l2_prio_close(struct v4l2_prio_state *global, enum v4l2_priority local);
+enum v4l2_priority v4l2_prio_max(struct v4l2_prio_state *global);
+int v4l2_prio_check(struct v4l2_prio_state *global, enum v4l2_priority local);
+
+/* ------------------------------------------------------------------------- */
+
 /* Control helper functions */
 
 int v4l2_ctrl_check(struct v4l2_ext_control *ctrl, struct v4l2_queryctrl *qctrl,
-		const char * const *menu_items);
+		const char **menu_items);
 const char *v4l2_ctrl_get_name(u32 id);
-const char * const *v4l2_ctrl_get_menu(u32 id);
+const char **v4l2_ctrl_get_menu(u32 id);
 int v4l2_ctrl_query_fill(struct v4l2_queryctrl *qctrl, s32 min, s32 max, s32 step, s32 def);
 int v4l2_ctrl_query_menu(struct v4l2_querymenu *qmenu,
-		struct v4l2_queryctrl *qctrl, const char * const *menu_items);
+		struct v4l2_queryctrl *qctrl, const char **menu_items);
 #define V4L2_CTRL_MENU_IDS_END (0xffffffff)
 int v4l2_ctrl_query_menu_valid_items(struct v4l2_querymenu *qmenu, const u32 *ids);
 
@@ -131,7 +146,7 @@ struct i2c_board_info;
 
 struct v4l2_subdev *v4l2_i2c_new_subdev_board(struct v4l2_device *v4l2_dev,
 		struct i2c_adapter *adapter, struct i2c_board_info *info,
-		const unsigned short *probe_addrs);
+		const unsigned short *probe_addrs, int enable_devnode);
 
 /* Initialize an v4l2_subdev with data from an i2c_client struct */
 void v4l2_i2c_subdev_init(struct v4l2_subdev *sd, struct i2c_client *client,
@@ -164,7 +179,8 @@ struct spi_device;
 /* Load an spi module and return an initialized v4l2_subdev struct.
    The client_type argument is the name of the chip that's on the adapter. */
 struct v4l2_subdev *v4l2_spi_new_subdev(struct v4l2_device *v4l2_dev,
-		struct spi_master *master, struct spi_board_info *info);
+		struct spi_master *master, struct spi_board_info *info,
+		int enable_devnode);
 
 /* Initialize an v4l2_subdev with data from an spi_device struct */
 void v4l2_spi_subdev_init(struct v4l2_subdev *sd, struct spi_device *spi,

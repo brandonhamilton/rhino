@@ -914,7 +914,7 @@ enum BC_STATUS crystalhd_user_open(struct crystalhd_cmd *ctx,
  * Return:
  *	status
  *
- * Closer application handle and release app specific
+ * Closer aplication handle and release app specific
  * resources.
  */
 enum BC_STATUS crystalhd_user_close(struct crystalhd_cmd *ctx, struct crystalhd_user *uc)

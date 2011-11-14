@@ -149,7 +149,8 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 
 		/* if the binary is not readable than enforce mm->dumpable=0
 		   regardless of the interpreter's permissions */
-		would_dump(bprm, bprm->file);
+		if (file_permission(bprm->file, MAY_READ))
+			bprm->interp_flags |= BINPRM_FLAGS_ENFORCE_NONDUMP;
 
 		allow_write_access(bprm->file);
 		bprm->file = NULL;

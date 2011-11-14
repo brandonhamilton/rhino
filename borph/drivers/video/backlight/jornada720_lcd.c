@@ -135,12 +135,12 @@ static struct platform_driver jornada_lcd_driver = {
 	},
 };
 
-static int __init jornada_lcd_init(void)
+int __init jornada_lcd_init(void)
 {
 	return platform_driver_register(&jornada_lcd_driver);
 }
 
-static void __exit jornada_lcd_exit(void)
+void __exit jornada_lcd_exit(void)
 {
 	platform_driver_unregister(&jornada_lcd_driver);
 }

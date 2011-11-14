@@ -17,10 +17,9 @@
  * ============================================================================
  */
 
+#include "sysdef.h"
 #include "sme_api.h"
-#include "wbhal.h"
-#include "wb35reg_f.h"
-#include "core.h"
+#include "wbhal_f.h"
 
 /* Declare SQ3 to rate and fragmentation threshold table */
 /* Declare fragmentation thresholds table */
@@ -40,8 +39,13 @@ static u8 MTO_Data_Rate_Tbl[MTO_MAX_DATA_RATE_LEVELS] = {
 	2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108
 };
 
+static int TotalTxPkt;
+static int TotalTxPktRetry;
 /* this record the retry rate at different data rate */
 static int retryrate_rec[MTO_MAX_DATA_RATE_LEVELS];
+
+static int PeriodTotalTxPkt;
+static int PeriodTotalTxPktRetry;
 
 static u8 boSparseTxTraffic;
 
@@ -169,4 +173,9 @@ void MTO_SetTxCount(struct wbsoft_priv *adapter, u8 tx_rate, u8 index)
 		MTO_HAL()->dto_tx_retry_count += index;
 		MTO_HAL()->dto_tx_frag_count += (index + 1);
 	}
+	TotalTxPkt++;
+	TotalTxPktRetry += (index + 1);
+
+	PeriodTotalTxPkt++;
+	PeriodTotalTxPktRetry += (index + 1);
 }

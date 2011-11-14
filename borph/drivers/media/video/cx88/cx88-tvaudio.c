@@ -786,12 +786,8 @@ void cx88_set_tvaudio(struct cx88_core *core)
 		break;
 	case WW_I2SADC:
 		set_audio_start(core, 0x01);
-		/*
-		 * Slave/Philips/Autobaud
-		 * NB on Nova-S bit1 NPhilipsSony appears to be inverted:
-		 *	0= Sony, 1=Philips
-		 */
-		cx_write(AUD_I2SINPUTCNTL, core->board.i2sinputcntl);
+		/* Slave/Philips/Autobaud */
+		cx_write(AUD_I2SINPUTCNTL, 0);
 		/* Switch to "I2S ADC mode" */
 		cx_write(AUD_I2SCNTL, 0x1);
 		set_audio_finish(core, EN_I2SIN_ENABLE);

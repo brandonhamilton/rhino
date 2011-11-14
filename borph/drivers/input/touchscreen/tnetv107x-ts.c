@@ -14,7 +14,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/input.h>
 #include <linux/platform_device.h>
@@ -290,9 +289,9 @@ static int __devinit tsc_probe(struct platform_device *pdev)
 	}
 
 	ts->clk = clk_get(dev, NULL);
-	if (IS_ERR(ts->clk)) {
+	if (!ts->clk) {
 		dev_err(dev, "cannot claim device clock\n");
-		error = PTR_ERR(ts->clk);
+		error = -EINVAL;
 		goto error_clk;
 	}
 
@@ -393,5 +392,5 @@ module_exit(tsc_exit);
 
 MODULE_AUTHOR("Cyril Chemparathy");
 MODULE_DESCRIPTION("TNETV107X Touchscreen Driver");
-MODULE_ALIAS("platform:tnetv107x-ts");
+MODULE_ALIAS("platform: tnetv107x-ts");
 MODULE_LICENSE("GPL");

@@ -43,10 +43,6 @@
 #include <linux/firmware.h>
 #include <linux/ethtool.h>
 
-#include <pcmcia/cistpl.h>
-#include <pcmcia/cisreg.h>
-#include <pcmcia/ds.h>
-
 #ifdef FT_DEBUG
 #define DEBUG(n, args...) printk(KERN_DEBUG args);
 #else
@@ -54,9 +50,10 @@
 #endif
 
 #include <linux/delay.h>
+#include "ft1000_dev.h"
 #include "ft1000.h"
 
-int card_download(struct net_device *dev, const u8 *pFileStart, u32 FileLength);
+int card_download(struct net_device *dev, void *pFileStart, UINT FileLength);
 
 void ft1000InitProc(struct net_device *dev);
 void ft1000CleanupProc(struct net_device *dev);
@@ -88,8 +85,42 @@ MODULE_SUPPORTED_DEVICE("FT1000");
 
 //---------------------------------------------------------------------------
 //
+// Function:   ft1000_asic_read
+// Descripton: This function will retrieve the value of a specific ASIC
+//             register.
+// Input:
+//    dev - network device structure
+//    offset - ASIC register to read
+// Output:
+//    value - value of ASIC register
+//
+//---------------------------------------------------------------------------
+inline u16 ft1000_asic_read(struct net_device *dev, u16 offset)
+{
+	return (ft1000_read_reg(dev, offset));
+}
+
+//---------------------------------------------------------------------------
+//
+// Function:   ft1000_asic_write
+// Descripton: This function will set the value of a specific ASIC
+//             register.
+// Input:
+//    dev - network device structure
+//    value - value to set ASIC register
+// Output:
+//    none
+//
+//---------------------------------------------------------------------------
+inline void ft1000_asic_write(struct net_device *dev, u16 offset, u16 value)
+{
+	ft1000_write_reg(dev, offset, value);
+}
+
+//---------------------------------------------------------------------------
+//
 // Function:   ft1000_read_fifo_len
-// Description: This function will read the ASIC Uplink FIFO status register
+// Descripton: This function will read the ASIC Uplink FIFO status register
 //             which will return the number of bytes remaining in the Uplink FIFO.
 //             Sixteen bytes are subtracted to make sure that the ASIC does not
 //             reach its threshold.
@@ -101,7 +132,7 @@ MODULE_SUPPORTED_DEVICE("FT1000");
 //---------------------------------------------------------------------------
 static inline u16 ft1000_read_fifo_len(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 
 	if (info->AsicID == ELECTRABUZZ_ID) {
 		return (ft1000_read_reg(dev, FT1000_REG_UFIFO_STAT) - 16);
@@ -113,7 +144,7 @@ static inline u16 ft1000_read_fifo_len(struct net_device *dev)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_read_dpram
-// Description: This function will read the specific area of dpram
+// Descripton: This function will read the specific area of dpram
 //             (Electrabuzz ASIC only)
 // Input:
 //     dev    - device structure
@@ -124,7 +155,7 @@ static inline u16 ft1000_read_fifo_len(struct net_device *dev)
 //---------------------------------------------------------------------------
 u16 ft1000_read_dpram(struct net_device * dev, int offset)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 	u16 data;
 
@@ -140,7 +171,7 @@ u16 ft1000_read_dpram(struct net_device * dev, int offset)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_write_dpram
-// Description: This function will write to a specific area of dpram
+// Descripton: This function will write to a specific area of dpram
 //             (Electrabuzz ASIC only)
 // Input:
 //     dev    - device structure
@@ -153,7 +184,7 @@ u16 ft1000_read_dpram(struct net_device * dev, int offset)
 static inline void ft1000_write_dpram(struct net_device *dev,
 					  int offset, u16 value)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 
 	// Provide mutual exclusive access while reading ASIC registers.
@@ -166,7 +197,7 @@ static inline void ft1000_write_dpram(struct net_device *dev,
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_read_dpram_mag_16
-// Description: This function will read the specific area of dpram
+// Descripton: This function will read the specific area of dpram
 //             (Magnemite ASIC only)
 // Input:
 //     dev    - device structure
@@ -177,7 +208,7 @@ static inline void ft1000_write_dpram(struct net_device *dev,
 //---------------------------------------------------------------------------
 u16 ft1000_read_dpram_mag_16(struct net_device *dev, int offset, int Index)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 	u16 data;
 
@@ -198,7 +229,7 @@ u16 ft1000_read_dpram_mag_16(struct net_device *dev, int offset, int Index)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_write_dpram_mag_16
-// Description: This function will write to a specific area of dpram
+// Descripton: This function will write to a specific area of dpram
 //             (Magnemite ASIC only)
 // Input:
 //     dev    - device structure
@@ -211,7 +242,7 @@ u16 ft1000_read_dpram_mag_16(struct net_device *dev, int offset, int Index)
 static inline void ft1000_write_dpram_mag_16(struct net_device *dev,
 						 int offset, u16 value, int Index)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 
 	// Provide mutual exclusive access while reading ASIC registers.
@@ -228,7 +259,7 @@ static inline void ft1000_write_dpram_mag_16(struct net_device *dev,
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_read_dpram_mag_32
-// Description: This function will read the specific area of dpram
+// Descripton: This function will read the specific area of dpram
 //             (Magnemite ASIC only)
 // Input:
 //     dev    - device structure
@@ -239,7 +270,7 @@ static inline void ft1000_write_dpram_mag_16(struct net_device *dev,
 //---------------------------------------------------------------------------
 u32 ft1000_read_dpram_mag_32(struct net_device *dev, int offset)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 	u32 data;
 
@@ -255,7 +286,7 @@ u32 ft1000_read_dpram_mag_32(struct net_device *dev, int offset)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_write_dpram_mag_32
-// Description: This function will write to a specific area of dpram
+// Descripton: This function will write to a specific area of dpram
 //             (Magnemite ASIC only)
 // Input:
 //     dev    - device structure
@@ -267,7 +298,7 @@ u32 ft1000_read_dpram_mag_32(struct net_device *dev, int offset)
 //---------------------------------------------------------------------------
 void ft1000_write_dpram_mag_32(struct net_device *dev, int offset, u32 value)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	unsigned long flags;
 
 	// Provide mutual exclusive access while reading ASIC registers.
@@ -280,7 +311,7 @@ void ft1000_write_dpram_mag_32(struct net_device *dev, int offset, u32 value)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_enable_interrupts
-// Description: This function will enable interrupts base on the current interrupt mask.
+// Descripton: This function will enable interrupts base on the current interrupt mask.
 // Input:
 //     dev    - device structure
 // Output:
@@ -289,20 +320,23 @@ void ft1000_write_dpram_mag_32(struct net_device *dev, int offset, u32 value)
 //---------------------------------------------------------------------------
 static void ft1000_enable_interrupts(struct net_device *dev)
 {
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 tempword;
 
 	DEBUG(1, "ft1000_hw:ft1000_enable_interrupts()\n");
-	ft1000_write_reg(dev, FT1000_REG_SUP_IMASK, ISR_DEFAULT_MASK);
+	ft1000_write_reg(dev, FT1000_REG_SUP_IMASK,
+			 info->CurrentInterruptEnableMask);
 	tempword = ft1000_read_reg(dev, FT1000_REG_SUP_IMASK);
 	DEBUG(1,
 		  "ft1000_hw:ft1000_enable_interrupts:current interrupt enable mask = 0x%x\n",
 		  tempword);
+	info->InterruptsEnabled = TRUE;
 }
 
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_disable_interrupts
-// Description: This function will disable all interrupts.
+// Descripton: This function will disable all interrupts.
 // Input:
 //     dev    - device structure
 // Output:
@@ -311,6 +345,7 @@ static void ft1000_enable_interrupts(struct net_device *dev)
 //---------------------------------------------------------------------------
 static void ft1000_disable_interrupts(struct net_device *dev)
 {
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 tempword;
 
 	DEBUG(1, "ft1000_hw: ft1000_disable_interrupts()\n");
@@ -319,12 +354,13 @@ static void ft1000_disable_interrupts(struct net_device *dev)
 	DEBUG(1,
 		  "ft1000_hw:ft1000_disable_interrupts:current interrupt enable mask = 0x%x\n",
 		  tempword);
+	info->InterruptsEnabled = FALSE;
 }
 
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_reset_asic
-// Description: This function will call the Card Service function to reset the
+// Descripton: This function will call the Card Service function to reset the
 //             ASIC.
 // Input:
 //     dev    - device structure
@@ -334,12 +370,13 @@ static void ft1000_disable_interrupts(struct net_device *dev)
 //---------------------------------------------------------------------------
 static void ft1000_reset_asic(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 tempword;
 
 	DEBUG(1, "ft1000_hw:ft1000_reset_asic called\n");
 
 	(*info->ft1000_reset) (info->link);
+	info->ASICResetNum++;
 
 	// Let's use the register provided by the Magnemite ASIC to reset the
 	// ASIC and DSP.
@@ -367,21 +404,21 @@ static void ft1000_reset_asic(struct net_device *dev)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_reset_card
-// Description: This function will reset the card
+// Descripton: This function will reset the card
 // Input:
 //     dev    - device structure
 // Output:
-//     status - false (card reset fail)
-//              true  (card reset successful)
+//     status - FALSE (card reset fail)
+//              TRUE  (card reset successful)
 //
 //---------------------------------------------------------------------------
 static int ft1000_reset_card(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 tempword;
 	int i;
 	unsigned long flags;
-	struct prov_record *ptr;
+	PPROV_RECORD ptr;
 
 	DEBUG(1, "ft1000_hw:ft1000_reset_card called.....\n");
 
@@ -396,7 +433,7 @@ static int ft1000_reset_card(struct net_device *dev)
 	while (list_empty(&info->prov_list) == 0) {
 		DEBUG(0,
 			  "ft1000_hw:ft1000_reset_card:deleting provisioning record\n");
-		ptr = list_entry(info->prov_list.next, struct prov_record, list);
+		ptr = list_entry(info->prov_list.next, PROV_RECORD, list);
 		list_del(&ptr->list);
 		kfree(ptr->pprov_data);
 		kfree(ptr);
@@ -416,12 +453,14 @@ static int ft1000_reset_card(struct net_device *dev)
 	if (ft1000_card_present == 1) {
 		spin_lock_irqsave(&info->dpram_lock, flags);
 		if (info->AsicID == ELECTRABUZZ_ID) {
-			ft1000_write_reg(dev, FT1000_REG_DPRAM_ADDR,
-					 FT1000_DPRAM_RX_BASE);
-			for (i = 0; i < MAX_DSP_SESS_REC; i++) {
-				info->DSPSess.Rec[i] =
-					ft1000_read_reg(dev,
-							FT1000_REG_DPRAM_DATA);
+			if (info->DspHibernateFlag == 0) {
+				ft1000_write_reg(dev, FT1000_REG_DPRAM_ADDR,
+						 FT1000_DPRAM_RX_BASE);
+				for (i = 0; i < MAX_DSP_SESS_REC; i++) {
+					info->DSPSess.Rec[i] =
+						ft1000_read_reg(dev,
+								FT1000_REG_DPRAM_DATA);
+				}
 			}
 		} else {
 			ft1000_write_reg(dev, FT1000_REG_DPRAM_ADDR,
@@ -438,6 +477,8 @@ static int ft1000_reset_card(struct net_device *dev)
 	mdelay(10);
 	//reset ASIC
 	ft1000_reset_asic(dev);
+
+	info->DSPResetNum++;
 
 	DEBUG(1, "ft1000_hw:ft1000_reset_card:downloading dsp image\n");
 
@@ -472,7 +513,7 @@ static int ft1000_reset_card(struct net_device *dev)
 		if (i == 50) {
 			DEBUG(0,
 				  "ft1000_hw:ft1000_reset_card:No FEFE detected from DSP\n");
-			return false;
+			return FALSE;
 		}
 
 	} else {
@@ -483,7 +524,7 @@ static int ft1000_reset_card(struct net_device *dev)
 
 	if (card_download(dev, fw_entry->data, fw_entry->size)) {
 		DEBUG(1, "card download unsuccessful\n");
-		return false;
+		return FALSE;
 	} else {
 		DEBUG(1, "card download successful\n");
 	}
@@ -519,20 +560,20 @@ static int ft1000_reset_card(struct net_device *dev)
 //	poll_timer.data = (u_long)dev;
 //	add_timer(&poll_timer);
 
-	return true;
+	return TRUE;
 
 }
 
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_chkcard
-// Description: This function will check if the device is presently available on
+// Descripton: This function will check if the device is presently available on
 //             the system.
 // Input:
 //     dev    - device structure
 // Output:
-//     status - false (device is not present)
-//              true  (device is present)
+//     status - FALSE (device is not present)
+//              TRUE  (device is present)
 //
 //---------------------------------------------------------------------------
 static int ft1000_chkcard(struct net_device *dev)
@@ -545,7 +586,7 @@ static int ft1000_chkcard(struct net_device *dev)
 	if (tempword == 0) {
 		DEBUG(1,
 			  "ft1000_hw:ft1000_chkcard: IMASK = 0 Card not detected\n");
-		return false;
+		return FALSE;
 	}
 	// The system will return the value of 0xffff for the version register
 	// if the device is not present.
@@ -553,16 +594,16 @@ static int ft1000_chkcard(struct net_device *dev)
 	if (tempword == 0xffff) {
 		DEBUG(1,
 			  "ft1000_hw:ft1000_chkcard: Version = 0xffff Card not detected\n");
-		return false;
+		return FALSE;
 	}
-	return true;
+	return TRUE;
 }
 
 
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_hbchk
-// Description: This function will perform the heart beat check of the DSP as
+// Descripton: This function will perform the heart beat check of the DSP as
 //             well as the ASIC.
 // Input:
 //     dev    - device structure
@@ -574,10 +615,10 @@ static void ft1000_hbchk(u_long data)
 {
 	struct net_device *dev = (struct net_device *)data;
 
-	struct ft1000_info *info;
-	u16 tempword;
+	FT1000_INFO *info;
+	USHORT tempword;
 
-	info = netdev_priv(dev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
 	if (info->CardReady == 1) {
 		// Perform dsp heartbeat check
@@ -783,19 +824,19 @@ static void ft1000_hbchk(u_long data)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_send_cmd
-// Description:
+// Descripton:
 // Input:
 // Output:
 //
 //---------------------------------------------------------------------------
 void ft1000_send_cmd (struct net_device *dev, u16 *ptempbuffer, int size, u16 qtype)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	int i;
 	u16 tempword;
 	unsigned long flags;
 
-	size += sizeof(struct pseudo_hdr);
+	size += PSEUDOSZ;
 	// check for odd byte and increment to 16-bit word align value
 	if ((size & 0x0001)) {
 		size++;
@@ -863,7 +904,7 @@ void ft1000_send_cmd (struct net_device *dev, u16 *ptempbuffer, int size, u16 qt
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_receive_cmd
-// Description: This function will read a message from the dpram area.
+// Descripton: This function will read a message from the dpram area.
 // Input:
 //    dev - network device structure
 //    pbuffer - caller supply address to buffer
@@ -873,9 +914,9 @@ void ft1000_send_cmd (struct net_device *dev, u16 *ptempbuffer, int size, u16 qt
 //          = 1 (successful)
 //
 //---------------------------------------------------------------------------
-bool ft1000_receive_cmd(struct net_device *dev, u16 * pbuffer, int maxsz, u16 *pnxtph)
+BOOLEAN ft1000_receive_cmd(struct net_device *dev, u16 * pbuffer, int maxsz, u16 *pnxtph)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 size;
 	u16 *ppseudohdr;
 	int i;
@@ -883,18 +924,18 @@ bool ft1000_receive_cmd(struct net_device *dev, u16 * pbuffer, int maxsz, u16 *p
 	unsigned long flags;
 
 	if (info->AsicID == ELECTRABUZZ_ID) {
-		size = ( ft1000_read_dpram(dev, *pnxtph) ) + sizeof(struct pseudo_hdr);
+		size = ( ft1000_read_dpram(dev, *pnxtph) ) + PSEUDOSZ;
 	} else {
 		size =
 			ntohs(ft1000_read_dpram_mag_16
 			  (dev, FT1000_MAG_PH_LEN,
-			   FT1000_MAG_PH_LEN_INDX)) + sizeof(struct pseudo_hdr);
+			   FT1000_MAG_PH_LEN_INDX)) + PSEUDOSZ;
 	}
 	if (size > maxsz) {
 		DEBUG(1,
 			  "FT1000:ft1000_receive_cmd:Invalid command length = %d\n",
 			  size);
-		return false;
+		return FALSE;
 	} else {
 		ppseudohdr = (u16 *) pbuffer;
 		spin_lock_irqsave(&info->dpram_lock, flags);
@@ -949,16 +990,16 @@ bool ft1000_receive_cmd(struct net_device *dev, u16 * pbuffer, int maxsz, u16 *p
 			DEBUG(1,
 				  "FT1000:ft1000_receive_cmd:Pseudo header checksum mismatch\n");
 			// Drop this message
-			return false;
+			return FALSE;
 		}
-		return true;
+		return TRUE;
 	}
 }
 
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_proc_drvmsg
-// Description: This function will process the various driver messages.
+// Descripton: This function will process the various driver messages.
 // Input:
 //     dev    - device structure
 //     pnxtph - pointer to next pseudo header
@@ -968,17 +1009,17 @@ bool ft1000_receive_cmd(struct net_device *dev, u16 * pbuffer, int maxsz, u16 *p
 //---------------------------------------------------------------------------
 void ft1000_proc_drvmsg(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 msgtype;
 	u16 tempword;
-	struct media_msg *pmediamsg;
-	struct dsp_init_msg *pdspinitmsg;
-	struct drv_msg *pdrvmsg;
+	PMEDIAMSG pmediamsg;
+	PDSPINITMSG pdspinitmsg;
+	PDRVMSG pdrvmsg;
 	u16 len;
 	u16 i;
-	struct prov_record *ptr;
-	struct pseudo_hdr *ppseudo_hdr;
-	u16 *pmsg;
+	PPROV_RECORD ptr;
+	PPSEUDO_HDR ppseudo_hdr;
+	PUSHORT pmsg;
 	struct timeval tv;
 	union {
 		u8 byte[2];
@@ -994,7 +1035,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
     if ( ft1000_receive_cmd(dev, &cmdbuffer[0], MAX_CMD_SQSIZE, &tempword) ) {
 
 		// Get the message type which is total_len + PSEUDO header + msgtype + message body
-		pdrvmsg = (struct drv_msg *) & cmdbuffer[0];
+		pdrvmsg = (PDRVMSG) & cmdbuffer[0];
 		msgtype = ntohs(pdrvmsg->type);
 		DEBUG(1, "Command message type = 0x%x\n", msgtype);
 		switch (msgtype) {
@@ -1017,12 +1058,12 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 				}
 				ptr =
 					list_entry(info->prov_list.next,
-						   struct prov_record, list);
+						   PROV_RECORD, list);
 				len = *(u16 *) ptr->pprov_data;
 				len = htons(len);
 
-				pmsg = (u16 *) ptr->pprov_data;
-				ppseudo_hdr = (struct pseudo_hdr *) pmsg;
+				pmsg = (PUSHORT) ptr->pprov_data;
+				ppseudo_hdr = (PPSEUDO_HDR) pmsg;
 				// Insert slow queue sequence number
 				ppseudo_hdr->seq_num = info->squeseqnum++;
 				ppseudo_hdr->portsrc = 0;
@@ -1046,7 +1087,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 			info->CardReady = 1;
 			break;
 		case MEDIA_STATE:
-			pmediamsg = (struct media_msg *) & cmdbuffer[0];
+			pmediamsg = (PMEDIAMSG) & cmdbuffer[0];
 			if (info->ProgConStat != 0xFF) {
 			if (pmediamsg->state) {
 				DEBUG(1, "Media is up\n");
@@ -1078,7 +1119,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
             }
 			break;
 		case DSP_INIT_MSG:
-			pdspinitmsg = (struct dsp_init_msg *) & cmdbuffer[0];
+			pdspinitmsg = (PDSPINITMSG) & cmdbuffer[0];
 			memcpy(info->DspVer, pdspinitmsg->DspVer, DSPVERSZ);
 			DEBUG(1, "DSPVER = 0x%2x 0x%2x 0x%2x 0x%2x\n",
 				  info->DspVer[0], info->DspVer[1], info->DspVer[2],
@@ -1095,7 +1136,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 			dev->dev_addr[5] = info->eui64[7];
 
 			if (ntohs(pdspinitmsg->length) ==
-				(sizeof(struct dsp_init_msg) - 20)) {
+				(sizeof(DSPINITMSG) - 20)) {
 				memcpy(info->ProductMode,
 					   pdspinitmsg->ProductMode, MODESZ);
 				memcpy(info->RfCalVer, pdspinitmsg->RfCalVer,
@@ -1112,7 +1153,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 			tempword = ntohs(pdrvmsg->length);
 			info->DSPInfoBlklen = tempword;
 			if (tempword < (MAX_DSP_SESS_REC - 4)) {
-				pmsg = (u16 *) & pdrvmsg->data[0];
+				pmsg = (PUSHORT) & pdrvmsg->data[0];
 				for (i = 0; i < ((tempword + 1) / 2); i++) {
 					DEBUG(1,
 						  "FT1000:drivermsg:dsp info data = 0x%x\n",
@@ -1124,6 +1165,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 		case DSP_GET_INFO:
 			DEBUG(1, "FT1000:drivermsg:Got DSP_GET_INFO\n");
 			// copy dsp info block to dsp
+			info->DrvMsgPend = 1;
 			// allow any outstanding ioctl to finish
 			mdelay(10);
 			tempword = ft1000_read_reg(dev, FT1000_REG_DOORBELL);
@@ -1139,8 +1181,8 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 			if ((tempword & FT1000_DB_DPRAM_TX) == 0) {
 				// Put message into Slow Queue
 				// Form Pseudo header
-				pmsg = (u16 *) info->DSPInfoBlk;
-				ppseudo_hdr = (struct pseudo_hdr *) pmsg;
+				pmsg = (PUSHORT) info->DSPInfoBlk;
+				ppseudo_hdr = (PPSEUDO_HDR) pmsg;
 				ppseudo_hdr->length =
 					htons(info->DSPInfoBlklen + 4);
 				ppseudo_hdr->source = 0x10;
@@ -1164,13 +1206,15 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 				info->DSPInfoBlk[8] = 0x7200;
 				info->DSPInfoBlk[9] =
 					htons(info->DSPInfoBlklen);
-				ft1000_send_cmd (dev, (u16 *)info->DSPInfoBlk, (u16)(info->DSPInfoBlklen+4), 0);
+				ft1000_send_cmd (dev, (PUSHORT)info->DSPInfoBlk, (USHORT)(info->DSPInfoBlklen+4), 0);
 			}
+			info->DrvMsgPend = 0;
 
 			break;
 		case GET_DRV_ERR_RPT_MSG:
 			DEBUG(1, "FT1000:drivermsg:Got GET_DRV_ERR_RPT_MSG\n");
 			// copy driver error message to dsp
+			info->DrvMsgPend = 1;
 			// allow any outstanding ioctl to finish
 			mdelay(10);
 			tempword = ft1000_read_reg(dev, FT1000_REG_DOORBELL);
@@ -1186,8 +1230,8 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 			if ((tempword & FT1000_DB_DPRAM_TX) == 0) {
 				// Put message into Slow Queue
 				// Form Pseudo header
-				pmsg = (u16 *) & tempbuffer[0];
-				ppseudo_hdr = (struct pseudo_hdr *) pmsg;
+				pmsg = (PUSHORT) & tempbuffer[0];
+				ppseudo_hdr = (PPSEUDO_HDR) pmsg;
 				ppseudo_hdr->length = htons(0x0012);
 				ppseudo_hdr->source = 0x10;
 				ppseudo_hdr->destination = 0x20;
@@ -1207,7 +1251,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
                 for (i=1; i<7; i++) {
                     ppseudo_hdr->checksum ^= *pmsg++;
                 }
-				pmsg = (u16 *) & tempbuffer[16];
+				pmsg = (PUSHORT) & tempbuffer[16];
 				*pmsg++ = htons(RSP_DRV_ERR_RPT_MSG);
 				*pmsg++ = htons(0x000e);
 				*pmsg++ = htons(info->DSP_TIME[0]);
@@ -1222,9 +1266,10 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 				*pmsg++ = convert.wrd;
 				*pmsg++ = htons(info->DrvErrNum);
 
-				ft1000_send_cmd (dev, (u16 *)&tempbuffer[0], (u16)(0x0012), 0);
+				ft1000_send_cmd (dev, (PUSHORT)&tempbuffer[0], (USHORT)(0x0012), 0);
 				info->DrvErrNum = 0;
 			}
+			info->DrvMsgPend = 0;
 
 			break;
 		default:
@@ -1236,7 +1281,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_parse_dpram_msg
-// Description: This function will parse the message received from the DSP
+// Descripton: This function will parse the message received from the DSP
 //             via the DPRAM interface.
 // Input:
 //     dev    - device structure
@@ -1247,7 +1292,7 @@ void ft1000_proc_drvmsg(struct net_device *dev)
 //---------------------------------------------------------------------------
 int ft1000_parse_dpram_msg(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 doorbell;
 	u16 portid;
 	u16 nxtph;
@@ -1291,11 +1336,13 @@ int ft1000_parse_dpram_msg(struct net_device *dev)
 			ft1000_write_reg(dev, FT1000_REG_SUP_CTRL,
 					 HOST_INTF_BE);
 		}
+		info->DspAsicReset = 0;
 	}
 
 	if (doorbell & FT1000_DSP_ASIC_RESET) {
 		DEBUG(0,
 			  "FT1000:ft1000_parse_dpram_msg: Got a dsp ASIC reset message\n");
+		info->DspAsicReset = 1;
 		ft1000_write_reg(dev, FT1000_REG_DOORBELL,
 				 FT1000_DSP_ASIC_RESET);
 		udelay(200);
@@ -1317,7 +1364,7 @@ int ft1000_parse_dpram_msg(struct net_device *dev)
 		}
 		DEBUG(1, "FT1000:ft1000_parse_dpram_msg:total length = %d\n",
 			  total_len);
-		if ((total_len < MAX_CMD_SQSIZE) && (total_len > sizeof(struct pseudo_hdr))) {
+		if ((total_len < MAX_CMD_SQSIZE) && (total_len > PSEUDOSZ)) {
             total_len += nxtph;
             cnt = 0;
             // ft1000_read_reg will return a value that needs to be byteswap
@@ -1391,7 +1438,7 @@ int ft1000_parse_dpram_msg(struct net_device *dev)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_flush_fifo
-// Description: This function will flush one packet from the downlink
+// Descripton: This function will flush one packet from the downlink
 //             FIFO.
 // Input:
 //     dev      - device structure
@@ -1402,7 +1449,7 @@ int ft1000_parse_dpram_msg(struct net_device *dev)
 //---------------------------------------------------------------------------
 static void ft1000_flush_fifo(struct net_device *dev, u16 DrvErrNum)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 i;
 	u32 templong;
 	u16 tempword;
@@ -1536,7 +1583,7 @@ static void ft1000_flush_fifo(struct net_device *dev, u16 DrvErrNum)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_copy_up_pkt
-// Description: This function will pull Flarion packets out of the Downlink
+// Descripton: This function will pull Flarion packets out of the Downlink
 //             FIFO and convert it to an ethernet packet.  The ethernet packet will
 //             then be deliver to the TCP/IP stack.
 // Input:
@@ -1549,7 +1596,7 @@ static void ft1000_flush_fifo(struct net_device *dev, u16 DrvErrNum)
 int ft1000_copy_up_pkt(struct net_device *dev)
 {
 	u16 tempword;
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 len;
 	struct sk_buff *skb;
 	u16 i;
@@ -1664,7 +1711,7 @@ int ft1000_copy_up_pkt(struct net_device *dev)
 			tempword = ft1000_read_reg(dev, FT1000_REG_DFIFO);
 			*pbuffer++ = (u8) (tempword >> 8);
 			*pbuffer++ = (u8) tempword;
-			if (ft1000_chkcard(dev) == false) {
+			if (ft1000_chkcard(dev) == FALSE) {
 				kfree_skb(skb);
 				return FAILURE;
 			}
@@ -1722,7 +1769,7 @@ int ft1000_copy_up_pkt(struct net_device *dev)
 //---------------------------------------------------------------------------
 //
 // Function:   ft1000_copy_down_pkt
-// Description: This function will take an ethernet packet and convert it to
+// Descripton: This function will take an ethernet packet and convert it to
 //             a Flarion packet prior to sending it to the ASIC Downlink
 //             FIFO.
 // Input:
@@ -1736,11 +1783,11 @@ int ft1000_copy_up_pkt(struct net_device *dev)
 //---------------------------------------------------------------------------
 int ft1000_copy_down_pkt(struct net_device *dev, u16 * packet, u16 len)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	union {
-		struct pseudo_hdr blk;
-		u16 buff[sizeof(struct pseudo_hdr) >> 1];
-		u8 buffc[sizeof(struct pseudo_hdr)];
+		PSEUDO_HDR blk;
+		u16 buff[sizeof(PSEUDO_HDR) >> 1];
+		u8 buffc[sizeof(PSEUDO_HDR)];
 	} pseudo;
 	int i;
 	u32 *plong;
@@ -1889,14 +1936,14 @@ int ft1000_copy_down_pkt(struct net_device *dev, u16 * packet, u16 len)
 	}
 
 	info->stats.tx_packets++;
-	// Add 14 bytes for MAC address plus ethernet type
+	// Add 14 bytes for MAC adddress plus ethernet type
 	info->stats.tx_bytes += (len + 14);
 	return SUCCESS;
 }
 
 static struct net_device_stats *ft1000_stats(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	return (&info->stats);
 }
 
@@ -1920,7 +1967,7 @@ static int ft1000_open(struct net_device *dev)
 
 static int ft1000_close(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 
 	DEBUG(0, "ft1000_hw: ft1000_close()\n");
 
@@ -1942,7 +1989,7 @@ static int ft1000_close(struct net_device *dev)
 
 static int ft1000_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u8 *pdata;
 
 	DEBUG(1, "ft1000_hw: ft1000_start_xmit()\n");
@@ -1979,7 +2026,7 @@ static int ft1000_start_xmit(struct sk_buff *skb, struct net_device *dev)
 static irqreturn_t ft1000_interrupt(int irq, void *dev_id)
 {
 	struct net_device *dev = (struct net_device *)dev_id;
-	struct ft1000_info *info = netdev_priv(dev);
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
 	u16 tempword;
 	u16 inttype;
 	int cnt;
@@ -1991,7 +2038,7 @@ static irqreturn_t ft1000_interrupt(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
-	if (ft1000_chkcard(dev) == false) {
+	if (ft1000_chkcard(dev) == FALSE) {
 		ft1000_disable_interrupts(dev);
 		return IRQ_HANDLED;
 	}
@@ -2044,8 +2091,8 @@ static irqreturn_t ft1000_interrupt(int irq, void *dev_id)
 
 void stop_ft1000_card(struct net_device *dev)
 {
-	struct ft1000_info *info = netdev_priv(dev);
-	struct prov_record *ptr;
+	FT1000_INFO *info = (FT1000_INFO *) netdev_priv(dev);
+	PPROV_RECORD ptr;
 //	int cnt;
 
 	DEBUG(0, "ft1000_hw: stop_ft1000_card()\n");
@@ -2057,7 +2104,7 @@ void stop_ft1000_card(struct net_device *dev)
 
 	// Make sure we free any memory reserve for provisioning
 	while (list_empty(&info->prov_list) == 0) {
-		ptr = list_entry(info->prov_list.next, struct prov_record, list);
+		ptr = list_entry(info->prov_list.next, PROV_RECORD, list);
 		list_del(&ptr->list);
 		kfree(ptr->pprov_data);
 		kfree(ptr);
@@ -2079,8 +2126,8 @@ void stop_ft1000_card(struct net_device *dev)
 static void ft1000_get_drvinfo(struct net_device *dev,
 				   struct ethtool_drvinfo *info)
 {
-	struct ft1000_info *ft_info;
-	ft_info = netdev_priv(dev);
+	FT1000_INFO *ft_info;
+	ft_info = (FT1000_INFO *) netdev_priv(dev);
 
 	snprintf(info->driver, 32, "ft1000");
 	snprintf(info->bus_info, ETHTOOL_BUSINFO_LEN, "PCMCIA 0x%lx",
@@ -2091,8 +2138,8 @@ static void ft1000_get_drvinfo(struct net_device *dev,
 
 static u32 ft1000_get_link(struct net_device *dev)
 {
-	struct ft1000_info *info;
-	info = netdev_priv(dev);
+	FT1000_INFO *info;
+	info = (FT1000_INFO *) netdev_priv(dev);
 	return info->mediastate;
 }
 
@@ -2101,11 +2148,13 @@ static const struct ethtool_ops ops = {
 	.get_link = ft1000_get_link
 };
 
-struct net_device *init_ft1000_card(struct pcmcia_device *link,
-					void *ft1000_reset)
+struct net_device *init_ft1000_card(unsigned short irq, int port,
+					unsigned char *mac_addr, void *ft1000_reset,
+					void *link, struct device *fdev)
 {
-	struct ft1000_info *info;
+	FT1000_INFO *info;
 	struct net_device *dev;
+	int i;
 
 	static const struct net_device_ops ft1000ops =		// Slavius 21.10.2009 due to kernel changes
 	{
@@ -2116,8 +2165,8 @@ struct net_device *init_ft1000_card(struct pcmcia_device *link,
 	};
 
 	DEBUG(1, "ft1000_hw: init_ft1000_card()\n");
-	DEBUG(1, "ft1000_hw: irq = %d\n", link->irq);
-	DEBUG(1, "ft1000_hw: port = 0x%04x\n", link->resource[0]->start);
+	DEBUG(1, "ft1000_hw: irq = %d\n", irq);
+	DEBUG(1, "ft1000_hw: port = 0x%04x\n", port);
 
 	flarion_ft1000_cnt++;
 
@@ -2129,16 +2178,16 @@ struct net_device *init_ft1000_card(struct pcmcia_device *link,
 		return NULL;
 	}
 
-	dev = alloc_etherdev(sizeof(struct ft1000_info));
+	dev = alloc_etherdev(sizeof(FT1000_INFO));
 	if (!dev) {
 		printk(KERN_ERR "ft1000: failed to allocate etherdev\n");
 		return NULL;
 	}
 
-	SET_NETDEV_DEV(dev, &link->dev);
-	info = netdev_priv(dev);
+	SET_NETDEV_DEV(dev, fdev);
+	info = (FT1000_INFO *) netdev_priv(dev);
 
-	memset(info, 0, sizeof(struct ft1000_info));
+	memset(info, 0, sizeof(FT1000_INFO));
 
 	DEBUG(1, "address of dev = 0x%8x\n", (u32) dev);
 	DEBUG(1, "address of dev info = 0x%8x\n", (u32) info);
@@ -2148,11 +2197,16 @@ struct net_device *init_ft1000_card(struct pcmcia_device *link,
 
 	spin_lock_init(&info->dpram_lock);
 	info->DrvErrNum = 0;
+	info->ASICResetNum = 0;
 	info->registered = 1;
 	info->link = link;
 	info->ft1000_reset = ft1000_reset;
 	info->mediastate = 0;
 	info->fifo_cnt = 0;
+	info->DeviceCreated = FALSE;
+	info->DeviceMajor = 0;
+	info->CurrentInterruptEnableMask = ISR_DEFAULT_MASK;
+	info->InterruptsEnabled = FALSE;
 	info->CardReady = 0;
 	info->DSP_TIME[0] = 0;
 	info->DSP_TIME[1] = 0;
@@ -2173,12 +2227,14 @@ struct net_device *init_ft1000_card(struct pcmcia_device *link,
 
 	DEBUG(0, "device name = %s\n", dev->name);
 
-	dev->irq = link->irq;
-	dev->base_addr = link->resource[0]->start;
-	if (pcmcia_get_mac_from_cis(link, dev)) {
-		printk(KERN_ERR "ft1000: Could not read mac address\n");
-		goto err_dev;
+	for (i = 0; i < 6; i++) {
+		dev->dev_addr[i] = mac_addr[i];
+		DEBUG(1, "ft1000_hw: mac_addr %d = 0x%02x\n", i, mac_addr[i]);
 	}
+
+	netif_stop_queue(dev);
+	dev->irq = irq;
+	dev->base_addr = port;
 
 	if (request_irq(dev->irq, ft1000_interrupt, IRQF_SHARED, dev->name, dev)) {
 		printk(KERN_ERR "ft1000: Could not request_irq\n");
@@ -2198,13 +2254,13 @@ struct net_device *init_ft1000_card(struct pcmcia_device *link,
 	info->AsicID = ft1000_read_reg(dev, FT1000_REG_ASIC_ID);
 	if (info->AsicID == ELECTRABUZZ_ID) {
 		DEBUG(0, "ft1000_hw: ELECTRABUZZ ASIC\n");
-		if (request_firmware(&fw_entry, "ft1000.img", &link->dev) != 0) {
+		if (request_firmware(&fw_entry, "ft1000.img", fdev) != 0) {
 			printk(KERN_INFO "ft1000: Could not open ft1000.img\n");
 			goto err_unreg;
 		}
 	} else {
 		DEBUG(0, "ft1000_hw: MAGNEMITE ASIC\n");
-		if (request_firmware(&fw_entry, "ft2000.img", &link->dev) != 0) {
+		if (request_firmware(&fw_entry, "ft2000.img", fdev) != 0) {
 			printk(KERN_INFO "ft1000: Could not open ft2000.img\n");
 			goto err_unreg;
 		}
@@ -2232,3 +2288,7 @@ err_dev:
 	free_netdev(dev);
 	return NULL;
 }
+
+EXPORT_SYMBOL(init_ft1000_card);
+EXPORT_SYMBOL(stop_ft1000_card);
+EXPORT_SYMBOL(flarion_ft1000_cnt);

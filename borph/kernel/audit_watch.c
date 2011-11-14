@@ -144,9 +144,9 @@ int audit_watch_compare(struct audit_watch *watch, unsigned long ino, dev_t dev)
 }
 
 /* Initialize a parent watch entry. */
-static struct audit_parent *audit_init_parent(struct path *path)
+static struct audit_parent *audit_init_parent(struct nameidata *ndp)
 {
-	struct inode *inode = path->dentry->d_inode;
+	struct inode *inode = ndp->path.dentry->d_inode;
 	struct audit_parent *parent;
 	int ret;
 
@@ -353,38 +353,51 @@ static void audit_remove_parent_watches(struct audit_parent *parent)
 }
 
 /* Get path information necessary for adding watches. */
-static int audit_get_nd(struct audit_watch *watch, struct path *parent)
+static int audit_get_nd(char *path, struct nameidata **ndp, struct nameidata **ndw)
 {
-	struct nameidata nd;
-	struct dentry *d;
+	struct nameidata *ndparent, *ndwatch;
 	int err;
 
-	err = kern_path_parent(watch->path, &nd);
-	if (err)
+	ndparent = kmalloc(sizeof(*ndparent), GFP_KERNEL);
+	if (unlikely(!ndparent))
+		return -ENOMEM;
+
+	ndwatch = kmalloc(sizeof(*ndwatch), GFP_KERNEL);
+	if (unlikely(!ndwatch)) {
+		kfree(ndparent);
+		return -ENOMEM;
+	}
+
+	err = path_lookup(path, LOOKUP_PARENT, ndparent);
+	if (err) {
+		kfree(ndparent);
+		kfree(ndwatch);
 		return err;
-
-	if (nd.last_type != LAST_NORM) {
-		path_put(&nd.path);
-		return -EINVAL;
 	}
 
-	mutex_lock_nested(&nd.path.dentry->d_inode->i_mutex, I_MUTEX_PARENT);
-	d = lookup_one_len(nd.last.name, nd.path.dentry, nd.last.len);
-	if (IS_ERR(d)) {
-		mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
-		path_put(&nd.path);
-		return PTR_ERR(d);
+	err = path_lookup(path, 0, ndwatch);
+	if (err) {
+		kfree(ndwatch);
+		ndwatch = NULL;
 	}
-	if (d->d_inode) {
-		/* update watch filter fields */
-		watch->dev = d->d_inode->i_sb->s_dev;
-		watch->ino = d->d_inode->i_ino;
-	}
-	mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
 
-	*parent = nd.path;
-	dput(d);
+	*ndp = ndparent;
+	*ndw = ndwatch;
+
 	return 0;
+}
+
+/* Release resources used for watch path information. */
+static void audit_put_nd(struct nameidata *ndp, struct nameidata *ndw)
+{
+	if (ndp) {
+		path_put(&ndp->path);
+		kfree(ndp);
+	}
+	if (ndw) {
+		path_put(&ndw->path);
+		kfree(ndw);
+	}
 }
 
 /* Associate the given rule with an existing parent.
@@ -427,24 +440,31 @@ int audit_add_watch(struct audit_krule *krule, struct list_head **list)
 {
 	struct audit_watch *watch = krule->watch;
 	struct audit_parent *parent;
-	struct path parent_path;
+	struct nameidata *ndp = NULL, *ndw = NULL;
 	int h, ret = 0;
 
 	mutex_unlock(&audit_filter_mutex);
 
 	/* Avoid calling path_lookup under audit_filter_mutex. */
-	ret = audit_get_nd(watch, &parent_path);
+	ret = audit_get_nd(watch->path, &ndp, &ndw);
+	if (ret) {
+		/* caller expects mutex locked */
+		mutex_lock(&audit_filter_mutex);
+		goto error;
+	}
 
-	/* caller expects mutex locked */
 	mutex_lock(&audit_filter_mutex);
 
-	if (ret)
-		return ret;
+	/* update watch filter fields */
+	if (ndw) {
+		watch->dev = ndw->path.dentry->d_inode->i_sb->s_dev;
+		watch->ino = ndw->path.dentry->d_inode->i_ino;
+	}
 
 	/* either find an old parent or attach a new one */
-	parent = audit_find_parent(parent_path.dentry->d_inode);
+	parent = audit_find_parent(ndp->path.dentry->d_inode);
 	if (!parent) {
-		parent = audit_init_parent(&parent_path);
+		parent = audit_init_parent(ndp);
 		if (IS_ERR(parent)) {
 			ret = PTR_ERR(parent);
 			goto error;
@@ -459,8 +479,9 @@ int audit_add_watch(struct audit_krule *krule, struct list_head **list)
 	h = audit_hash_ino((u32)watch->ino);
 	*list = &audit_inode_hash[h];
 error:
-	path_put(&parent_path);
+	audit_put_nd(ndp, ndw);		/* NULL args OK */
 	return ret;
+
 }
 
 void audit_remove_watch_rule(struct audit_krule *krule)

@@ -673,7 +673,7 @@ struct async_s {
 
 
 /*------------------------------------------------------------------*/
-/* auxiliary states for supplementary services                     */
+/* auxilliary states for supplementary services                     */
 /*------------------------------------------------------------------*/
 
 #define IDLE                0

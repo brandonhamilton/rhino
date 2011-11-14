@@ -50,7 +50,8 @@ static int atbm8830_write_reg(struct atbm_state *priv, u16 reg, u8 data)
 	msg2.addr = dev_addr;
 
 	if (debug >= 2)
-		dprintk("%s: reg=0x%04X, data=0x%02X\n", __func__, reg, data);
+		printk(KERN_DEBUG "%s: reg=0x%04X, data=0x%02X\n",
+			__func__, reg, data);
 
 	ret = i2c_transfer(priv->i2c, &msg1, 1);
 	if (ret != 1)
@@ -76,7 +77,8 @@ static int atbm8830_read_reg(struct atbm_state *priv, u16 reg, u8 *p_data)
 
 	ret = i2c_transfer(priv->i2c, &msg1, 1);
 	if (ret != 1) {
-		dprintk("%s: error reg=0x%04x, ret=%i\n", __func__, reg, ret);
+		dprintk(KERN_DEBUG "%s: error reg=0x%04x, ret=%i\n",
+			__func__, reg, ret);
 		return -EIO;
 	}
 
@@ -86,7 +88,7 @@ static int atbm8830_read_reg(struct atbm_state *priv, u16 reg, u8 *p_data)
 
 	*p_data = buf2[0];
 	if (debug >= 2)
-		dprintk("%s: reg=0x%04X, data=0x%02X\n",
+		printk(KERN_DEBUG "%s: reg=0x%04X, data=0x%02X\n",
 			__func__, reg, buf2[0]);
 
 	return 0;

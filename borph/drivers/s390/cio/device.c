@@ -127,7 +127,7 @@ static int ccw_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return ret;
 }
 
-static struct bus_type ccw_bus_type;
+struct bus_type ccw_bus_type;
 
 static void io_subchannel_irq(struct subchannel *);
 static int io_subchannel_probe(struct subchannel *);
@@ -172,11 +172,9 @@ static int io_subchannel_settle(void)
 }
 
 static struct css_driver io_subchannel_driver = {
-	.drv = {
-		.owner = THIS_MODULE,
-		.name = "io_subchannel",
-	},
+	.owner = THIS_MODULE,
 	.subchannel_type = io_subchannel_ids,
+	.name = "io_subchannel",
 	.irq = io_subchannel_irq,
 	.sch_event = io_subchannel_sch_event,
 	.chp_event = io_subchannel_chp_event,
@@ -541,24 +539,15 @@ static ssize_t online_store (struct device *dev, struct device_attribute *attr,
 	int force, ret;
 	unsigned long i;
 
-	/* Prevent conflict between multiple on-/offline processing requests. */
+	if (!dev_fsm_final_state(cdev) &&
+	    cdev->private->state != DEV_STATE_DISCONNECTED)
+		return -EAGAIN;
 	if (atomic_cmpxchg(&cdev->private->onoff, 0, 1) != 0)
 		return -EAGAIN;
-	/* Prevent conflict between internal I/Os and on-/offline processing. */
-	if (!dev_fsm_final_state(cdev) &&
-	    cdev->private->state != DEV_STATE_DISCONNECTED) {
-		ret = -EAGAIN;
-		goto out_onoff;
-	}
-	/* Prevent conflict between pending work and on-/offline processing.*/
-	if (work_pending(&cdev->private->todo_work)) {
-		ret = -EAGAIN;
-		goto out_onoff;
-	}
 
-	if (cdev->drv && !try_module_get(cdev->drv->driver.owner)) {
-		ret = -EINVAL;
-		goto out_onoff;
+	if (cdev->drv && !try_module_get(cdev->drv->owner)) {
+		atomic_set(&cdev->private->onoff, 0);
+		return -EINVAL;
 	}
 	if (!strncmp(buf, "force\n", count)) {
 		force = 1;
@@ -582,8 +571,7 @@ static ssize_t online_store (struct device *dev, struct device_attribute *attr,
 	}
 out:
 	if (cdev->drv)
-		module_put(cdev->drv->driver.owner);
-out_onoff:
+		module_put(cdev->drv->owner);
 	atomic_set(&cdev->private->onoff, 0);
 	return (ret < 0) ? ret : count;
 }
@@ -1042,7 +1030,6 @@ static void io_subchannel_init_fields(struct subchannel *sch)
  */
 static int io_subchannel_probe(struct subchannel *sch)
 {
-	struct io_subchannel_private *io_priv;
 	struct ccw_device *cdev;
 	int rc;
 
@@ -1086,11 +1073,10 @@ static int io_subchannel_probe(struct subchannel *sch)
 	if (rc)
 		goto out_schedule;
 	/* Allocate I/O subchannel private data. */
-	io_priv = kzalloc(sizeof(*io_priv), GFP_KERNEL | GFP_DMA);
-	if (!io_priv)
+	sch->private = kzalloc(sizeof(struct io_subchannel_private),
+			       GFP_KERNEL | GFP_DMA);
+	if (!sch->private)
 		goto out_schedule;
-
-	set_io_private(sch, io_priv);
 	css_schedule_eval(sch->schid);
 	return 0;
 
@@ -1104,7 +1090,6 @@ out_schedule:
 static int
 io_subchannel_remove (struct subchannel *sch)
 {
-	struct io_subchannel_private *io_priv = to_io_private(sch);
 	struct ccw_device *cdev;
 
 	cdev = sch_get_cdev(sch);
@@ -1114,12 +1099,11 @@ io_subchannel_remove (struct subchannel *sch)
 	/* Set ccw device to not operational and drop reference. */
 	spin_lock_irq(cdev->ccwlock);
 	sch_set_cdev(sch, NULL);
-	set_io_private(sch, NULL);
 	cdev->private->state = DEV_STATE_NOT_OPER;
 	spin_unlock_irq(cdev->ccwlock);
 	ccw_device_unregister(cdev);
 out_free:
-	kfree(io_priv);
+	kfree(sch->private);
 	sysfs_remove_group(&sch->dev.kobj, &io_subchannel_attr_group);
 	return 0;
 }
@@ -1321,12 +1305,10 @@ static int purge_fn(struct device *dev, void *data)
 
 	spin_lock_irq(cdev->ccwlock);
 	if (is_blacklisted(id->ssid, id->devno) &&
-	    (cdev->private->state == DEV_STATE_OFFLINE) &&
-	    (atomic_cmpxchg(&cdev->private->onoff, 0, 1) == 0)) {
+	    (cdev->private->state == DEV_STATE_OFFLINE)) {
 		CIO_MSG_EVENT(3, "ccw: purging 0.%x.%04x\n", id->ssid,
 			      id->devno);
 		ccw_device_sched_todo(cdev, CDEV_TODO_UNREG);
-		atomic_set(&cdev->private->onoff, 0);
 	}
 	spin_unlock_irq(cdev->ccwlock);
 	/* Abort loop in case of pending signal. */
@@ -1571,12 +1553,11 @@ spinlock_t * cio_get_console_lock(void)
 static int ccw_device_console_enable(struct ccw_device *cdev,
 				     struct subchannel *sch)
 {
-	struct io_subchannel_private *io_priv = cio_get_console_priv();
 	int rc;
 
 	/* Attach subchannel private data. */
-	memset(io_priv, 0, sizeof(*io_priv));
-	set_io_private(sch, io_priv);
+	sch->private = cio_get_console_priv();
+	memset(sch->private, 0, sizeof(struct io_subchannel_private));
 	io_subchannel_init_fields(sch);
 	rc = cio_commit_config(sch);
 	if (rc)
@@ -1854,7 +1835,6 @@ static void __ccw_device_pm_restore(struct ccw_device *cdev)
 	 * available again. Kick re-detection.
 	 */
 	cdev->private->flags.resuming = 1;
-	cdev->private->path_new_mask = LPM_ANYPATH;
 	css_schedule_eval(sch->schid);
 	spin_unlock_irq(sch->lock);
 	css_complete_work();
@@ -1982,7 +1962,7 @@ static const struct dev_pm_ops ccw_pm_ops = {
 	.restore = ccw_device_pm_restore,
 };
 
-static struct bus_type ccw_bus_type = {
+struct bus_type ccw_bus_type = {
 	.name   = "ccw",
 	.match  = ccw_bus_match,
 	.uevent = ccw_uevent,
@@ -2005,6 +1985,8 @@ int ccw_driver_register(struct ccw_driver *cdriver)
 	struct device_driver *drv = &cdriver->driver;
 
 	drv->bus = &ccw_bus_type;
+	drv->name = cdriver->name;
+	drv->owner = cdriver->owner;
 
 	return driver_register(drv);
 }
@@ -2122,4 +2104,5 @@ EXPORT_SYMBOL(ccw_device_set_offline);
 EXPORT_SYMBOL(ccw_driver_register);
 EXPORT_SYMBOL(ccw_driver_unregister);
 EXPORT_SYMBOL(get_ccwdev_by_busid);
+EXPORT_SYMBOL(ccw_bus_type);
 EXPORT_SYMBOL_GPL(ccw_device_get_subchannel_id);

@@ -160,7 +160,7 @@ long ubifs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (IS_RDONLY(inode))
 			return -EROFS;
 
-		if (!inode_owner_or_capable(inode))
+		if (!is_owner_or_cap(inode))
 			return -EACCES;
 
 		if (get_user(flags, (int __user *) arg))

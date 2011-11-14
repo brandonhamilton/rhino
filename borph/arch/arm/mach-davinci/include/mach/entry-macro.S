@@ -46,3 +46,6 @@
 #endif
 1002:
 		.endm
+
+		.macro	irq_prio_table
+		.endm

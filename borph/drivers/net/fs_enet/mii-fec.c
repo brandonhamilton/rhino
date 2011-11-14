@@ -101,20 +101,14 @@ static int fs_enet_fec_mii_reset(struct mii_bus *bus)
 	return 0;
 }
 
-static struct of_device_id fs_enet_mdio_fec_match[];
-static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev)
+static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev,
+                                        const struct of_device_id *match)
 {
-	const struct of_device_id *match;
 	struct resource res;
 	struct mii_bus *new_bus;
 	struct fec_info *fec;
-	int (*get_bus_freq)(struct device_node *);
+	int (*get_bus_freq)(struct device_node *) = match->data;
 	int ret = -ENOMEM, clock, speed;
-
-	match = of_match_device(fs_enet_mdio_fec_match, &ofdev->dev);
-	if (!match)
-		return -EINVAL;
-	get_bus_freq = match->data;
 
 	new_bus = mdiobus_alloc();
 	if (!new_bus)
@@ -136,7 +130,7 @@ static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev)
 
 	snprintf(new_bus->id, MII_BUS_ID_SIZE, "%x", res.start);
 
-	fec->fecp = ioremap(res.start, resource_size(&res));
+	fec->fecp = ioremap(res.start, res.end - res.start + 1);
 	if (!fec->fecp)
 		goto out_fec;
 
@@ -227,7 +221,7 @@ static struct of_device_id fs_enet_mdio_fec_match[] = {
 };
 MODULE_DEVICE_TABLE(of, fs_enet_mdio_fec_match);
 
-static struct platform_driver fs_enet_fec_mdio_driver = {
+static struct of_platform_driver fs_enet_fec_mdio_driver = {
 	.driver = {
 		.name = "fsl-fec-mdio",
 		.owner = THIS_MODULE,
@@ -239,12 +233,12 @@ static struct platform_driver fs_enet_fec_mdio_driver = {
 
 static int fs_enet_mdio_fec_init(void)
 {
-	return platform_driver_register(&fs_enet_fec_mdio_driver);
+	return of_register_platform_driver(&fs_enet_fec_mdio_driver);
 }
 
 static void fs_enet_mdio_fec_exit(void)
 {
-	platform_driver_unregister(&fs_enet_fec_mdio_driver);
+	of_unregister_platform_driver(&fs_enet_fec_mdio_driver);
 }
 
 module_init(fs_enet_mdio_fec_init);

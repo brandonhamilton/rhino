@@ -35,6 +35,7 @@
 #include "clock2xxx.h"
 #include "clock3xxx.h"
 #include "clock44xx.h"
+#include "clock81xx.h"
 #include "io.h"
 
 #include <plat/omap-pm.h>
@@ -65,7 +66,7 @@ static struct map_desc omap24xx_io_desc[] __initdata = {
 	},
 };
 
-#ifdef CONFIG_SOC_OMAP2420
+#ifdef CONFIG_ARCH_OMAP2420
 static struct map_desc omap242x_io_desc[] __initdata = {
 	{
 		.virtual	= DSP_MEM_2420_VIRT,
@@ -89,7 +90,7 @@ static struct map_desc omap242x_io_desc[] __initdata = {
 
 #endif
 
-#ifdef CONFIG_SOC_OMAP2430
+#ifdef CONFIG_ARCH_OMAP2430
 static struct map_desc omap243x_io_desc[] __initdata = {
 	{
 		.virtual	= L4_WK_243X_VIRT,
@@ -174,18 +175,6 @@ static struct map_desc omap34xx_io_desc[] __initdata = {
 #endif
 };
 #endif
-
-#ifdef CONFIG_SOC_OMAPTI816X
-static struct map_desc omapti816x_io_desc[] __initdata = {
-	{
-		.virtual	= L4_34XX_VIRT,
-		.pfn		= __phys_to_pfn(L4_34XX_PHYS),
-		.length		= L4_34XX_SIZE,
-		.type		= MT_DEVICE
-	},
-};
-#endif
-
 #ifdef	CONFIG_ARCH_OMAP4
 static struct map_desc omap44xx_io_desc[] __initdata = {
 	{
@@ -239,6 +228,23 @@ static struct map_desc omap44xx_io_desc[] __initdata = {
 };
 #endif
 
+#ifdef CONFIG_ARCH_TI81XX
+static struct map_desc ti81xx_io_desc[] __initdata = {
+	{
+		.virtual	= L4_SLOW_TI81XX_VIRT,
+		.pfn		= __phys_to_pfn(L4_SLOW_TI81XX_PHYS),
+		.length		= L4_SLOW_TI81XX_SIZE,
+		.type		= MT_DEVICE
+	},
+	{
+		.virtual	= TI81XX_L2_MC_VIRT,
+		.pfn		= __phys_to_pfn(TI81XX_L2_MC_PHYS),
+		.length		= TI81XX_L2_MC_SIZE,
+		.type		= MT_STRONGLY_ORDERED
+	},
+};
+#endif
+
 static void __init _omap2_map_common_io(void)
 {
 	/* Normally devicemaps_init() would flush caches and tlb after
@@ -252,7 +258,7 @@ static void __init _omap2_map_common_io(void)
 	omap_sram_init();
 }
 
-#ifdef CONFIG_SOC_OMAP2420
+#ifdef CONFIG_ARCH_OMAP2420
 void __init omap242x_map_common_io(void)
 {
 	iotable_init(omap24xx_io_desc, ARRAY_SIZE(omap24xx_io_desc));
@@ -261,7 +267,7 @@ void __init omap242x_map_common_io(void)
 }
 #endif
 
-#ifdef CONFIG_SOC_OMAP2430
+#ifdef CONFIG_ARCH_OMAP2430
 void __init omap243x_map_common_io(void)
 {
 	iotable_init(omap24xx_io_desc, ARRAY_SIZE(omap24xx_io_desc));
@@ -278,18 +284,18 @@ void __init omap34xx_map_common_io(void)
 }
 #endif
 
-#ifdef CONFIG_SOC_OMAPTI816X
-void __init omapti816x_map_common_io(void)
-{
-	iotable_init(omapti816x_io_desc, ARRAY_SIZE(omapti816x_io_desc));
-	_omap2_map_common_io();
-}
-#endif
-
 #ifdef CONFIG_ARCH_OMAP4
 void __init omap44xx_map_common_io(void)
 {
 	iotable_init(omap44xx_io_desc, ARRAY_SIZE(omap44xx_io_desc));
+	_omap2_map_common_io();
+}
+#endif
+
+#ifdef CONFIG_ARCH_TI81XX
+void __init ti81xx_map_common_io()
+{
+	iotable_init(ti81xx_io_desc, ARRAY_SIZE(ti81xx_io_desc));
 	_omap2_map_common_io();
 }
 #endif
@@ -333,8 +339,24 @@ static int _set_hwmod_postsetup_state(struct omap_hwmod *oh, void *data)
 	return omap_hwmod_set_postsetup_state(oh, *(u8 *)data);
 }
 
-/* See irq.c, omap4-common.c and entry-macro.S */
-void __iomem *omap_irq_base;
+/*
+ * Initialize asm_irq_base for entry-macro.S
+ */
+static inline void omap_irq_base_init(void)
+{
+#ifdef MULTI_OMAP2
+	extern void __iomem *omap_irq_base;
+
+	if (cpu_is_omap24xx())
+		omap_irq_base = OMAP2_L4_IO_ADDRESS(OMAP24XX_IC_BASE);
+	else if (cpu_is_omap34xx() || cpu_is_ti81xx())
+		omap_irq_base = OMAP2_L4_IO_ADDRESS(OMAP34XX_IC_BASE);
+	else if (cpu_is_omap44xx())
+		omap_irq_base = OMAP2_L4_IO_ADDRESS(OMAP44XX_GIC_CPU_BASE);
+	else
+		pr_err("Could not initialize omap_irq_base\n");
+#endif
+}
 
 void __init omap2_init_common_infrastructure(void)
 {
@@ -342,16 +364,20 @@ void __init omap2_init_common_infrastructure(void)
 
 	if (cpu_is_omap242x()) {
 		omap2xxx_powerdomains_init();
-		omap2xxx_clockdomains_init();
+		omap2_clockdomains_init();
 		omap2420_hwmod_init();
 	} else if (cpu_is_omap243x()) {
 		omap2xxx_powerdomains_init();
-		omap2xxx_clockdomains_init();
+		omap2_clockdomains_init();
 		omap2430_hwmod_init();
 	} else if (cpu_is_omap34xx()) {
 		omap3xxx_powerdomains_init();
-		omap3xxx_clockdomains_init();
+		omap2_clockdomains_init();
 		omap3xxx_hwmod_init();
+	} else if (cpu_is_ti81xx()) {
+		ti81xx_powerdomains_init();
+		omap2_clockdomains_init();
+		ti81xx_hwmod_init();
 	} else if (cpu_is_omap44xx()) {
 		omap44xx_powerdomains_init();
 		omap44xx_clockdomains_init();
@@ -394,6 +420,10 @@ void __init omap2_init_common_infrastructure(void)
 		omap2430_clk_init();
 	else if (cpu_is_omap34xx())
 		omap3xxx_clk_init();
+	else if (cpu_is_ti816x())
+		ti816x_clk_init();
+	else if (cpu_is_ti814x())
+		ti814x_clk_init();
 	else if (cpu_is_omap44xx())
 		omap4xxx_clk_init();
 	else
@@ -403,11 +433,15 @@ void __init omap2_init_common_infrastructure(void)
 void __init omap2_init_common_devices(struct omap_sdrc_params *sdrc_cs0,
 				      struct omap_sdrc_params *sdrc_cs1)
 {
-	if (cpu_is_omap24xx() || omap3_has_sdrc()) {
+	omap_serial_early_init();
+
+	omap_hwmod_late_init();
+
+	if (cpu_is_omap24xx() || cpu_is_omap34xx()) {
 		omap2_sdrc_init(sdrc_cs0, sdrc_cs1);
 		_omap2_init_reprogram_sdrc();
 	}
-
+	omap_irq_base_init();
 }
 
 /*

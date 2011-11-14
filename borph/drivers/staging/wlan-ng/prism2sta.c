@@ -50,6 +50,7 @@
 * --------------------------------------------------------------------
 */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
@@ -1975,7 +1976,7 @@ static wlandevice_t *create_wlan(void)
 
 	wlandev->nsdcaps = P80211_NSDCAP_HWFRAGMENT | P80211_NSDCAP_AUTOJOIN;
 
-	/* Initialize the device private data structure. */
+	/* Initialize the device private data stucture. */
 	hw->dot11_desired_bss_type = 1;
 
 	return wlandev;

@@ -397,14 +397,10 @@ int mlx4_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 		cq->resize_buf = NULL;
 		cq->resize_umem = NULL;
 	} else {
-		struct mlx4_ib_cq_buf tmp_buf;
-		int tmp_cqe = 0;
-
 		spin_lock_irq(&cq->lock);
 		if (cq->resize_buf) {
 			mlx4_ib_cq_resize_copy_cqes(cq);
-			tmp_buf = cq->buf;
-			tmp_cqe = cq->ibcq.cqe;
+			mlx4_ib_free_cq_buf(dev, &cq->buf, cq->ibcq.cqe);
 			cq->buf      = cq->resize_buf->buf;
 			cq->ibcq.cqe = cq->resize_buf->cqe;
 
@@ -412,9 +408,6 @@ int mlx4_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 			cq->resize_buf = NULL;
 		}
 		spin_unlock_irq(&cq->lock);
-
-		if (tmp_cqe)
-			mlx4_ib_free_cq_buf(dev, &tmp_buf, tmp_cqe);
 	}
 
 	goto out;

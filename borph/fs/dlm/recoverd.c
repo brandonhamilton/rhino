@@ -58,7 +58,13 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 
 	mutex_lock(&ls->ls_recoverd_active);
 
-	dlm_callback_suspend(ls);
+	/*
+	 * Suspending and resuming dlm_astd ensures that no lkb's from this ls
+	 * will be processed by dlm_astd during recovery.
+	 */
+
+	dlm_astd_suspend();
+	dlm_astd_resume();
 
 	/*
 	 * Free non-master tossed rsb's.  Master rsb's are kept on toss
@@ -196,8 +202,6 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 
 	dlm_adjust_timeouts(ls);
 
-	dlm_callback_resume(ls);
-
 	error = enable_locking(ls, rv->seq);
 	if (error) {
 		log_debug(ls, "enable_locking failed %d", error);
@@ -217,6 +221,8 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 	}
 
 	dlm_grant_after_purge(ls);
+
+	dlm_astd_wake();
 
 	log_debug(ls, "recover %llx done: %u ms",
 		  (unsigned long long)rv->seq,

@@ -6,7 +6,7 @@
 
 #include <linux/completion.h>
 #include <linux/sunrpc/cache.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * Deferred request handling

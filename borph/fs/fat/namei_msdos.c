@@ -148,8 +148,7 @@ static int msdos_find(struct inode *dir, const unsigned char *name, int len,
  * that the existing dentry can be used. The msdos fs routines will
  * return ENOENT or EINVAL as appropriate.
  */
-static int msdos_hash(const struct dentry *dentry, const struct inode *inode,
-	       struct qstr *qstr)
+static int msdos_hash(struct dentry *dentry, struct qstr *qstr)
 {
 	struct fat_mount_options *options = &MSDOS_SB(dentry->d_sb)->options;
 	unsigned char msdos_name[MSDOS_NAME];
@@ -165,18 +164,16 @@ static int msdos_hash(const struct dentry *dentry, const struct inode *inode,
  * Compare two msdos names. If either of the names are invalid,
  * we fall back to doing the standard name comparison.
  */
-static int msdos_cmp(const struct dentry *parent, const struct inode *pinode,
-		const struct dentry *dentry, const struct inode *inode,
-		unsigned int len, const char *str, const struct qstr *name)
+static int msdos_cmp(struct dentry *dentry, struct qstr *a, struct qstr *b)
 {
-	struct fat_mount_options *options = &MSDOS_SB(parent->d_sb)->options;
+	struct fat_mount_options *options = &MSDOS_SB(dentry->d_sb)->options;
 	unsigned char a_msdos_name[MSDOS_NAME], b_msdos_name[MSDOS_NAME];
 	int error;
 
-	error = msdos_format_name(name->name, name->len, a_msdos_name, options);
+	error = msdos_format_name(a->name, a->len, a_msdos_name, options);
 	if (error)
 		goto old_compare;
-	error = msdos_format_name(str, len, b_msdos_name, options);
+	error = msdos_format_name(b->name, b->len, b_msdos_name, options);
 	if (error)
 		goto old_compare;
 	error = memcmp(a_msdos_name, b_msdos_name, MSDOS_NAME);
@@ -185,8 +182,8 @@ out:
 
 old_compare:
 	error = 1;
-	if (name->len == len)
-		error = memcmp(name->name, str, len);
+	if (a->len == b->len)
+		error = memcmp(a->name, b->name, a->len);
 	goto out;
 }
 
@@ -209,20 +206,33 @@ static struct dentry *msdos_lookup(struct inode *dir, struct dentry *dentry,
 	int err;
 
 	lock_super(sb);
+
 	err = msdos_find(dir, dentry->d_name.name, dentry->d_name.len, &sinfo);
-	switch (err) {
-	case -ENOENT:
-		inode = NULL;
-		break;
-	case 0:
-		inode = fat_build_inode(sb, sinfo.de, sinfo.i_pos);
-		brelse(sinfo.bh);
-		break;
-	default:
-		inode = ERR_PTR(err);
+	if (err) {
+		if (err == -ENOENT) {
+			inode = NULL;
+			goto out;
+		}
+		goto error;
 	}
+
+	inode = fat_build_inode(sb, sinfo.de, sinfo.i_pos);
+	brelse(sinfo.bh);
+	if (IS_ERR(inode)) {
+		err = PTR_ERR(inode);
+		goto error;
+	}
+out:
 	unlock_super(sb);
-	return d_splice_alias(inode, dentry);
+	dentry->d_op = &msdos_dentry_operations;
+	dentry = d_splice_alias(inode, dentry);
+	if (dentry)
+		dentry->d_op = &msdos_dentry_operations;
+	return dentry;
+
+error:
+	unlock_super(sb);
+	return ERR_PTR(err);
 }
 
 /***** Creates a directory entry (name is already formatted). */
@@ -648,16 +658,21 @@ static const struct inode_operations msdos_dir_inode_operations = {
 	.getattr	= fat_getattr,
 };
 
-static void setup(struct super_block *sb)
-{
-	MSDOS_SB(sb)->dir_ops = &msdos_dir_inode_operations;
-	sb->s_d_op = &msdos_dentry_operations;
-	sb->s_flags |= MS_NOATIME;
-}
-
 static int msdos_fill_super(struct super_block *sb, void *data, int silent)
 {
-	return fat_fill_super(sb, data, silent, 0, setup);
+	int res;
+
+	lock_super(sb);
+	res = fat_fill_super(sb, data, silent, &msdos_dir_inode_operations, 0);
+	if (res) {
+		unlock_super(sb);
+		return res;
+	}
+
+	sb->s_flags |= MS_NOATIME;
+	sb->s_root->d_op = &msdos_dentry_operations;
+	unlock_super(sb);
+	return 0;
 }
 
 static struct dentry *msdos_mount(struct file_system_type *fs_type,

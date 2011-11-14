@@ -43,10 +43,9 @@ static int ext2_remount (struct super_block * sb, int * flags, char * data);
 static int ext2_statfs (struct dentry * dentry, struct kstatfs * buf);
 static int ext2_sync_fs(struct super_block *sb, int wait);
 
-void ext2_error(struct super_block *sb, const char *function,
-		const char *fmt, ...)
+void ext2_error (struct super_block * sb, const char * function,
+		 const char * fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 	struct ext2_sb_info *sbi = EXT2_SB(sb);
 	struct ext2_super_block *es = sbi->s_es;
@@ -60,13 +59,9 @@ void ext2_error(struct super_block *sb, const char *function,
 	}
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk(KERN_CRIT "EXT2-fs (%s): error: %s: %pV\n",
-	       sb->s_id, function, &vaf);
-
+	printk(KERN_CRIT "EXT2-fs (%s): error: %s: ", sb->s_id, function);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 
 	if (test_opt(sb, ERRORS_PANIC))
@@ -81,16 +76,12 @@ void ext2_error(struct super_block *sb, const char *function,
 void ext2_msg(struct super_block *sb, const char *prefix,
 		const char *fmt, ...)
 {
-	struct va_format vaf;
 	va_list args;
 
 	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk("%sEXT2-fs (%s): %pV\n", prefix, sb->s_id, &vaf);
-
+	printk("%sEXT2-fs (%s): ", prefix, sb->s_id);
+	vprintk(fmt, args);
+	printk("\n");
 	va_end(args);
 }
 
@@ -170,16 +161,9 @@ static struct inode *ext2_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void ext2_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(ext2_inode_cachep, EXT2_I(inode));
-}
-
 static void ext2_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, ext2_i_callback);
+	kmem_cache_free(ext2_inode_cachep, EXT2_I(inode));
 }
 
 static void init_once(void *foo)
@@ -898,8 +882,7 @@ static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 		brelse(bh);
 
 		if (!sb_set_blocksize(sb, blocksize)) {
-			ext2_msg(sb, KERN_ERR,
-				"error: bad blocksize %d", blocksize);
+			ext2_msg(sb, KERN_ERR, "error: blocksize is too small");
 			goto failed_sbi;
 		}
 
@@ -1383,7 +1366,7 @@ static struct dentry *ext2_mount(struct file_system_type *fs_type,
 
 /* Read data from quotafile - avoid pagecache and such because we cannot afford
  * acquiring the locks... As quota files are never truncated and quota code
- * itself serializes the operations (and no one else should touch the files)
+ * itself serializes the operations (and noone else should touch the files)
  * we don't have to be afraid of races */
 static ssize_t ext2_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off)

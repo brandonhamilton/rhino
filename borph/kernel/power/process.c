@@ -22,7 +22,7 @@
  */
 #define TIMEOUT	(20 * HZ)
 
-static inline int freezable(struct task_struct * p)
+static inline int freezeable(struct task_struct * p)
 {
 	if ((p == current) ||
 	    (p->flags & PF_NOFREEZE) ||
@@ -53,7 +53,7 @@ static int try_to_freeze_tasks(bool sig_only)
 		todo = 0;
 		read_lock(&tasklist_lock);
 		do_each_thread(g, p) {
-			if (frozen(p) || !freezable(p))
+			if (frozen(p) || !freezeable(p))
 				continue;
 
 			if (!freeze_task(p, sig_only))
@@ -64,12 +64,6 @@ static int try_to_freeze_tasks(bool sig_only)
 			 * perturb a task in TASK_STOPPED or TASK_TRACED.
 			 * It is "frozen enough".  If the task does wake
 			 * up, it will immediately call try_to_freeze.
-			 *
-			 * Because freeze_task() goes through p's
-			 * scheduler lock after setting TIF_FREEZE, it's
-			 * guaranteed that either we see TASK_RUNNING or
-			 * try_to_stop() after schedule() in ptrace/signal
-			 * stop sees TIF_FREEZE.
 			 */
 			if (!task_is_stopped_or_traced(p) &&
 			    !freezer_should_skip(p))
@@ -85,7 +79,7 @@ static int try_to_freeze_tasks(bool sig_only)
 		if (!todo || time_after(jiffies, end_time))
 			break;
 
-		if (pm_wakeup_pending()) {
+		if (!pm_check_wakeup_events()) {
 			wakeup = true;
 			break;
 		}
@@ -167,7 +161,7 @@ static void thaw_tasks(bool nosig_only)
 
 	read_lock(&tasklist_lock);
 	do_each_thread(g, p) {
-		if (!freezable(p))
+		if (!freezeable(p))
 			continue;
 
 		if (nosig_only && should_send_signal(p))

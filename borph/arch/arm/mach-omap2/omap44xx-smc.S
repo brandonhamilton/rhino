@@ -29,7 +29,7 @@ ENTRY(omap_smc1)
 	dsb
 	smc	#0
 	ldmfd   sp!, {r2-r12, pc}
-ENDPROC(omap_smc1)
+END(omap_smc1)
 
 ENTRY(omap_modify_auxcoreboot0)
 	stmfd   sp!, {r1-r12, lr}
@@ -37,7 +37,7 @@ ENTRY(omap_modify_auxcoreboot0)
 	dsb
 	smc	#0
 	ldmfd   sp!, {r1-r12, pc}
-ENDPROC(omap_modify_auxcoreboot0)
+END(omap_modify_auxcoreboot0)
 
 ENTRY(omap_auxcoreboot_addr)
 	stmfd   sp!, {r2-r12, lr}
@@ -45,7 +45,7 @@ ENTRY(omap_auxcoreboot_addr)
 	dsb
 	smc	#0
 	ldmfd   sp!, {r2-r12, pc}
-ENDPROC(omap_auxcoreboot_addr)
+END(omap_auxcoreboot_addr)
 
 ENTRY(omap_read_auxcoreboot0)
 	stmfd   sp!, {r2-r12, lr}
@@ -54,4 +54,4 @@ ENTRY(omap_read_auxcoreboot0)
 	smc	#0
 	mov	r0, r0, lsr #9
 	ldmfd   sp!, {r2-r12, pc}
-ENDPROC(omap_read_auxcoreboot0)
+END(omap_read_auxcoreboot0)

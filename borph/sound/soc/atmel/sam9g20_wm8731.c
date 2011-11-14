@@ -44,6 +44,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
@@ -92,7 +93,6 @@ static struct snd_soc_ops at91sam9g20ek_ops = {
 };
 
 static int at91sam9g20ek_set_bias_level(struct snd_soc_card *card,
-					struct snd_soc_dapm_context *dapm,
 					enum snd_soc_bias_level level)
 {
 	static int mclk_on;
@@ -140,14 +140,13 @@ static int at91sam9g20ek_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_codec *codec = rtd->codec;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int ret;
 
 	printk(KERN_DEBUG
 			"at91sam9g20ek_wm8731 "
 			": at91sam9g20ek_wm8731_init() called\n");
 
-	ret = snd_soc_dai_set_sysclk(codec_dai, WM8731_SYSCLK_MCLK,
+	ret = snd_soc_dai_set_sysclk(codec_dai, WM8731_SYSCLK_XTAL,
 		MCLK_RATE, SND_SOC_CLOCK_IN);
 	if (ret < 0) {
 		printk(KERN_ERR "Failed to set WM8731 SYSCLK: %d\n", ret);
@@ -155,25 +154,25 @@ static int at91sam9g20ek_wm8731_init(struct snd_soc_pcm_runtime *rtd)
 	}
 
 	/* Add specific widgets */
-	snd_soc_dapm_new_controls(dapm, at91sam9g20ek_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, at91sam9g20ek_dapm_widgets,
 				  ARRAY_SIZE(at91sam9g20ek_dapm_widgets));
 	/* Set up specific audio path interconnects */
-	snd_soc_dapm_add_routes(dapm, intercon, ARRAY_SIZE(intercon));
+	snd_soc_dapm_add_routes(codec, intercon, ARRAY_SIZE(intercon));
 
 	/* not connected */
-	snd_soc_dapm_nc_pin(dapm, "RLINEIN");
-	snd_soc_dapm_nc_pin(dapm, "LLINEIN");
+	snd_soc_dapm_nc_pin(codec, "RLINEIN");
+	snd_soc_dapm_nc_pin(codec, "LLINEIN");
 
 #ifdef ENABLE_MIC_INPUT
-	snd_soc_dapm_enable_pin(dapm, "Int Mic");
+	snd_soc_dapm_enable_pin(codec, "Int Mic");
 #else
-	snd_soc_dapm_nc_pin(dapm, "Int Mic");
+	snd_soc_dapm_nc_pin(codec, "Int Mic");
 #endif
 
 	/* always connected */
-	snd_soc_dapm_enable_pin(dapm, "Ext Spk");
+	snd_soc_dapm_enable_pin(codec, "Ext Spk");
 
-	snd_soc_dapm_sync(dapm);
+	snd_soc_dapm_sync(codec);
 
 	return 0;
 }
@@ -185,7 +184,7 @@ static struct snd_soc_dai_link at91sam9g20ek_dai = {
 	.codec_dai_name = "wm8731-hifi",
 	.init = at91sam9g20ek_wm8731_init,
 	.platform_name = "atmel-pcm-audio",
-	.codec_name = "wm8731.0-001b",
+	.codec_name = "wm8731-codec.0-001b",
 	.ops = &at91sam9g20ek_ops,
 };
 

@@ -351,16 +351,11 @@ int sysfs_hash_and_remove(struct sysfs_dirent *dir_sd, const void *ns, const cha
 
 int sysfs_permission(struct inode *inode, int mask)
 {
-	struct sysfs_dirent *sd;
-
-	if (mask & MAY_NOT_BLOCK)
-		return -ECHILD;
-
-	sd = inode->i_private;
+	struct sysfs_dirent *sd = inode->i_private;
 
 	mutex_lock(&sysfs_mutex);
 	sysfs_refresh_inode(sd, inode);
 	mutex_unlock(&sysfs_mutex);
 
-	return generic_permission(inode, mask);
+	return generic_permission(inode, mask, NULL);
 }

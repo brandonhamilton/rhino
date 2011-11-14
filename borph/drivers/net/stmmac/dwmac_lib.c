@@ -26,9 +26,9 @@
 
 #undef DWMAC_DMA_DEBUG
 #ifdef DWMAC_DMA_DEBUG
-#define DWMAC_LIB_DBG(fmt, args...)  printk(fmt, ## args)
+#define DBG(fmt, args...)  printk(fmt, ## args)
 #else
-#define DWMAC_LIB_DBG(fmt, args...)  do { } while (0)
+#define DBG(fmt, args...)  do { } while (0)
 #endif
 
 /* CSR1 enables the transmit DMA to check for new descriptor */
@@ -152,7 +152,7 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 	/* read the status register (CSR5) */
 	u32 intr_status = readl(ioaddr + DMA_STATUS);
 
-	DWMAC_LIB_DBG(KERN_INFO "%s: [CSR5: 0x%08x]\n", __func__, intr_status);
+	DBG(INFO, "%s: [CSR5: 0x%08x]\n", __func__, intr_status);
 #ifdef DWMAC_DMA_DEBUG
 	/* It displays the DMA process states (CSR5 register) */
 	show_tx_process_state(intr_status);
@@ -160,43 +160,43 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 #endif
 	/* ABNORMAL interrupts */
 	if (unlikely(intr_status & DMA_STATUS_AIS)) {
-		DWMAC_LIB_DBG(KERN_INFO "CSR5[15] DMA ABNORMAL IRQ: ");
+		DBG(INFO, "CSR5[15] DMA ABNORMAL IRQ: ");
 		if (unlikely(intr_status & DMA_STATUS_UNF)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit underflow\n");
+			DBG(INFO, "transmit underflow\n");
 			ret = tx_hard_error_bump_tc;
 			x->tx_undeflow_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_TJT)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit jabber\n");
+			DBG(INFO, "transmit jabber\n");
 			x->tx_jabber_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_OVF)) {
-			DWMAC_LIB_DBG(KERN_INFO "recv overflow\n");
+			DBG(INFO, "recv overflow\n");
 			x->rx_overflow_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RU)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive buffer unavailable\n");
+			DBG(INFO, "receive buffer unavailable\n");
 			x->rx_buf_unav_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RPS)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive process stopped\n");
+			DBG(INFO, "receive process stopped\n");
 			x->rx_process_stopped_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RWT)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive watchdog\n");
+			DBG(INFO, "receive watchdog\n");
 			x->rx_watchdog_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_ETI)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit early interrupt\n");
+			DBG(INFO, "transmit early interrupt\n");
 			x->tx_early_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_TPS)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit process stopped\n");
+			DBG(INFO, "transmit process stopped\n");
 			x->tx_process_stopped_irq++;
 			ret = tx_hard_error;
 		}
 		if (unlikely(intr_status & DMA_STATUS_FBI)) {
-			DWMAC_LIB_DBG(KERN_INFO "fatal bus error\n");
+			DBG(INFO, "fatal bus error\n");
 			x->fatal_bus_error_irq++;
 			ret = tx_hard_error;
 		}
@@ -215,7 +215,7 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 	/* Clear the interrupt by writing a logic 1 to the CSR5[15-0] */
 	writel((intr_status & 0x1ffff), ioaddr + DMA_STATUS);
 
-	DWMAC_LIB_DBG(KERN_INFO "\n\n");
+	DBG(INFO, "\n\n");
 	return ret;
 }
 

@@ -452,10 +452,9 @@ static void __devinit sabre_pbm_init(struct pci_pbm_info *pbm,
 	sabre_scan_bus(pbm, &op->dev);
 }
 
-static const struct of_device_id sabre_match[];
-static int __devinit sabre_probe(struct platform_device *op)
+static int __devinit sabre_probe(struct platform_device *op,
+				 const struct of_device_id *match)
 {
-	const struct of_device_id *match;
 	const struct linux_prom64_registers *pr_regs;
 	struct device_node *dp = op->dev.of_node;
 	struct pci_pbm_info *pbm;
@@ -465,8 +464,7 @@ static int __devinit sabre_probe(struct platform_device *op)
 	const u32 *vdma;
 	u64 clear_irq;
 
-	match = of_match_device(sabre_match, &op->dev);
-	hummingbird_p = match && (match->data != NULL);
+	hummingbird_p = (match->data != NULL);
 	if (!hummingbird_p) {
 		struct device_node *cpu_dp;
 
@@ -584,7 +582,7 @@ out_err:
 	return err;
 }
 
-static const struct of_device_id sabre_match[] = {
+static struct of_device_id __initdata sabre_match[] = {
 	{
 		.name = "pci",
 		.compatible = "pci108e,a001",
@@ -597,7 +595,7 @@ static const struct of_device_id sabre_match[] = {
 	{},
 };
 
-static struct platform_driver sabre_driver = {
+static struct of_platform_driver sabre_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
@@ -608,7 +606,7 @@ static struct platform_driver sabre_driver = {
 
 static int __init sabre_init(void)
 {
-	return platform_driver_register(&sabre_driver);
+	return of_register_platform_driver(&sabre_driver);
 }
 
 subsys_initcall(sabre_init);

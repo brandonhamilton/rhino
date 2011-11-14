@@ -406,7 +406,6 @@ static int kaweth_download_firmware(struct kaweth_device *kaweth,
 
 	if (fw->size > KAWETH_FIRMWARE_BUF_SIZE) {
 		err("Firmware too big: %zu", fw->size);
-		release_firmware(fw);
 		return -ENOSPC;
 	}
 	data_len = fw->size;
@@ -1221,7 +1220,7 @@ static void kaweth_disconnect(struct usb_interface *intf)
 
 	usb_set_intfdata(intf, NULL);
 	if (!kaweth) {
-		dev_warn(&intf->dev, "unregistering non-existent device\n");
+		dev_warn(&intf->dev, "unregistering non-existant device\n");
 		return;
 	}
 	netdev = kaweth->net;

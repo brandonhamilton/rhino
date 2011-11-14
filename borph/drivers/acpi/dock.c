@@ -77,7 +77,7 @@ struct dock_dependent_device {
 	struct list_head list;
 	struct list_head hotplug_list;
 	acpi_handle handle;
-	const struct acpi_dock_ops *ops;
+	struct acpi_dock_ops *ops;
 	void *context;
 };
 
@@ -589,7 +589,7 @@ EXPORT_SYMBOL_GPL(unregister_dock_notifier);
  * the dock driver after _DCK is executed.
  */
 int
-register_hotplug_dock_device(acpi_handle handle, const struct acpi_dock_ops *ops,
+register_hotplug_dock_device(acpi_handle handle, struct acpi_dock_ops *ops,
 			     void *context)
 {
 	struct dock_dependent_device *dd;
@@ -725,7 +725,7 @@ static void dock_notify(acpi_handle handle, u32 event, void *data)
 			complete_dock(ds);
 			dock_event(ds, event, DOCK_EVENT);
 			dock_lock(ds, 1);
-			acpi_update_all_gpes();
+			acpi_update_gpes();
 			break;
 		}
 		if (dock_present(ds) || dock_in_progress(ds))

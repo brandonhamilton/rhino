@@ -383,7 +383,7 @@ static void plx_pci_reset_marathon(struct pci_dev *pdev)
 {
 	void __iomem *reset_addr;
 	int i;
-	static const int reset_bar[2] = {3, 5};
+	int reset_bar[2] = {3, 5};
 
 	plx_pci_reset_common(pdev);
 

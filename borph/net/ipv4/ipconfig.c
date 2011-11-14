@@ -87,8 +87,8 @@
 #endif
 
 /* Define the friendly delay before and after opening net devices */
-#define CONF_POST_OPEN		10	/* After opening: 10 msecs */
-#define CONF_CARRIER_TIMEOUT	120000	/* Wait for carrier timeout */
+#define CONF_PRE_OPEN		500	/* Before opening: 1/2 second */
+#define CONF_POST_OPEN		1	/* After opening: 1 second */
 
 /* Define the timeout for waiting for a DHCP/BOOTP/RARP reply */
 #define CONF_OPEN_RETRIES 	2	/* (Re)open devices twice */
@@ -188,14 +188,14 @@ struct ic_device {
 static struct ic_device *ic_first_dev __initdata = NULL;/* List of open device */
 static struct net_device *ic_dev __initdata = NULL;	/* Selected device */
 
-static bool __init ic_is_init_dev(struct net_device *dev)
+static bool __init ic_device_match(struct net_device *dev)
 {
-	if (dev->flags & IFF_LOOPBACK)
-		return false;
-	return user_dev_name[0] ? !strcmp(dev->name, user_dev_name) :
+	if (user_dev_name[0] ? !strcmp(dev->name, user_dev_name) :
 	    (!(dev->flags & IFF_LOOPBACK) &&
 	     (dev->flags & (IFF_POINTOPOINT|IFF_BROADCAST)) &&
-	     strncmp(dev->name, "dummy", 5));
+	     strncmp(dev->name, "dummy", 5)))
+		return true;
+	return false;
 }
 
 static int __init ic_open_devs(void)
@@ -203,7 +203,6 @@ static int __init ic_open_devs(void)
 	struct ic_device *d, **last;
 	struct net_device *dev;
 	unsigned short oflags;
-	unsigned long start;
 
 	last = &ic_first_dev;
 	rtnl_lock();
@@ -217,7 +216,9 @@ static int __init ic_open_devs(void)
 	}
 
 	for_each_netdev(&init_net, dev) {
-		if (ic_is_init_dev(dev)) {
+		if (dev->flags & IFF_LOOPBACK)
+			continue;
+		if (ic_device_match(dev)) {
 			int able = 0;
 			if (dev->mtu >= 364)
 				able |= IC_BOOTP;
@@ -251,17 +252,6 @@ static int __init ic_open_devs(void)
 				dev->name, able, d->xid));
 		}
 	}
-
-	/* wait for a carrier on at least one device */
-	start = jiffies;
-	while (jiffies - start < msecs_to_jiffies(CONF_CARRIER_TIMEOUT)) {
-		for_each_netdev(&init_net, dev)
-			if (ic_is_init_dev(dev) && netif_carrier_ok(dev))
-				goto have_carrier;
-
-		msleep(1);
-	}
-have_carrier:
 	rtnl_unlock();
 
 	*last = NULL;
@@ -861,44 +851,41 @@ static void __init ic_do_bootp_ext(u8 *ext)
 #endif
 
 	switch (*ext++) {
-	case 1:		/* Subnet mask */
-		if (ic_netmask == NONE)
-			memcpy(&ic_netmask, ext+1, 4);
-		break;
-	case 3:		/* Default gateway */
-		if (ic_gateway == NONE)
-			memcpy(&ic_gateway, ext+1, 4);
-		break;
-	case 6:		/* DNS server */
-		servers= *ext/4;
-		if (servers > CONF_NAMESERVERS_MAX)
-			servers = CONF_NAMESERVERS_MAX;
-		for (i = 0; i < servers; i++) {
-			if (ic_nameservers[i] == NONE)
-				memcpy(&ic_nameservers[i], ext+1+4*i, 4);
-		}
-		break;
-	case 12:	/* Host name */
-		ic_bootp_string(utsname()->nodename, ext+1, *ext,
-				__NEW_UTS_LEN);
-		ic_host_name_set = 1;
-		break;
-	case 15:	/* Domain name (DNS) */
-		ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
-		break;
-	case 17:	/* Root path */
-		if (!root_server_path[0])
-			ic_bootp_string(root_server_path, ext+1, *ext,
-					sizeof(root_server_path));
-		break;
-	case 26:	/* Interface MTU */
-		memcpy(&mtu, ext+1, sizeof(mtu));
-		ic_dev_mtu = ntohs(mtu);
-		break;
-	case 40:	/* NIS Domain name (_not_ DNS) */
-		ic_bootp_string(utsname()->domainname, ext+1, *ext,
-				__NEW_UTS_LEN);
-		break;
+		case 1:		/* Subnet mask */
+			if (ic_netmask == NONE)
+				memcpy(&ic_netmask, ext+1, 4);
+			break;
+		case 3:		/* Default gateway */
+			if (ic_gateway == NONE)
+				memcpy(&ic_gateway, ext+1, 4);
+			break;
+		case 6:		/* DNS server */
+			servers= *ext/4;
+			if (servers > CONF_NAMESERVERS_MAX)
+				servers = CONF_NAMESERVERS_MAX;
+			for (i = 0; i < servers; i++) {
+				if (ic_nameservers[i] == NONE)
+					memcpy(&ic_nameservers[i], ext+1+4*i, 4);
+			}
+			break;
+		case 12:	/* Host name */
+			ic_bootp_string(utsname()->nodename, ext+1, *ext, __NEW_UTS_LEN);
+			ic_host_name_set = 1;
+			break;
+		case 15:	/* Domain name (DNS) */
+			ic_bootp_string(ic_domain, ext+1, *ext, sizeof(ic_domain));
+			break;
+		case 17:	/* Root path */
+			if (!root_server_path[0])
+				ic_bootp_string(root_server_path, ext+1, *ext, sizeof(root_server_path));
+			break;
+		case 26:	/* Interface MTU */
+			memcpy(&mtu, ext+1, sizeof(mtu));
+			ic_dev_mtu = ntohs(mtu);
+			break;
+		case 40:	/* NIS Domain name (_not_ DNS) */
+			ic_bootp_string(utsname()->domainname, ext+1, *ext, __NEW_UTS_LEN);
+			break;
 	}
 }
 
@@ -935,7 +922,7 @@ static int __init ic_bootp_recv(struct sk_buff *skb, struct net_device *dev, str
 		goto drop;
 
 	/* Fragments are not supported */
-	if (ip_is_fragment(h)) {
+	if (h->frag_off & htons(IP_OFFSET | IP_MF)) {
 		if (net_ratelimit())
 			printk(KERN_ERR "DHCP/BOOTP: Ignoring fragmented "
 			       "reply.\n");
@@ -1204,13 +1191,13 @@ static int __init ic_dynamic(void)
 		    (ic_proto_enabled & IC_USE_DHCP) &&
 		    ic_dhcp_msgtype != DHCPACK) {
 			ic_got_reply = 0;
-			printk(KERN_CONT ",");
+			printk(",");
 			continue;
 		}
 #endif /* IPCONFIG_DHCP */
 
 		if (ic_got_reply) {
-			printk(KERN_CONT " OK\n");
+			printk(" OK\n");
 			break;
 		}
 
@@ -1218,7 +1205,7 @@ static int __init ic_dynamic(void)
 			continue;
 
 		if (! --retries) {
-			printk(KERN_CONT " timed out!\n");
+			printk(" timed out!\n");
 			break;
 		}
 
@@ -1228,7 +1215,7 @@ static int __init ic_dynamic(void)
 		if (timeout > CONF_TIMEOUT_MAX)
 			timeout = CONF_TIMEOUT_MAX;
 
-		printk(KERN_CONT ".");
+		printk(".");
 	}
 
 #ifdef IPCONFIG_BOOTP
@@ -1249,7 +1236,7 @@ static int __init ic_dynamic(void)
 		((ic_got_reply & IC_RARP) ? "RARP"
 		 : (ic_proto_enabled & IC_USE_DHCP) ? "DHCP" : "BOOTP"),
 		&ic_servaddr);
-	printk(KERN_CONT "my address is %pI4\n", &ic_myaddr);
+	printk("my address is %pI4\n", &ic_myaddr);
 
 	return 0;
 }
@@ -1337,13 +1324,14 @@ static int __init wait_for_devices(void)
 {
 	int i;
 
+	msleep(CONF_PRE_OPEN);
 	for (i = 0; i < DEVICE_WAIT_MAX; i++) {
 		struct net_device *dev;
 		int found = 0;
 
 		rtnl_lock();
 		for_each_netdev(&init_net, dev) {
-			if (ic_is_init_dev(dev)) {
+			if (ic_device_match(dev)) {
 				found = 1;
 				break;
 			}
@@ -1390,7 +1378,7 @@ static int __init ip_auto_config(void)
 		return err;
 
 	/* Give drivers a chance to settle */
-	msleep(CONF_POST_OPEN);
+	ssleep(CONF_POST_OPEN);
 
 	/*
 	 * If the config information is insufficient (e.g., our IP address or
@@ -1456,7 +1444,7 @@ static int __init ip_auto_config(void)
 		root_server_addr = addr;
 
 	/*
-	 * Use defaults wherever applicable.
+	 * Use defaults whereever applicable.
 	 */
 	if (ic_defaults() < 0)
 		return -1;
@@ -1480,19 +1468,19 @@ static int __init ip_auto_config(void)
 	/*
 	 * Clue in the operator.
 	 */
-	printk("IP-Config: Complete:\n");
-	printk("     device=%s", ic_dev->name);
-	printk(KERN_CONT ", addr=%pI4", &ic_myaddr);
-	printk(KERN_CONT ", mask=%pI4", &ic_netmask);
-	printk(KERN_CONT ", gw=%pI4", &ic_gateway);
-	printk(KERN_CONT ",\n     host=%s, domain=%s, nis-domain=%s",
+	printk("IP-Config: Complete:");
+	printk("\n     device=%s", ic_dev->name);
+	printk(", addr=%pI4", &ic_myaddr);
+	printk(", mask=%pI4", &ic_netmask);
+	printk(", gw=%pI4", &ic_gateway);
+	printk(",\n     host=%s, domain=%s, nis-domain=%s",
 	       utsname()->nodename, ic_domain, utsname()->domainname);
-	printk(KERN_CONT ",\n     bootserver=%pI4", &ic_servaddr);
-	printk(KERN_CONT ", rootserver=%pI4", &root_server_addr);
-	printk(KERN_CONT ", rootpath=%s", root_server_path);
+	printk(",\n     bootserver=%pI4", &ic_servaddr);
+	printk(", rootserver=%pI4", &root_server_addr);
+	printk(", rootpath=%s", root_server_path);
 	if (ic_dev_mtu)
-		printk(KERN_CONT ", mtu=%d", ic_dev_mtu);
-	printk(KERN_CONT "\n");
+		printk(", mtu=%d", ic_dev_mtu);
+	printk("\n");
 #endif /* !SILENT */
 
 	return 0;

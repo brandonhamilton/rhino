@@ -45,9 +45,11 @@ void __init free_mem_mach(unsigned long addr, unsigned long size)
 	return free_bootmem(addr, size);
 }
 
-void * __init early_init_dt_alloc_memory_arch(u64 size, u64 align)
+u64 __init early_init_dt_alloc_memory_arch(u64 size, u64 align)
 {
-	return __alloc_bootmem(size, align, __pa(MAX_DMA_ADDRESS));
+	return virt_to_phys(
+		__alloc_bootmem(size, align, __pa(MAX_DMA_ADDRESS))
+		);
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -83,8 +85,7 @@ void __init early_init_devtree(void *params)
 	 * device-tree, including the platform type, initrd location and
 	 * size, and more ...
 	 */
-	of_scan_flat_dt(early_init_dt_scan_chosen, arcs_cmdline);
-
+	of_scan_flat_dt(early_init_dt_scan_chosen, NULL);
 
 	/* Scan memory nodes */
 	of_scan_flat_dt(early_init_dt_scan_root, NULL);

@@ -143,16 +143,16 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 	struct net_bridge *br;
 	const unsigned char *buf;
 
+	if (!br_port_exists(dev))
+		goto err;
+	p = br_port_get_rcu(dev);
+
 	if (!pskb_may_pull(skb, 4))
 		goto err;
 
 	/* compare of protocol id and version */
 	buf = skb->data;
 	if (buf[0] != 0 || buf[1] != 0 || buf[2] != 0)
-		goto err;
-
-	p = br_port_get_rcu(dev);
-	if (!p)
 		goto err;
 
 	br = p->br;
@@ -210,19 +210,10 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 		bpdu.hello_time = br_get_ticks(buf+28);
 		bpdu.forward_delay = br_get_ticks(buf+30);
 
-		if (bpdu.message_age > bpdu.max_age) {
-			if (net_ratelimit())
-				br_notice(p->br,
-					  "port %u config from %pM"
-					  " (message_age %ul > max_age %ul)\n",
-					  p->port_no,
-					  eth_hdr(skb)->h_source,
-					  bpdu.message_age, bpdu.max_age);
-			goto out;
-		}
-
 		br_received_config_bpdu(p, &bpdu);
-	} else if (buf[0] == BPDU_TYPE_TCN) {
+	}
+
+	else if (buf[0] == BPDU_TYPE_TCN) {
 		br_received_tcn_bpdu(p);
 	}
  out:

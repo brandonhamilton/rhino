@@ -26,16 +26,10 @@
  *  This file contains the control operations of vendor 3
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
-#include <linux/gpio.h>
 #include <linux/pci.h>
-#include <linux/delay.h>
 #include <linux/file.h>
-#include <sound/control.h>
 #include "intel_sst.h"
 #include "intelmid_snd_control.h"
-#include "intelmid.h"
 
 enum reg_v3 {
 	VAUDIOCNT = 0x51,
@@ -85,19 +79,12 @@ enum reg_v3 {
 	HPLMIXSEL = 0x12b,
 	HPRMIXSEL = 0x12c,
 	LOANTIPOP = 0x12d,
-	AUXDBNC = 0x12f,
 };
 
-static void nc_set_amp_power(int power)
-{
-	if (snd_pmic_ops_nc.gpio_amp)
-		gpio_set_value(snd_pmic_ops_nc.gpio_amp, power);
-}
-
 /****
- * nc_init_card - initialize the sound card
+ * nc_init_card - initilize the sound card
  *
- * This initializes the audio paths to know values in case of this sound card
+ * This initilizes the audio paths to know values in case of this sound card
  */
 static int nc_init_card(void)
 {
@@ -121,21 +108,19 @@ static int nc_init_card(void)
 		{VOICEVOL, 0x0e, 0},
 		{HPLVOL, 0x06, 0},
 		{HPRVOL, 0x06, 0},
-		{MICCTRL, 0x51, 0x00},
+		{MICCTRL, 0x41, 0x00},
 		{ADCSAMPLERATE, 0x8B, 0x00},
 		{MICSELVOL, 0x5B, 0x00},
 		{LILSEL, 0x06, 0},
 		{LIRSEL, 0x46, 0},
 		{LOANTIPOP, 0x00, 0},
 		{DMICCTRL1, 0x40, 0},
-		{AUXDBNC, 0xff, 0},
 	};
 	snd_pmic_ops_nc.card_status = SND_CARD_INIT_DONE;
 	snd_pmic_ops_nc.master_mute = UNMUTE;
 	snd_pmic_ops_nc.mute_status = UNMUTE;
-	sst_sc_reg_access(sc_access, PMIC_WRITE, 27);
-	mutex_init(&snd_pmic_ops_nc.lock);
-	pr_debug("init complete!!\n");
+	sst_sc_reg_access(sc_access, PMIC_WRITE, 26);
+	pr_debug("sst: init complete!!\n");
 	return 0;
 }
 
@@ -181,11 +166,10 @@ static int nc_power_up_pb(unsigned int port)
 		return retval;
 	if (port == 0xFF)
 		return 0;
-	mutex_lock(&snd_pmic_ops_nc.lock);
 	nc_enable_audiodac(MUTE);
 	msleep(30);
 
-	pr_debug("powering up pb....\n");
+	pr_debug("sst: powering up pb....\n");
 
 	sc_access[0].reg_addr = VAUDIOCNT;
 	sc_access[0].value = 0x27;
@@ -222,21 +206,8 @@ static int nc_power_up_pb(unsigned int port)
 
 	msleep(30);
 
-	snd_pmic_ops_nc.pb_on = 1;
+	return nc_enable_audiodac(UNMUTE);
 
-	/*
-	 * There is a mismatch between Playback Sources and the enumerated
-	 * values of output sources.  This mismatch causes ALSA upper to send
-	 * Item 1 for Internal Speaker, but the expected enumeration is 2!  For
-	 * now, treat MONO_EARPIECE and INTERNAL_SPKR identically and power up
-	 * the needed resources
-	 */
-	if (snd_pmic_ops_nc.output_dev_id == MONO_EARPIECE ||
-	    snd_pmic_ops_nc.output_dev_id == INTERNAL_SPKR)
-		nc_set_amp_power(1);
-	nc_enable_audiodac(UNMUTE);
-	mutex_unlock(&snd_pmic_ops_nc.lock);
-	return 0;
 }
 
 static int nc_power_up_cp(unsigned int port)
@@ -251,7 +222,7 @@ static int nc_power_up_cp(unsigned int port)
 		return retval;
 
 
-	pr_debug("powering up cp....\n");
+	pr_debug("sst: powering up cp....\n");
 
 	if (port == 0xFF)
 		return 0;
@@ -296,6 +267,7 @@ static int nc_power_down(void)
 	int retval = 0;
 	struct sc_reg_access sc_access[5];
 
+
 	if (snd_pmic_ops_nc.card_status == SND_CARD_UN_INIT)
 		retval = nc_init_card();
 	if (retval)
@@ -303,11 +275,7 @@ static int nc_power_down(void)
 	nc_enable_audiodac(MUTE);
 
 
-	pr_debug("powering dn nc_power_down ....\n");
-
-	if (snd_pmic_ops_nc.output_dev_id == MONO_EARPIECE ||
-	    snd_pmic_ops_nc.output_dev_id == INTERNAL_SPKR)
-		nc_set_amp_power(0);
+	pr_debug("sst: powering dn nc_power_down ....\n");
 
 	msleep(30);
 
@@ -345,7 +313,7 @@ static int nc_power_down(void)
 	return nc_enable_audiodac(UNMUTE);
 }
 
-static int nc_power_down_pb(unsigned int device)
+static int nc_power_down_pb(void)
 {
 
 	int retval = 0;
@@ -356,8 +324,8 @@ static int nc_power_down_pb(unsigned int device)
 	if (retval)
 		return retval;
 
-	pr_debug("powering dn pb....\n");
-	mutex_lock(&snd_pmic_ops_nc.lock);
+	pr_debug("sst: powering dn pb....\n");
+
 	nc_enable_audiodac(MUTE);
 
 
@@ -384,14 +352,12 @@ static int nc_power_down_pb(unsigned int device)
 
 	msleep(30);
 
-	snd_pmic_ops_nc.pb_on = 0;
+	return nc_enable_audiodac(UNMUTE);
 
-	nc_enable_audiodac(UNMUTE);
-	mutex_unlock(&snd_pmic_ops_nc.lock);
-	return 0;
+
 }
 
-static int nc_power_down_cp(unsigned int device)
+static int nc_power_down_cp(void)
 {
 	struct sc_reg_access sc_access[] = {
 		{POWERCTRL1, 0x00, 0xBE},
@@ -404,7 +370,7 @@ static int nc_power_down_cp(unsigned int device)
 	if (retval)
 		return retval;
 
-	pr_debug("powering dn cp....\n");
+	pr_debug("sst: powering dn cp....\n");
 	return sst_sc_reg_access(sc_access, PMIC_READ_MODIFY, 1);
 }
 
@@ -434,7 +400,7 @@ static int nc_set_pcm_voice_params(void)
 		return retval;
 
 	sst_sc_reg_access(sc_access, PMIC_WRITE, 14);
-	pr_debug("Voice parameters set successfully!!\n");
+	pr_debug("sst: Voice parameters set successfully!!\n");
 	return 0;
 }
 
@@ -485,20 +451,20 @@ static int nc_set_pcm_audio_params(int sfreq, int word_size, int num_channel)
 
 		sc_access.value = 0x07;
 		sc_access.reg_addr = RMUTE;
-		pr_debug("RIGHT_HP_MUTE value%d\n", sc_access.value);
+		pr_debug("sst: RIGHT_HP_MUTE value%d\n", sc_access.value);
 		sc_access.mask = MASK2;
 		sst_sc_reg_access(&sc_access, PMIC_READ_MODIFY, 1);
 	} else {
 		sc_access.value = 0x00;
 		sc_access.reg_addr = RMUTE;
-		pr_debug("RIGHT_HP_MUTE value %d\n", sc_access.value);
+		pr_debug("sst: RIGHT_HP_MUTE value %d\n", sc_access.value);
 		sc_access.mask = MASK2;
 		sst_sc_reg_access(&sc_access, PMIC_READ_MODIFY, 1);
 
 
 	}
 
-	pr_debug("word_size = %d\n", word_size);
+	pr_debug("sst: word_size = %d\n", word_size);
 
 	if (word_size == 24) {
 		sc_access.reg_addr = AUDIOPORT2;
@@ -511,7 +477,7 @@ static int nc_set_pcm_audio_params(int sfreq, int word_size, int num_channel)
 	}
 	sst_sc_reg_access(&sc_access, PMIC_READ_MODIFY, 1);
 
-	pr_debug("word_size = %d\n", word_size);
+	pr_debug("sst: word_size = %d\n", word_size);
 	sc_access.reg_addr = AUDIOPORT1;
 	sc_access.mask = MASK5|MASK4|MASK1|MASK0;
 	if (word_size == 16)
@@ -529,13 +495,11 @@ static int nc_set_selected_output_dev(u8 value)
 {
 	struct sc_reg_access sc_access_HP[] = {
 		{LMUTE, 0x02, 0x06},
-		{RMUTE, 0x02, 0x06},
-		{DRVPOWERCTRL, 0x06, 0x06},
+		{RMUTE, 0x02, 0x06}
 	};
 	struct sc_reg_access sc_access_IS[] = {
 		{LMUTE, 0x04, 0x06},
-		{RMUTE, 0x04, 0x06},
-		{DRVPOWERCTRL, 0x00, 0x06},
+		{RMUTE, 0x04, 0x06}
 	};
 	int retval = 0;
 
@@ -544,27 +508,18 @@ static int nc_set_selected_output_dev(u8 value)
 		retval = nc_init_card();
 	if (retval)
 		return retval;
-	pr_debug("nc set selected output:%d\n", value);
-	mutex_lock(&snd_pmic_ops_nc.lock);
+	pr_debug("sst: nc set selected output:%d\n", value);
 	switch (value) {
 	case STEREO_HEADPHONE:
-		if (snd_pmic_ops_nc.pb_on)
-			sst_sc_reg_access(sc_access_HP+2, PMIC_WRITE, 1);
 		retval = sst_sc_reg_access(sc_access_HP, PMIC_WRITE, 2);
-		nc_set_amp_power(0);
 		break;
-	case MONO_EARPIECE:
 	case INTERNAL_SPKR:
-		retval = sst_sc_reg_access(sc_access_IS, PMIC_WRITE, 3);
-		if (snd_pmic_ops_nc.pb_on)
-			nc_set_amp_power(1);
+		retval = sst_sc_reg_access(sc_access_IS, PMIC_WRITE, 2);
 		break;
 	default:
-		pr_err("rcvd illegal request: %d\n", value);
-		mutex_unlock(&snd_pmic_ops_nc.lock);
+		pr_err("sst: rcvd illegal request: %d\n", value);
 		return -EINVAL;
 	}
-	mutex_unlock(&snd_pmic_ops_nc.lock);
 	return retval;
 }
 
@@ -586,7 +541,7 @@ static int nc_audio_init(void)
 	};
 
 	sst_sc_reg_access(sc_access, PMIC_WRITE, 12);
-	pr_debug("Audio Init successfully!!\n");
+	pr_debug("sst: Audio Init successfully!!\n");
 
 	/*set output device */
 	nc_set_selected_output_dev(snd_pmic_ops_nc.output_dev_id);
@@ -594,13 +549,13 @@ static int nc_audio_init(void)
 	if (snd_pmic_ops_nc.num_channel == 1) {
 		sc_acces.value = 0x07;
 		sc_acces.reg_addr = RMUTE;
-		pr_debug("RIGHT_HP_MUTE value%d\n", sc_acces.value);
+		pr_debug("sst: RIGHT_HP_MUTE value%d\n", sc_acces.value);
 		sc_acces.mask = MASK2;
 		sst_sc_reg_access(&sc_acces, PMIC_READ_MODIFY, 1);
 	} else {
 		sc_acces.value = 0x00;
 		sc_acces.reg_addr = RMUTE;
-		pr_debug("RIGHT_HP_MUTE value%d\n", sc_acces.value);
+		pr_debug("sst: RIGHT_HP_MUTE value%d\n", sc_acces.value);
 		sc_acces.mask = MASK2;
 		sst_sc_reg_access(&sc_acces, PMIC_READ_MODIFY, 1);
 	}
@@ -674,11 +629,11 @@ static int nc_set_mute(int dev_id, u8 value)
 	if (retval)
 		return retval;
 
-	pr_debug("set device id::%d, value %d\n", dev_id, value);
+	pr_debug("sst: set device id::%d, value %d\n", dev_id, value);
 
 	switch (dev_id) {
 	case PMIC_SND_MUTE_ALL:
-		pr_debug("PMIC_SND_MUTE_ALL value %d\n", value);
+		pr_debug("sst: PMIC_SND_MUTE_ALL value %d\n", value);
 		snd_pmic_ops_nc.mute_status = value;
 		snd_pmic_ops_nc.master_mute = value;
 		if (value == UNMUTE) {
@@ -714,7 +669,7 @@ static int nc_set_mute(int dev_id, u8 value)
 		}
 		break;
 	case PMIC_SND_HP_MIC_MUTE:
-		pr_debug("PMIC_SND_HPMIC_MUTE value %d\n", value);
+		pr_debug("sst: PMIC_SND_HPMIC_MUTE value %d\n", value);
 		if (value == UNMUTE) {
 			/* unmute the system, set the 6th bit to one */
 			sc_access[0].value = 0x00;
@@ -727,7 +682,7 @@ static int nc_set_mute(int dev_id, u8 value)
 		retval = sst_sc_reg_access(sc_access, PMIC_READ_MODIFY, 1);
 		break;
 	case PMIC_SND_AMIC_MUTE:
-		pr_debug("PMIC_SND_AMIC_MUTE value %d\n", value);
+		pr_debug("sst: PMIC_SND_AMIC_MUTE value %d\n", value);
 		if (value == UNMUTE) {
 			/* unmute the system, set the 6th bit to one */
 			sc_access[0].value = 0x00;
@@ -741,7 +696,7 @@ static int nc_set_mute(int dev_id, u8 value)
 		break;
 
 	case PMIC_SND_DMIC_MUTE:
-		pr_debug("INPUT_MUTE_DMIC value%d\n", value);
+		pr_debug("sst: INPUT_MUTE_DMIC value%d\n", value);
 		if (value == UNMUTE) {
 			/* unmute the system, set the 6th bit to one */
 			sc_access[1].value = 0x00;
@@ -769,13 +724,13 @@ static int nc_set_mute(int dev_id, u8 value)
 
 		if (dev_id == PMIC_SND_LEFT_HP_MUTE) {
 			sc_access[0].reg_addr = LMUTE;
-			pr_debug("LEFT_HP_MUTE value %d\n",
+			pr_debug("sst: LEFT_HP_MUTE value %d\n",
 					sc_access[0].value);
 		} else {
 			if (snd_pmic_ops_nc.num_channel == 1)
 				sc_access[0].value = 0x04;
 			sc_access[0].reg_addr = RMUTE;
-			pr_debug("RIGHT_HP_MUTE value %d\n",
+			pr_debug("sst: RIGHT_HP_MUTE value %d\n",
 					sc_access[0].value);
 		}
 		sc_access[0].mask = MASK2;
@@ -788,7 +743,7 @@ static int nc_set_mute(int dev_id, u8 value)
 		else
 			sc_access[0].value = 0x03;
 		sc_access[0].reg_addr = LMUTE;
-		pr_debug("SPEAKER_MUTE %d\n", sc_access[0].value);
+		pr_debug("sst: SPEAKER_MUTE %d\n", sc_access[0].value);
 		sc_access[0].mask = MASK1;
 		retval = sst_sc_reg_access(sc_access, PMIC_READ_MODIFY, 1);
 		break;
@@ -809,10 +764,10 @@ static int nc_set_vol(int dev_id, int value)
 	if (retval)
 		return retval;
 
-	pr_debug("set volume:%d\n", dev_id);
+	pr_debug("sst: set volume:%d\n", dev_id);
 	switch (dev_id) {
 	case PMIC_SND_CAPTURE_VOL:
-		pr_debug("PMIC_SND_CAPTURE_VOL:value::%d\n", value);
+		pr_debug("sst: PMIC_SND_CAPTURE_VOL:value::%d\n", value);
 		sc_access[0].value = sc_access[1].value =
 					sc_access[2].value = -value;
 		sc_access[0].mask = sc_access[1].mask = sc_access[2].mask =
@@ -824,43 +779,27 @@ static int nc_set_vol(int dev_id, int value)
 		break;
 
 	case PMIC_SND_LEFT_PB_VOL:
-		pr_debug("PMIC_SND_LEFT_HP_VOL %d\n", value);
+		pr_debug("sst: PMIC_SND_LEFT_HP_VOL %d\n", value);
 		sc_access[0].value = -value;
-		sc_access[0].reg_addr  = HPLVOL;
-		sc_access[0].mask = (MASK0|MASK1|MASK2|MASK3|MASK4);
-		entries = 1;
-		break;
-
-	case PMIC_SND_RIGHT_PB_VOL:
-		pr_debug("PMIC_SND_RIGHT_HP_VOL value %d\n", value);
-		if (snd_pmic_ops_nc.num_channel == 1) {
-			sc_access[0].value = 0x04;
-			sc_access[0].reg_addr = RMUTE;
-			sc_access[0].mask = MASK2;
-		} else {
-			sc_access[0].value = -value;
-			sc_access[0].reg_addr  = HPRVOL;
-			sc_access[0].mask = (MASK0|MASK1|MASK2|MASK3|MASK4);
-		}
-		entries = 1;
-		break;
-
-	case PMIC_SND_LEFT_MASTER_VOL:
-		pr_debug("PMIC_SND_LEFT_MASTER_VOL value %d\n", value);
-		sc_access[0].value = -value;
-		sc_access[0].reg_addr = AUDIOLVOL;
+		sc_access[0].reg_addr  = AUDIOLVOL;
 		sc_access[0].mask =
 			(MASK0|MASK1|MASK2|MASK3|MASK4|MASK5|MASK6);
 		entries = 1;
 		break;
 
-	case PMIC_SND_RIGHT_MASTER_VOL:
-		pr_debug("PMIC_SND_RIGHT_MASTER_VOL value %d\n", value);
+	case PMIC_SND_RIGHT_PB_VOL:
+		pr_debug("sst: PMIC_SND_RIGHT_HP_VOL value %d\n", value);
+		if (snd_pmic_ops_nc.num_channel == 1) {
+			sc_access[0].value = 0x04;
+		    sc_access[0].reg_addr = RMUTE;
+			sc_access[0].mask = MASK2;
+		} else {
 		sc_access[0].value = -value;
-		sc_access[0].reg_addr = AUDIORVOL;
+		sc_access[0].reg_addr  = AUDIORVOL;
 		sc_access[0].mask =
 				(MASK0|MASK1|MASK2|MASK3|MASK4|MASK5|MASK6);
 		entries = 1;
+		}
 		break;
 
 	default:
@@ -882,14 +821,14 @@ static int nc_set_selected_input_dev(u8 value)
 		return retval;
 	snd_pmic_ops_nc.input_dev_id = value;
 
-	pr_debug("nc set selected input:%d\n", value);
+	pr_debug("sst: nc set selected input:%d\n", value);
 
 	switch (value) {
 	case AMIC:
-		pr_debug("Selecting AMIC\n");
+		pr_debug("sst: Selecting AMIC\n");
 		sc_access[0].reg_addr = 0x107;
 		sc_access[0].value = 0x40;
-		sc_access[0].mask =  MASK6|MASK3|MASK1|MASK0;
+		sc_access[0].mask =  MASK6|MASK4|MASK3|MASK1|MASK0;
 		sc_access[1].reg_addr = 0x10a;
 		sc_access[1].value = 0x40;
 		sc_access[1].mask = MASK6;
@@ -903,10 +842,10 @@ static int nc_set_selected_input_dev(u8 value)
 		break;
 
 	case HS_MIC:
-		pr_debug("Selecting HS_MIC\n");
-		sc_access[0].reg_addr = MICCTRL;
-		sc_access[0].mask =  MASK6|MASK3|MASK1|MASK0;
-		sc_access[0].value = 0x00;
+		pr_debug("sst: Selecting HS_MIC\n");
+		sc_access[0].reg_addr = 0x107;
+		sc_access[0].mask =  MASK6|MASK4|MASK3|MASK1|MASK0;
+		sc_access[0].value = 0x10;
 		sc_access[1].reg_addr = 0x109;
 		sc_access[1].mask = MASK6;
 		sc_access[1].value = 0x40;
@@ -916,16 +855,13 @@ static int nc_set_selected_input_dev(u8 value)
 		sc_access[3].reg_addr = 0x105;
 		sc_access[3].value = 0x40;
 		sc_access[3].mask = MASK6;
-		sc_access[4].reg_addr = ADCSAMPLERATE;
-		sc_access[4].mask = MASK7|MASK6|MASK5|MASK4|MASK3;
-		sc_access[4].value = 0xc8;
-		num_val = 5;
+		num_val = 4;
 		break;
 
 	case DMIC:
-		pr_debug("DMIC\n");
-		sc_access[0].reg_addr = MICCTRL;
-		sc_access[0].mask = MASK6|MASK3|MASK1|MASK0;
+		pr_debug("sst: DMIC\n");
+		sc_access[0].reg_addr = 0x107;
+		sc_access[0].mask = MASK6|MASK4|MASK3|MASK1|MASK0;
 		sc_access[0].value = 0x0B;
 		sc_access[1].reg_addr = 0x105;
 		sc_access[1].value = 0x80;
@@ -933,13 +869,10 @@ static int nc_set_selected_input_dev(u8 value)
 		sc_access[2].reg_addr = 0x10a;
 		sc_access[2].value = 0x40;
 		sc_access[2].mask = MASK6;
-		sc_access[3].reg_addr = LILSEL;
+		sc_access[3].reg_addr = 0x109;
 		sc_access[3].mask = MASK6;
-		sc_access[3].value = 0x00;
-		sc_access[4].reg_addr = ADCSAMPLERATE;
-		sc_access[4].mask =  MASK7|MASK6|MASK5|MASK4|MASK3;
-		sc_access[4].value = 0x33;
-		num_val = 5;
+		sc_access[3].value = 0x40;
+		num_val = 4;
 		break;
 	default:
 		return -EINVAL;
@@ -957,23 +890,23 @@ static int nc_get_mute(int dev_id, u8 *value)
 	if (retval)
 		return retval;
 
-	pr_debug("get mute::%d\n", dev_id);
+	pr_debug("sst: get mute::%d\n", dev_id);
 
 	switch (dev_id) {
 	case PMIC_SND_AMIC_MUTE:
-		pr_debug("PMIC_SND_INPUT_MUTE_MIC1\n");
+		pr_debug("sst: PMIC_SND_INPUT_MUTE_MIC1\n");
 		sc_access.reg_addr = LILSEL;
 		mask = MASK6;
 		break;
 	case PMIC_SND_HP_MIC_MUTE:
-		pr_debug("PMIC_SND_INPUT_MUTE_MIC2\n");
+		pr_debug("sst: PMIC_SND_INPUT_MUTE_MIC2\n");
 		sc_access.reg_addr = LIRSEL;
 		mask = MASK6;
 		break;
 	case PMIC_SND_LEFT_HP_MUTE:
 	case PMIC_SND_RIGHT_HP_MUTE:
 		mask = MASK2;
-		pr_debug("PMIC_SN_LEFT/RIGHT_HP_MUTE\n");
+		pr_debug("sst: PMIC_SN_LEFT/RIGHT_HP_MUTE\n");
 		if (dev_id == PMIC_SND_RIGHT_HP_MUTE)
 			sc_access.reg_addr = RMUTE;
 		else
@@ -981,12 +914,12 @@ static int nc_get_mute(int dev_id, u8 *value)
 		break;
 
 	case PMIC_SND_LEFT_SPEAKER_MUTE:
-		pr_debug("PMIC_MONO_EARPIECE_MUTE\n");
+		pr_debug("sst: PMIC_MONO_EARPIECE_MUTE\n");
 		sc_access.reg_addr = RMUTE;
 		mask = MASK1;
 		break;
 	case PMIC_SND_DMIC_MUTE:
-		pr_debug("PMIC_SND_INPUT_MUTE_DMIC\n");
+		pr_debug("sst: PMIC_SND_INPUT_MUTE_DMIC\n");
 		sc_access.reg_addr = 0x105;
 		mask = MASK6;
 		break;
@@ -995,16 +928,16 @@ static int nc_get_mute(int dev_id, u8 *value)
 
 	}
 	retval = sst_sc_reg_access(&sc_access, PMIC_READ, 1);
-	pr_debug("reg value = %d\n", sc_access.value);
+	pr_debug("sst: reg value = %d\n", sc_access.value);
 	if (retval)
 		return retval;
 	*value = (sc_access.value) & mask;
-	pr_debug("masked value = %d\n", *value);
+	pr_debug("sst: masked value = %d\n", *value);
 	if (*value)
 		*value = 0;
 	else
 		*value = 1;
-	pr_debug("value returned = 0x%x\n", *value);
+	pr_debug("sst: value returned = 0x%x\n", *value);
 	return retval;
 }
 
@@ -1020,33 +953,21 @@ static int nc_get_vol(int dev_id, int *value)
 
 	switch (dev_id) {
 	case PMIC_SND_CAPTURE_VOL:
-		pr_debug("PMIC_SND_INPUT_CAPTURE_VOL\n");
+		pr_debug("sst: PMIC_SND_INPUT_CAPTURE_VOL\n");
 		sc_access.reg_addr =  LILSEL;
 		mask = (MASK0|MASK1|MASK2|MASK3|MASK4|MASK5);
 		break;
 
-	case PMIC_SND_LEFT_MASTER_VOL:
-		pr_debug("GET_VOLUME_PMIC_LEFT_MASTER_VOL\n");
+	case PMIC_SND_RIGHT_PB_VOL:
+		pr_debug("sst: GET_VOLUME_PMIC_LEFT_HP_VOL\n");
 		sc_access.reg_addr = AUDIOLVOL;
 		mask = (MASK0|MASK1|MASK2|MASK3|MASK4|MASK5|MASK6);
 		break;
 
-	case PMIC_SND_RIGHT_MASTER_VOL:
-		pr_debug("GET_VOLUME_PMIC_RIGHT_MASTER_VOL\n");
+	case PMIC_SND_LEFT_PB_VOL:
+		pr_debug("sst: GET_VOLUME_PMIC_RIGHT_HP_VOL\n");
 		sc_access.reg_addr = AUDIORVOL;
 		mask = (MASK0|MASK1|MASK2|MASK3|MASK4|MASK5|MASK6);
-		break;
-
-	case PMIC_SND_RIGHT_PB_VOL:
-		pr_debug("GET_VOLUME_PMIC_RIGHT_HP_VOL\n");
-		sc_access.reg_addr = HPRVOL;
-		mask = (MASK0|MASK1|MASK2|MASK3|MASK4);
-		break;
-
-	case PMIC_SND_LEFT_PB_VOL:
-		pr_debug("GET_VOLUME_PMIC_LEFT_HP_VOL\n");
-		sc_access.reg_addr = HPLVOL;
-		mask = (MASK0|MASK1|MASK2|MASK3|MASK4);
 		break;
 
 	default:
@@ -1054,87 +975,13 @@ static int nc_get_vol(int dev_id, int *value)
 
 	}
 	retval = sst_sc_reg_access(&sc_access, PMIC_READ, 1);
-	pr_debug("value read = 0x%x\n", sc_access.value);
+	pr_debug("sst: value read = 0x%x\n", sc_access.value);
 	*value = -((sc_access.value) & mask);
-	pr_debug("get vol value returned = %d\n", *value);
+	pr_debug("sst: get vol value returned = %d\n", *value);
 	return retval;
 }
 
-static void hp_automute(enum snd_jack_types type, int present)
-{
-	u8 in = DMIC;
-	u8 out = INTERNAL_SPKR;
-	if (present) {
-		if (type == SND_JACK_HEADSET)
-			in = HS_MIC;
-		out = STEREO_HEADPHONE;
-	}
-	nc_set_selected_input_dev(in);
-	nc_set_selected_output_dev(out);
-}
-
-static void nc_pmic_irq_cb(void *cb_data, u8 intsts)
-{
-	u8 value = 0;
-	struct mad_jack *mjack = NULL;
-	unsigned int present = 0, jack_event_flag = 0, buttonpressflag = 0;
-	struct snd_intelmad *intelmaddata = cb_data;
-	struct sc_reg_access sc_access_read = {0,};
-
-	sc_access_read.reg_addr = 0x132;
-	sst_sc_reg_access(&sc_access_read, PMIC_READ, 1);
-	value = (sc_access_read.value);
-	pr_debug("value returned = 0x%x\n", value);
-
-	mjack = &intelmaddata->jack[0];
-	if (intsts & 0x1) {
-		pr_debug("SST DBG:MAD headset detected\n");
-		/* send headset detect/undetect */
-		present = (value == 0x1) ? 3 : 0;
-		jack_event_flag = 1;
-		mjack->jack.type = SND_JACK_HEADSET;
-		hp_automute(SND_JACK_HEADSET, present);
-	}
-
-	if (intsts & 0x2) {
-		pr_debug(":MAD headphone detected\n");
-		/* send headphone detect/undetect */
-		present = (value == 0x2) ? 1 : 0;
-		jack_event_flag = 1;
-		mjack->jack.type = SND_JACK_HEADPHONE;
-		hp_automute(SND_JACK_HEADPHONE, present);
-	}
-
-	if (intsts & 0x4) {
-		pr_debug("MAD short push detected\n");
-		/* send short push */
-		present = 1;
-		jack_event_flag = 1;
-		buttonpressflag = 1;
-		mjack->jack.type = MID_JACK_HS_SHORT_PRESS;
-	}
-
-	if (intsts & 0x8) {
-		pr_debug(":MAD long push detected\n");
-		/* send long push */
-		present = 1;
-		jack_event_flag = 1;
-		buttonpressflag = 1;
-		mjack->jack.type = MID_JACK_HS_LONG_PRESS;
-	}
-
-	if (jack_event_flag)
-		sst_mad_send_jack_report(&mjack->jack,
-					buttonpressflag, present);
-}
-static int nc_jack_enable(void)
-{
-	return 0;
-}
-
 struct snd_pmic_ops snd_pmic_ops_nc = {
-	.input_dev_id   =       DMIC,
-	.output_dev_id  =       INTERNAL_SPKR,
 	.set_input_dev	=	nc_set_selected_input_dev,
 	.set_output_dev =	nc_set_selected_output_dev,
 	.set_mute	=	nc_set_mute,
@@ -1150,7 +997,5 @@ struct snd_pmic_ops snd_pmic_ops_nc = {
 	.power_up_pmic_cp =	nc_power_up_cp,
 	.power_down_pmic_pb =	nc_power_down_pb,
 	.power_down_pmic_cp =	nc_power_down_cp,
-	.power_down_pmic	=	nc_power_down,
-	.pmic_irq_cb	=	nc_pmic_irq_cb,
-	.pmic_jack_enable =	nc_jack_enable,
+	.power_down_pmic =	nc_power_down,
 };

@@ -14,8 +14,11 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef _BRCMF_PROTO_H_
-#define _BRCMF_PROTO_H_
+#ifndef _dhd_proto_h_
+#define _dhd_proto_h_
+
+#include <dhdioctl.h>
+#include <wlioctl.h>
 
 #ifndef IOCTL_RESP_TIMEOUT
 #define IOCTL_RESP_TIMEOUT  2000	/* In milli second */
@@ -26,50 +29,64 @@
 #endif
 
 /*
- * Exported from the brcmf protocol module (brcmf_cdc)
+ * Exported from the dhd protocol module (dhd_cdc, dhd_rndis)
  */
 
 /* Linkage, sets prot link and updates hdrlen in pub */
-extern int brcmf_proto_attach(struct brcmf_pub *drvr);
+extern int dhd_prot_attach(dhd_pub_t *dhdp);
 
-/* Unlink, frees allocated protocol memory (including brcmf_proto) */
-extern void brcmf_proto_detach(struct brcmf_pub *drvr);
+/* Unlink, frees allocated protocol memory (including dhd_prot) */
+extern void dhd_prot_detach(dhd_pub_t *dhdp);
 
 /* Initialize protocol: sync w/dongle state.
  * Sets dongle media info (iswl, drv_version, mac address).
  */
-extern int brcmf_proto_init(struct brcmf_pub *drvr);
+extern int dhd_prot_init(dhd_pub_t *dhdp);
 
 /* Stop protocol: sync w/dongle state. */
-extern void brcmf_proto_stop(struct brcmf_pub *drvr);
+extern void dhd_prot_stop(dhd_pub_t *dhdp);
+
+extern bool dhd_proto_fcinfo(dhd_pub_t *dhd, void *pktbuf, u8 *fcbits);
 
 /* Add any protocol-specific data header.
  * Caller must reserve prot_hdrlen prepend space.
  */
-extern void brcmf_proto_hdrpush(struct brcmf_pub *, int ifidx,
-				struct sk_buff *txp);
+extern void dhd_prot_hdrpush(dhd_pub_t *, int ifidx, void *txp);
 
 /* Remove any protocol-specific data header. */
-extern int brcmf_proto_hdrpull(struct brcmf_pub *, int *ifidx,
-			       struct sk_buff *rxp);
+extern int dhd_prot_hdrpull(dhd_pub_t *, int *ifidx, void *rxp);
 
 /* Use protocol to issue ioctl to dongle */
-extern int brcmf_proto_ioctl(struct brcmf_pub *drvr, int ifidx,
-			     struct brcmf_ioctl *ioc, void *buf, int len);
+extern int dhd_prot_ioctl(dhd_pub_t *dhd, int ifidx, wl_ioctl_t *ioc,
+			  void *buf, int len);
+
+/* Check for and handle local prot-specific iovar commands */
+extern int dhd_prot_iovar_op(dhd_pub_t *dhdp, const char *name,
+			     void *params, int plen, void *arg, int len,
+			     bool set);
 
 /* Add prot dump output to a buffer */
-extern void brcmf_proto_dump(struct brcmf_pub *drvr,
-			     struct brcmu_strbuf *strbuf);
+extern void dhd_prot_dump(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf);
 
 /* Update local copy of dongle statistics */
-extern void brcmf_proto_dstats(struct brcmf_pub *drvr);
+extern void dhd_prot_dstats(dhd_pub_t *dhdp);
 
-extern int brcmf_c_ioctl(struct brcmf_pub *drvr, struct brcmf_c_ioctl *ioc,
-			 void *buf, uint buflen);
+extern int dhd_ioctl(dhd_pub_t *dhd_pub, dhd_ioctl_t *ioc, void *buf,
+		     uint buflen);
 
-extern int brcmf_c_preinit_ioctls(struct brcmf_pub *drvr);
+extern int dhd_preinit_ioctls(dhd_pub_t *dhd);
 
-extern int brcmf_proto_cdc_set_ioctl(struct brcmf_pub *drvr, int ifidx,
-				     uint cmd, void *buf, uint len);
+/********************************
+ * For version-string expansion *
+ */
+#if defined(BDC)
+#define DHD_PROTOCOL "bdc"
+#elif defined(CDC)
+#define DHD_PROTOCOL "cdc"
+#elif defined(RNDIS)
+#define DHD_PROTOCOL "rndis"
+#else
+#define DHD_PROTOCOL "unknown"
+#endif				/* proto */
 
-#endif				/* _BRCMF_PROTO_H_ */
+#endif				/* _dhd_proto_h_ */

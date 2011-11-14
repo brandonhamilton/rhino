@@ -21,8 +21,6 @@
 #include <mach/hardware.h>
 #include <mach/common.h>
 
-#include "irq-common.h"
-
 /*
  *****************************************
  * TZIC Registers                        *
@@ -49,52 +47,70 @@
 
 void __iomem *tzic_base; /* Used as irq controller base in entry-macro.S */
 
-#define TZIC_NUM_IRQS 128
-
-#ifdef CONFIG_FIQ
-static int tzic_set_irq_fiq(unsigned int irq, unsigned int type)
+/**
+ * tzic_mask_irq() - Disable interrupt number "irq" in the TZIC
+ *
+ * @param  irq          interrupt source number
+ */
+static void tzic_mask_irq(unsigned int irq)
 {
-	unsigned int index, mask, value;
+	int index, off;
 
 	index = irq >> 5;
-	if (unlikely(index >= 4))
-		return -EINVAL;
-	mask = 1U << (irq & 0x1F);
+	off = irq & 0x1F;
+	__raw_writel(1 << off, tzic_base + TZIC_ENCLEAR0(index));
+}
 
-	value = __raw_readl(tzic_base + TZIC_INTSEC0(index)) | mask;
-	if (type)
-		value &= ~mask;
-	__raw_writel(value, tzic_base + TZIC_INTSEC0(index));
+/**
+ * tzic_unmask_irq() - Enable interrupt number "irq" in the TZIC
+ *
+ * @param  irq          interrupt source number
+ */
+static void tzic_unmask_irq(unsigned int irq)
+{
+	int index, off;
+
+	index = irq >> 5;
+	off = irq & 0x1F;
+	__raw_writel(1 << off, tzic_base + TZIC_ENSET0(index));
+}
+
+static unsigned int wakeup_intr[4];
+
+/**
+ * tzic_set_wake_irq() - Set interrupt number "irq" in the TZIC as a wake-up source.
+ *
+ * @param  irq          interrupt source number
+ * @param  enable       enable as wake-up if equal to non-zero
+ * 			disble as wake-up if equal to zero
+ *
+ * @return       This function returns 0 on success.
+ */
+static int tzic_set_wake_irq(unsigned int irq, unsigned int enable)
+{
+	unsigned int index, off;
+
+	index = irq >> 5;
+	off = irq & 0x1F;
+
+	if (index > 3)
+		return -EINVAL;
+
+	if (enable)
+		wakeup_intr[index] |= (1 << off);
+	else
+		wakeup_intr[index] &= ~(1 << off);
 
 	return 0;
 }
-#else
-#define tzic_set_irq_fiq NULL
-#endif
 
-static unsigned int *wakeup_intr[4];
-
-static __init void tzic_init_gc(unsigned int irq_start)
-{
-	struct irq_chip_generic *gc;
-	struct irq_chip_type *ct;
-	int idx = irq_start >> 5;
-
-	gc = irq_alloc_generic_chip("tzic", 1, irq_start, tzic_base,
-				    handle_level_irq);
-	gc->private = tzic_set_irq_fiq;
-	gc->wake_enabled = IRQ_MSK(32);
-	wakeup_intr[idx] = &gc->wake_active;
-
-	ct = gc->chip_types;
-	ct->chip.irq_mask = irq_gc_mask_disable_reg;
-	ct->chip.irq_unmask = irq_gc_unmask_enable_reg;
-	ct->chip.irq_set_wake = irq_gc_set_wake;
-	ct->regs.disable = TZIC_ENCLEAR0(idx);
-	ct->regs.enable = TZIC_ENSET0(idx);
-
-	irq_setup_generic_chip(gc, IRQ_MSK(32), 0, IRQ_NOREQUEST, 0);
-}
+static struct irq_chip mxc_tzic_chip = {
+	.name = "MXC_TZIC",
+	.ack = tzic_mask_irq,
+	.mask = tzic_mask_irq,
+	.unmask = tzic_unmask_irq,
+	.set_wake = tzic_set_wake_irq,
+};
 
 /*
  * This function initializes the TZIC hardware and disables all the
@@ -124,14 +140,11 @@ void __init tzic_init_irq(void __iomem *irqbase)
 
 	/* all IRQ no FIQ Warning :: No selection */
 
-	for (i = 0; i < TZIC_NUM_IRQS; i += 32)
-		tzic_init_gc(i);
-
-#ifdef CONFIG_FIQ
-	/* Initialize FIQ */
-	init_FIQ();
-#endif
-
+	for (i = 0; i < MXC_INTERNAL_IRQS; i++) {
+		set_irq_chip(i, &mxc_tzic_chip);
+		set_irq_handler(i, handle_level_irq);
+		set_irq_flags(i, IRQF_VALID);
+	}
 	pr_info("TrustZone Interrupt Controller (TZIC) initialized\n");
 }
 
@@ -152,7 +165,7 @@ int tzic_enable_wake(int is_idle)
 
 	for (i = 0; i < 4; i++) {
 		v = is_idle ? __raw_readl(tzic_base + TZIC_ENSET0(i)) :
-			*wakeup_intr[i];
+			wakeup_intr[i];
 		__raw_writel(v, tzic_base + TZIC_WAKEUP0(i));
 	}
 

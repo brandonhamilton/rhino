@@ -39,7 +39,7 @@ struct builtin_fw {
 int request_firmware(const struct firmware **fw, const char *name,
 		     struct device *device);
 int request_firmware_nowait(
-	struct module *module, bool uevent,
+	struct module *module, int uevent,
 	const char *name, struct device *device, gfp_t gfp, void *context,
 	void (*cont)(const struct firmware *fw, void *context));
 
@@ -52,7 +52,7 @@ static inline int request_firmware(const struct firmware **fw,
 	return -EINVAL;
 }
 static inline int request_firmware_nowait(
-	struct module *module, bool uevent,
+	struct module *module, int uevent,
 	const char *name, struct device *device, gfp_t gfp, void *context,
 	void (*cont)(const struct firmware *fw, void *context))
 {

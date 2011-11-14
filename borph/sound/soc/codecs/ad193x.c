@@ -19,11 +19,14 @@
 #include <sound/initval.h>
 #include <sound/soc.h>
 #include <sound/tlv.h>
+#include <sound/soc-dapm.h>
 #include "ad193x.h"
 
 /* codec private data */
 struct ad193x_priv {
-	enum snd_soc_control_type control_type;
+	u8 reg_cache[AD193X_NUM_REGS];
+	enum snd_soc_control_type bus_type;
+	void *control_data;
 	int sysclk;
 };
 
@@ -350,15 +353,17 @@ static struct snd_soc_dai_driver ad193x_dai = {
 static int ad193x_probe(struct snd_soc_codec *codec)
 {
 	struct ad193x_priv *ad193x = snd_soc_codec_get_drvdata(codec);
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int ret;
 
-	if (ad193x->control_type == SND_SOC_I2C)
-		ret = snd_soc_codec_set_cache_io(codec, 8, 8, ad193x->control_type);
+	codec->control_data = ad193x->control_data;
+	if (ad193x->bus_type == SND_SOC_I2C)
+		ret = snd_soc_codec_set_cache_io(codec, 8, 8, ad193x->bus_type);
 	else
-		ret = snd_soc_codec_set_cache_io(codec, 16, 8, ad193x->control_type);
+		ret = snd_soc_codec_set_cache_io(codec, 16, 8, ad193x->bus_type);
 	if (ret < 0) {
-		dev_err(codec->dev, "failed to set cache I/O: %d\n", ret);
+		dev_err(codec->dev, "failed to set cache I/O: %d\n",
+				ret);
+		kfree(ad193x);
 		return ret;
 	}
 
@@ -380,9 +385,9 @@ static int ad193x_probe(struct snd_soc_codec *codec)
 
 	snd_soc_add_controls(codec, ad193x_snd_controls,
 			     ARRAY_SIZE(ad193x_snd_controls));
-	snd_soc_dapm_new_controls(dapm, ad193x_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, ad193x_dapm_widgets,
 				  ARRAY_SIZE(ad193x_dapm_widgets));
-	snd_soc_dapm_add_routes(dapm, audio_paths, ARRAY_SIZE(audio_paths));
+	snd_soc_dapm_add_routes(codec, audio_paths, ARRAY_SIZE(audio_paths));
 
 	return ret;
 }
@@ -405,7 +410,8 @@ static int __devinit ad193x_spi_probe(struct spi_device *spi)
 		return -ENOMEM;
 
 	spi_set_drvdata(spi, ad193x);
-	ad193x->control_type = SND_SOC_SPI;
+	ad193x->control_data = spi;
+	ad193x->bus_type = SND_SOC_SPI;
 
 	ret = snd_soc_register_codec(&spi->dev,
 			&soc_codec_dev_ad193x, &ad193x_dai, 1);
@@ -423,7 +429,7 @@ static int __devexit ad193x_spi_remove(struct spi_device *spi)
 
 static struct spi_driver ad193x_spi_driver = {
 	.driver = {
-		.name	= "ad193x",
+		.name	= "ad193x-codec",
 		.owner	= THIS_MODULE,
 	},
 	.probe		= ad193x_spi_probe,
@@ -450,7 +456,8 @@ static int __devinit ad193x_i2c_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	i2c_set_clientdata(client, ad193x);
-	ad193x->control_type = SND_SOC_I2C;
+	ad193x->control_data = client;
+	ad193x->bus_type = SND_SOC_I2C;
 
 	ret =  snd_soc_register_codec(&client->dev,
 			&soc_codec_dev_ad193x, &ad193x_dai, 1);
@@ -468,7 +475,7 @@ static int __devexit ad193x_i2c_remove(struct i2c_client *client)
 
 static struct i2c_driver ad193x_i2c_driver = {
 	.driver = {
-		.name = "ad193x",
+		.name = "ad193x-codec",
 	},
 	.probe    = ad193x_i2c_probe,
 	.remove   = __devexit_p(ad193x_i2c_remove),

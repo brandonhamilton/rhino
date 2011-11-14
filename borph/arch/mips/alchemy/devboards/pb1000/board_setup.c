@@ -65,7 +65,7 @@ void __init board_setup(void)
 
 	/* Set AUX clock to 12 MHz * 8 = 96 MHz */
 	au_writel(8, SYS_AUXPLL);
-	alchemy_gpio1_input_enable();
+	au_writel(0, SYS_PINSTATERD);
 	udelay(100);
 
 #if defined(CONFIG_USB_OHCI_HCD) || defined(CONFIG_USB_OHCI_HCD_MODULE)
@@ -197,7 +197,7 @@ void __init board_setup(void)
 
 static int __init pb1000_init_irq(void)
 {
-	irq_set_irq_type(AU1000_GPIO15_INT, IRQF_TRIGGER_LOW);
+	set_irq_type(AU1000_GPIO15_INT, IRQF_TRIGGER_LOW);
 	return 0;
 }
 arch_initcall(pb1000_init_irq);

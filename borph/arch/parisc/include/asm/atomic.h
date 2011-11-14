@@ -197,15 +197,15 @@ static __inline__ int atomic_read(const atomic_t *v)
 #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
 
 /**
- * __atomic_add_unless - add unless the number is a given value
+ * atomic_add_unless - add unless the number is a given value
  * @v: pointer of type atomic_t
  * @a: the amount to add to v...
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
-static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -217,9 +217,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != (u);
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 #define atomic_add(i,v)	((void)(__atomic_add_return( (i),(v))))
 #define atomic_sub(i,v)	((void)(__atomic_add_return(-(i),(v))))
@@ -258,10 +259,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 
 #define ATOMIC64_INIT(i) ((atomic64_t) { (i) })
 
-static __inline__ s64
+static __inline__ int
 __atomic64_add_return(s64 i, atomic64_t *v)
 {
-	s64 ret;
+	int ret;
 	unsigned long flags;
 	_atomic_spin_lock_irqsave(v, flags);
 
@@ -316,7 +317,7 @@ atomic64_read(const atomic64_t *v)
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
 static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 {
@@ -335,7 +336,12 @@ static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 
 #define atomic64_inc_not_zero(v) atomic64_add_unless((v), 1, 0)
 
+#else /* CONFIG_64BIT */
+
+#include <asm-generic/atomic64.h>
+
 #endif /* !CONFIG_64BIT */
 
+#include <asm-generic/atomic-long.h>
 
 #endif /* _ASM_PARISC_ATOMIC_H_ */

@@ -26,12 +26,12 @@ static struct sock_filter ptp_filter[] = {
 	PTP_FILTER
 };
 
-static unsigned int classify(const struct sk_buff *skb)
+static unsigned int classify(struct sk_buff *skb)
 {
 	if (likely(skb->dev &&
 		   skb->dev->phydev &&
 		   skb->dev->phydev->drv))
-		return sk_run_filter(skb, ptp_filter);
+		return sk_run_filter(skb, ptp_filter, ARRAY_SIZE(ptp_filter));
 	else
 		return PTP_CLASS_NONE;
 }
@@ -68,7 +68,6 @@ void skb_clone_tx_timestamp(struct sk_buff *skb)
 		break;
 	}
 }
-EXPORT_SYMBOL_GPL(skb_clone_tx_timestamp);
 
 void skb_complete_tx_timestamp(struct sk_buff *skb,
 			       struct skb_shared_hwtstamps *hwtstamps)
@@ -122,7 +121,6 @@ bool skb_defer_rx_timestamp(struct sk_buff *skb)
 
 	return false;
 }
-EXPORT_SYMBOL_GPL(skb_defer_rx_timestamp);
 
 void __init skb_timestamping_init(void)
 {

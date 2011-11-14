@@ -81,7 +81,7 @@
 #include <linux/spinlock_types.h>
 
 /*
- * Pull the arch_spin*() functions/declarations (UP-nondebug doesn't need them):
+ * Pull the arch_spin*() functions/declarations (UP-nondebug doesnt need them):
  */
 #ifdef CONFIG_SMP
 # include <asm/spinlock.h>
@@ -384,7 +384,7 @@ static inline void assert_spin_locked(spinlock_t *lock)
  * Pull the atomic_t declaration:
  * (asm-mips/atomic.h needs above definitions)
  */
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 /**
  * atomic_dec_and_lock - lock on reaching reference count zero
  * @atomic: the atomic counter

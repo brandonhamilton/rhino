@@ -63,8 +63,7 @@ void ___ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 
 	lockdep_assert_held(&sta->ampdu_mlme.mtx);
 
-	tid_rx = rcu_dereference_protected(sta->ampdu_mlme.tid_rx[tid],
-					lockdep_is_held(&sta->ampdu_mlme.mtx));
+	tid_rx = sta->ampdu_mlme.tid_rx[tid];
 
 	if (!tid_rx)
 		return;
@@ -77,7 +76,7 @@ void ___ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 #endif /* CONFIG_MAC80211_HT_DEBUG */
 
 	if (drv_ampdu_action(local, sta->sdata, IEEE80211_AMPDU_RX_STOP,
-			     &sta->sta, tid, NULL, 0))
+			     &sta->sta, tid, NULL))
 		printk(KERN_DEBUG "HW problem - can not stop rx "
 				"aggregation for tid %d\n", tid);
 
@@ -99,29 +98,6 @@ void __ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 	___ieee80211_stop_rx_ba_session(sta, tid, initiator, reason, tx);
 	mutex_unlock(&sta->ampdu_mlme.mtx);
 }
-
-void ieee80211_stop_rx_ba_session(struct ieee80211_vif *vif, u16 ba_rx_bitmap,
-				  const u8 *addr)
-{
-	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
-	struct sta_info *sta;
-	int i;
-
-	rcu_read_lock();
-	sta = sta_info_get(sdata, addr);
-	if (!sta) {
-		rcu_read_unlock();
-		return;
-	}
-
-	for (i = 0; i < STA_TID_NUM; i++)
-		if (ba_rx_bitmap & BIT(i))
-			set_bit(i, sta->ampdu_mlme.tid_rx_stop_requested);
-
-	ieee80211_queue_work(&sta->local->hw, &sta->ampdu_mlme.work);
-	rcu_read_unlock();
-}
-EXPORT_SYMBOL(ieee80211_stop_rx_ba_session);
 
 /*
  * After accepting the AddBA Request we activated a timer,
@@ -153,7 +129,9 @@ static void sta_rx_agg_reorder_timer_expired(unsigned long data)
 			timer_to_tid[0]);
 
 	rcu_read_lock();
+	spin_lock(&sta->lock);
 	ieee80211_release_reorder_timeout(sta, *ptid);
+	spin_unlock(&sta->lock);
 	rcu_read_unlock();
 }
 
@@ -209,6 +187,8 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 				     struct ieee80211_mgmt *mgmt,
 				     size_t len)
 {
+	struct ieee80211_hw *hw = &local->hw;
+	struct ieee80211_conf *conf = &hw->conf;
 	struct tid_ampdu_rx *tid_agg_rx;
 	u16 capab, tid, timeout, ba_policy, buf_size, start_seq_num, status;
 	u8 dialog_token;
@@ -253,12 +233,14 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 		goto end_no_lock;
 	}
 	/* determine default buffer size */
-	if (buf_size == 0)
-		buf_size = IEEE80211_MAX_AMPDU_BUF;
+	if (buf_size == 0) {
+		struct ieee80211_supported_band *sband;
 
-	/* make sure the size doesn't exceed the maximum supported by the hw */
-	if (buf_size > local->hw.max_rx_aggregation_subframes)
-		buf_size = local->hw.max_rx_aggregation_subframes;
+		sband = local->hw.wiphy->bands[conf->channel->band];
+		buf_size = IEEE80211_MIN_AMPDU_BUF;
+		buf_size = buf_size << sband->ht_cap.ampdu_factor;
+	}
+
 
 	/* examine state machine */
 	mutex_lock(&sta->ampdu_mlme.mtx);
@@ -270,15 +252,11 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 				"%pM on tid %u\n",
 				mgmt->sa, tid);
 #endif /* CONFIG_MAC80211_HT_DEBUG */
-
-		/* delete existing Rx BA session on the same tid */
-		___ieee80211_stop_rx_ba_session(sta, tid, WLAN_BACK_RECIPIENT,
-						WLAN_STATUS_UNSPECIFIED_QOS,
-						false);
+		goto end;
 	}
 
 	/* prepare A-MPDU MLME for Rx aggregation */
-	tid_agg_rx = kmalloc(sizeof(struct tid_ampdu_rx), GFP_KERNEL);
+	tid_agg_rx = kmalloc(sizeof(struct tid_ampdu_rx), GFP_ATOMIC);
 	if (!tid_agg_rx) {
 #ifdef CONFIG_MAC80211_HT_DEBUG
 		if (net_ratelimit())
@@ -302,9 +280,9 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 
 	/* prepare reordering buffer */
 	tid_agg_rx->reorder_buf =
-		kcalloc(buf_size, sizeof(struct sk_buff *), GFP_KERNEL);
+		kcalloc(buf_size, sizeof(struct sk_buff *), GFP_ATOMIC);
 	tid_agg_rx->reorder_time =
-		kcalloc(buf_size, sizeof(unsigned long), GFP_KERNEL);
+		kcalloc(buf_size, sizeof(unsigned long), GFP_ATOMIC);
 	if (!tid_agg_rx->reorder_buf || !tid_agg_rx->reorder_time) {
 #ifdef CONFIG_MAC80211_HT_DEBUG
 		if (net_ratelimit())
@@ -318,7 +296,7 @@ void ieee80211_process_addba_request(struct ieee80211_local *local,
 	}
 
 	ret = drv_ampdu_action(local, sta->sdata, IEEE80211_AMPDU_RX_START,
-			       &sta->sta, tid, &start_seq_num, 0);
+			       &sta->sta, tid, &start_seq_num);
 #ifdef CONFIG_MAC80211_HT_DEBUG
 	printk(KERN_DEBUG "Rx A-MPDU request on tid %d result %d\n", tid, ret);
 #endif /* CONFIG_MAC80211_HT_DEBUG */

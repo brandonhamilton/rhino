@@ -7,7 +7,6 @@
 #include <linux/shm.h>
 #include <linux/sched.h>
 #include <linux/io.h>
-#include <linux/personality.h>
 #include <linux/random.h>
 #include <asm/cputype.h>
 #include <asm/system.h>
@@ -32,7 +31,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	unsigned long start_addr;
-#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K)
+#ifdef CONFIG_CPU_V6
 	unsigned int cache_type;
 	int do_align = 0, aliasing = 0;
 
@@ -83,8 +82,7 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	        mm->cached_hole_size = 0;
 	}
 	/* 8 bits of randomness in 20 address space bits */
-	if ((current->flags & PF_RANDOMIZE) &&
-	    !(current->personality & ADDR_NO_RANDOMIZE))
+	if (current->flags & PF_RANDOMIZE)
 		addr += (get_random_int() % (1 << 8)) << PAGE_SHIFT;
 
 full_search:

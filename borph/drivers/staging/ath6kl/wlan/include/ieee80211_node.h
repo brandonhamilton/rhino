@@ -55,7 +55,7 @@
 #define IEEE80211_NODE_HASHSIZE 32
 /* simple hash is enough for variation of macaddr */
 #define IEEE80211_NODE_HASH(addr)   \
-    (((const u8 *)(addr))[IEEE80211_ADDR_LEN - 1] % \
+    (((const A_UINT8 *)(addr))[IEEE80211_ADDR_LEN - 1] % \
         IEEE80211_NODE_HASHSIZE)
 
 /*
@@ -71,14 +71,14 @@ struct ieee80211_node_table {
     struct bss              *nt_node_last;  /* information of all nodes */
     struct bss              *nt_hash[IEEE80211_NODE_HASHSIZE];
     const char              *nt_name;   /* for debugging */
-    u32 nt_scangen; /* gen# for timeout scan */
+    A_UINT32                nt_scangen; /* gen# for timeout scan */
 #ifdef THREAD_X
     A_TIMER                 nt_inact_timer;
-    u8 isTimerArmed;   /* is the node timer armed */
+    A_UINT8                 isTimerArmed;   /* is the node timer armed */
 #endif
-    u32 nt_nodeAge; /* node aging time */
+    A_UINT32                nt_nodeAge; /* node aging time */
 #ifdef OS_ROAM_MANAGEMENT
-    u32 nt_si_gen; /* gen# for scan indication*/
+    A_UINT32                nt_si_gen; /* gen# for scan indication*/
 #endif
 };
 

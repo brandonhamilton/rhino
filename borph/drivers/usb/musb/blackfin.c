@@ -21,7 +21,6 @@
 #include <asm/cacheflush.h>
 
 #include "musb_core.h"
-#include "musbhsdma.h"
 #include "blackfin.h"
 
 struct bfin_glue {
@@ -33,9 +32,8 @@ struct bfin_glue {
 /*
  * Load an endpoint's FIFO
  */
-void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
+static void bfin_musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 {
-	struct musb *musb = hw_ep->musb;
 	void __iomem *fifo = hw_ep->fifo;
 	void __iomem *epio = hw_ep->regs;
 	u8 epnum = hw_ep->epnum;
@@ -44,7 +42,7 @@ void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 
 	musb_writew(epio, MUSB_TXCOUNT, len);
 
-	dev_dbg(musb->controller, "TX ep%d fifo %p count %d buf %p, epio %p\n",
+	DBG(4, "TX ep%d fifo %p count %d buf %p, epio %p\n",
 			hw_ep->epnum, fifo, len, src, epio);
 
 	dump_fifo_data(src, len);
@@ -97,9 +95,8 @@ void musb_write_fifo(struct musb_hw_ep *hw_ep, u16 len, const u8 *src)
 /*
  * Unload an endpoint's FIFO
  */
-void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
+static void bfin_musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
 {
-	struct musb *musb = hw_ep->musb;
 	void __iomem *fifo = hw_ep->fifo;
 	u8 epnum = hw_ep->epnum;
 
@@ -156,7 +153,7 @@ void musb_read_fifo(struct musb_hw_ep *hw_ep, u16 len, u8 *dst)
 				*(dst + len - 1) = (u8)inw((unsigned long)fifo + 4);
 		}
 	}
-	dev_dbg(musb->controller, "%cX ep%d fifo %p count %d buf %p\n",
+	DBG(4, "%cX ep%d fifo %p count %d buf %p\n",
 			'R', hw_ep->epnum, fifo, len, dst);
 
 	dump_fifo_data(dst, len);
@@ -281,14 +278,12 @@ static void musb_conn_timer_handler(unsigned long _musb)
 		}
 		break;
 	default:
-		dev_dbg(musb->controller, "%s state not handled\n",
-			otg_state_string(musb->xceiv->state));
+		DBG(1, "%s state not handled\n", otg_state_string(musb));
 		break;
 	}
 	spin_unlock_irqrestore(&musb->lock, flags);
 
-	dev_dbg(musb->controller, "state is %s\n",
-		otg_state_string(musb->xceiv->state));
+	DBG(4, "state is %s\n", otg_state_string(musb));
 }
 
 static void bfin_musb_enable(struct musb *musb)
@@ -310,9 +305,9 @@ static void bfin_musb_set_vbus(struct musb *musb, int is_on)
 		value = !value;
 	gpio_set_value(musb->config->gpio_vrsel, value);
 
-	dev_dbg(musb->controller, "VBUS %s, devctl %02x "
+	DBG(1, "VBUS %s, devctl %02x "
 		/* otg %3x conf %08x prcm %08x */ "\n",
-		otg_state_string(musb->xceiv->state),
+		otg_state_string(musb),
 		musb_readb(musb->mregs, MUSB_DEVCTL));
 }
 
@@ -327,7 +322,7 @@ static void bfin_musb_try_idle(struct musb *musb, unsigned long timeout)
 		mod_timer(&musb_conn_timer, jiffies + TIMER_DELAY);
 }
 
-static int bfin_musb_vbus_status(struct musb *musb)
+static int bfin_musb_get_vbus_status(struct musb *musb)
 {
 	return 0;
 }
@@ -335,27 +330,6 @@ static int bfin_musb_vbus_status(struct musb *musb)
 static int bfin_musb_set_mode(struct musb *musb, u8 musb_mode)
 {
 	return -EIO;
-}
-
-static int bfin_musb_adjust_channel_params(struct dma_channel *channel,
-				u16 packet_sz, u8 *mode,
-				dma_addr_t *dma_addr, u32 *len)
-{
-	struct musb_dma_channel *musb_channel = channel->private_data;
-
-	/*
-	 * Anomaly 05000450 might cause data corruption when using DMA
-	 * MODE 1 transmits with short packet.  So to work around this,
-	 * we truncate all MODE 1 transfers down to a multiple of the
-	 * max packet size, and then do the last short packet transfer
-	 * (if there is any) using MODE 0.
-	 */
-	if (ANOMALY_05000450) {
-		if (musb_channel->transmit && *mode == 1)
-			*len = *len - (*len % packet_sz);
-	}
-
-	return 0;
 }
 
 static void bfin_musb_reg_init(struct musb *musb)
@@ -413,8 +387,8 @@ static int bfin_musb_init(struct musb *musb)
 	}
 	gpio_direction_output(musb->config->gpio_vrsel, 0);
 
-	usb_nop_xceiv_register();
-	musb->xceiv = otg_get_transceiver();
+	usb_nop_xceiv_register(musb->id);
+	musb->xceiv = otg_get_transceiver(musb->id);
 	if (!musb->xceiv) {
 		gpio_free(musb->config->gpio_vrsel);
 		return -ENODEV;
@@ -430,7 +404,6 @@ static int bfin_musb_init(struct musb *musb)
 		musb->xceiv->set_power = bfin_musb_set_power;
 
 	musb->isr = blackfin_interrupt;
-	musb->double_buffer_not_ok = true;
 
 	return 0;
 }
@@ -440,11 +413,13 @@ static int bfin_musb_exit(struct musb *musb)
 	gpio_free(musb->config->gpio_vrsel);
 
 	otg_put_transceiver(musb->xceiv);
-	usb_nop_xceiv_unregister();
+	usb_nop_xceiv_unregister(musb->id);
 	return 0;
 }
 
 static const struct musb_platform_ops bfin_ops = {
+	.fifo_mode	= 2,
+	.flags		= MUSB_GLUE_EP_ADDR_FLAT_MAPPING | MUSB_GLUE_DMA_INVENTRA,
 	.init		= bfin_musb_init,
 	.exit		= bfin_musb_exit,
 
@@ -457,7 +432,11 @@ static const struct musb_platform_ops bfin_ops = {
 	.vbus_status	= bfin_musb_vbus_status,
 	.set_vbus	= bfin_musb_set_vbus,
 
-	.adjust_channel_params = bfin_musb_adjust_channel_params,
+	.read_fifo	= bfin_musb_read_fifo,
+	.write_fifo	= bfin_musb_write_fifo,
+
+	.dma_controller_create = inventra_dma_controller_create,
+	.dma_controller_destroy = inventra_dma_controller_destroy,
 };
 
 static u64 bfin_dmamask = DMA_BIT_MASK(32);
@@ -568,7 +547,7 @@ static struct dev_pm_ops bfin_pm_ops = {
 	.resume		= bfin_resume,
 };
 
-#define DEV_PM_OPS	&bfin_pm_ops
+#define DEV_PM_OPS	&bfin_pm_op,
 #else
 #define DEV_PM_OPS	NULL
 #endif
@@ -576,7 +555,7 @@ static struct dev_pm_ops bfin_pm_ops = {
 static struct platform_driver bfin_driver = {
 	.remove		= __exit_p(bfin_remove),
 	.driver		= {
-		.name	= "musb-blackfin",
+		.name	= "musb-bfin",
 		.pm	= DEV_PM_OPS,
 	},
 };

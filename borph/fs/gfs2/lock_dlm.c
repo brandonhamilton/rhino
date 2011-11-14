@@ -22,6 +22,7 @@ static void gdlm_ast(void *arg)
 {
 	struct gfs2_glock *gl = arg;
 	unsigned ret = gl->gl_state;
+	struct gfs2_sbd *sdp = gl->gl_sbd;
 
 	BUG_ON(gl->gl_lksb.sb_flags & DLM_SBF_DEMOTED);
 
@@ -30,7 +31,12 @@ static void gdlm_ast(void *arg)
 
 	switch (gl->gl_lksb.sb_status) {
 	case -DLM_EUNLOCK: /* Unlocked, so glock can be freed */
-		gfs2_glock_free(gl);
+		if (gl->gl_ops->go_flags & GLOF_ASPACE)
+			kmem_cache_free(gfs2_glock_aspace_cachep, gl);
+		else
+			kmem_cache_free(gfs2_glock_cachep, gl);
+		if (atomic_dec_and_test(&sdp->sd_glock_disposal))
+			wake_up(&sdp->sd_glock_wait);
 		return;
 	case -DLM_ECANCEL: /* Cancel while getting lock */
 		ret |= LM_OUT_CANCELED;
@@ -140,13 +146,15 @@ static u32 make_flags(const u32 lkid, const unsigned int gfs_flags,
 	return lkf;
 }
 
-static int gdlm_lock(struct gfs2_glock *gl, unsigned int req_state,
-		     unsigned int flags)
+static unsigned int gdlm_lock(struct gfs2_glock *gl,
+			      unsigned int req_state, unsigned int flags)
 {
 	struct lm_lockstruct *ls = &gl->gl_sbd->sd_lockstruct;
+	int error;
 	int req;
 	u32 lkf;
 
+	gl->gl_req = req_state;
 	req = make_mode(req_state);
 	lkf = make_flags(gl->gl_lksb.sb_lkid, flags, req);
 
@@ -154,18 +162,25 @@ static int gdlm_lock(struct gfs2_glock *gl, unsigned int req_state,
 	 * Submit the actual lock request.
 	 */
 
-	return dlm_lock(ls->ls_dlm, req, &gl->gl_lksb, lkf, gl->gl_strname,
-			GDLM_STRNAME_BYTES - 1, 0, gdlm_ast, gl, gdlm_bast);
+	error = dlm_lock(ls->ls_dlm, req, &gl->gl_lksb, lkf, gl->gl_strname,
+			 GDLM_STRNAME_BYTES - 1, 0, gdlm_ast, gl, gdlm_bast);
+	if (error == -EAGAIN)
+		return 0;
+	if (error)
+		return LM_OUT_ERROR;
+	return LM_OUT_ASYNC;
 }
 
-static void gdlm_put_lock(struct gfs2_glock *gl)
+static void gdlm_put_lock(struct kmem_cache *cachep, struct gfs2_glock *gl)
 {
 	struct gfs2_sbd *sdp = gl->gl_sbd;
 	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
 	int error;
 
 	if (gl->gl_lksb.sb_lkid == 0) {
-		gfs2_glock_free(gl);
+		kmem_cache_free(cachep, gl);
+		if (atomic_dec_and_test(&sdp->sd_glock_disposal))
+			wake_up(&sdp->sd_glock_wait);
 		return;
 	}
 

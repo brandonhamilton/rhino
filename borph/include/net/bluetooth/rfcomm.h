@@ -1,5 +1,5 @@
-/*
-   RFCOMM implementation for Linux Bluetooth stack (BlueZ)
+/* 
+   RFCOMM implementation for Linux Bluetooth stack (BlueZ).
    Copyright (C) 2002 Maxim Krasnyansky <maxk@qualcomm.com>
    Copyright (C) 2002 Marcel Holtmann <marcel@holtmann.org>
 
@@ -11,13 +11,13 @@
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.
    IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) AND AUTHOR(S) BE LIABLE FOR ANY
-   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
-   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES 
+   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN 
+   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF 
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS,
-   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS
+   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS, 
+   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS 
    SOFTWARE IS DISCLAIMED.
 */
 
@@ -105,7 +105,7 @@
 struct rfcomm_hdr {
 	u8 addr;
 	u8 ctrl;
-	u8 len;    /* Actual size can be 2 bytes */
+	u8 len;    // Actual size can be 2 bytes
 } __packed;
 
 struct rfcomm_cmd {
@@ -228,14 +228,13 @@ struct rfcomm_dlc {
 /* ---- RFCOMM SEND RPN ---- */
 int rfcomm_send_rpn(struct rfcomm_session *s, int cr, u8 dlci,
 			u8 bit_rate, u8 data_bits, u8 stop_bits,
-			u8 parity, u8 flow_ctrl_settings,
+			u8 parity, u8 flow_ctrl_settings, 
 			u8 xon_char, u8 xoff_char, u16 param_mask);
 
 /* ---- RFCOMM DLCs (channels) ---- */
 struct rfcomm_dlc *rfcomm_dlc_alloc(gfp_t prio);
 void rfcomm_dlc_free(struct rfcomm_dlc *d);
-int  rfcomm_dlc_open(struct rfcomm_dlc *d, bdaddr_t *src, bdaddr_t *dst,
-								u8 channel);
+int  rfcomm_dlc_open(struct rfcomm_dlc *d, bdaddr_t *src, bdaddr_t *dst, u8 channel);
 int  rfcomm_dlc_close(struct rfcomm_dlc *d, int reason);
 int  rfcomm_dlc_send(struct rfcomm_dlc *d, struct sk_buff *skb);
 int  rfcomm_dlc_set_modem_status(struct rfcomm_dlc *d, u8 v24_sig);
@@ -272,8 +271,7 @@ static inline void rfcomm_dlc_unthrottle(struct rfcomm_dlc *d)
 }
 
 /* ---- RFCOMM sessions ---- */
-void   rfcomm_session_getaddr(struct rfcomm_session *s, bdaddr_t *src,
-								bdaddr_t *dst);
+void   rfcomm_session_getaddr(struct rfcomm_session *s, bdaddr_t *src, bdaddr_t *dst);
 
 static inline void rfcomm_session_hold(struct rfcomm_session *s)
 {
@@ -314,8 +312,7 @@ struct rfcomm_pinfo {
 int  rfcomm_init_sockets(void);
 void rfcomm_cleanup_sockets(void);
 
-int  rfcomm_connect_ind(struct rfcomm_session *s, u8 channel,
-							struct rfcomm_dlc **d);
+int  rfcomm_connect_ind(struct rfcomm_session *s, u8 channel, struct rfcomm_dlc **d);
 
 /* ---- RFCOMM TTY ---- */
 #define RFCOMM_MAX_DEV  256

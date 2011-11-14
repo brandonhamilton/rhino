@@ -80,6 +80,7 @@ unsigned qib_wc_pat = 1; /* default (1) is to use PAT, not MTRR */
 module_param_named(wc_pat, qib_wc_pat, uint, S_IRUGO);
 MODULE_PARM_DESC(wc_pat, "enable write-combining via PAT mechanism");
 
+struct workqueue_struct *qib_wq;
 struct workqueue_struct *qib_cq_wq;
 
 static void verify_interrupt(unsigned long);
@@ -91,11 +92,9 @@ unsigned long *qib_cpulist;
 /* set number of contexts we'll actually use */
 void qib_set_ctxtcnt(struct qib_devdata *dd)
 {
-	if (!qib_cfgctxts) {
+	if (!qib_cfgctxts)
 		dd->cfgctxts = dd->first_user_ctxt + num_online_cpus();
-		if (dd->cfgctxts > dd->ctxtcnt)
-			dd->cfgctxts = dd->ctxtcnt;
-	} else if (qib_cfgctxts < dd->num_pports)
+	else if (qib_cfgctxts < dd->num_pports)
 		dd->cfgctxts = dd->ctxtcnt;
 	else if (qib_cfgctxts <= dd->ctxtcnt)
 		dd->cfgctxts = qib_cfgctxts;
@@ -269,19 +268,22 @@ static void init_shadow_tids(struct qib_devdata *dd)
 	struct page **pages;
 	dma_addr_t *addrs;
 
-	pages = vzalloc(dd->cfgctxts * dd->rcvtidcnt * sizeof(struct page *));
+	pages = vmalloc(dd->cfgctxts * dd->rcvtidcnt * sizeof(struct page *));
 	if (!pages) {
 		qib_dev_err(dd, "failed to allocate shadow page * "
 			    "array, no expected sends!\n");
 		goto bail;
 	}
 
-	addrs = vzalloc(dd->cfgctxts * dd->rcvtidcnt * sizeof(dma_addr_t));
+	addrs = vmalloc(dd->cfgctxts * dd->rcvtidcnt * sizeof(dma_addr_t));
 	if (!addrs) {
 		qib_dev_err(dd, "failed to allocate shadow dma handle "
 			    "array, no expected sends!\n");
 		goto bail_free;
 	}
+
+	memset(pages, 0, dd->cfgctxts * dd->rcvtidcnt * sizeof(struct page *));
+	memset(addrs, 0, dd->cfgctxts * dd->rcvtidcnt * sizeof(dma_addr_t));
 
 	dd->pageshadow = pages;
 	dd->physshadow = addrs;
@@ -346,7 +348,7 @@ done:
  * @dd: the qlogic_ib device
  *
  * sanity check at least some of the values after reset, and
- * ensure no receive or transmit (explicitly, in case reset
+ * ensure no receive or transmit (explictly, in case reset
  * failed
  */
 static int init_after_reset(struct qib_devdata *dd)
@@ -1043,10 +1045,24 @@ static int __init qlogic_ib_init(void)
 	if (ret)
 		goto bail;
 
+	/*
+	 * We create our own workqueue mainly because we want to be
+	 * able to flush it when devices are being removed.  We can't
+	 * use schedule_work()/flush_scheduled_work() because both
+	 * unregister_netdev() and linkwatch_event take the rtnl lock,
+	 * so flush_scheduled_work() can deadlock during device
+	 * removal.
+	 */
+	qib_wq = create_workqueue("qib");
+	if (!qib_wq) {
+		ret = -ENOMEM;
+		goto bail_dev;
+	}
+
 	qib_cq_wq = create_singlethread_workqueue("qib_cq");
 	if (!qib_cq_wq) {
 		ret = -ENOMEM;
-		goto bail_dev;
+		goto bail_wq;
 	}
 
 	/*
@@ -1076,6 +1092,8 @@ bail_unit:
 	idr_destroy(&qib_unit_table);
 bail_cq_wq:
 	destroy_workqueue(qib_cq_wq);
+bail_wq:
+	destroy_workqueue(qib_wq);
 bail_dev:
 	qib_dev_cleanup();
 bail:
@@ -1099,6 +1117,7 @@ static void __exit qlogic_ib_cleanup(void)
 
 	pci_unregister_driver(&qib_driver);
 
+	destroy_workqueue(qib_wq);
 	destroy_workqueue(qib_cq_wq);
 
 	qib_cpulist_count = 0;
@@ -1271,7 +1290,7 @@ static int __devinit qib_init_one(struct pci_dev *pdev,
 
 	if (qib_mini_init || initfail || ret) {
 		qib_stop_timers(dd);
-		flush_workqueue(ib_wq);
+		flush_scheduled_work();
 		for (pidx = 0; pidx < dd->num_pports; ++pidx)
 			dd->f_quiet_serdes(dd->pport + pidx);
 		if (qib_mini_init)
@@ -1320,8 +1339,8 @@ static void __devexit qib_remove_one(struct pci_dev *pdev)
 
 	qib_stop_timers(dd);
 
-	/* wait until all of our (qsfp) queue_work() calls complete */
-	flush_workqueue(ib_wq);
+	/* wait until all of our (qsfp) schedule_work() calls complete */
+	flush_scheduled_work();
 
 	ret = qibfs_remove(dd);
 	if (ret)

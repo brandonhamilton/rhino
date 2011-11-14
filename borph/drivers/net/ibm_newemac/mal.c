@@ -517,7 +517,8 @@ void *mal_dump_regs(struct mal_instance *mal, void *buf)
 	return regs + 1;
 }
 
-static int __devinit mal_probe(struct platform_device *ofdev)
+static int __devinit mal_probe(struct platform_device *ofdev,
+			       const struct of_device_id *match)
 {
 	struct mal_instance *mal;
 	int err = 0, i, bd_size;
@@ -788,7 +789,7 @@ static struct of_device_id mal_platform_match[] =
 	{},
 };
 
-static struct platform_driver mal_of_driver = {
+static struct of_platform_driver mal_of_driver = {
 	.driver = {
 		.name = "mcmal",
 		.owner = THIS_MODULE,
@@ -800,10 +801,10 @@ static struct platform_driver mal_of_driver = {
 
 int __init mal_init(void)
 {
-	return platform_driver_register(&mal_of_driver);
+	return of_register_platform_driver(&mal_of_driver);
 }
 
 void mal_exit(void)
 {
-	platform_driver_unregister(&mal_of_driver);
+	of_unregister_platform_driver(&mal_of_driver);
 }

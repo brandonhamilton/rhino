@@ -28,6 +28,7 @@
 #include <plat/menelaus.h>
 #include <plat/mcbsp.h>
 #include <plat/omap44xx.h>
+#include <plat/dma.h>
 
 /*-------------------------------------------------------------------------*/
 
@@ -35,8 +36,8 @@
 
 static struct platform_device **omap_mcbsp_devices;
 
-void omap_mcbsp_register_board_cfg(struct resource *res, int res_count,
-			struct omap_mcbsp_platform_data *config, int size)
+void omap_mcbsp_register_board_cfg(struct omap_mcbsp_platform_data *config,
+					int size)
 {
 	int i;
 
@@ -54,8 +55,6 @@ void omap_mcbsp_register_board_cfg(struct resource *res, int res_count,
 		new_mcbsp = platform_device_alloc("omap-mcbsp", i + 1);
 		if (!new_mcbsp)
 			continue;
-		platform_device_add_resources(new_mcbsp, &res[i * res_count],
-					res_count);
 		new_mcbsp->dev.platform_data = &config[i];
 		ret = platform_device_add(new_mcbsp);
 		if (ret) {
@@ -67,8 +66,8 @@ void omap_mcbsp_register_board_cfg(struct resource *res, int res_count,
 }
 
 #else
-void omap_mcbsp_register_board_cfg(struct resource *res, int res_count,
-			struct omap_mcbsp_platform_data *config, int size)
+void omap_mcbsp_register_board_cfg(struct omap_mcbsp_platform_data *config,
+					int size)
 {  }
 #endif
 
@@ -112,7 +111,7 @@ static inline void omap_init_mcpdm(void) {}
 #if defined(CONFIG_MMC_OMAP) || defined(CONFIG_MMC_OMAP_MODULE) || \
 	defined(CONFIG_MMC_OMAP_HS) || defined(CONFIG_MMC_OMAP_HS_MODULE)
 
-#define OMAP_MMC_NR_RES		2
+#define OMAP_MMC_NR_RES		4
 
 /*
  * Register MMC devices. Called from mach-omap1 and mach-omap2 device init.
@@ -135,6 +134,52 @@ int __init omap_mmc_add(const char *name, int id, unsigned long base,
 	res[0].flags = IORESOURCE_MEM;
 	res[1].start = res[1].end = irq;
 	res[1].flags = IORESOURCE_IRQ;
+	/* Populate DMA lines based on the instance used. Rx first,Tx next*/
+	switch (id) {
+	case 0:
+		res[2].start = OMAP24XX_DMA_MMC1_RX;
+		res[2].end = OMAP24XX_DMA_MMC1_RX;
+		res[2].flags = IORESOURCE_DMA;
+		res[3].start = OMAP24XX_DMA_MMC1_TX;
+		res[3].end = OMAP24XX_DMA_MMC1_TX;
+		res[3].flags = IORESOURCE_DMA;
+		break;
+	case 1:
+		res[2].start = OMAP24XX_DMA_MMC2_RX;
+		res[2].end = OMAP24XX_DMA_MMC2_RX;
+		res[2].flags = IORESOURCE_DMA;
+		res[3].start = OMAP24XX_DMA_MMC2_TX;
+		res[3].end = OMAP24XX_DMA_MMC2_TX;
+		res[3].flags = IORESOURCE_DMA;
+		break;
+	case 2:
+		res[2].start = OMAP34XX_DMA_MMC3_RX;
+		res[2].end = OMAP34XX_DMA_MMC3_RX;
+		res[2].flags = IORESOURCE_DMA;
+		res[3].start = OMAP34XX_DMA_MMC3_TX;
+		res[3].end = OMAP34XX_DMA_MMC3_TX;
+		res[3].flags = IORESOURCE_DMA;
+		break;
+	case 3:
+		res[2].start = OMAP44XX_DMA_MMC4_RX;
+		res[2].end = OMAP44XX_DMA_MMC4_RX;
+		res[2].flags = IORESOURCE_DMA;
+		res[3].start = OMAP44XX_DMA_MMC4_TX;
+		res[3].end = OMAP44XX_DMA_MMC4_TX;
+		res[3].flags = IORESOURCE_DMA;
+		break;
+	case 4:
+		res[2].start = OMAP44XX_DMA_MMC5_RX;
+		res[2].end = OMAP44XX_DMA_MMC5_RX;
+		res[2].flags = IORESOURCE_DMA;
+		res[3].start = OMAP44XX_DMA_MMC5_TX;
+		res[3].end = OMAP44XX_DMA_MMC5_TX;
+		res[3].flags = IORESOURCE_DMA;
+		break;
+	default:
+		ret = -ENODEV;
+		goto fail;
+	}
 
 	ret = platform_device_add_resources(pdev, res, ARRAY_SIZE(res));
 	if (ret == 0)
@@ -280,7 +325,7 @@ EXPORT_SYMBOL(omap_dsp_get_mempool_base);
  * Claiming GPIOs, and setting their direction and initial values, is the
  * responsibility of the device drivers.  So is responding to probe().
  *
- * Board-specific knowledge like creating devices or pin setup is to be
+ * Board-specific knowlege like creating devices or pin setup is to be
  * kept out of drivers as much as possible.  In particular, pin setup
  * may be handled by the boot loader, and drivers should expect it will
  * normally have been done by the time they're probed.

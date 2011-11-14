@@ -47,28 +47,23 @@ struct sd {
 	u8 image_offset;
 
 	u8 bridge;
+#define BRIDGE_VC0321 0
+#define BRIDGE_VC0323 1
 	u8 sensor;
+#define SENSOR_HV7131R 0
+#define SENSOR_MI0360 1
+#define SENSOR_MI1310_SOC 2
+#define SENSOR_MI1320 3
+#define SENSOR_MI1320_SOC 4
+#define SENSOR_OV7660 5
+#define SENSOR_OV7670 6
+#define SENSOR_PO1200 7
+#define SENSOR_PO3130NC 8
+#define SENSOR_POxxxx 9
 	u8 flags;
 #define FL_SAMSUNG 0x01		/* SamsungQ1 (2 sensors) */
 #define FL_HFLIP 0x02		/* mirrored by default */
 #define FL_VFLIP 0x04		/* vertical flipped by default */
-};
-enum bridges {
-	BRIDGE_VC0321,
-	BRIDGE_VC0323,
-};
-enum sensors {
-	SENSOR_HV7131R,
-	SENSOR_MI0360,
-	SENSOR_MI1310_SOC,
-	SENSOR_MI1320,
-	SENSOR_MI1320_SOC,
-	SENSOR_OV7660,
-	SENSOR_OV7670,
-	SENSOR_PO1200,
-	SENSOR_PO3130NC,
-	SENSOR_POxxxx,
-	NSENSORS
 };
 
 /* V4L2 controls supported by the driver */
@@ -265,56 +260,56 @@ static const struct ctrl sd_ctrls[] = {
 };
 
 /* table of the disabled controls */
-static u32 ctrl_dis[NSENSORS] = {
-    [SENSOR_HV7131R] =
+static u32 ctrl_dis[] = {
+/* SENSOR_HV7131R 0 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << HFLIP_IDX) | (1 << VFLIP_IDX) | (1 << LIGHTFREQ_IDX)
 		| (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_MI0360] =
+/* SENSOR_MI0360 1 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << HFLIP_IDX) | (1 << VFLIP_IDX) | (1 << LIGHTFREQ_IDX)
 		| (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_MI1310_SOC] =
+/* SENSOR_MI1310_SOC 2 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << LIGHTFREQ_IDX) | (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_MI1320] =
+/* SENSOR_MI1320 3 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << LIGHTFREQ_IDX) | (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_MI1320_SOC] =
+/* SENSOR_MI1320_SOC 4 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << LIGHTFREQ_IDX) | (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_OV7660] =
+/* SENSOR_OV7660 5 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << LIGHTFREQ_IDX) | (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_OV7670] =
+/* SENSOR_OV7670 6 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_PO1200] =
+/* SENSOR_PO1200 7 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << LIGHTFREQ_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_PO3130NC] =
+/* SENSOR_PO3130NC 8 */
 	(1 << BRIGHTNESS_IDX) | (1 << CONTRAST_IDX) | (1 << COLORS_IDX)
 		| (1 << HFLIP_IDX) | (1 << VFLIP_IDX) | (1 << LIGHTFREQ_IDX)
 		| (1 << SHARPNESS_IDX)
 		| (1 << GAIN_IDX) | (1 << EXPOSURE_IDX)
 		| (1 << AUTOGAIN_IDX) | (1 << BACKLIGHT_IDX),
-    [SENSOR_POxxxx] =
+/* SENSOR_POxxxx 9 */
 	(1 << HFLIP_IDX) | (1 << VFLIP_IDX) | (1 << LIGHTFREQ_IDX),
 };
 
@@ -3425,18 +3420,17 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	struct sd *sd = (struct sd *) gspca_dev;
 	struct cam *cam;
 	int sensor;
-	/* number of packets per ISOC message */
-	static u8 npkt[NSENSORS] = {
-		[SENSOR_HV7131R] =	64,
-		[SENSOR_MI0360] =	32,
-		[SENSOR_MI1310_SOC] =	32,
-		[SENSOR_MI1320] =	64,
-		[SENSOR_MI1320_SOC] =	128,
-		[SENSOR_OV7660] =	32,
-		[SENSOR_OV7670] =	64,
-		[SENSOR_PO1200] =	128,
-		[SENSOR_PO3130NC] =	128,
-		[SENSOR_POxxxx] =	128,
+	static u8 npkt[] = {	/* number of packets per ISOC message */
+		64,		/* HV7131R 0 */
+		32,		/* MI0360 1 */
+		32,		/* MI1310_SOC 2 */
+		64,		/* MI1320 3 */
+		128,		/* MI1320_SOC 4 */
+		32,		/* OV7660 5 */
+		64,		/* OV7670 6 */
+		128,		/* PO1200 7 */
+		128,		/* PO3130NC 8 */
+		128,		/* POxxxx 9 */
 	};
 
 	if (sd->sensor != SENSOR_POxxxx)
@@ -4192,7 +4186,7 @@ static const struct sd_desc sd_desc = {
 #define BF(bridge, flags) \
 	.driver_info = (BRIDGE_ ## bridge << 8) \
 		| (flags)
-static const struct usb_device_id device_table[] = {
+static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x041e, 0x405b), BF(VC0323, FL_VFLIP)},
 	{USB_DEVICE(0x046d, 0x0892), BF(VC0321, 0)},
 	{USB_DEVICE(0x046d, 0x0896), BF(VC0321, 0)},

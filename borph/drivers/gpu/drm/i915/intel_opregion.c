@@ -26,7 +26,6 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/acpi_io.h>
 #include <acpi/video.h>
 
 #include "drmP.h"
@@ -39,8 +38,6 @@
 
 #define OPREGION_HEADER_OFFSET 0
 #define OPREGION_ACPI_OFFSET   0x100
-#define   ACPI_CLID 0x01ac /* current lid state indicator */
-#define   ACPI_CDCK 0x01b0 /* current docking state indicator */
 #define OPREGION_SWSCI_OFFSET  0x200
 #define OPREGION_ASLE_OFFSET   0x300
 #define OPREGION_VBT_OFFSET    0x400
@@ -276,8 +273,14 @@ void intel_opregion_enable_asle(struct drm_device *dev)
 	struct opregion_asle *asle = dev_priv->opregion.asle;
 
 	if (asle) {
-		if (IS_MOBILE(dev))
+		if (IS_MOBILE(dev)) {
+			unsigned long irqflags;
+
+			spin_lock_irqsave(&dev_priv->user_irq_lock, irqflags);
 			intel_enable_asle(dev);
+			spin_unlock_irqrestore(&dev_priv->user_irq_lock,
+					       irqflags);
+		}
 
 		asle->tche = ASLE_ALS_EN | ASLE_BLC_EN | ASLE_PFIT_EN |
 			ASLE_PFMB_EN;
@@ -297,26 +300,19 @@ static int intel_opregion_video_event(struct notifier_block *nb,
 	/* The only video events relevant to opregion are 0x80. These indicate
 	   either a docking event, lid switch or display switch request. In
 	   Linux, these are handled by the dock, button and video drivers.
-	*/
+	   We might want to fix the video driver to be opregion-aware in
+	   future, but right now we just indicate to the firmware that the
+	   request has been handled */
 
 	struct opregion_acpi *acpi;
-	struct acpi_bus_event *event = data;
-	int ret = NOTIFY_OK;
-
-	if (strcmp(event->device_class, ACPI_VIDEO_CLASS) != 0)
-		return NOTIFY_DONE;
 
 	if (!system_opregion)
 		return NOTIFY_DONE;
 
 	acpi = system_opregion->acpi;
-
-	if (event->type == 0x80 && !(acpi->cevt & 0x1))
-		ret = NOTIFY_BAD;
-
 	acpi->csts = 0;
 
-	return ret;
+	return NOTIFY_OK;
 }
 
 static struct notifier_block intel_opregion_notifier = {
@@ -486,7 +482,7 @@ int intel_opregion_setup(struct drm_device *dev)
 		return -ENOTSUPP;
 	}
 
-	base = acpi_os_ioremap(asls, OPREGION_SIZE);
+	base = ioremap(asls, OPREGION_SIZE);
 	if (!base)
 		return -ENOMEM;
 
@@ -497,8 +493,6 @@ int intel_opregion_setup(struct drm_device *dev)
 	}
 	opregion->header = base;
 	opregion->vbt = base + OPREGION_VBT_OFFSET;
-
-	opregion->lid_state = base + ACPI_CLID;
 
 	mboxes = opregion->header->mboxes;
 	if (mboxes & MBOX_ACPI) {

@@ -53,8 +53,6 @@
 #include "powerdomain.h"
 #include "clockdomain.h"
 
-static int omap2_pm_debug;
-
 #ifdef CONFIG_SUSPEND
 static suspend_state_t suspend_state = PM_SUSPEND_ON;
 static inline bool is_suspending(void)
@@ -125,6 +123,7 @@ static void omap2_enter_full_retention(void)
 	omap2_gpio_prepare_for_idle(0);
 
 	if (omap2_pm_debug) {
+		omap2_pm_dump(0, 0, 0);
 		getnstimeofday(&ts_preidle);
 	}
 
@@ -135,7 +134,7 @@ static void omap2_enter_full_retention(void)
 
 	/* Block console output in case it is on one of the OMAP UARTs */
 	if (!is_suspending())
-		if (!console_trylock())
+		if (try_acquire_console_sem())
 			goto no_sleep;
 
 	omap_uart_prepare_idle(0);
@@ -152,7 +151,7 @@ static void omap2_enter_full_retention(void)
 	omap_uart_resume_idle(0);
 
 	if (!is_suspending())
-		console_unlock();
+		release_console_sem();
 
 no_sleep:
 	if (omap2_pm_debug) {
@@ -161,6 +160,7 @@ no_sleep:
 		getnstimeofday(&ts_postidle);
 		ts_idle = timespec_sub(ts_postidle, ts_preidle);
 		tmp = timespec_to_ns(&ts_idle) * NSEC_PER_USEC;
+		omap2_pm_dump(0, 1, tmp);
 	}
 	omap2_gpio_resume_after_idle();
 
@@ -247,6 +247,7 @@ static void omap2_enter_mpu_retention(void)
 	}
 
 	if (omap2_pm_debug) {
+		omap2_pm_dump(only_idle ? 2 : 1, 0, 0);
 		getnstimeofday(&ts_preidle);
 	}
 
@@ -258,6 +259,7 @@ static void omap2_enter_mpu_retention(void)
 		getnstimeofday(&ts_postidle);
 		ts_idle = timespec_sub(ts_postidle, ts_preidle);
 		tmp = timespec_to_ns(&ts_idle) * NSEC_PER_USEC;
+		omap2_pm_dump(only_idle ? 2 : 1, 1, tmp);
 	}
 }
 
@@ -348,24 +350,27 @@ static void omap2_pm_end(void)
 	enable_hlt();
 }
 
-static const struct platform_suspend_ops omap_pm_ops = {
-	.begin		= omap2_pm_begin,
-	.enter		= omap2_pm_enter,
-	.end		= omap2_pm_end,
-	.valid		= suspend_valid_only_mem,
+static const struct platform_suspend_ops omap_pm_ops[] = {
+	{
+		.begin		= omap2_pm_begin,
+		.enter		= omap2_pm_enter,
+		.end		= omap2_pm_end,
+		.valid		= suspend_valid_only_mem,
+	}
 };
-#else
-static const struct platform_suspend_ops __initdata omap_pm_ops;
 #endif /* CONFIG_SUSPEND */
 
 /* XXX This function should be shareable between OMAP2xxx and OMAP3 */
 static int __init clkdms_setup(struct clockdomain *clkdm, void *unused)
 {
+	clkdm_clear_all_wkdeps(clkdm);
+	clkdm_clear_all_sleepdeps(clkdm);
+
 	if (clkdm->flags & CLKDM_CAN_ENABLE_AUTO)
-		clkdm_allow_idle(clkdm);
+		omap2_clkdm_allow_idle(clkdm);
 	else if (clkdm->flags & CLKDM_CAN_FORCE_SLEEP &&
 		 atomic_read(&clkdm->usecount) == 0)
-		clkdm_sleep(clkdm);
+		omap2_clkdm_sleep(clkdm);
 	return 0;
 }
 
@@ -374,10 +379,7 @@ static void __init prcm_setup_regs(void)
 	int i, num_mem_banks;
 	struct powerdomain *pwrdm;
 
-	/*
-	 * Enable autoidle
-	 * XXX This should be handled by hwmod code or PRCM init code
-	 */
+	/* Enable autoidle */
 	omap2_prm_write_mod_reg(OMAP24XX_AUTOIDLE_MASK, OCP_MOD,
 			  OMAP2_PRCM_SYSCONFIG_OFFSET);
 
@@ -403,15 +405,82 @@ static void __init prcm_setup_regs(void)
 
 	pwrdm = clkdm_get_pwrdm(dsp_clkdm);
 	pwrdm_set_next_pwrst(pwrdm, PWRDM_POWER_OFF);
-	clkdm_sleep(dsp_clkdm);
+	omap2_clkdm_sleep(dsp_clkdm);
 
 	pwrdm = clkdm_get_pwrdm(gfx_clkdm);
 	pwrdm_set_next_pwrst(pwrdm, PWRDM_POWER_OFF);
-	clkdm_sleep(gfx_clkdm);
+	omap2_clkdm_sleep(gfx_clkdm);
 
-	/* Enable hardware-supervised idle for all clkdms */
+	/*
+	 * Clear clockdomain wakeup dependencies and enable
+	 * hardware-supervised idle for all clkdms
+	 */
 	clkdm_for_each(clkdms_setup, NULL);
 	clkdm_add_wkdep(mpu_clkdm, wkup_clkdm);
+
+	/* Enable clock autoidle for all domains */
+	omap2_cm_write_mod_reg(OMAP24XX_AUTO_CAM_MASK |
+			       OMAP24XX_AUTO_MAILBOXES_MASK |
+			       OMAP24XX_AUTO_WDT4_MASK |
+			       OMAP2420_AUTO_WDT3_MASK |
+			       OMAP24XX_AUTO_MSPRO_MASK |
+			       OMAP2420_AUTO_MMC_MASK |
+			       OMAP24XX_AUTO_FAC_MASK |
+			       OMAP2420_AUTO_EAC_MASK |
+			       OMAP24XX_AUTO_HDQ_MASK |
+			       OMAP24XX_AUTO_UART2_MASK |
+			       OMAP24XX_AUTO_UART1_MASK |
+			       OMAP24XX_AUTO_I2C2_MASK |
+			       OMAP24XX_AUTO_I2C1_MASK |
+			       OMAP24XX_AUTO_MCSPI2_MASK |
+			       OMAP24XX_AUTO_MCSPI1_MASK |
+			       OMAP24XX_AUTO_MCBSP2_MASK |
+			       OMAP24XX_AUTO_MCBSP1_MASK |
+			       OMAP24XX_AUTO_GPT12_MASK |
+			       OMAP24XX_AUTO_GPT11_MASK |
+			       OMAP24XX_AUTO_GPT10_MASK |
+			       OMAP24XX_AUTO_GPT9_MASK |
+			       OMAP24XX_AUTO_GPT8_MASK |
+			       OMAP24XX_AUTO_GPT7_MASK |
+			       OMAP24XX_AUTO_GPT6_MASK |
+			       OMAP24XX_AUTO_GPT5_MASK |
+			       OMAP24XX_AUTO_GPT4_MASK |
+			       OMAP24XX_AUTO_GPT3_MASK |
+			       OMAP24XX_AUTO_GPT2_MASK |
+			       OMAP2420_AUTO_VLYNQ_MASK |
+			       OMAP24XX_AUTO_DSS_MASK,
+			       CORE_MOD, CM_AUTOIDLE1);
+	omap2_cm_write_mod_reg(OMAP24XX_AUTO_UART3_MASK |
+			       OMAP24XX_AUTO_SSI_MASK |
+			       OMAP24XX_AUTO_USB_MASK,
+			       CORE_MOD, CM_AUTOIDLE2);
+	omap2_cm_write_mod_reg(OMAP24XX_AUTO_SDRC_MASK |
+			       OMAP24XX_AUTO_GPMC_MASK |
+			       OMAP24XX_AUTO_SDMA_MASK,
+			       CORE_MOD, CM_AUTOIDLE3);
+	omap2_cm_write_mod_reg(OMAP24XX_AUTO_PKA_MASK |
+			       OMAP24XX_AUTO_AES_MASK |
+			       OMAP24XX_AUTO_RNG_MASK |
+			       OMAP24XX_AUTO_SHA_MASK |
+			       OMAP24XX_AUTO_DES_MASK,
+			       CORE_MOD, OMAP24XX_CM_AUTOIDLE4);
+
+	omap2_cm_write_mod_reg(OMAP2420_AUTO_DSP_IPI_MASK, OMAP24XX_DSP_MOD,
+			       CM_AUTOIDLE);
+
+	/* Put DPLL and both APLLs into autoidle mode */
+	omap2_cm_write_mod_reg((0x03 << OMAP24XX_AUTO_DPLL_SHIFT) |
+			       (0x03 << OMAP24XX_AUTO_96M_SHIFT) |
+			       (0x03 << OMAP24XX_AUTO_54M_SHIFT),
+			       PLL_MOD, CM_AUTOIDLE);
+
+	omap2_cm_write_mod_reg(OMAP24XX_AUTO_OMAPCTRL_MASK |
+			       OMAP24XX_AUTO_WDT1_MASK |
+			       OMAP24XX_AUTO_MPU_WDT_MASK |
+			       OMAP24XX_AUTO_GPIOS_MASK |
+			       OMAP24XX_AUTO_32KSYNC_MASK |
+			       OMAP24XX_AUTO_GPT1_MASK,
+			       WKUP_MOD, CM_AUTOIDLE);
 
 	/* REVISIT: Configure number of 32 kHz clock cycles for sys_clk
 	 * stabilisation */
@@ -513,7 +582,7 @@ static int __init omap2_pm_init(void)
 						    omap24xx_cpu_suspend_sz);
 	}
 
-	suspend_set_ops(&omap_pm_ops);
+	suspend_set_ops(omap_pm_ops);
 	pm_idle = omap2_pm_idle;
 
 	return 0;

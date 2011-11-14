@@ -69,7 +69,11 @@ static int ixp4xx_spkr_event(struct input_dev *dev, unsigned int type, unsigned 
 	}
 
 	if (value > 20 && value < 32767)
-		count = (IXP4XX_TIMER_FREQ / (value * 4)) - 1;
+#ifndef FREQ
+		count = (ixp4xx_get_board_tick_rate() / (value * 4)) - 1;
+#else
+		count = (FREQ / (value * 4)) - 1;
+#endif
 
 	ixp4xx_spkr_control(pin, count);
 

@@ -20,6 +20,7 @@
 #include "power/power.h"
 
 #define to_bus_attr(_attr) container_of(_attr, struct bus_attribute, attr)
+#define to_bus(obj) container_of(obj, struct bus_type_private, subsys.kobj)
 
 /*
  * sysfs bindings for drivers
@@ -95,11 +96,11 @@ static ssize_t bus_attr_show(struct kobject *kobj, struct attribute *attr,
 			     char *buf)
 {
 	struct bus_attribute *bus_attr = to_bus_attr(attr);
-	struct subsys_private *subsys_priv = to_subsys_private(kobj);
+	struct bus_type_private *bus_priv = to_bus(kobj);
 	ssize_t ret = 0;
 
 	if (bus_attr->show)
-		ret = bus_attr->show(subsys_priv->bus, buf);
+		ret = bus_attr->show(bus_priv->bus, buf);
 	return ret;
 }
 
@@ -107,11 +108,11 @@ static ssize_t bus_attr_store(struct kobject *kobj, struct attribute *attr,
 			      const char *buf, size_t count)
 {
 	struct bus_attribute *bus_attr = to_bus_attr(attr);
-	struct subsys_private *subsys_priv = to_subsys_private(kobj);
+	struct bus_type_private *bus_priv = to_bus(kobj);
 	ssize_t ret = 0;
 
 	if (bus_attr->store)
-		ret = bus_attr->store(subsys_priv->bus, buf, count);
+		ret = bus_attr->store(bus_priv->bus, buf, count);
 	return ret;
 }
 
@@ -857,9 +858,9 @@ static BUS_ATTR(uevent, S_IWUSR, NULL, bus_uevent_store);
 int bus_register(struct bus_type *bus)
 {
 	int retval;
-	struct subsys_private *priv;
+	struct bus_type_private *priv;
 
-	priv = kzalloc(sizeof(struct subsys_private), GFP_KERNEL);
+	priv = kzalloc(sizeof(struct bus_type_private), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
@@ -975,7 +976,7 @@ struct klist *bus_get_device_klist(struct bus_type *bus)
 EXPORT_SYMBOL_GPL(bus_get_device_klist);
 
 /*
- * Yes, this forcibly breaks the klist abstraction temporarily.  It
+ * Yes, this forcably breaks the klist abstraction temporarily.  It
  * just wants to sort the klist, not change reference counts and
  * take/drop locks rapidly in the process.  It does all this while
  * holding the lock for the list, so objects can't otherwise be

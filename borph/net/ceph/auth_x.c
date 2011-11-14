@@ -662,16 +662,14 @@ int ceph_x_init(struct ceph_auth_client *ac)
 		goto out;
 
 	ret = -EINVAL;
-	if (!ac->key) {
+	if (!ac->secret) {
 		pr_err("no secret set (for auth_x protocol)\n");
 		goto out_nomem;
 	}
 
-	ret = ceph_crypto_key_clone(&xi->secret, ac->key);
-	if (ret < 0) {
-		pr_err("cannot clone key: %d\n", ret);
+	ret = ceph_crypto_key_unarmor(&xi->secret, ac->secret);
+	if (ret)
 		goto out_nomem;
-	}
 
 	xi->starting = true;
 	xi->ticket_handlers = RB_ROOT;

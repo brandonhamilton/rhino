@@ -53,7 +53,7 @@ static struct platform_device board_nor_device = {
 	.resource	= &board_nor_resource,
 };
 
-static void
+void
 __init board_nor_init(struct mtd_partition *nor_parts, u8 nr_parts, u8 cs)
 {
 	int err;
@@ -87,7 +87,7 @@ static struct omap_onenand_platform_data board_onenand_data = {
 	.dma_channel	= -1,   /* disable DMA in OMAP OneNAND driver */
 };
 
-static void
+void
 __init board_onenand_init(struct mtd_partition *onenand_parts,
 				u8 nr_parts, u8 cs)
 {
@@ -98,7 +98,7 @@ __init board_onenand_init(struct mtd_partition *onenand_parts,
 	gpmc_onenand_init(&board_onenand_data);
 }
 #else
-static void
+void
 __init board_onenand_init(struct mtd_partition *nor_parts, u8 nr_parts, u8 cs)
 {
 }
@@ -132,7 +132,11 @@ static struct gpmc_timings nand_timings = {
 };
 
 static struct omap_nand_platform_data board_nand_data = {
+	.nand_setup	= NULL,
 	.gpmc_t		= &nand_timings,
+	.dma_channel	= -1,		/* disable DMA in OMAP NAND driver */
+	.dev_ready	= NULL,
+	.devsize	= 0,	/* '0' for 8-bit, '1' for 16-bit device */
 };
 
 void
@@ -144,13 +148,28 @@ __init board_nand_init(struct mtd_partition *nand_parts,
 	board_nand_data.nr_parts	= nr_parts;
 	board_nand_data.devsize		= nand_type;
 
-	board_nand_data.ecc_opt = OMAP_ECC_HAMMING_CODE_DEFAULT;
 	board_nand_data.gpmc_irq = OMAP_GPMC_IRQ_BASE + cs;
+
+	if(cpu_is_omap3630())
+		board_nand_data.ecc_opt = OMAP_ECC_HAMMING_CODE_HW;
+
+	if (cpu_is_omap3517() || cpu_is_omap3505())
+		board_nand_data.gpmc_t = NULL;
+
+	if (cpu_is_ti81xx()) {
+		board_nand_data.ecc_opt = OMAP_ECC_HAMMING_CODE_HW;
+		board_nand_data.xfer_type = NAND_OMAP_POLLED;
+
+		if (cpu_is_ti814x())
+			board_nand_data.gpmc_t = NULL;
+	}
+
 	gpmc_nand_init(&board_nand_data);
 }
 #else
 void
-__init board_nand_init(struct mtd_partition *nand_parts, u8 nr_parts, u8 cs, int nand_type)
+__init board_nand_init(struct mtd_partition *nand_parts, u8 nr_parts,
+		u8 cs, int nand_type)
 {
 }
 #endif /* CONFIG_MTD_NAND_OMAP2 || CONFIG_MTD_NAND_OMAP2_MODULE */

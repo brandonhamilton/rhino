@@ -49,15 +49,14 @@ struct dn_fib_rule
 };
 
 
-int dn_fib_lookup(struct flowidn *flp, struct dn_fib_res *res)
+int dn_fib_lookup(struct flowi *flp, struct dn_fib_res *res)
 {
 	struct fib_lookup_arg arg = {
 		.result = res,
 	};
 	int err;
 
-	err = fib_rules_lookup(dn_fib_rules_ops,
-			       flowidn_to_flowi(flp), 0, &arg);
+	err = fib_rules_lookup(dn_fib_rules_ops, flp, 0, &arg);
 	res->r = arg.rule;
 
 	return err;
@@ -66,7 +65,6 @@ int dn_fib_lookup(struct flowidn *flp, struct dn_fib_res *res)
 static int dn_fib_rule_action(struct fib_rule *rule, struct flowi *flp,
 			      int flags, struct fib_lookup_arg *arg)
 {
-	struct flowidn *fld = &flp->u.dn;
 	int err = -EAGAIN;
 	struct dn_fib_table *tbl;
 
@@ -92,7 +90,7 @@ static int dn_fib_rule_action(struct fib_rule *rule, struct flowi *flp,
 	if (tbl == NULL)
 		goto errout;
 
-	err = tbl->lookup(tbl, fld, (struct dn_fib_res *)arg->result);
+	err = tbl->lookup(tbl, flp, (struct dn_fib_res *)arg->result);
 	if (err > 0)
 		err = -EAGAIN;
 errout:
@@ -106,9 +104,8 @@ static const struct nla_policy dn_fib_rule_policy[FRA_MAX+1] = {
 static int dn_fib_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
 {
 	struct dn_fib_rule *r = (struct dn_fib_rule *)rule;
-	struct flowidn *fld = &fl->u.dn;
-	__le16 daddr = fld->daddr;
-	__le16 saddr = fld->saddr;
+	__le16 daddr = fl->fld_dst;
+	__le16 saddr = fl->fld_src;
 
 	if (((saddr ^ r->src) & r->srcmask) ||
 	    ((daddr ^ r->dst) & r->dstmask))
@@ -178,7 +175,7 @@ static int dn_fib_rule_compare(struct fib_rule *rule, struct fib_rule_hdr *frh,
 
 unsigned dnet_addr_type(__le16 addr)
 {
-	struct flowidn fld = { .daddr = addr };
+	struct flowi fl = { .nl_u = { .dn_u = { .daddr = addr } } };
 	struct dn_fib_res res;
 	unsigned ret = RTN_UNICAST;
 	struct dn_fib_table *tb = dn_fib_get_table(RT_TABLE_LOCAL, 0);
@@ -186,7 +183,7 @@ unsigned dnet_addr_type(__le16 addr)
 	res.r = NULL;
 
 	if (tb) {
-		if (!tb->lookup(tb, &fld, &res)) {
+		if (!tb->lookup(tb, &fl, &res)) {
 			ret = res.type;
 			dn_fib_res_put(&res);
 		}

@@ -72,6 +72,7 @@ struct cpdma_desc {
 	void			*sw_token;
 	u32			sw_buffer;
 	u32			sw_len;
+	u32			sw_next;
 };
 
 struct cpdma_desc_pool {
@@ -104,13 +105,13 @@ struct cpdma_ctlr {
 };
 
 struct cpdma_chan {
+	struct cpdma_desc __iomem	*head, *tail;
+	void __iomem			*hdp, *cp, *rxfree;
 	enum cpdma_state		state;
 	struct cpdma_ctlr		*ctlr;
 	int				chan_num;
 	spinlock_t			lock;
-	struct cpdma_desc __iomem	*head, *tail;
 	int				count;
-	void __iomem			*hdp, *cp, *rxfree;
 	u32				mask;
 	cpdma_handler_fn		handler;
 	enum dma_data_direction		dir;
@@ -138,8 +139,7 @@ struct cpdma_chan {
  * abstract out these details
  */
 static struct cpdma_desc_pool *
-cpdma_desc_pool_create(struct device *dev, u32 phys, u32 hw_addr,
-				int size, int align)
+cpdma_desc_pool_create(struct device *dev, u32 phys, u32 hw_addr, int size, int align)
 {
 	int bitmap_size;
 	struct cpdma_desc_pool *pool;
@@ -167,7 +167,7 @@ cpdma_desc_pool_create(struct device *dev, u32 phys, u32 hw_addr,
 	} else {
 		pool->cpumap = dma_alloc_coherent(dev, size, &pool->phys,
 						  GFP_KERNEL);
-		pool->iomap = pool->cpumap;
+		pool->iomap = (void __force __iomem *)pool->cpumap;
 		pool->hw_addr = pool->phys;
 	}
 
@@ -216,16 +216,35 @@ desc_from_phys(struct cpdma_desc_pool *pool, dma_addr_t dma)
 }
 
 static struct cpdma_desc __iomem *
-cpdma_desc_alloc(struct cpdma_desc_pool *pool, int num_desc)
+cpdma_desc_alloc(struct cpdma_desc_pool *pool, int num_desc, bool is_rx)
 {
 	unsigned long flags;
 	int index;
 	struct cpdma_desc __iomem *desc = NULL;
+	static int last_index = 4096;
 
 	spin_lock_irqsave(&pool->lock, flags);
 
-	index = bitmap_find_next_zero_area(pool->bitmap, pool->num_desc, 0,
-					   num_desc, 0);
+	if(is_rx) {
+		index = bitmap_find_next_zero_area(pool->bitmap, pool->num_desc/2, 0,
+					num_desc, 0);
+	 } else {
+		if(last_index >= pool->num_desc) last_index = pool->num_desc / 2;
+
+		index = bitmap_find_next_zero_area(pool->bitmap, pool->num_desc, last_index,
+				 num_desc, 0);
+
+		if (!(index < pool->num_desc)) {
+			index = bitmap_find_next_zero_area(pool->bitmap, pool->num_desc,
+						pool->num_desc/2, num_desc,0);
+		}
+
+		if(index < pool->num_desc)
+			last_index = index + 1;
+		else
+			last_index = pool->num_desc / 2;
+	}
+
 	if (index < pool->num_desc) {
 		bitmap_set(pool->bitmap, index, num_desc);
 		desc = pool->iomap + pool->desc_size * index;
@@ -276,6 +295,7 @@ struct cpdma_ctlr *cpdma_ctlr_create(struct cpdma_params *params)
 		ctlr->num_chan = CPDMA_MAX_CHANNELS;
 	return ctlr;
 }
+EXPORT_SYMBOL(cpdma_ctlr_create);
 
 int cpdma_ctlr_start(struct cpdma_ctlr *ctlr)
 {
@@ -321,6 +341,7 @@ int cpdma_ctlr_start(struct cpdma_ctlr *ctlr)
 	spin_unlock_irqrestore(&ctlr->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_ctlr_start);
 
 int cpdma_ctlr_stop(struct cpdma_ctlr *ctlr)
 {
@@ -351,6 +372,7 @@ int cpdma_ctlr_stop(struct cpdma_ctlr *ctlr)
 	spin_unlock_irqrestore(&ctlr->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_ctlr_stop);
 
 int cpdma_ctlr_dump(struct cpdma_ctlr *ctlr)
 {
@@ -421,6 +443,7 @@ int cpdma_ctlr_dump(struct cpdma_ctlr *ctlr)
 	spin_unlock_irqrestore(&ctlr->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_ctlr_dump);
 
 int cpdma_ctlr_destroy(struct cpdma_ctlr *ctlr)
 {
@@ -444,6 +467,7 @@ int cpdma_ctlr_destroy(struct cpdma_ctlr *ctlr)
 	kfree(ctlr);
 	return ret;
 }
+EXPORT_SYMBOL(cpdma_ctlr_destroy);
 
 int cpdma_ctlr_int_ctrl(struct cpdma_ctlr *ctlr, bool enable)
 {
@@ -467,11 +491,14 @@ int cpdma_ctlr_int_ctrl(struct cpdma_ctlr *ctlr, bool enable)
 	spin_unlock_irqrestore(&ctlr->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_ctlr_int_ctrl);
 
 void cpdma_ctlr_eoi(struct cpdma_ctlr *ctlr)
 {
-	dma_reg_write(ctlr, CPDMA_MACEOIVECTOR, 0);
+	dma_reg_write(ctlr, CPDMA_MACEOIVECTOR, 1);
+	dma_reg_write(ctlr, CPDMA_MACEOIVECTOR, 2);
 }
+EXPORT_SYMBOL(cpdma_ctlr_eoi);
 
 struct cpdma_chan *cpdma_chan_create(struct cpdma_ctlr *ctlr, int chan_num,
 				     cpdma_handler_fn handler)
@@ -528,6 +555,7 @@ err_chan_busy:
 err_chan_alloc:
 	return ERR_PTR(ret);
 }
+EXPORT_SYMBOL(cpdma_chan_create);
 
 int cpdma_chan_destroy(struct cpdma_chan *chan)
 {
@@ -545,6 +573,7 @@ int cpdma_chan_destroy(struct cpdma_chan *chan)
 	kfree(chan);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_chan_destroy);
 
 int cpdma_chan_get_stats(struct cpdma_chan *chan,
 			 struct cpdma_chan_stats *stats)
@@ -557,6 +586,7 @@ int cpdma_chan_get_stats(struct cpdma_chan *chan,
 	spin_unlock_irqrestore(&chan->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_chan_get_stats);
 
 int cpdma_chan_dump(struct cpdma_chan *chan)
 {
@@ -629,6 +659,7 @@ static void __cpdma_chan_submit(struct cpdma_chan *chan,
 
 	/* first chain the descriptor at the tail of the list */
 	desc_write(prev, hw_next, desc_dma);
+	desc_write(prev, sw_next,desc_dma);
 	chan->tail = desc;
 	chan->stats.tail_enqueue++;
 
@@ -651,6 +682,7 @@ int cpdma_chan_submit(struct cpdma_chan *chan, void *token, void *data,
 	unsigned long			flags;
 	u32				mode;
 	int				ret = 0;
+	bool                            is_rx;
 
 	spin_lock_irqsave(&chan->lock, flags);
 
@@ -659,7 +691,8 @@ int cpdma_chan_submit(struct cpdma_chan *chan, void *token, void *data,
 		goto unlock_ret;
 	}
 
-	desc = cpdma_desc_alloc(ctlr->pool, 1);
+	is_rx = (chan->rxfree != 0);
+	desc = cpdma_desc_alloc(ctlr->pool, 1, is_rx);
 	if (!desc) {
 		chan->stats.desc_alloc_fail++;
 		ret = -ENOMEM;
@@ -675,6 +708,7 @@ int cpdma_chan_submit(struct cpdma_chan *chan, void *token, void *data,
 	mode = CPDMA_DESC_OWNER | CPDMA_DESC_SOP | CPDMA_DESC_EOP;
 
 	desc_write(desc, hw_next,   0);
+	desc_write(desc, sw_next,   0);
 	desc_write(desc, hw_buffer, buffer);
 	desc_write(desc, hw_len,    len);
 	desc_write(desc, hw_mode,   mode | len);
@@ -693,6 +727,7 @@ unlock_ret:
 	spin_unlock_irqrestore(&chan->lock, flags);
 	return ret;
 }
+EXPORT_SYMBOL(cpdma_chan_submit);
 
 static void __cpdma_chan_free(struct cpdma_chan *chan,
 			      struct cpdma_desc __iomem *desc,
@@ -717,7 +752,7 @@ static int __cpdma_chan_process(struct cpdma_chan *chan)
 {
 	struct cpdma_ctlr		*ctlr = chan->ctlr;
 	struct cpdma_desc __iomem	*desc;
-	int				status, outlen;
+	u32				status, outlen;
 	struct cpdma_desc_pool		*pool = ctlr->pool;
 	dma_addr_t			desc_dma;
 	unsigned long			flags;
@@ -741,19 +776,19 @@ static int __cpdma_chan_process(struct cpdma_chan *chan)
 	}
 	status	= status & (CPDMA_DESC_EOQ | CPDMA_DESC_TD_COMPLETE);
 
-	chan->head = desc_from_phys(pool, desc_read(desc, hw_next));
+	chan->head = desc_from_phys(pool, desc_read(desc, sw_next));
 	chan_write(chan, cp, desc_dma);
 	chan->count--;
 	chan->stats.good_dequeue++;
 
-	if (status & CPDMA_DESC_EOQ) {
+	if ((status & CPDMA_DESC_EOQ) && (chan->head) && (!(status & CPDMA_DESC_TD_COMPLETE))) {
 		chan->stats.requeue++;
 		chan_write(chan, hdp, desc_phys(pool, chan->head));
 	}
 
 	spin_unlock_irqrestore(&chan->lock, flags);
 
-	__cpdma_chan_free(chan, desc, outlen, status);
+	__cpdma_chan_free(chan, desc, outlen, (int)status);
 	return status;
 
 unlock_ret:
@@ -776,6 +811,7 @@ int cpdma_chan_process(struct cpdma_chan *chan, int quota)
 	}
 	return used;
 }
+EXPORT_SYMBOL(cpdma_chan_process);
 
 int cpdma_chan_start(struct cpdma_chan *chan)
 {
@@ -803,6 +839,7 @@ int cpdma_chan_start(struct cpdma_chan *chan)
 	spin_unlock_irqrestore(&chan->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_chan_start);
 
 int cpdma_chan_stop(struct cpdma_chan *chan)
 {
@@ -824,6 +861,8 @@ int cpdma_chan_stop(struct cpdma_chan *chan)
 	/* trigger teardown */
 	dma_reg_write(ctlr, chan->td, chan->chan_num);
 
+	spin_unlock_irqrestore(&chan->lock, flags);
+
 	/* wait for teardown complete */
 	timeout = jiffies + HZ/10;	/* 100 msec */
 	while (time_before(jiffies, timeout)) {
@@ -843,6 +882,7 @@ int cpdma_chan_stop(struct cpdma_chan *chan)
 	} while ((ret & CPDMA_DESC_TD_COMPLETE) == 0);
 
 	/* remaining packets haven't been tx/rx'ed, clean them up */
+	spin_lock_irqsave(&chan->lock, flags);
 	while (chan->head) {
 		struct cpdma_desc __iomem *desc = chan->head;
 		dma_addr_t next_dma;
@@ -861,6 +901,7 @@ int cpdma_chan_stop(struct cpdma_chan *chan)
 	spin_unlock_irqrestore(&chan->lock, flags);
 	return 0;
 }
+EXPORT_SYMBOL(cpdma_chan_stop);
 
 int cpdma_chan_int_ctrl(struct cpdma_chan *chan, bool enable)
 {

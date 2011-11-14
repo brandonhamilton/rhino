@@ -1,6 +1,5 @@
 #ifndef SPI_ADIS16260_H_
 #define SPI_ADIS16260_H_
-#include "adis16260_platform_data.h"
 
 #define ADIS16260_STARTUP_DELAY	220 /* ms */
 
@@ -85,23 +84,29 @@
 /**
  * struct adis16260_state - device instance specific data
  * @us:			actual spi_device
+ * @work_trigger_to_ring: bh for triggered event handling
+ * @inter:		used to check if new interrupt has been triggered
+ * @last_timestamp:	passing timestamp from th to bh of interrupt handler
+ * @indio_dev:		industrial I/O device structure
  * @trig:		data ready trigger registered with iio
- * @buf_lock:		mutex to protect tx and rx
- * @negate:		negate the scale parameter
  * @tx:			transmit buffer
- * @rx:			receive buffer
+ * @rx:			recieve buffer
+ * @buf_lock:		mutex to protect tx and rx
  **/
 struct adis16260_state {
-	struct spi_device	*us;
-	struct iio_trigger	*trig;
-	struct mutex		buf_lock;
-	unsigned		negate:1;
-	u8			tx[ADIS16260_MAX_TX] ____cacheline_aligned;
-	u8			rx[ADIS16260_MAX_RX];
+	struct spi_device		*us;
+	struct work_struct		work_trigger_to_ring;
+	s64				last_timestamp;
+	struct iio_dev			*indio_dev;
+	struct iio_trigger		*trig;
+	u8				*tx;
+	u8				*rx;
+	struct mutex			buf_lock;
 };
 
-int adis16260_set_irq(struct iio_dev *indio_dev, bool enable);
+int adis16260_set_irq(struct device *dev, bool enable);
 
+#ifdef CONFIG_IIO_RING_BUFFER
 /* At the moment triggers are only used for ring buffer
  * filling. This may change!
  */
@@ -112,7 +117,6 @@ int adis16260_set_irq(struct iio_dev *indio_dev, bool enable);
 #define ADIS16260_SCAN_TEMP	3
 #define ADIS16260_SCAN_ANGL	4
 
-#ifdef CONFIG_IIO_RING_BUFFER
 void adis16260_remove_trigger(struct iio_dev *indio_dev);
 int adis16260_probe_trigger(struct iio_dev *indio_dev);
 

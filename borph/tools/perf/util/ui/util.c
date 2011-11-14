@@ -9,7 +9,6 @@
 #include "../debug.h"
 #include "browser.h"
 #include "helpline.h"
-#include "ui.h"
 #include "util.h"
 
 static void newt_form__set_exit_keys(newtComponent self)
@@ -105,26 +104,10 @@ out_destroy_form:
 	return rc;
 }
 
-static const char yes[] = "Yes", no[] = "No",
-		  warning_str[] = "Warning!", ok[] = "Ok";
+static const char yes[] = "Yes", no[] = "No";
 
 bool ui__dialog_yesno(const char *msg)
 {
 	/* newtWinChoice should really be accepting const char pointers... */
 	return newtWinChoice(NULL, (char *)yes, (char *)no, (char *)msg) == 1;
-}
-
-void ui__warning(const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-	if (use_browser > 0) {
-		pthread_mutex_lock(&ui__lock);
-		newtWinMessagev((char *)warning_str, (char *)ok,
-				(char *)format, args);
-		pthread_mutex_unlock(&ui__lock);
-	} else
-		vfprintf(stderr, format, args);
-	va_end(args);
 }

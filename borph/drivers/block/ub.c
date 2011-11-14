@@ -1788,8 +1788,7 @@ static int ub_bd_revalidate(struct gendisk *disk)
  *
  * The return code is bool!
  */
-static unsigned int ub_bd_check_events(struct gendisk *disk,
-				       unsigned int clearing)
+static int ub_bd_media_changed(struct gendisk *disk)
 {
 	struct ub_lun *lun = disk->private_data;
 
@@ -1807,10 +1806,10 @@ static unsigned int ub_bd_check_events(struct gendisk *disk,
 	 */
 	if (ub_sync_tur(lun->udev, lun) != 0) {
 		lun->changed = 1;
-		return DISK_EVENT_MEDIA_CHANGE;
+		return 1;
 	}
 
-	return lun->changed ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return lun->changed;
 }
 
 static const struct block_device_operations ub_bd_fops = {
@@ -1818,7 +1817,7 @@ static const struct block_device_operations ub_bd_fops = {
 	.open		= ub_bd_unlocked_open,
 	.release	= ub_bd_release,
 	.ioctl		= ub_bd_ioctl,
-	.check_events	= ub_bd_check_events,
+	.media_changed	= ub_bd_media_changed,
 	.revalidate_disk = ub_bd_revalidate,
 };
 

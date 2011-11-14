@@ -29,7 +29,7 @@ struct fib6_rule
 	u8			tclass;
 };
 
-struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
+struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi *fl,
 				   int flags, pol_lookup_t lookup)
 {
 	struct fib_lookup_arg arg = {
@@ -37,8 +37,7 @@ struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
 		.flags = FIB_LOOKUP_NOREF,
 	};
 
-	fib_rules_lookup(net->ipv6.fib6_rules_ops,
-			 flowi6_to_flowi(fl6), flags, &arg);
+	fib_rules_lookup(net->ipv6.fib6_rules_ops, fl, flags, &arg);
 
 	if (arg.result)
 		return arg.result;
@@ -50,7 +49,6 @@ struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
 static int fib6_rule_action(struct fib_rule *rule, struct flowi *flp,
 			    int flags, struct fib_lookup_arg *arg)
 {
-	struct flowi6 *flp6 = &flp->u.ip6;
 	struct rt6_info *rt = NULL;
 	struct fib6_table *table;
 	struct net *net = rule->fr_net;
@@ -73,7 +71,7 @@ static int fib6_rule_action(struct fib_rule *rule, struct flowi *flp,
 
 	table = fib6_get_table(net, rule->table);
 	if (table)
-		rt = lookup(net, table, flp6, flags);
+		rt = lookup(net, table, flp, flags);
 
 	if (rt != net->ipv6.ip6_null_entry) {
 		struct fib6_rule *r = (struct fib6_rule *)rule;
@@ -88,14 +86,14 @@ static int fib6_rule_action(struct fib_rule *rule, struct flowi *flp,
 
 			if (ipv6_dev_get_saddr(net,
 					       ip6_dst_idev(&rt->dst)->dev,
-					       &flp6->daddr,
+					       &flp->fl6_dst,
 					       rt6_flags2srcprefs(flags),
 					       &saddr))
 				goto again;
 			if (!ipv6_prefix_equal(&saddr, &r->src.addr,
 					       r->src.plen))
 				goto again;
-			ipv6_addr_copy(&flp6->saddr, &saddr);
+			ipv6_addr_copy(&flp->fl6_src, &saddr);
 		}
 		goto out;
 	}
@@ -115,10 +113,9 @@ out:
 static int fib6_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
 {
 	struct fib6_rule *r = (struct fib6_rule *) rule;
-	struct flowi6 *fl6 = &fl->u.ip6;
 
 	if (r->dst.plen &&
-	    !ipv6_prefix_equal(&fl6->daddr, &r->dst.addr, r->dst.plen))
+	    !ipv6_prefix_equal(&fl->fl6_dst, &r->dst.addr, r->dst.plen))
 		return 0;
 
 	/*
@@ -128,14 +125,14 @@ static int fib6_rule_match(struct fib_rule *rule, struct flowi *fl, int flags)
 	 */
 	if (r->src.plen) {
 		if (flags & RT6_LOOKUP_F_HAS_SADDR) {
-			if (!ipv6_prefix_equal(&fl6->saddr, &r->src.addr,
+			if (!ipv6_prefix_equal(&fl->fl6_src, &r->src.addr,
 					       r->src.plen))
 				return 0;
 		} else if (!(r->common.flags & FIB_RULE_FIND_SADDR))
 			return 0;
 	}
 
-	if (r->tclass && r->tclass != ((ntohl(fl6->flowlabel) >> 20) & 0xff))
+	if (r->tclass && r->tclass != ((ntohl(fl->fl6_flowlabel) >> 20) & 0xff))
 		return 0;
 
 	return 1;

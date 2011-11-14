@@ -5,7 +5,7 @@
  * Copyright (C) 2004 Florian Schirmer (jolt@tuxbox.org)
  * Copyright (C) 2006 Felix Fietkau (nbd@openwrt.org)
  * Copyright (C) 2006 Broadcom Corporation.
- * Copyright (C) 2007 Michael Buesch <m@bues.ch>
+ * Copyright (C) 2007 Michael Buesch <mb@bu3sch.de>
  *
  * Distribute under GPL.
  */
@@ -25,7 +25,6 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/ssb/ssb.h>
 #include <linux/slab.h>
@@ -39,7 +38,6 @@
 
 #define DRV_MODULE_NAME		"b44"
 #define DRV_MODULE_VERSION	"2.0"
-#define DRV_DESCRIPTION		"Broadcom 44xx/47xx 10/100 PCI ethernet driver"
 
 #define B44_DEF_MSG_ENABLE	  \
 	(NETIF_MSG_DRV		| \
@@ -92,8 +90,11 @@
 #define B44_ETHIPV6UDP_HLEN	62
 #define B44_ETHIPV4UDP_HLEN	42
 
+static char version[] __devinitdata =
+	DRV_MODULE_NAME ".c:v" DRV_MODULE_VERSION "\n";
+
 MODULE_AUTHOR("Felix Fietkau, Florian Schirmer, Pekka Pietikainen, David S. Miller");
-MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_DESCRIPTION("Broadcom 44xx/47xx 10/100 PCI ethernet driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_MODULE_VERSION);
 
@@ -608,7 +609,7 @@ static void b44_tx(struct b44 *bp)
 				 skb->len,
 				 DMA_TO_DEVICE);
 		rp->skb = NULL;
-		dev_kfree_skb(skb);
+		dev_kfree_skb_irq(skb);
 	}
 
 	bp->tx_cons = cons;
@@ -1806,8 +1807,8 @@ static int b44_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	if (bp->flags & B44_FLAG_ADV_100FULL)
 		cmd->advertising |= ADVERTISED_100baseT_Full;
 	cmd->advertising |= ADVERTISED_Pause | ADVERTISED_Asym_Pause;
-	ethtool_cmd_speed_set(cmd, ((bp->flags & B44_FLAG_100_BASE_T) ?
-				    SPEED_100 : SPEED_10));
+	cmd->speed = (bp->flags & B44_FLAG_100_BASE_T) ?
+		SPEED_100 : SPEED_10;
 	cmd->duplex = (bp->flags & B44_FLAG_FULL_DUPLEX) ?
 		DUPLEX_FULL : DUPLEX_HALF;
 	cmd->port = 0;
@@ -1819,7 +1820,7 @@ static int b44_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	if (cmd->autoneg == AUTONEG_ENABLE)
 		cmd->advertising |= ADVERTISED_Autoneg;
 	if (!netif_running(dev)){
-		ethtool_cmd_speed_set(cmd, 0);
+		cmd->speed = 0;
 		cmd->duplex = 0xff;
 	}
 	cmd->maxtxpkt = 0;
@@ -1830,7 +1831,6 @@ static int b44_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 static int b44_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	struct b44 *bp = netdev_priv(dev);
-	u32 speed = ethtool_cmd_speed(cmd);
 
 	/* We do not support gigabit. */
 	if (cmd->autoneg == AUTONEG_ENABLE) {
@@ -1838,8 +1838,8 @@ static int b44_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 		    (ADVERTISED_1000baseT_Half |
 		     ADVERTISED_1000baseT_Full))
 			return -EINVAL;
-	} else if ((speed != SPEED_100 &&
-		    speed != SPEED_10) ||
+	} else if ((cmd->speed != SPEED_100 &&
+		    cmd->speed != SPEED_10) ||
 		   (cmd->duplex != DUPLEX_HALF &&
 		    cmd->duplex != DUPLEX_FULL)) {
 			return -EINVAL;
@@ -1873,7 +1873,7 @@ static int b44_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	} else {
 		bp->flags |= B44_FLAG_FORCE_LINK;
 		bp->flags &= ~(B44_FLAG_100_BASE_T | B44_FLAG_FULL_DUPLEX);
-		if (speed == SPEED_100)
+		if (cmd->speed == SPEED_100)
 			bp->flags |= B44_FLAG_100_BASE_T;
 		if (cmd->duplex == DUPLEX_FULL)
 			bp->flags |= B44_FLAG_FULL_DUPLEX;
@@ -2128,13 +2128,16 @@ static const struct net_device_ops b44_netdev_ops = {
 static int __devinit b44_init_one(struct ssb_device *sdev,
 				  const struct ssb_device_id *ent)
 {
+	static int b44_version_printed = 0;
 	struct net_device *dev;
 	struct b44 *bp;
 	int err;
 
 	instance++;
 
-	pr_info_once("%s version %s\n", DRV_DESCRIPTION, DRV_MODULE_VERSION);
+	if (b44_version_printed++ == 0)
+		pr_info("%s", version);
+
 
 	dev = alloc_etherdev(sizeof(*bp));
 	if (!dev) {
@@ -2220,7 +2223,8 @@ static int __devinit b44_init_one(struct ssb_device *sdev,
 	if (b44_phy_reset(bp) < 0)
 		bp->phy_addr = B44_PHY_ADDR_NO_PHY;
 
-	netdev_info(dev, "%s %pM\n", DRV_DESCRIPTION, dev->dev_addr);
+	netdev_info(dev, "Broadcom 44xx/47xx 10/100BaseT Ethernet %pM\n",
+		    dev->dev_addr);
 
 	return 0;
 
@@ -2330,7 +2334,7 @@ static struct ssb_driver b44_ssb_driver = {
 	.resume		= b44_resume,
 };
 
-static inline int __init b44_pci_init(void)
+static inline int b44_pci_init(void)
 {
 	int err = 0;
 #ifdef CONFIG_B44_PCI
@@ -2339,7 +2343,7 @@ static inline int __init b44_pci_init(void)
 	return err;
 }
 
-static inline void __exit b44_pci_exit(void)
+static inline void b44_pci_exit(void)
 {
 #ifdef CONFIG_B44_PCI
 	ssb_pcihost_unregister(&b44_pci_driver);

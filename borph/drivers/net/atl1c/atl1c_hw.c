@@ -345,7 +345,7 @@ int atl1c_write_phy_reg(struct atl1c_hw *hw, u32 reg_addr, u16 phy_data)
  */
 static int atl1c_phy_setup_adv(struct atl1c_hw *hw)
 {
-	u16 mii_adv_data = ADVERTISE_DEFAULT_CAP & ~ADVERTISE_ALL;
+	u16 mii_adv_data = ADVERTISE_DEFAULT_CAP & ~ADVERTISE_SPEED_MASK;
 	u16 mii_giga_ctrl_data = GIGA_CR_1000T_DEFAULT_CAP &
 				~GIGA_CR_1000T_SPEED_MASK;
 
@@ -373,7 +373,7 @@ static int atl1c_phy_setup_adv(struct atl1c_hw *hw)
 	}
 
 	if (atl1c_write_phy_reg(hw, MII_ADVERTISE, mii_adv_data) != 0 ||
-	    atl1c_write_phy_reg(hw, MII_CTRL1000, mii_giga_ctrl_data) != 0)
+	    atl1c_write_phy_reg(hw, MII_GIGA_CR, mii_giga_ctrl_data) != 0)
 		return -1;
 	return 0;
 }
@@ -517,18 +517,19 @@ int atl1c_phy_init(struct atl1c_hw *hw)
 					"Error Setting up Auto-Negotiation\n");
 			return ret_val;
 		}
-		mii_bmcr_data |= BMCR_ANENABLE | BMCR_ANRESTART;
+		mii_bmcr_data |= BMCR_AUTO_NEG_EN | BMCR_RESTART_AUTO_NEG;
 		break;
 	case MEDIA_TYPE_100M_FULL:
-		mii_bmcr_data |= BMCR_SPEED100 | BMCR_FULLDPLX;
+		mii_bmcr_data |= BMCR_SPEED_100 | BMCR_FULL_DUPLEX;
 		break;
 	case MEDIA_TYPE_100M_HALF:
-		mii_bmcr_data |= BMCR_SPEED100;
+		mii_bmcr_data |= BMCR_SPEED_100;
 		break;
 	case MEDIA_TYPE_10M_FULL:
-		mii_bmcr_data |= BMCR_FULLDPLX;
+		mii_bmcr_data |= BMCR_SPEED_10 | BMCR_FULL_DUPLEX;
 		break;
 	case MEDIA_TYPE_10M_HALF:
+		mii_bmcr_data |= BMCR_SPEED_10;
 		break;
 	default:
 		if (netif_msg_link(adapter))
@@ -656,7 +657,7 @@ int atl1c_restart_autoneg(struct atl1c_hw *hw)
 	err = atl1c_phy_setup_adv(hw);
 	if (err)
 		return err;
-	mii_bmcr_data |= BMCR_ANENABLE | BMCR_ANRESTART;
+	mii_bmcr_data |= BMCR_AUTO_NEG_EN | BMCR_RESTART_AUTO_NEG;
 
 	return atl1c_write_phy_reg(hw, MII_BMCR, mii_bmcr_data);
 }

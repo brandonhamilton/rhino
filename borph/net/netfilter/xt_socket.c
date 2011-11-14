@@ -35,15 +35,6 @@
 #include <net/netfilter/nf_conntrack.h>
 #endif
 
-static void
-xt_socket_put_sk(struct sock *sk)
-{
-	if (sk->sk_state == TCP_TIME_WAIT)
-		inet_twsk_put(inet_twsk(sk));
-	else
-		sock_put(sk);
-}
-
 static int
 extract_icmp4_fields(const struct sk_buff *skb,
 		    u8 *protocol,
@@ -143,9 +134,9 @@ socket_match(const struct sk_buff *skb, struct xt_action_param *par,
 	ct = nf_ct_get(skb, &ctinfo);
 	if (ct && !nf_ct_is_untracked(ct) &&
 	    ((iph->protocol != IPPROTO_ICMP &&
-	      ctinfo == IP_CT_ESTABLISHED_REPLY) ||
+	      ctinfo == IP_CT_IS_REPLY + IP_CT_ESTABLISHED) ||
 	     (iph->protocol == IPPROTO_ICMP &&
-	      ctinfo == IP_CT_RELATED_REPLY)) &&
+	      ctinfo == IP_CT_IS_REPLY + IP_CT_RELATED)) &&
 	    (ct->status & IPS_SRC_NAT_DONE)) {
 
 		daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
@@ -173,7 +164,7 @@ socket_match(const struct sk_buff *skb, struct xt_action_param *par,
 				       (sk->sk_state == TCP_TIME_WAIT &&
 					inet_twsk(sk)->tw_transparent));
 
-		xt_socket_put_sk(sk);
+		nf_tproxy_put_sock(sk);
 
 		if (wildcard || !transparent)
 			sk = NULL;
@@ -307,7 +298,7 @@ socket_mt6_v1(const struct sk_buff *skb, struct xt_action_param *par)
 				       (sk->sk_state == TCP_TIME_WAIT &&
 					inet_twsk(sk)->tw_transparent));
 
-		xt_socket_put_sk(sk);
+		nf_tproxy_put_sock(sk);
 
 		if (wildcard || !transparent)
 			sk = NULL;

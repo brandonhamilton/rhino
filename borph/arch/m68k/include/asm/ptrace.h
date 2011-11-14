@@ -85,6 +85,7 @@ struct switch_stack {
 #define user_mode(regs) (!((regs)->sr & PS_S))
 #define instruction_pointer(regs) ((regs)->pc)
 #define profile_pc(regs) instruction_pointer(regs)
+extern void show_regs(struct pt_regs *);
 
 #define arch_has_single_step()	(1)
 

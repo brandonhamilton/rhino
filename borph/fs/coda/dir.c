@@ -18,14 +18,14 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/spinlock.h>
-#include <linux/namei.h>
 
 #include <asm/uaccess.h>
 
 #include <linux/coda.h>
+#include <linux/coda_linux.h>
 #include <linux/coda_psdev.h>
-#include "coda_linux.h"
-#include "coda_cache.h"
+#include <linux/coda_fs_i.h>
+#include <linux/coda_cache.h>
 
 #include "coda_int.h"
 
@@ -47,7 +47,7 @@ static int coda_readdir(struct file *file, void *buf, filldir_t filldir);
 
 /* dentry ops */
 static int coda_dentry_revalidate(struct dentry *de, struct nameidata *nd);
-static int coda_dentry_delete(const struct dentry *);
+static int coda_dentry_delete(struct dentry *);
 
 /* support routines */
 static int coda_venus_readdir(struct file *coda_file, void *buf,
@@ -60,7 +60,7 @@ static int coda_return_EIO(void)
 }
 #define CODA_EIO_ERROR ((void *) (coda_return_EIO))
 
-const struct dentry_operations coda_dentry_operations =
+static const struct dentry_operations coda_dentry_operations =
 {
 	.d_revalidate	= coda_dentry_revalidate,
 	.d_delete	= coda_dentry_delete,
@@ -125,6 +125,8 @@ static struct dentry *coda_lookup(struct inode *dir, struct dentry *entry, struc
 		return ERR_PTR(error);
 
 exit:
+	entry->d_op = &coda_dentry_operations;
+
 	if (inode && (type & CODA_NOCACHE))
 		coda_flag_inode(inode, C_VATTR | C_PURGE);
 
@@ -135,9 +137,6 @@ exit:
 int coda_permission(struct inode *inode, int mask)
 {
 	int error;
-
-	if (mask & MAY_NOT_BLOCK)
-		return -ECHILD;
 
 	mask &= MAY_READ | MAY_WRITE | MAY_EXEC;
  
@@ -449,7 +448,8 @@ static int coda_venus_readdir(struct file *coda_file, void *buf,
 	struct file *host_file;
 	struct dentry *de;
 	struct venus_dirent *vdir;
-	unsigned long vdir_size = offsetof(struct venus_dirent, d_name);
+	unsigned long vdir_size =
+	    (unsigned long)(&((struct venus_dirent *)0)->d_name);
 	unsigned int type;
 	struct qstr name;
 	ino_t ino;
@@ -473,7 +473,7 @@ static int coda_venus_readdir(struct file *coda_file, void *buf,
 		coda_file->f_pos++;
 	}
 	if (coda_file->f_pos == 1) {
-		ret = filldir(buf, "..", 2, 1, parent_ino(de), DT_DIR);
+		ret = filldir(buf, "..", 2, 1, de->d_parent->d_inode->i_ino, DT_DIR);
 		if (ret < 0)
 			goto out;
 		result++;
@@ -541,13 +541,9 @@ out:
 /* called when a cache lookup succeeds */
 static int coda_dentry_revalidate(struct dentry *de, struct nameidata *nd)
 {
-	struct inode *inode;
+	struct inode *inode = de->d_inode;
 	struct coda_inode_info *cii;
 
-	if (nd->flags & LOOKUP_RCU)
-		return -ECHILD;
-
-	inode = de->d_inode;
 	if (!inode || coda_isroot(inode))
 		goto out;
 	if (is_bad_inode(inode))
@@ -563,7 +559,7 @@ static int coda_dentry_revalidate(struct dentry *de, struct nameidata *nd)
 	if (cii->c_flags & C_FLUSH) 
 		coda_flag_inode_children(inode, C_FLUSH);
 
-	if (de->d_count > 1)
+	if (atomic_read(&de->d_count) > 1)
 		/* pretend it's valid, but don't change the flags */
 		goto out;
 
@@ -581,7 +577,7 @@ out:
  * This is the callback from dput() when d_count is going to 0.
  * We use this to unhash dentries with bad inodes.
  */
-static int coda_dentry_delete(const struct dentry * dentry)
+static int coda_dentry_delete(struct dentry * dentry)
 {
 	int flags;
 

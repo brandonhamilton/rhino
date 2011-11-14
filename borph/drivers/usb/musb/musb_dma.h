@@ -68,16 +68,35 @@ struct musb_hw_ep;
 #define	is_dma_capable()	(0)
 #endif
 
-#ifdef CONFIG_USB_TI_CPPI_DMA
-#define	is_cppi_enabled()	1
+#ifdef CONFIG_USB_INVENTRA_DMA
+#define	is_inventra_dma(musb)	(musb->ops->flags & MUSB_GLUE_DMA_INVENTRA)
 #else
-#define	is_cppi_enabled()	0
+#define	is_inventra_dma(musb)	0
+#endif
+
+#ifdef CONFIG_USB_TI_CPPI_DMA
+#define	is_cppi_enabled(musb)	(musb->ops->flags & MUSB_GLUE_DMA_CPPI)
+
+#else
+#define	is_cppi_enabled(musb)	0
+#endif
+
+#ifdef CONFIG_USB_TI_CPPI41_DMA
+#define is_cppi41_enabled(musb)	(musb->ops->flags & MUSB_GLUE_DMA_CPPI41)
+#else
+#define is_cppi41_enabled(musb)     0
 #endif
 
 #ifdef CONFIG_USB_TUSB_OMAP_DMA
-#define tusb_dma_omap()			1
+#define tusb_dma_omap(musb)		(musb->ops->flags & MUSB_GLUE_DMA_TUSB)
 #else
-#define tusb_dma_omap()			0
+#define tusb_dma_omap(musb)		0
+#endif
+
+#ifdef CONFIG_USB_INVENTRA_DMA
+#define	is_inventra_dma_enabled()	1
+#else
+#define	is_inventra_dma_enabled()	0
 #endif
 
 /* Anomaly 05000456 - USB Receive Interrupt Is Not Generated in DMA Mode 1
@@ -169,18 +188,78 @@ struct dma_controller {
 							dma_addr_t dma_addr,
 							u32 length);
 	int			(*channel_abort)(struct dma_channel *);
-	int			(*is_compatible)(struct dma_channel *channel,
-							u16 maxpacket,
-							void *buf, u32 length);
 };
 
 /* called after channel_program(), may indicate a fault */
 extern void musb_dma_completion(struct musb *musb, u8 epnum, u8 transmit);
 
 
-extern struct dma_controller *__init
-dma_controller_create(struct musb *, void __iomem *);
+#ifdef CONFIG_USB_TI_CPPI_DMA
+extern struct dma_controller *__devinit
+cppi_dma_controller_create(struct musb *, void __iomem *);
 
-extern void dma_controller_destroy(struct dma_controller *);
+extern void cppi_dma_controller_destroy(struct dma_controller *);
+#else
+static inline struct dma_controller *__devinit
+cppi_dma_controller_create(struct musb *musb, void __iomem *mregs)
+{
+	return NULL;
+}
+
+static inline void cppi_dma_controller_destroy(struct dma_controller *c)
+{
+}
+#endif
+
+#ifdef CONFIG_USB_TI_CPPI41_DMA
+extern struct dma_controller *__devinit
+cppi41_dma_controller_create(struct musb *, void __iomem *);
+
+extern void cppi41_dma_controller_destroy(struct dma_controller *);
+#else
+static inline struct dma_controller *__devinit
+cppi41_dma_controller_create(struct musb *musb, void __iomem *mregs)
+{
+	return NULL;
+}
+
+static inline void cppi41_dma_controller_destroy(struct dma_controller *c)
+{
+}
+#endif
+
+#ifdef CONFIG_USB_INVENTRA_DMA
+extern struct dma_controller *__devinit
+inventra_dma_controller_create(struct musb *, void __iomem *);
+
+extern void inventra_dma_controller_destroy(struct dma_controller *);
+#else
+static inline struct dma_controller *__devinit
+inventra_dma_controller_create(struct musb *musb, void __iomem *mregs)
+{
+	return NULL;
+}
+
+static inline void inventra_dma_controller_destroy(struct dma_controller *c)
+{
+}
+#endif
+
+#ifdef CONFIG_USB_TUSB_OMAP_DMA
+extern struct dma_controller *__devinit
+tusb_dma_controller_create(struct musb *, void __iomem *);
+
+extern void tusb_dma_controller_destroy(struct dma_controller *);
+#else
+static inline struct dma_controller *__devinit
+tusb_dma_controller_create(struct musb *musb, void __iomem *mregs)
+{
+	return NULL;
+}
+
+static inline void tusb_dma_controller_destroy(struct dma_controller *c)
+{
+}
+#endif
 
 #endif	/* __MUSB_DMA_H__ */

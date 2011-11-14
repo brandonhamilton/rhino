@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/clkdev.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -93,6 +92,8 @@ static void __init trout_map_io(void)
 }
 
 MACHINE_START(TROUT, "HTC Dream")
+#ifdef CONFIG_MSM_DEBUG_UART
+#endif
 	.boot_params	= 0x10000100,
 	.fixup		= trout_fixup,
 	.map_io		= trout_map_io,

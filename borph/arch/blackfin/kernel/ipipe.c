@@ -32,8 +32,7 @@
 #include <linux/unistd.h>
 #include <linux/io.h>
 #include <asm/system.h>
-#include <linux/atomic.h>
-#include <asm/irq_handler.h>
+#include <asm/atomic.h>
 
 DEFINE_PER_CPU(struct pt_regs, __ipipe_tick_regs);
 
@@ -155,7 +154,7 @@ void __ipipe_handle_irq(unsigned irq, struct pt_regs *regs)
 	 * pending for it.
 	 */
 	if (test_bit(IPIPE_AHEAD_FLAG, &this_domain->flags) &&
-	    !__ipipe_ipending_p(ipipe_head_cpudom_ptr()))
+	    ipipe_head_cpudom_var(irqpend_himask) == 0)
 		goto out;
 
 	__ipipe_walk_pipeline(head);
@@ -186,21 +185,25 @@ void __ipipe_disable_irqdesc(struct ipipe_domain *ipd, unsigned irq)
 }
 EXPORT_SYMBOL(__ipipe_disable_irqdesc);
 
-asmlinkage int __ipipe_syscall_root(struct pt_regs *regs)
+int __ipipe_syscall_root(struct pt_regs *regs)
 {
 	struct ipipe_percpu_domain_data *p;
-	void (*hook)(void);
+	unsigned long flags;
 	int ret;
 
-	WARN_ON_ONCE(irqs_disabled_hw());
-
 	/*
-	 * We need to run the IRQ tail hook each time we intercept a
-	 * syscall, because we know that important operations might be
-	 * pending there (e.g. Xenomai deferred rescheduling).
+	 * We need to run the IRQ tail hook whenever we don't
+	 * propagate a syscall to higher domains, because we know that
+	 * important operations might be pending there (e.g. Xenomai
+	 * deferred rescheduling).
 	 */
-	hook = (__typeof__(hook))__ipipe_irq_tail_hook;
-	hook();
+
+	if (regs->orig_p0 < NR_syscalls) {
+		void (*hook)(void) = (void (*)(void))__ipipe_irq_tail_hook;
+		hook();
+		if ((current->flags & PF_EVNOTIFY) == 0)
+			return 0;
+	}
 
 	/*
 	 * This routine either returns:
@@ -211,34 +214,39 @@ asmlinkage int __ipipe_syscall_root(struct pt_regs *regs)
 	 * tail work has to be performed (for handling signals etc).
 	 */
 
-	if (!__ipipe_syscall_watched_p(current, regs->orig_p0) ||
-	    !__ipipe_event_monitored_p(IPIPE_EVENT_SYSCALL))
+	if (!__ipipe_event_monitored_p(IPIPE_EVENT_SYSCALL))
 		return 0;
 
 	ret = __ipipe_dispatch_event(IPIPE_EVENT_SYSCALL, regs);
 
-	hard_local_irq_disable();
+	flags = hard_local_irq_save();
 
-	/*
-	 * This is the end of the syscall path, so we may
-	 * safely assume a valid Linux task stack here.
-	 */
-	if (current->ipipe_flags & PF_EVTRET) {
-		current->ipipe_flags &= ~PF_EVTRET;
-		__ipipe_dispatch_event(IPIPE_EVENT_RETURN, regs);
+	if (!__ipipe_root_domain_p) {
+		hard_local_irq_restore(flags);
+		return 1;
 	}
 
-	if (!__ipipe_root_domain_p)
-		ret = -1;
-	else {
-		p = ipipe_root_cpudom_ptr();
-		if (__ipipe_ipending_p(p))
-			__ipipe_sync_pipeline();
-	}
+	p = ipipe_root_cpudom_ptr();
+	if ((p->irqpend_himask & IPIPE_IRQMASK_VIRT) != 0)
+		__ipipe_sync_pipeline(IPIPE_IRQMASK_VIRT);
 
-	hard_local_irq_enable();
+	hard_local_irq_restore(flags);
 
 	return -ret;
+}
+
+unsigned long ipipe_critical_enter(void (*syncfn) (void))
+{
+	unsigned long flags;
+
+	flags = hard_local_irq_save();
+
+	return flags;
+}
+
+void ipipe_critical_exit(unsigned long flags)
+{
+	hard_local_irq_restore(flags);
 }
 
 static void __ipipe_no_irqtail(void)
@@ -247,11 +255,10 @@ static void __ipipe_no_irqtail(void)
 
 int ipipe_get_sysinfo(struct ipipe_sysinfo *info)
 {
-	info->sys_nr_cpus = num_online_cpus();
-	info->sys_cpu_freq = ipipe_cpu_freq();
-	info->sys_hrtimer_irq = IPIPE_TIMER_IRQ;
-	info->sys_hrtimer_freq = __ipipe_core_clock;
-	info->sys_hrclock_freq = __ipipe_core_clock;
+	info->ncpus = num_online_cpus();
+	info->cpufreq = ipipe_cpu_freq();
+	info->archdep.tmirq = IPIPE_TIMER_IRQ;
+	info->archdep.tmfreq = info->cpufreq;
 
 	return 0;
 }
@@ -282,7 +289,6 @@ int ipipe_trigger_irq(unsigned irq)
 asmlinkage void __ipipe_sync_root(void)
 {
 	void (*irq_tail_hook)(void) = (void (*)(void))__ipipe_irq_tail_hook;
-	struct ipipe_percpu_domain_data *p;
 	unsigned long flags;
 
 	BUG_ON(irqs_disabled());
@@ -294,20 +300,19 @@ asmlinkage void __ipipe_sync_root(void)
 
 	clear_thread_flag(TIF_IRQ_SYNC);
 
-	p = ipipe_root_cpudom_ptr();
-	if (__ipipe_ipending_p(p))
-		__ipipe_sync_pipeline();
+	if (ipipe_root_cpudom_var(irqpend_himask) != 0)
+		__ipipe_sync_pipeline(IPIPE_IRQMASK_ANY);
 
 	hard_local_irq_restore(flags);
 }
 
-void ___ipipe_sync_pipeline(void)
+void ___ipipe_sync_pipeline(unsigned long syncmask)
 {
 	if (__ipipe_root_domain_p &&
 	    test_bit(IPIPE_SYNCDEFER_FLAG, &ipipe_root_cpudom_var(status)))
 		return;
 
-	__ipipe_sync_stage();
+	__ipipe_sync_stage(syncmask);
 }
 
 void __ipipe_disable_root_irqs_hw(void)

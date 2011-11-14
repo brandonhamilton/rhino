@@ -4,7 +4,7 @@
  * Copyright (C) 2010 Nokia Corporation
  *
  * Contacts: Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *	     Sakari Ailus <sakari.ailus@iki.fi>
+ *	     Sakari Ailus <sakari.ailus@maxwell.research.nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -47,7 +47,7 @@ struct v4l2_subdev_format {
 	__u32 which;
 	__u32 pad;
 	struct v4l2_mbus_framefmt format;
-	__u32 reserved[8];
+	__u32 reserved[9];
 };
 
 /**
@@ -60,7 +60,7 @@ struct v4l2_subdev_crop {
 	__u32 which;
 	__u32 pad;
 	struct v4l2_rect rect;
-	__u32 reserved[8];
+	__u32 reserved[10];
 };
 
 /**
@@ -73,7 +73,7 @@ struct v4l2_subdev_mbus_code_enum {
 	__u32 pad;
 	__u32 index;
 	__u32 code;
-	__u32 reserved[9];
+	__u32 reserved[5];
 };
 
 /**
@@ -101,7 +101,7 @@ struct v4l2_subdev_frame_size_enum {
 struct v4l2_subdev_frame_interval {
 	__u32 pad;
 	struct v4l2_fract interval;
-	__u32 reserved[9];
+	__u32 reserved[5];
 };
 
 /**

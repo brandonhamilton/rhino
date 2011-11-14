@@ -143,7 +143,6 @@ static inline void video_put(struct video_device *vdev)
 static void v4l2_device_release(struct device *cd)
 {
 	struct video_device *vdev = to_video_device(cd);
-	struct v4l2_device *v4l2_dev = vdev->v4l2_dev;
 
 	mutex_lock(&videodev_lock);
 	if (video_device[vdev->minor] != vdev) {
@@ -167,19 +166,9 @@ static void v4l2_device_release(struct device *cd)
 
 	mutex_unlock(&videodev_lock);
 
-#if defined(CONFIG_MEDIA_CONTROLLER)
-	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev &&
-	    vdev->vfl_type != VFL_TYPE_SUBDEV)
-		media_device_unregister_entity(&vdev->entity);
-#endif
-
 	/* Release video_device and perform other
 	   cleanups as needed. */
 	vdev->release(vdev);
-
-	/* Decrease v4l2_device refcount */
-	if (v4l2_dev)
-		v4l2_device_put(v4l2_dev);
 }
 
 static struct class video_class = {
@@ -192,70 +181,6 @@ struct video_device *video_devdata(struct file *file)
 	return video_device[iminor(file->f_path.dentry->d_inode)];
 }
 EXPORT_SYMBOL(video_devdata);
-
-
-/* Priority handling */
-
-static inline bool prio_is_valid(enum v4l2_priority prio)
-{
-	return prio == V4L2_PRIORITY_BACKGROUND ||
-	       prio == V4L2_PRIORITY_INTERACTIVE ||
-	       prio == V4L2_PRIORITY_RECORD;
-}
-
-void v4l2_prio_init(struct v4l2_prio_state *global)
-{
-	memset(global, 0, sizeof(*global));
-}
-EXPORT_SYMBOL(v4l2_prio_init);
-
-int v4l2_prio_change(struct v4l2_prio_state *global, enum v4l2_priority *local,
-		     enum v4l2_priority new)
-{
-	if (!prio_is_valid(new))
-		return -EINVAL;
-	if (*local == new)
-		return 0;
-
-	atomic_inc(&global->prios[new]);
-	if (prio_is_valid(*local))
-		atomic_dec(&global->prios[*local]);
-	*local = new;
-	return 0;
-}
-EXPORT_SYMBOL(v4l2_prio_change);
-
-void v4l2_prio_open(struct v4l2_prio_state *global, enum v4l2_priority *local)
-{
-	v4l2_prio_change(global, local, V4L2_PRIORITY_DEFAULT);
-}
-EXPORT_SYMBOL(v4l2_prio_open);
-
-void v4l2_prio_close(struct v4l2_prio_state *global, enum v4l2_priority local)
-{
-	if (prio_is_valid(local))
-		atomic_dec(&global->prios[local]);
-}
-EXPORT_SYMBOL(v4l2_prio_close);
-
-enum v4l2_priority v4l2_prio_max(struct v4l2_prio_state *global)
-{
-	if (atomic_read(&global->prios[V4L2_PRIORITY_RECORD]) > 0)
-		return V4L2_PRIORITY_RECORD;
-	if (atomic_read(&global->prios[V4L2_PRIORITY_INTERACTIVE]) > 0)
-		return V4L2_PRIORITY_INTERACTIVE;
-	if (atomic_read(&global->prios[V4L2_PRIORITY_BACKGROUND]) > 0)
-		return V4L2_PRIORITY_BACKGROUND;
-	return V4L2_PRIORITY_UNSET;
-}
-EXPORT_SYMBOL(v4l2_prio_max);
-
-int v4l2_prio_check(struct v4l2_prio_state *global, enum v4l2_priority local)
-{
-	return (local < v4l2_prio_max(global)) ? -EBUSY : 0;
-}
-EXPORT_SYMBOL(v4l2_prio_check);
-
 
 static ssize_t v4l2_read(struct file *filp, char __user *buf,
 		size_t sz, loff_t *off)
@@ -358,23 +283,6 @@ static long v4l2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
-#ifdef CONFIG_MMU
-#define v4l2_get_unmapped_area NULL
-#else
-static unsigned long v4l2_get_unmapped_area(struct file *filp,
-		unsigned long addr, unsigned long len, unsigned long pgoff,
-		unsigned long flags)
-{
-	struct video_device *vdev = video_devdata(filp);
-
-	if (!vdev->fops->get_unmapped_area)
-		return -ENOSYS;
-	if (!video_is_registered(vdev))
-		return -ENODEV;
-	return vdev->fops->get_unmapped_area(filp, addr, len, pgoff, flags);
-}
-#endif
-
 static int v4l2_mmap(struct file *filp, struct vm_area_struct *vm)
 {
 	struct video_device *vdev = video_devdata(filp);
@@ -395,6 +303,9 @@ static int v4l2_mmap(struct file *filp, struct vm_area_struct *vm)
 static int v4l2_open(struct inode *inode, struct file *filp)
 {
 	struct video_device *vdev;
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	struct media_entity *entity = NULL;
+#endif
 	int ret = 0;
 
 	/* Check if the video device is available */
@@ -408,6 +319,16 @@ static int v4l2_open(struct inode *inode, struct file *filp)
 	/* and increase the device refcount */
 	video_get(vdev);
 	mutex_unlock(&videodev_lock);
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev) {
+		entity = media_entity_get(&vdev->entity);
+		if (!entity) {
+			ret = -EBUSY;
+			video_put(vdev);
+			return ret;
+		}
+	}
+#endif
 	if (vdev->fops->open) {
 		if (vdev->lock && mutex_lock_interruptible(vdev->lock)) {
 			ret = -ERESTARTSYS;
@@ -423,8 +344,13 @@ static int v4l2_open(struct inode *inode, struct file *filp)
 
 err:
 	/* decrease the refcount in case of an error */
-	if (ret)
+	if (ret) {
+#if defined(CONFIG_MEDIA_CONTROLLER)
+		if (vdev->v4l2_dev && vdev->v4l2_dev->mdev)
+			media_entity_put(entity);
+#endif
 		video_put(vdev);
+	}
 	return ret;
 }
 
@@ -441,6 +367,10 @@ static int v4l2_release(struct inode *inode, struct file *filp)
 		if (vdev->lock)
 			mutex_unlock(vdev->lock);
 	}
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev)
+		media_entity_put(&vdev->entity);
+#endif
 	/* decrease the refcount unconditionally since the release()
 	   return value is ignored. */
 	video_put(vdev);
@@ -452,7 +382,6 @@ static const struct file_operations v4l2_fops = {
 	.read = v4l2_read,
 	.write = v4l2_write,
 	.open = v4l2_open,
-	.get_unmapped_area = v4l2_get_unmapped_area,
 	.mmap = v4l2_mmap,
 	.unlocked_ioctl = v4l2_ioctl,
 #ifdef CONFIG_COMPAT
@@ -512,10 +441,6 @@ static int get_index(struct video_device *vdev)
  *	The registration code assigns minor numbers and device node numbers
  *	based on the requested type and registers the new device node with
  *	the kernel.
- *
- *	This function assumes that struct video_device was zeroed when it
- *	was allocated and does not contain any stale date.
- *
  *	An error is returned if no free minor or device node number could be
  *	found, or if the registration of the device node failed.
  *
@@ -539,6 +464,7 @@ int __video_register_device(struct video_device *vdev, int type, int nr,
 	int minor_offset = 0;
 	int minor_cnt = VIDEO_NUM_DEVICES;
 	const char *name_base;
+	void *priv = vdev->dev.p;
 
 	/* A minor value of -1 marks this video device as never
 	   having been registered */
@@ -580,10 +506,6 @@ int __video_register_device(struct video_device *vdev, int type, int nr,
 			vdev->parent = vdev->v4l2_dev->dev;
 		if (vdev->ctrl_handler == NULL)
 			vdev->ctrl_handler = vdev->v4l2_dev->ctrl_handler;
-		/* If the prio state pointer is NULL, then use the v4l2_device
-		   prio state. */
-		if (vdev->prio == NULL)
-			vdev->prio = &vdev->v4l2_dev->prio;
 	}
 
 	/* Part 2: find a free minor, device node number and device index. */
@@ -664,6 +586,10 @@ int __video_register_device(struct video_device *vdev, int type, int nr,
 	}
 
 	/* Part 4: register the device with sysfs */
+	memset(&vdev->dev, 0, sizeof(vdev->dev));
+	/* The memset above cleared the device's device_private, so
+	   put back the copy we made earlier. */
+	vdev->dev.p = priv;
 	vdev->dev.class = &video_class;
 	vdev->dev.devt = MKDEV(VIDEO_MAJOR, vdev->minor);
 	if (vdev->parent)
@@ -681,16 +607,10 @@ int __video_register_device(struct video_device *vdev, int type, int nr,
 	if (nr != -1 && nr != vdev->num && warn_if_nr_in_use)
 		printk(KERN_WARNING "%s: requested %s%d, got %s\n", __func__,
 			name_base, nr, video_device_node_name(vdev));
-
-	/* Increase v4l2_device refcount */
-	if (vdev->v4l2_dev)
-		v4l2_device_get(vdev->v4l2_dev);
-
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	/* Part 5: Register the entity. */
-	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev &&
-	    vdev->vfl_type != VFL_TYPE_SUBDEV) {
-		vdev->entity.type = MEDIA_ENT_T_DEVNODE_V4L;
+	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev) {
+		vdev->entity.type = MEDIA_ENTITY_TYPE_DEVNODE_V4L;
 		vdev->entity.name = vdev->name;
 		vdev->entity.v4l.major = VIDEO_MAJOR;
 		vdev->entity.v4l.minor = vdev->minor;
@@ -734,6 +654,11 @@ void video_unregister_device(struct video_device *vdev)
 	/* Check if vdev was ever registered at all */
 	if (!vdev || !video_is_registered(vdev))
 		return;
+
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	if (vdev->v4l2_dev && vdev->v4l2_dev->mdev)
+		media_device_unregister_entity(&vdev->entity);
+#endif
 
 	mutex_lock(&videodev_lock);
 	/* This must be in a critical section to prevent a race with v4l2_open.

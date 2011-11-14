@@ -183,7 +183,7 @@ static inline void list_splice_init_rcu(struct list_head *list,
 	struct list_head *last = list->prev;
 	struct list_head *at = head->next;
 
-	if (list_empty(list))
+	if (list_empty(head))
 		return;
 
 	/* "first" and "last" tracking list, so initialize it. */
@@ -241,6 +241,11 @@ static inline void list_splice_init_rcu(struct list_head *list,
 #define list_first_entry_rcu(ptr, type, member) \
 	list_entry_rcu((ptr)->next, type, member)
 
+#define __list_for_each_rcu(pos, head) \
+	for (pos = rcu_dereference_raw(list_next_rcu(head)); \
+		pos != (head); \
+		pos = rcu_dereference_raw(list_next_rcu((pos)))
+
 /**
  * list_for_each_entry_rcu	-	iterate over rcu list of given type
  * @pos:	the type * to use as a loop cursor.
@@ -253,7 +258,7 @@ static inline void list_splice_init_rcu(struct list_head *list,
  */
 #define list_for_each_entry_rcu(pos, head, member) \
 	for (pos = list_entry_rcu((head)->next, typeof(*pos), member); \
-		&pos->member != (head); \
+		prefetch(pos->member.next), &pos->member != (head); \
 		pos = list_entry_rcu(pos->member.next, typeof(*pos), member))
 
 
@@ -270,7 +275,7 @@ static inline void list_splice_init_rcu(struct list_head *list,
  */
 #define list_for_each_continue_rcu(pos, head) \
 	for ((pos) = rcu_dereference_raw(list_next_rcu(pos)); \
-		(pos) != (head); \
+		prefetch((pos)->next), (pos) != (head); \
 		(pos) = rcu_dereference_raw(list_next_rcu(pos)))
 
 /**
@@ -284,7 +289,7 @@ static inline void list_splice_init_rcu(struct list_head *list,
  */
 #define list_for_each_entry_continue_rcu(pos, head, member) 		\
 	for (pos = list_entry_rcu(pos->member.next, typeof(*pos), member); \
-	     &pos->member != (head);	\
+	     prefetch(pos->member.next), &pos->member != (head);	\
 	     pos = list_entry_rcu(pos->member.next, typeof(*pos), member))
 
 /**
@@ -427,7 +432,7 @@ static inline void hlist_add_after_rcu(struct hlist_node *prev,
 
 #define __hlist_for_each_rcu(pos, head)				\
 	for (pos = rcu_dereference(hlist_first_rcu(head));	\
-	     pos;						\
+	     pos && ({ prefetch(pos->next); 1; });		\
 	     pos = rcu_dereference(hlist_next_rcu(pos)))
 
 /**
@@ -443,7 +448,7 @@ static inline void hlist_add_after_rcu(struct hlist_node *prev,
  */
 #define hlist_for_each_entry_rcu(tpos, pos, head, member)		\
 	for (pos = rcu_dereference_raw(hlist_first_rcu(head));		\
-		pos &&							 \
+		pos && ({ prefetch(pos->next); 1; }) &&			 \
 		({ tpos = hlist_entry(pos, typeof(*tpos), member); 1; }); \
 		pos = rcu_dereference_raw(hlist_next_rcu(pos)))
 
@@ -460,7 +465,7 @@ static inline void hlist_add_after_rcu(struct hlist_node *prev,
  */
 #define hlist_for_each_entry_rcu_bh(tpos, pos, head, member)		 \
 	for (pos = rcu_dereference_bh((head)->first);			 \
-		pos &&							 \
+		pos && ({ prefetch(pos->next); 1; }) &&			 \
 		({ tpos = hlist_entry(pos, typeof(*tpos), member); 1; }); \
 		pos = rcu_dereference_bh(pos->next))
 
@@ -472,7 +477,7 @@ static inline void hlist_add_after_rcu(struct hlist_node *prev,
  */
 #define hlist_for_each_entry_continue_rcu(tpos, pos, member)		\
 	for (pos = rcu_dereference((pos)->next);			\
-	     pos &&							\
+	     pos && ({ prefetch(pos->next); 1; }) &&			\
 	     ({ tpos = hlist_entry(pos, typeof(*tpos), member); 1; });  \
 	     pos = rcu_dereference(pos->next))
 
@@ -484,7 +489,7 @@ static inline void hlist_add_after_rcu(struct hlist_node *prev,
  */
 #define hlist_for_each_entry_continue_rcu_bh(tpos, pos, member)		\
 	for (pos = rcu_dereference_bh((pos)->next);			\
-	     pos &&							\
+	     pos && ({ prefetch(pos->next); 1; }) &&			\
 	     ({ tpos = hlist_entry(pos, typeof(*tpos), member); 1; });  \
 	     pos = rcu_dereference_bh(pos->next))
 

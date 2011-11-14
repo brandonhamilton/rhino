@@ -21,7 +21,6 @@
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
-#include <asm/io.h>
 
 #include "dmxdev.h"
 #include "dvbdev.h"
@@ -51,13 +50,13 @@ int vp1034_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
 	switch (voltage) {
 	case SEC_VOLTAGE_13:
 		dprintk(MANTIS_ERROR, 1, "Polarization=[13V]");
-		mantis_gpio_set_bits(mantis, 13, 1);
-		mantis_gpio_set_bits(mantis, 14, 0);
+		gpio_set_bits(mantis, 13, 1);
+		gpio_set_bits(mantis, 14, 0);
 		break;
 	case SEC_VOLTAGE_18:
 		dprintk(MANTIS_ERROR, 1, "Polarization=[18V]");
-		mantis_gpio_set_bits(mantis, 13, 1);
-		mantis_gpio_set_bits(mantis, 14, 1);
+		gpio_set_bits(mantis, 13, 1);
+		gpio_set_bits(mantis, 14, 1);
 		break;
 	case SEC_VOLTAGE_OFF:
 		dprintk(MANTIS_ERROR, 1, "Frontend (dummy) POWERDOWN");
@@ -83,7 +82,7 @@ static int vp1034_frontend_init(struct mantis_pci *mantis, struct dvb_frontend *
 		msleep(250);
 
 		dprintk(MANTIS_ERROR, 1, "Probing for MB86A16 (DVB-S/DSS)");
-		fe = dvb_attach(mb86a16_attach, &vp1034_mb86a16_config, adapter);
+		fe = mb86a16_attach(&vp1034_mb86a16_config, adapter);
 		if (fe) {
 			dprintk(MANTIS_ERROR, 1,
 			"found MB86A16 DVB-S/DSS frontend @0x%02x",

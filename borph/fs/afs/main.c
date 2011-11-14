@@ -30,7 +30,6 @@ module_param(rootcell, charp, 0);
 MODULE_PARM_DESC(rootcell, "root AFS cell name and VL server IP addr list");
 
 struct afs_uuid afs_uuid;
-struct workqueue_struct *afs_wq;
 
 /*
  * get a client UUID
@@ -88,16 +87,10 @@ static int __init afs_init(void)
 	if (ret < 0)
 		return ret;
 
-	/* create workqueue */
-	ret = -ENOMEM;
-	afs_wq = alloc_workqueue("afs", 0, 0);
-	if (!afs_wq)
-		return ret;
-
 	/* register the /proc stuff */
 	ret = afs_proc_init();
 	if (ret < 0)
-		goto error_proc;
+		return ret;
 
 #ifdef CONFIG_AFS_FSCACHE
 	/* we want to be able to cache */
@@ -147,8 +140,6 @@ error_cell_init:
 error_cache:
 #endif
 	afs_proc_cleanup();
-error_proc:
-	destroy_workqueue(afs_wq);
 	rcu_barrier();
 	printk(KERN_ERR "kAFS: failed to register: %d\n", ret);
 	return ret;
@@ -172,7 +163,7 @@ static void __exit afs_exit(void)
 	afs_purge_servers();
 	afs_callback_update_kill();
 	afs_vlocation_purge();
-	destroy_workqueue(afs_wq);
+	flush_scheduled_work();
 	afs_cell_purge();
 #ifdef CONFIG_AFS_FSCACHE
 	fscache_unregister_netfs(&afs_cache_netfs);

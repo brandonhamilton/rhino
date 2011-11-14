@@ -104,6 +104,7 @@ enum tvp514x_output {
  * @ vs_polarity: VSYNC Polarity configuration for current interface.
  */
 struct tvp514x_platform_data {
+	int (*s_power) (struct v4l2_subdev *subdev, u32 on);
 	/* Interface control params */
 	bool clk_polarity;
 	bool hs_polarity;

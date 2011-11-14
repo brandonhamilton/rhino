@@ -169,21 +169,21 @@ static inline int atomic_add_negative(int i, atomic_t *v)
 	char c;
 	__asm__ __volatile__("addl %2,%1; smi %0"
 			     : "=d" (c), "+m" (*v)
-			     : ASM_DI (i));
+			     : "id" (i));
 	return c != 0;
 }
 
 static inline void atomic_clear_mask(unsigned long mask, unsigned long *v)
 {
-	__asm__ __volatile__("andl %1,%0" : "+m" (*v) : ASM_DI (~(mask)));
+	__asm__ __volatile__("andl %1,%0" : "+m" (*v) : "id" (~(mask)));
 }
 
 static inline void atomic_set_mask(unsigned long mask, unsigned long *v)
 {
-	__asm__ __volatile__("orl %1,%0" : "+m" (*v) : ASM_DI (mask));
+	__asm__ __volatile__("orl %1,%0" : "+m" (*v) : "id" (mask));
 }
 
-static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -195,9 +195,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != (u);
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 /* Atomic operations are already serializing */
 #define smp_mb__before_atomic_dec()	barrier()
@@ -205,4 +206,6 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 #define smp_mb__before_atomic_inc()	barrier()
 #define smp_mb__after_atomic_inc()	barrier()
 
+#include <asm-generic/atomic-long.h>
+#include <asm-generic/atomic64.h>
 #endif /* __ARCH_M68K_ATOMIC __ */

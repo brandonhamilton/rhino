@@ -114,8 +114,8 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 	return r;
 }
 
-int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
-		struct kvm *kvm, int irq_source_id, int level)
+static int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
+		       struct kvm *kvm, int irq_source_id, int level)
 {
 	struct kvm_lapic_irq irq;
 
@@ -409,9 +409,8 @@ int kvm_set_irq_routing(struct kvm *kvm,
 
 	mutex_lock(&kvm->irq_lock);
 	old = kvm->irq_routing;
-	kvm_irq_routing_update(kvm, new);
+	rcu_assign_pointer(kvm->irq_routing, new);
 	mutex_unlock(&kvm->irq_lock);
-
 	synchronize_rcu();
 
 	new = old;

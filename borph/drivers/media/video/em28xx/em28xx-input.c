@@ -25,6 +25,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/input.h>
 #include <linux/usb.h>
 #include <linux/slab.h>
 
@@ -63,7 +64,7 @@ struct em28xx_ir_poll_result {
 
 struct em28xx_IR {
 	struct em28xx *dev;
-	struct rc_dev *rc;
+	struct input_dev *input;
 	char name[32];
 	char phys[32];
 
@@ -74,6 +75,10 @@ struct em28xx_IR {
 	unsigned int last_readcount;
 
 	int  (*get_key)(struct em28xx_IR *, struct em28xx_ir_poll_result *);
+
+	/* IR device properties */
+
+	struct ir_dev_props props;
 };
 
 /**********************************************************
@@ -297,12 +302,12 @@ static void em28xx_ir_handle_key(struct em28xx_IR *ir)
 			poll_result.toggle_bit, poll_result.read_count,
 			poll_result.rc_address, poll_result.rc_data[0]);
 		if (ir->full_code)
-			rc_keydown(ir->rc,
+			ir_keydown(ir->input,
 				   poll_result.rc_address << 8 |
 				   poll_result.rc_data[0],
 				   poll_result.toggle_bit);
 		else
-			rc_keydown(ir->rc,
+			ir_keydown(ir->input,
 				   poll_result.rc_data[0],
 				   poll_result.toggle_bit);
 
@@ -326,9 +331,9 @@ static void em28xx_ir_work(struct work_struct *work)
 	schedule_delayed_work(&ir->work, msecs_to_jiffies(ir->polling));
 }
 
-static int em28xx_ir_start(struct rc_dev *rc)
+static int em28xx_ir_start(void *priv)
 {
-	struct em28xx_IR *ir = rc->priv;
+	struct em28xx_IR *ir = priv;
 
 	INIT_DELAYED_WORK(&ir->work, em28xx_ir_work);
 	schedule_delayed_work(&ir->work, 0);
@@ -336,30 +341,30 @@ static int em28xx_ir_start(struct rc_dev *rc)
 	return 0;
 }
 
-static void em28xx_ir_stop(struct rc_dev *rc)
+static void em28xx_ir_stop(void *priv)
 {
-	struct em28xx_IR *ir = rc->priv;
+	struct em28xx_IR *ir = priv;
 
 	cancel_delayed_work_sync(&ir->work);
 }
 
-int em28xx_ir_change_protocol(struct rc_dev *rc_dev, u64 rc_type)
+int em28xx_ir_change_protocol(void *priv, u64 ir_type)
 {
 	int rc = 0;
-	struct em28xx_IR *ir = rc_dev->priv;
+	struct em28xx_IR *ir = priv;
 	struct em28xx *dev = ir->dev;
 	u8 ir_config = EM2874_IR_RC5;
 
 	/* Adjust xclk based o IR table for RC5/NEC tables */
 
-	if (rc_type == RC_TYPE_RC5) {
+	if (ir_type == IR_TYPE_RC5) {
 		dev->board.xclk |= EM28XX_XCLK_IR_RC5_MODE;
 		ir->full_code = 1;
-	} else if (rc_type == RC_TYPE_NEC) {
+	} else if (ir_type == IR_TYPE_NEC) {
 		dev->board.xclk &= ~EM28XX_XCLK_IR_RC5_MODE;
 		ir_config = EM2874_IR_NEC;
 		ir->full_code = 1;
-	} else if (rc_type != RC_TYPE_UNKNOWN)
+	} else if (ir_type != IR_TYPE_UNKNOWN)
 		rc = -EINVAL;
 
 	em28xx_write_reg_bits(dev, EM28XX_R0F_XCLK, dev->board.xclk,
@@ -372,7 +377,6 @@ int em28xx_ir_change_protocol(struct rc_dev *rc_dev, u64 rc_type)
 		ir->get_key = default_polling_getkey;
 		break;
 	case CHIP_ID_EM2874:
-	case CHIP_ID_EM28174:
 		ir->get_key = em2874_polling_getkey;
 		em28xx_write_regs(dev, EM2874_R50_IR_CONFIG, &ir_config, 1);
 		break;
@@ -387,7 +391,7 @@ int em28xx_ir_change_protocol(struct rc_dev *rc_dev, u64 rc_type)
 int em28xx_ir_init(struct em28xx *dev)
 {
 	struct em28xx_IR *ir;
-	struct rc_dev *rc;
+	struct input_dev *input_dev;
 	int err = -ENOMEM;
 
 	if (dev->board.ir_codes == NULL) {
@@ -396,27 +400,28 @@ int em28xx_ir_init(struct em28xx *dev)
 	}
 
 	ir = kzalloc(sizeof(*ir), GFP_KERNEL);
-	rc = rc_allocate_device();
-	if (!ir || !rc)
+	input_dev = input_allocate_device();
+	if (!ir || !input_dev)
 		goto err_out_free;
 
 	/* record handles to ourself */
 	ir->dev = dev;
 	dev->ir = ir;
-	ir->rc = rc;
+
+	ir->input = input_dev;
 
 	/*
 	 * em2874 supports more protocols. For now, let's just announce
 	 * the two protocols that were already tested
 	 */
-	rc->allowed_protos = RC_TYPE_RC5 | RC_TYPE_NEC;
-	rc->priv = ir;
-	rc->change_protocol = em28xx_ir_change_protocol;
-	rc->open = em28xx_ir_start;
-	rc->close = em28xx_ir_stop;
+	ir->props.allowed_protos = IR_TYPE_RC5 | IR_TYPE_NEC;
+	ir->props.priv = ir;
+	ir->props.change_protocol = em28xx_ir_change_protocol;
+	ir->props.open = em28xx_ir_start;
+	ir->props.close = em28xx_ir_stop;
 
 	/* By default, keep protocol field untouched */
-	err = em28xx_ir_change_protocol(rc, RC_TYPE_UNKNOWN);
+	err = em28xx_ir_change_protocol(ir, IR_TYPE_UNKNOWN);
 	if (err)
 		goto err_out_free;
 
@@ -430,27 +435,27 @@ int em28xx_ir_init(struct em28xx *dev)
 	usb_make_path(dev->udev, ir->phys, sizeof(ir->phys));
 	strlcat(ir->phys, "/input0", sizeof(ir->phys));
 
-	rc->input_name = ir->name;
-	rc->input_phys = ir->phys;
-	rc->input_id.bustype = BUS_USB;
-	rc->input_id.version = 1;
-	rc->input_id.vendor = le16_to_cpu(dev->udev->descriptor.idVendor);
-	rc->input_id.product = le16_to_cpu(dev->udev->descriptor.idProduct);
-	rc->dev.parent = &dev->udev->dev;
-	rc->map_name = dev->board.ir_codes;
-	rc->driver_name = MODULE_NAME;
+	input_dev->name = ir->name;
+	input_dev->phys = ir->phys;
+	input_dev->id.bustype = BUS_USB;
+	input_dev->id.version = 1;
+	input_dev->id.vendor = le16_to_cpu(dev->udev->descriptor.idVendor);
+	input_dev->id.product = le16_to_cpu(dev->udev->descriptor.idProduct);
+
+	input_dev->dev.parent = &dev->udev->dev;
+
+
 
 	/* all done */
-	err = rc_register_device(rc);
+	err = ir_input_register(ir->input, dev->board.ir_codes,
+				&ir->props, MODULE_NAME);
 	if (err)
 		goto err_out_stop;
 
 	return 0;
-
  err_out_stop:
 	dev->ir = NULL;
  err_out_free:
-	rc_free_device(rc);
 	kfree(ir);
 	return err;
 }
@@ -463,8 +468,8 @@ int em28xx_ir_fini(struct em28xx *dev)
 	if (!ir)
 		return 0;
 
-	em28xx_ir_stop(ir->rc);
-	rc_unregister_device(ir->rc);
+	em28xx_ir_stop(ir);
+	ir_input_unregister(ir->input);
 	kfree(ir);
 
 	/* done */
@@ -552,7 +557,7 @@ void em28xx_deregister_snapshot_button(struct em28xx *dev)
 {
 	if (dev->sbutton_input_dev != NULL) {
 		em28xx_info("Deregistering snapshot button\n");
-		cancel_delayed_work_sync(&dev->sbutton_query_work);
+		cancel_rearming_delayed_work(&dev->sbutton_query_work);
 		input_unregister_device(dev->sbutton_input_dev);
 		dev->sbutton_input_dev = NULL;
 	}

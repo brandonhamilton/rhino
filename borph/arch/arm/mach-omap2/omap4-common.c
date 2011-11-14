@@ -19,8 +19,6 @@
 #include <asm/hardware/gic.h>
 #include <asm/hardware/cache-l2x0.h>
 
-#include <plat/irqs.h>
-
 #include <mach/hardware.h>
 #include <mach/omap4-common.h>
 
@@ -28,6 +26,7 @@
 void __iomem *l2cache_base;
 #endif
 
+void __iomem *gic_cpu_base_addr;
 void __iomem *gic_dist_base_addr;
 
 
@@ -36,12 +35,12 @@ void __init gic_init_irq(void)
 	/* Static mapping, never released */
 	gic_dist_base_addr = ioremap(OMAP44XX_GIC_DIST_BASE, SZ_4K);
 	BUG_ON(!gic_dist_base_addr);
+	gic_dist_init(0, gic_dist_base_addr, 29);
 
 	/* Static mapping, never released */
-	omap_irq_base = ioremap(OMAP44XX_GIC_CPU_BASE, SZ_512);
-	BUG_ON(!omap_irq_base);
-
-	gic_init(0, 29, gic_dist_base_addr, omap_irq_base);
+	gic_cpu_base_addr = ioremap(OMAP44XX_GIC_CPU_BASE, SZ_512);
+	BUG_ON(!gic_cpu_base_addr);
+	gic_cpu_init(0, gic_cpu_base_addr);
 }
 
 #ifdef CONFIG_CACHE_L2X0
@@ -50,12 +49,6 @@ static void omap4_l2x0_disable(void)
 {
 	/* Disable PL310 L2 Cache controller */
 	omap_smc1(0x102, 0x0);
-}
-
-static void omap4_l2x0_set_debug(unsigned long val)
-{
-	/* Program PL310 L2 Cache controller debug register */
-	omap_smc1(0x100, val);
 }
 
 static int __init omap_l2_cache_init(void)
@@ -105,7 +98,6 @@ static int __init omap_l2_cache_init(void)
 	 * specific one
 	*/
 	outer_cache.disable = omap4_l2x0_disable;
-	outer_cache.set_debug = omap4_l2x0_set_debug;
 
 	return 0;
 }

@@ -89,7 +89,7 @@ struct acpi_ac {
 	unsigned long long state;
 };
 
-#define to_acpi_ac(x) container_of(x, struct acpi_ac, charger)
+#define to_acpi_ac(x) container_of(x, struct acpi_ac, charger);
 
 #ifdef CONFIG_ACPI_PROCFS_POWER
 static const struct file_operations acpi_ac_fops = {
@@ -197,8 +197,7 @@ static int acpi_ac_add_fs(struct acpi_device *device)
 {
 	struct proc_dir_entry *entry = NULL;
 
-	printk(KERN_WARNING PREFIX "Deprecated procfs I/F for AC is loaded,"
-			" please retry with CONFIG_ACPI_PROCFS_POWER cleared\n");
+
 	if (!acpi_device_dir(device)) {
 		acpi_device_dir(device) = proc_mkdir(acpi_device_bid(device),
 						     acpi_ac_dir);

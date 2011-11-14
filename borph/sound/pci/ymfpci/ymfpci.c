@@ -345,7 +345,7 @@ static void __devexit snd_card_ymfpci_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Yamaha DS-1 PCI",
 	.id_table = snd_ymfpci_ids,
 	.probe = snd_card_ymfpci_probe,
 	.remove = __devexit_p(snd_card_ymfpci_remove),

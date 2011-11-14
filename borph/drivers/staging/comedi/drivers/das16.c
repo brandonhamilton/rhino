@@ -1695,8 +1695,10 @@ static int das16_detach(struct comedi_device *dev)
 		}
 		if (devpriv->dma_chan)
 			free_dma(devpriv->dma_chan);
-		kfree(devpriv->user_ai_range_table);
-		kfree(devpriv->user_ao_range_table);
+		if (devpriv->user_ai_range_table)
+			kfree(devpriv->user_ai_range_table);
+		if (devpriv->user_ao_range_table)
+			kfree(devpriv->user_ao_range_table);
 	}
 
 	if (dev->irq)

@@ -2,7 +2,7 @@
 # Block layer core configuration
 #
 menuconfig BLOCK
-       bool "Enable the block layer" if EXPERT
+       bool "Enable the block layer" if EMBEDDED
        default y
        help
 	 Provide block layer support for the kernel.

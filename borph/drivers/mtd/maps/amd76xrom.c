@@ -82,7 +82,7 @@ static void amd76xrom_cleanup(struct amd76xrom_window *window)
 		if (map->rsrc.parent) {
 			release_resource(&map->rsrc);
 		}
-		mtd_device_unregister(map->mtd);
+		del_mtd_device(map->mtd);
 		map_destroy(map->mtd);
 		list_del(&map->list);
 		kfree(map);
@@ -149,9 +149,11 @@ static int __devinit amd76xrom_init_one (struct pci_dev *pdev,
 	if (request_resource(&iomem_resource, &window->rsrc)) {
 		window->rsrc.parent = NULL;
 		printk(KERN_ERR MOD_NAME
-		       " %s(): Unable to register resource %pR - kernel bug?\n",
-		       __func__, &window->rsrc);
-		return -EBUSY;
+			" %s(): Unable to register resource"
+			" 0x%.16llx-0x%.16llx - kernel bug?\n",
+			__func__,
+			(unsigned long long)window->rsrc.start,
+			(unsigned long long)window->rsrc.end);
 	}
 
 
@@ -262,7 +264,7 @@ static int __devinit amd76xrom_init_one (struct pci_dev *pdev,
 
 		/* Now that the mtd devices is complete claim and export it */
 		map->mtd->owner = THIS_MODULE;
-		if (mtd_device_register(map->mtd, NULL, 0)) {
+		if (add_mtd_device(map->mtd)) {
 			map_destroy(map->mtd);
 			map->mtd = NULL;
 			goto out;

@@ -139,7 +139,7 @@ struct s626_private {
 	int got_regions;
 	short allocatedBuf;
 	uint8_t ai_cmd_running;	/*  ai_cmd is running */
-	uint8_t ai_continous;	/*  continous acquisition */
+	uint8_t ai_continous;	/*  continous aquisition */
 	int ai_sample_count;	/*  number of samples to acquire */
 	unsigned int ai_sample_timer;
 	/*  time between samples in  units of the timer */
@@ -1048,7 +1048,7 @@ static irqreturn_t s626_irq_handler(int irq, void *d)
 	uint8_t group;
 	uint16_t irqbit;
 
-	DEBUG("s626_irq_handler: interrupt request received!!!\n");
+	DEBUG("s626_irq_handler: interrupt request recieved!!!\n");
 
 	if (dev->attached == 0)
 		return IRQ_NONE;
@@ -1165,14 +1165,14 @@ static irqreturn_t s626_irq_handler(int irq, void *d)
 							(16 * group)))
 					    == 1 && cmd->start_src == TRIG_EXT) {
 						DEBUG
-						    ("s626_irq_handler: Edge capture interrupt received from channel %d\n",
+						    ("s626_irq_handler: Edge capture interrupt recieved from channel %d\n",
 						     cmd->start_arg);
 
 						/*  Start executing the RPS program. */
 						MC_ENABLE(P_MC1, MC1_ERPS1);
 
 						DEBUG
-						    ("s626_irq_handler: acquisition start triggered!!!\n");
+						    ("s626_irq_handler: aquisition start triggered!!!\n");
 
 						if (cmd->scan_begin_src ==
 						    TRIG_EXT) {
@@ -1194,7 +1194,7 @@ static irqreturn_t s626_irq_handler(int irq, void *d)
 					    && cmd->scan_begin_src ==
 					    TRIG_EXT) {
 						DEBUG
-						    ("s626_irq_handler: Edge capture interrupt received from channel %d\n",
+						    ("s626_irq_handler: Edge capture interrupt recieved from channel %d\n",
 						     cmd->scan_begin_arg);
 
 						/*  Trigger ADC scan loop start by setting RPS Signal 0. */
@@ -1236,7 +1236,7 @@ static irqreturn_t s626_irq_handler(int irq, void *d)
 					    == 1
 					    && cmd->convert_src == TRIG_EXT) {
 						DEBUG
-						    ("s626_irq_handler: Edge capture interrupt received from channel %d\n",
+						    ("s626_irq_handler: Edge capture interrupt recieved from channel %d\n",
 						     cmd->convert_arg);
 
 						/*  Trigger ADC scan loop start by setting RPS Signal 0. */
@@ -1805,7 +1805,7 @@ static int s626_ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 		DEBUG("s626_ai_cmd: NULL command\n");
 		return -EINVAL;
 	} else {
-		DEBUG("s626_ai_cmd: command received!!!\n");
+		DEBUG("s626_ai_cmd: command recieved!!!\n");
 	}
 
 	if (dev->irq == 0) {
@@ -1880,7 +1880,7 @@ static int s626_ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 		devpriv->ai_continous = 0;
 		break;
 	case TRIG_NONE:
-		/*  continous acquisition */
+		/*  continous aquisition */
 		devpriv->ai_continous = 1;
 		devpriv->ai_sample_count = 0;
 		break;
@@ -2570,7 +2570,7 @@ static uint32_t I2Chandshake(struct comedi_device *dev, uint32_t val)
 	while ((RR7146(P_I2CCTRL) & (I2C_BUSY | I2C_ERR)) == I2C_BUSY)
 		;
 
-	/*  Return non-zero if I2C error occurred. */
+	/*  Return non-zero if I2C error occured. */
 	return RR7146(P_I2CCTRL) & I2C_ERR;
 
 }

@@ -114,9 +114,6 @@ MACHINE_START(ADI_COYOTE, "ADI Engineering Coyote")
 	.timer		= &ixp4xx_timer,
 	.boot_params	= 0x0100,
 	.init_machine	= coyote_init,
-#if defined(CONFIG_PCI)
-	.dma_zone_size	= SZ_64M,
-#endif
 MACHINE_END
 #endif
 

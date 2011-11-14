@@ -11,8 +11,6 @@
  *  published by the Free Software Foundation.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -416,7 +414,8 @@ static int __init dell_setup_rfkill(void)
 	int ret;
 
 	if (dmi_check_system(dell_blacklist)) {
-		pr_info("Blacklisted hardware detected - not enabling rfkill\n");
+		printk(KERN_INFO "dell-laptop: Blacklisted hardware detected - "
+				"not enabling rfkill\n");
 		return 0;
 	}
 
@@ -540,14 +539,14 @@ static int dell_get_intensity(struct backlight_device *bd)
 	else
 		dell_send_request(buffer, 0, 1);
 
-	ret = buffer->output[1];
-
 out:
 	release_buffer();
-	return ret;
+	if (ret)
+		return ret;
+	return buffer->output[1];
 }
 
-static const struct backlight_ops dell_ops = {
+static struct backlight_ops dell_ops = {
 	.get_brightness = dell_get_intensity,
 	.update_status  = dell_send_intensity,
 };
@@ -587,7 +586,7 @@ static int __init dell_init(void)
 	dmi_walk(find_tokens, NULL);
 
 	if (!da_tokens)  {
-		pr_info("Unable to find dmi tokens\n");
+		printk(KERN_INFO "dell-laptop: Unable to find dmi tokens\n");
 		return -ENODEV;
 	}
 
@@ -612,17 +611,19 @@ static int __init dell_init(void)
 	if (!bufferpage)
 		goto fail_buffer;
 	buffer = page_address(bufferpage);
+	mutex_init(&buffer_mutex);
 
 	ret = dell_setup_rfkill();
 
 	if (ret) {
-		pr_warn("Unable to setup rfkill\n");
+		printk(KERN_WARNING "dell-laptop: Unable to setup rfkill\n");
 		goto fail_rfkill;
 	}
 
 	ret = i8042_install_filter(dell_laptop_i8042_filter);
 	if (ret) {
-		pr_warn("Unable to install key filter\n");
+		printk(KERN_WARNING
+		       "dell-laptop: Unable to install key filter\n");
 		goto fail_filter;
 	}
 
@@ -650,7 +651,6 @@ static int __init dell_init(void)
 	if (max_intensity) {
 		struct backlight_properties props;
 		memset(&props, 0, sizeof(struct backlight_properties));
-		props.type = BACKLIGHT_PLATFORM;
 		props.max_brightness = max_intensity;
 		dell_backlight_device = backlight_device_register("dell_backlight",
 								  &platform_device->dev,

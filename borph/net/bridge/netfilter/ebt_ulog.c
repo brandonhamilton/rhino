@@ -216,6 +216,7 @@ unlock:
 nlmsg_failure:
 	pr_debug("error during NLMSG_PUT. This should "
 		 "not happen, please report to author.\n");
+	goto unlock;
 alloc_failure:
 	goto unlock;
 }

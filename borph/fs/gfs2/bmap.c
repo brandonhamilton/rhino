@@ -21,7 +21,6 @@
 #include "meta_io.h"
 #include "quota.h"
 #include "rgrp.h"
-#include "super.h"
 #include "trans.h"
 #include "dir.h"
 #include "util.h"
@@ -758,13 +757,13 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct gfs2_rgrp_list rlist;
 	u64 bn, bstart;
-	u32 blen, btotal;
+	u32 blen;
 	__be64 *p;
 	unsigned int rg_blocks = 0;
 	int metadata;
 	unsigned int revokes = 0;
 	int x;
-	int error = 0;
+	int error;
 
 	if (!*top)
 		sm->sm_first = 0;
@@ -780,14 +779,8 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 	metadata = (height != ip->i_height - 1);
 	if (metadata)
 		revokes = (height) ? sdp->sd_inptrs : sdp->sd_diptrs;
-	else if (ip->i_depth)
-		revokes = sdp->sd_inptrs;
 
-	if (ip != GFS2_I(sdp->sd_rindex))
-		error = gfs2_rindex_hold(sdp, &ip->i_alloc->al_ri_gh);
-	else if (!sdp->sd_rgrps)
-		error = gfs2_ri_update(ip);
-
+	error = gfs2_rindex_hold(sdp, &ip->i_alloc->al_ri_gh);
 	if (error)
 		return error;
 
@@ -842,7 +835,6 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 
 	bstart = 0;
 	blen = 0;
-	btotal = 0;
 
 	for (p = top; p < bottom; p++) {
 		if (!*p)
@@ -854,8 +846,10 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 			blen++;
 		else {
 			if (bstart) {
-				__gfs2_free_blocks(ip, bstart, blen, metadata);
-				btotal += blen;
+				if (metadata)
+					gfs2_free_meta(ip, bstart, blen);
+				else
+					gfs2_free_data(ip, bstart, blen);
 			}
 
 			bstart = bn;
@@ -866,13 +860,11 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 		gfs2_add_inode_blocks(&ip->i_inode, -1);
 	}
 	if (bstart) {
-		__gfs2_free_blocks(ip, bstart, blen, metadata);
-		btotal += blen;
+		if (metadata)
+			gfs2_free_meta(ip, bstart, blen);
+		else
+			gfs2_free_data(ip, bstart, blen);
 	}
-
-	gfs2_statfs_change(sdp, 0, +btotal, 0);
-	gfs2_quota_change(ip, -(s64)btotal, ip->i_inode.i_uid,
-			  ip->i_inode.i_gid);
 
 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
 
@@ -887,8 +879,7 @@ out_rg_gunlock:
 out_rlist:
 	gfs2_rlist_free(&rlist);
 out:
-	if (ip != GFS2_I(sdp->sd_rindex))
-		gfs2_glock_dq_uninit(&ip->i_alloc->al_ri_gh);
+	gfs2_glock_dq_uninit(&ip->i_alloc->al_ri_gh);
 	return error;
 }
 
@@ -1130,7 +1121,7 @@ void gfs2_trim_blocks(struct inode *inode)
  * earlier versions of GFS2 have a bug in the stuffed file reading
  * code which will result in a buffer overrun if the size is larger
  * than the max stuffed file size. In order to prevent this from
- * occurring, such files are unstuffed, but in other cases we can
+ * occuring, such files are unstuffed, but in other cases we can
  * just update the inode size directly.
  *
  * Returns: 0 on success, or -ve on error
@@ -1215,8 +1206,6 @@ int gfs2_setattr_size(struct inode *inode, u64 newsize)
 	ret = inode_newsize_ok(inode, newsize);
 	if (ret)
 		return ret;
-
-	inode_dio_wait(inode);
 
 	oldsize = inode->i_size;
 	if (newsize >= oldsize)

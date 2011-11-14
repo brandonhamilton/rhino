@@ -38,8 +38,8 @@
 
 #include "mlx4.h"
 
-int mlx4_SENSE_PORT(struct mlx4_dev *dev, int port,
-		    enum mlx4_port_type *type)
+static int mlx4_SENSE_PORT(struct mlx4_dev *dev, int port,
+			   enum mlx4_port_type *type)
 {
 	u64 out_param;
 	int err = 0;

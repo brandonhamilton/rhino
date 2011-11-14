@@ -67,9 +67,8 @@ dns_resolver_instantiate(struct key *key, const void *_data, size_t datalen)
 	size_t result_len = 0;
 	const char *data = _data, *end, *opt;
 
-	kenter("%%%d,%s,'%*.*s',%zu",
-	       key->serial, key->description,
-	       (int)datalen, (int)datalen, data, datalen);
+	kenter("%%%d,%s,'%s',%zu",
+	       key->serial, key->description, data, datalen);
 
 	if (datalen <= 1 || !data || data[datalen - 1] != '\0')
 		return -EINVAL;
@@ -212,25 +211,10 @@ static void dns_resolver_describe(const struct key *key, struct seq_file *m)
 	int err = key->type_data.x[0];
 
 	seq_puts(m, key->description);
-	if (key_is_instantiated(key)) {
-		if (err)
-			seq_printf(m, ": %d", err);
-		else
-			seq_printf(m, ": %u", key->datalen);
-	}
-}
-
-/*
- * read the DNS data
- * - the key's semaphore is read-locked
- */
-static long dns_resolver_read(const struct key *key,
-			      char __user *buffer, size_t buflen)
-{
-	if (key->type_data.x[0])
-		return key->type_data.x[0];
-
-	return user_read(key, buffer, buflen);
+	if (err)
+		seq_printf(m, ": %d", err);
+	else
+		seq_printf(m, ": %u", key->datalen);
 }
 
 struct key_type key_type_dns_resolver = {
@@ -240,7 +224,7 @@ struct key_type key_type_dns_resolver = {
 	.revoke		= user_revoke,
 	.destroy	= user_destroy,
 	.describe	= dns_resolver_describe,
-	.read		= dns_resolver_read,
+	.read		= user_read,
 };
 
 static int __init init_dns_resolver(void)

@@ -63,7 +63,8 @@ static int ingress_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 
 	result = tc_classify(skb, p->filter_list, &res);
 
-	qdisc_bstats_update(sch, skb);
+	sch->bstats.packets++;
+	sch->bstats.bytes += qdisc_pkt_len(skb);
 	switch (result) {
 	case TC_ACT_SHOT:
 		result = TC_ACT_SHOT;

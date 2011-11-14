@@ -152,7 +152,6 @@ ext4_read_inode_bitmap(struct super_block *sb, ext4_group_t block_group)
 	 * We do it here so the bitmap uptodate bit
 	 * get set with buffer lock held.
 	 */
-	trace_ext4_load_inode_bitmap(sb, block_group);
 	set_bitmap_uptodate(bh);
 	if (bh_submit_read(bh) < 0) {
 		put_bh(bh);
@@ -650,7 +649,7 @@ static int find_group_other(struct super_block *sb, struct inode *parent,
 		*group = parent_group + flex_size;
 		if (*group > ngroups)
 			*group = 0;
-		return find_group_orlov(sb, parent, group, mode, NULL);
+		return find_group_orlov(sb, parent, group, mode, 0);
 	}
 
 	/*
@@ -1028,7 +1027,7 @@ got:
 	inode->i_generation = sbi->s_next_generation++;
 	spin_unlock(&sbi->s_next_gen_lock);
 
-	ext4_clear_state_flags(ei); /* Only relevant on 32-bit archs */
+	ei->i_state_flags = 0;
 	ext4_set_inode_state(inode, EXT4_STATE_NEW);
 
 	ei->i_extra_isize = EXT4_SB(sb)->s_want_extra_isize;
@@ -1043,7 +1042,7 @@ got:
 	if (err)
 		goto fail_free_drop;
 
-	err = ext4_init_security(handle, inode, dir, qstr);
+	err = ext4_init_security(handle, inode, dir);
 	if (err)
 		goto fail_free_drop;
 
@@ -1053,11 +1052,6 @@ got:
 			ext4_set_inode_flag(inode, EXT4_INODE_EXTENTS);
 			ext4_ext_tree_init(handle, inode);
 		}
-	}
-
-	if (ext4_handle_valid(handle)) {
-		ei->i_sync_tid = handle->h_transaction->t_tid;
-		ei->i_datasync_tid = handle->h_transaction->t_tid;
 	}
 
 	err = ext4_mark_inode_dirty(handle, inode);
@@ -1287,7 +1281,7 @@ extern int ext4_init_inode_table(struct super_block *sb, ext4_group_t group,
 			   group, used_blks,
 			   ext4_itable_unused_count(sb, gdp));
 		ret = 1;
-		goto err_out;
+		goto out;
 	}
 
 	blk = ext4_inode_table(sb, gdp) + used_blks;

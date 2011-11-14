@@ -20,7 +20,6 @@
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_acct.h>
-#include <linux/rculist_nulls.h>
 
 struct ct_iter_state {
 	struct seq_net_private p;
@@ -36,8 +35,7 @@ static struct hlist_nulls_node *ct_get_first(struct seq_file *seq)
 	for (st->bucket = 0;
 	     st->bucket < net->ct.htable_size;
 	     st->bucket++) {
-		n = rcu_dereference(
-			hlist_nulls_first_rcu(&net->ct.hash[st->bucket]));
+		n = rcu_dereference(net->ct.hash[st->bucket].first);
 		if (!is_a_nulls(n))
 			return n;
 	}
@@ -50,14 +48,13 @@ static struct hlist_nulls_node *ct_get_next(struct seq_file *seq,
 	struct net *net = seq_file_net(seq);
 	struct ct_iter_state *st = seq->private;
 
-	head = rcu_dereference(hlist_nulls_next_rcu(head));
+	head = rcu_dereference(head->next);
 	while (is_a_nulls(head)) {
 		if (likely(get_nulls_value(head) == st->bucket)) {
 			if (++st->bucket >= net->ct.htable_size)
 				return NULL;
 		}
-		head = rcu_dereference(
-			hlist_nulls_first_rcu(&net->ct.hash[st->bucket]));
+		head = rcu_dereference(net->ct.hash[st->bucket].first);
 	}
 	return head;
 }
@@ -100,7 +97,7 @@ static int ct_show_secctx(struct seq_file *s, const struct nf_conn *ct)
 
 	ret = security_secid_to_secctx(ct->secmark, &secctx, &len);
 	if (ret)
-		return 0;
+		return ret;
 
 	ret = seq_printf(s, "secctx=%s ", secctx);
 
@@ -220,8 +217,7 @@ static struct hlist_node *ct_expect_get_first(struct seq_file *seq)
 	struct hlist_node *n;
 
 	for (st->bucket = 0; st->bucket < nf_ct_expect_hsize; st->bucket++) {
-		n = rcu_dereference(
-			hlist_first_rcu(&net->ct.expect_hash[st->bucket]));
+		n = rcu_dereference(net->ct.expect_hash[st->bucket].first);
 		if (n)
 			return n;
 	}
@@ -234,12 +230,11 @@ static struct hlist_node *ct_expect_get_next(struct seq_file *seq,
 	struct net *net = seq_file_net(seq);
 	struct ct_expect_iter_state *st = seq->private;
 
-	head = rcu_dereference(hlist_next_rcu(head));
+	head = rcu_dereference(head->next);
 	while (head == NULL) {
 		if (++st->bucket >= nf_ct_expect_hsize)
 			return NULL;
-		head = rcu_dereference(
-			hlist_first_rcu(&net->ct.expect_hash[st->bucket]));
+		head = rcu_dereference(net->ct.expect_hash[st->bucket].first);
 	}
 	return head;
 }

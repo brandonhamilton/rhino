@@ -205,21 +205,6 @@ static const int sh4a_cache_events
 			[ C(RESULT_MISS)   ] = -1,
 		},
 	},
-
-	[ C(NODE) ] = {
-		[ C(OP_READ) ] = {
-			[ C(RESULT_ACCESS) ] = -1,
-			[ C(RESULT_MISS)   ] = -1,
-		},
-		[ C(OP_WRITE) ] = {
-			[ C(RESULT_ACCESS) ] = -1,
-			[ C(RESULT_MISS)   ] = -1,
-		},
-		[ C(OP_PREFETCH) ] = {
-			[ C(RESULT_ACCESS) ] = -1,
-			[ C(RESULT_MISS)   ] = -1,
-		},
-	},
 };
 
 static int sh4a_event_map(int event)
@@ -299,4 +284,4 @@ static int __init sh4a_pmu_init(void)
 
 	return register_sh_pmu(&sh4a_pmu);
 }
-early_initcall(sh4a_pmu_init);
+arch_initcall(sh4a_pmu_init);

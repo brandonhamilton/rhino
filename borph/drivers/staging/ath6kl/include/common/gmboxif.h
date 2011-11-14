@@ -23,6 +23,10 @@
 #ifndef __GMBOXIF_H__
 #define __GMBOXIF_H__
 
+#ifndef ATH_TARGET
+#include "athstartpack.h"
+#endif
+
 /* GMBOX interface definitions */
     
 #define AR6K_GMBOX_CREDIT_COUNTER       1   /* we use credit counter 1 to track credits */
@@ -37,23 +41,23 @@
 
     /* definitions for BT HCI packets */
 typedef PREPACK struct {
-    u16 Flags_ConnHandle;
-    u16 Length;
+    A_UINT16 Flags_ConnHandle;
+    A_UINT16 Length;
 } POSTPACK BT_HCI_ACL_HEADER;
 
 typedef PREPACK struct {
-    u16 Flags_ConnHandle;
-    u8 Length;
+    A_UINT16 Flags_ConnHandle;
+    A_UINT8  Length;
 } POSTPACK BT_HCI_SCO_HEADER;
 
 typedef PREPACK struct {
-    u16 OpCode;
-    u8 ParamLength;
+    A_UINT16 OpCode;
+    A_UINT8  ParamLength;
 } POSTPACK BT_HCI_COMMAND_HEADER;
 
 typedef PREPACK struct {
-    u8 EventCode;
-    u8 ParamLength;
+    A_UINT8  EventCode;
+    A_UINT8  ParamLength;
 } POSTPACK BT_HCI_EVENT_HEADER;
 
 /* MBOX host interrupt signal assignments */
@@ -65,6 +69,10 @@ typedef PREPACK struct {
 #define MBOX_SIG_HCI_BRIDGE_PWR_SAV_ON    3
 #define MBOX_SIG_HCI_BRIDGE_PWR_SAV_OFF   4
 
+
+#ifndef ATH_TARGET
+#include "athendpack.h"
+#endif
 
 #endif /* __GMBOXIF_H__ */
 

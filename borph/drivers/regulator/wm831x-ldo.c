@@ -113,8 +113,7 @@ static int wm831x_gp_ldo_list_voltage(struct regulator_dev *rdev,
 }
 
 static int wm831x_gp_ldo_set_voltage_int(struct regulator_dev *rdev, int reg,
-					 int min_uV, int max_uV,
-					 unsigned *selector)
+					 int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -134,20 +133,16 @@ static int wm831x_gp_ldo_set_voltage_int(struct regulator_dev *rdev, int reg,
 	if (ret < min_uV || ret > max_uV)
 		return -EINVAL;
 
-	*selector = vsel;
-
 	return wm831x_set_bits(wm831x, reg, WM831X_LDO1_ON_VSEL_MASK, vsel);
 }
 
 static int wm831x_gp_ldo_set_voltage(struct regulator_dev *rdev,
-				     int min_uV, int max_uV,
-				     unsigned *selector)
+				     int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_LDO_ON_CONTROL;
 
-	return wm831x_gp_ldo_set_voltage_int(rdev, reg, min_uV, max_uV,
-					     selector);
+	return wm831x_gp_ldo_set_voltage_int(rdev, reg, min_uV, max_uV);
 }
 
 static int wm831x_gp_ldo_set_suspend_voltage(struct regulator_dev *rdev,
@@ -155,12 +150,11 @@ static int wm831x_gp_ldo_set_suspend_voltage(struct regulator_dev *rdev,
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_LDO_SLEEP_CONTROL;
-	unsigned int selector;
 
-	return wm831x_gp_ldo_set_voltage_int(rdev, reg, uV, uV, &selector);
+	return wm831x_gp_ldo_set_voltage_int(rdev, reg, uV, uV);
 }
 
-static int wm831x_gp_ldo_get_voltage_sel(struct regulator_dev *rdev)
+static int wm831x_gp_ldo_get_voltage(struct regulator_dev *rdev)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -173,7 +167,7 @@ static int wm831x_gp_ldo_get_voltage_sel(struct regulator_dev *rdev)
 
 	ret &= WM831X_LDO1_ON_VSEL_MASK;
 
-	return ret;
+	return wm831x_gp_ldo_list_voltage(rdev, ret);
 }
 
 static unsigned int wm831x_gp_ldo_get_mode(struct regulator_dev *rdev)
@@ -293,7 +287,7 @@ static unsigned int wm831x_gp_ldo_get_optimum_mode(struct regulator_dev *rdev,
 
 static struct regulator_ops wm831x_gp_ldo_ops = {
 	.list_voltage = wm831x_gp_ldo_list_voltage,
-	.get_voltage_sel = wm831x_gp_ldo_get_voltage_sel,
+	.get_voltage = wm831x_gp_ldo_get_voltage,
 	.set_voltage = wm831x_gp_ldo_set_voltage,
 	.set_suspend_voltage = wm831x_gp_ldo_set_suspend_voltage,
 	.get_mode = wm831x_gp_ldo_get_mode,
@@ -310,16 +304,10 @@ static __devinit int wm831x_gp_ldo_probe(struct platform_device *pdev)
 {
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
 	struct wm831x_pdata *pdata = wm831x->dev->platform_data;
-	int id;
+	int id = pdev->id % ARRAY_SIZE(pdata->ldo);
 	struct wm831x_ldo *ldo;
 	struct resource *res;
 	int ret, irq;
-
-	if (pdata && pdata->wm831x_num)
-		id = (pdata->wm831x_num * 10) + 1;
-	else
-		id = 0;
-	id = pdev->id - id;
 
 	dev_dbg(&pdev->dev, "Probing LDO%d\n", id + 1);
 
@@ -360,9 +348,9 @@ static __devinit int wm831x_gp_ldo_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq_byname(pdev, "UV");
-	ret = request_threaded_irq(irq, NULL, wm831x_ldo_uv_irq,
-				   IRQF_TRIGGER_RISING, ldo->name,
-				   ldo);
+	ret = wm831x_request_irq(wm831x, irq, wm831x_ldo_uv_irq,
+				 IRQF_TRIGGER_RISING, ldo->name,
+				 ldo);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to request UV IRQ %d: %d\n",
 			irq, ret);
@@ -383,10 +371,11 @@ err:
 static __devexit int wm831x_gp_ldo_remove(struct platform_device *pdev)
 {
 	struct wm831x_ldo *ldo = platform_get_drvdata(pdev);
+	struct wm831x *wm831x = ldo->wm831x;
 
 	platform_set_drvdata(pdev, NULL);
 
-	free_irq(platform_get_irq_byname(pdev, "UV"), ldo);
+	wm831x_free_irq(wm831x, platform_get_irq_byname(pdev, "UV"), ldo);
 	regulator_unregister(ldo->regulator);
 	kfree(ldo);
 
@@ -424,8 +413,7 @@ static int wm831x_aldo_list_voltage(struct regulator_dev *rdev,
 }
 
 static int wm831x_aldo_set_voltage_int(struct regulator_dev *rdev, int reg,
-				       int min_uV, int max_uV,
-				       unsigned *selector)
+					 int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -445,19 +433,16 @@ static int wm831x_aldo_set_voltage_int(struct regulator_dev *rdev, int reg,
 	if (ret < min_uV || ret > max_uV)
 		return -EINVAL;
 
-	*selector = vsel;
-
 	return wm831x_set_bits(wm831x, reg, WM831X_LDO7_ON_VSEL_MASK, vsel);
 }
 
 static int wm831x_aldo_set_voltage(struct regulator_dev *rdev,
-				   int min_uV, int max_uV, unsigned *selector)
+				     int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_LDO_ON_CONTROL;
 
-	return wm831x_aldo_set_voltage_int(rdev, reg, min_uV, max_uV,
-					   selector);
+	return wm831x_aldo_set_voltage_int(rdev, reg, min_uV, max_uV);
 }
 
 static int wm831x_aldo_set_suspend_voltage(struct regulator_dev *rdev,
@@ -465,12 +450,11 @@ static int wm831x_aldo_set_suspend_voltage(struct regulator_dev *rdev,
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_LDO_SLEEP_CONTROL;
-	unsigned int selector;
 
-	return wm831x_aldo_set_voltage_int(rdev, reg, uV, uV, &selector);
+	return wm831x_aldo_set_voltage_int(rdev, reg, uV, uV);
 }
 
-static int wm831x_aldo_get_voltage_sel(struct regulator_dev *rdev)
+static int wm831x_aldo_get_voltage(struct regulator_dev *rdev)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -483,7 +467,7 @@ static int wm831x_aldo_get_voltage_sel(struct regulator_dev *rdev)
 
 	ret &= WM831X_LDO7_ON_VSEL_MASK;
 
-	return ret;
+	return wm831x_aldo_list_voltage(rdev, ret);
 }
 
 static unsigned int wm831x_aldo_get_mode(struct regulator_dev *rdev)
@@ -564,7 +548,7 @@ static int wm831x_aldo_get_status(struct regulator_dev *rdev)
 
 static struct regulator_ops wm831x_aldo_ops = {
 	.list_voltage = wm831x_aldo_list_voltage,
-	.get_voltage_sel = wm831x_aldo_get_voltage_sel,
+	.get_voltage = wm831x_aldo_get_voltage,
 	.set_voltage = wm831x_aldo_set_voltage,
 	.set_suspend_voltage = wm831x_aldo_set_suspend_voltage,
 	.get_mode = wm831x_aldo_get_mode,
@@ -580,16 +564,10 @@ static __devinit int wm831x_aldo_probe(struct platform_device *pdev)
 {
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
 	struct wm831x_pdata *pdata = wm831x->dev->platform_data;
-	int id;
+	int id = pdev->id % ARRAY_SIZE(pdata->ldo);
 	struct wm831x_ldo *ldo;
 	struct resource *res;
 	int ret, irq;
-
-	if (pdata && pdata->wm831x_num)
-		id = (pdata->wm831x_num * 10) + 1;
-	else
-		id = 0;
-	id = pdev->id - id;
 
 	dev_dbg(&pdev->dev, "Probing LDO%d\n", id + 1);
 
@@ -630,8 +608,9 @@ static __devinit int wm831x_aldo_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq_byname(pdev, "UV");
-	ret = request_threaded_irq(irq, NULL, wm831x_ldo_uv_irq,
-				   IRQF_TRIGGER_RISING, ldo->name, ldo);
+	ret = wm831x_request_irq(wm831x, irq, wm831x_ldo_uv_irq,
+				 IRQF_TRIGGER_RISING, ldo->name,
+				 ldo);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to request UV IRQ %d: %d\n",
 			irq, ret);
@@ -652,8 +631,9 @@ err:
 static __devexit int wm831x_aldo_remove(struct platform_device *pdev)
 {
 	struct wm831x_ldo *ldo = platform_get_drvdata(pdev);
+	struct wm831x *wm831x = ldo->wm831x;
 
-	free_irq(platform_get_irq_byname(pdev, "UV"), ldo);
+	wm831x_free_irq(wm831x, platform_get_irq_byname(pdev, "UV"), ldo);
 	regulator_unregister(ldo->regulator);
 	kfree(ldo);
 
@@ -686,8 +666,7 @@ static int wm831x_alive_ldo_list_voltage(struct regulator_dev *rdev,
 
 static int wm831x_alive_ldo_set_voltage_int(struct regulator_dev *rdev,
 					    int reg,
-					    int min_uV, int max_uV,
-					    unsigned *selector)
+					    int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -701,20 +680,16 @@ static int wm831x_alive_ldo_set_voltage_int(struct regulator_dev *rdev,
 	if (ret < min_uV || ret > max_uV)
 		return -EINVAL;
 
-	*selector = vsel;
-
 	return wm831x_set_bits(wm831x, reg, WM831X_LDO11_ON_VSEL_MASK, vsel);
 }
 
 static int wm831x_alive_ldo_set_voltage(struct regulator_dev *rdev,
-					int min_uV, int max_uV,
-					unsigned *selector)
+				     int min_uV, int max_uV)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_ALIVE_LDO_ON_CONTROL;
 
-	return wm831x_alive_ldo_set_voltage_int(rdev, reg, min_uV, max_uV,
-						selector);
+	return wm831x_alive_ldo_set_voltage_int(rdev, reg, min_uV, max_uV);
 }
 
 static int wm831x_alive_ldo_set_suspend_voltage(struct regulator_dev *rdev,
@@ -722,12 +697,11 @@ static int wm831x_alive_ldo_set_suspend_voltage(struct regulator_dev *rdev,
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	int reg = ldo->base + WM831X_ALIVE_LDO_SLEEP_CONTROL;
-	unsigned selector;
 
-	return wm831x_alive_ldo_set_voltage_int(rdev, reg, uV, uV, &selector);
+	return wm831x_alive_ldo_set_voltage_int(rdev, reg, uV, uV);
 }
 
-static int wm831x_alive_ldo_get_voltage_sel(struct regulator_dev *rdev)
+static int wm831x_alive_ldo_get_voltage(struct regulator_dev *rdev)
 {
 	struct wm831x_ldo *ldo = rdev_get_drvdata(rdev);
 	struct wm831x *wm831x = ldo->wm831x;
@@ -740,7 +714,7 @@ static int wm831x_alive_ldo_get_voltage_sel(struct regulator_dev *rdev)
 
 	ret &= WM831X_LDO11_ON_VSEL_MASK;
 
-	return ret;
+	return wm831x_alive_ldo_list_voltage(rdev, ret);
 }
 
 static int wm831x_alive_ldo_get_status(struct regulator_dev *rdev)
@@ -762,7 +736,7 @@ static int wm831x_alive_ldo_get_status(struct regulator_dev *rdev)
 
 static struct regulator_ops wm831x_alive_ldo_ops = {
 	.list_voltage = wm831x_alive_ldo_list_voltage,
-	.get_voltage_sel = wm831x_alive_ldo_get_voltage_sel,
+	.get_voltage = wm831x_alive_ldo_get_voltage,
 	.set_voltage = wm831x_alive_ldo_set_voltage,
 	.set_suspend_voltage = wm831x_alive_ldo_set_suspend_voltage,
 	.get_status = wm831x_alive_ldo_get_status,
@@ -776,17 +750,10 @@ static __devinit int wm831x_alive_ldo_probe(struct platform_device *pdev)
 {
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
 	struct wm831x_pdata *pdata = wm831x->dev->platform_data;
-	int id;
+	int id = pdev->id % ARRAY_SIZE(pdata->ldo);
 	struct wm831x_ldo *ldo;
 	struct resource *res;
 	int ret;
-
-	if (pdata && pdata->wm831x_num)
-		id = (pdata->wm831x_num * 10) + 1;
-	else
-		id = 0;
-	id = pdev->id - id;
-
 
 	dev_dbg(&pdev->dev, "Probing LDO%d\n", id + 1);
 

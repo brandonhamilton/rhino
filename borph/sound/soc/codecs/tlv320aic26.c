@@ -18,6 +18,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 
 #include "tlv320aic26.h"
@@ -30,6 +31,7 @@ MODULE_LICENSE("GPL");
 struct aic26 {
 	struct spi_device *spi;
 	struct snd_soc_codec codec;
+	u16 reg_cache[AIC26_NUM_REGS];	/* shadow registers */
 	int master;
 	int datfm;
 	int mclk;
@@ -161,18 +163,10 @@ static int aic26_hw_params(struct snd_pcm_substream *substream,
 		dev_dbg(&aic26->spi->dev, "bad format\n"); return -EINVAL;
 	}
 
-	/**
-	 * Configure PLL
-	 * fsref = (mclk * PLLM) / 2048
-	 * where PLLM = J.DDDD (DDDD register ranges from 0 to 9999, decimal)
-	 */
+	/* Configure PLL */
 	pval = 1;
-	/* compute J portion of multiplier */
-	jval = fsref / (aic26->mclk / 2048);
-	/* compute fractional DDDD component of multiplier */
-	dval = fsref - (jval * (aic26->mclk / 2048));
-	dval = (10000 * dval) / (aic26->mclk / 2048);
-	dev_dbg(&aic26->spi->dev, "Setting PLLM to %d.%04d\n", jval, dval);
+	jval = (fsref == 44100) ? 7 : 8;
+	dval = (fsref == 44100) ? 5264 : 1920;
 	qval = 0;
 	reg = 0x8000 | qval << 11 | pval << 8 | jval << 2;
 	aic26_reg_write(codec, AIC26_REG_PLL_PROG1, reg);
@@ -361,6 +355,7 @@ static DEVICE_ATTR(keyclick, 0644, aic26_keyclick_show, aic26_keyclick_set);
  */
 static int aic26_probe(struct snd_soc_codec *codec)
 {
+	struct aic26 *aic26 = snd_soc_codec_get_drvdata(codec);
 	int ret, err, i, reg;
 
 	dev_info(codec->dev, "Probing AIC26 SoC CODEC driver\n");
@@ -378,7 +373,7 @@ static int aic26_probe(struct snd_soc_codec *codec)
 	aic26_reg_write(codec, AIC26_REG_AUDIO_CTRL3, reg);
 
 	/* Fill register cache */
-	for (i = 0; i < codec->driver->reg_cache_size; i++)
+	for (i = 0; i < ARRAY_SIZE(aic26->reg_cache); i++)
 		aic26_reg_read(codec, i);
 
 	/* Register the sysfs files for debugging */

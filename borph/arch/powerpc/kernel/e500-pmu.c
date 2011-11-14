@@ -75,11 +75,6 @@ static int e500_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
 		[C(OP_WRITE)] = {	-1,		-1	},
 		[C(OP_PREFETCH)] = {	-1,		-1	},
 	},
-	[C(NODE)] = {		/* 	RESULT_ACCESS	RESULT_MISS */
-		[C(OP_READ)] = {	-1,		-1 	},
-		[C(OP_WRITE)] = {	-1,		-1	},
-		[C(OP_PREFETCH)] = {	-1,		-1	},
-	},
 };
 
 static int num_events = 128;
@@ -131,4 +126,4 @@ static int init_e500_pmu(void)
 	return register_fsl_emb_pmu(&e500_pmu);
 }
 
-early_initcall(init_e500_pmu);
+arch_initcall(init_e500_pmu);

@@ -37,7 +37,7 @@
 
 #include <linux/spinlock.h>
 #include <linux/if_ether.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct adapter;
 struct l2t_data;

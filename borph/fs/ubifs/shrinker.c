@@ -277,18 +277,13 @@ static int kick_a_thread(void)
 	return 0;
 }
 
-int ubifs_shrinker(struct shrinker *shrink, struct shrink_control *sc)
+int ubifs_shrinker(struct shrinker *shrink, int nr, gfp_t gfp_mask)
 {
-	int nr = sc->nr_to_scan;
 	int freed, contention = 0;
 	long clean_zn_cnt = atomic_long_read(&ubifs_clean_zn_cnt);
 
 	if (nr == 0)
-		/*
-		 * Due to the way UBIFS updates the clean znode counter it may
-		 * temporarily be negative.
-		 */
-		return clean_zn_cnt >= 0 ? clean_zn_cnt : 1;
+		return clean_zn_cnt;
 
 	if (!clean_zn_cnt) {
 		/*

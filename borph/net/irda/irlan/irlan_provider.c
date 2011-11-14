@@ -73,7 +73,7 @@ static int irlan_provider_data_indication(void *instance, void *sap,
 
 	IRDA_DEBUG(4, "%s()\n", __func__ );
 
-	self = instance;
+	self = (struct irlan_cb *) instance;
 
 	IRDA_ASSERT(self != NULL, return -1;);
 	IRDA_ASSERT(self->magic == IRLAN_MAGIC, return -1;);
@@ -128,11 +128,12 @@ static void irlan_provider_connect_indication(void *instance, void *sap,
 {
 	struct irlan_cb *self;
 	struct tsap_cb *tsap;
+	__u32 saddr, daddr;
 
 	IRDA_DEBUG(0, "%s()\n", __func__ );
 
-	self = instance;
-	tsap = sap;
+	self = (struct irlan_cb *) instance;
+	tsap = (struct tsap_cb *) sap;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRLAN_MAGIC, return;);
@@ -140,6 +141,8 @@ static void irlan_provider_connect_indication(void *instance, void *sap,
 	IRDA_ASSERT(tsap == self->provider.tsap_ctrl,return;);
 	IRDA_ASSERT(self->provider.state == IRLAN_IDLE, return;);
 
+	daddr = irttp_get_daddr(tsap);
+	saddr = irttp_get_saddr(tsap);
 	self->provider.max_sdu_size = max_sdu_size;
 	self->provider.max_header_size = max_header_size;
 
@@ -182,8 +185,8 @@ static void irlan_provider_disconnect_indication(void *instance, void *sap,
 
 	IRDA_DEBUG(4, "%s(), reason=%d\n", __func__ , reason);
 
-	self = instance;
-	tsap = sap;
+	self = (struct irlan_cb *) instance;
+	tsap = (struct tsap_cb *) sap;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRLAN_MAGIC, return;);

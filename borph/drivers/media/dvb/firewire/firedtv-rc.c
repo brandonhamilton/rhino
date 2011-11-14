@@ -172,8 +172,7 @@ void fdtv_unregister_rc(struct firedtv *fdtv)
 
 void fdtv_handle_rc(struct firedtv *fdtv, unsigned int code)
 {
-	struct input_dev *idev = fdtv->remote_ctrl_dev;
-	u16 *keycode = idev->keycode;
+	u16 *keycode = fdtv->remote_ctrl_dev->keycode;
 
 	if (code >= 0x0300 && code <= 0x031f)
 		code = keycode[code - 0x0300];
@@ -189,8 +188,6 @@ void fdtv_handle_rc(struct firedtv *fdtv, unsigned int code)
 		return;
 	}
 
-	input_report_key(idev, code, 1);
-	input_sync(idev);
-	input_report_key(idev, code, 0);
-	input_sync(idev);
+	input_report_key(fdtv->remote_ctrl_dev, code, 1);
+	input_report_key(fdtv->remote_ctrl_dev, code, 0);
 }

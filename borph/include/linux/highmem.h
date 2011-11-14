@@ -81,8 +81,7 @@ DECLARE_PER_CPU(int, __kmap_atomic_idx);
 
 static inline int kmap_atomic_idx_push(void)
 {
-	int idx = __this_cpu_inc_return(__kmap_atomic_idx) - 1;
-
+	int idx = __get_cpu_var(__kmap_atomic_idx)++;
 #ifdef CONFIG_DEBUG_HIGHMEM
 	WARN_ON_ONCE(in_irq() && !irqs_disabled());
 	BUG_ON(idx > KM_TYPE_NR);
@@ -92,18 +91,16 @@ static inline int kmap_atomic_idx_push(void)
 
 static inline int kmap_atomic_idx(void)
 {
-	return __this_cpu_read(__kmap_atomic_idx) - 1;
+	return __get_cpu_var(__kmap_atomic_idx) - 1;
 }
 
-static inline void kmap_atomic_idx_pop(void)
+static inline int kmap_atomic_idx_pop(void)
 {
+	int idx = --__get_cpu_var(__kmap_atomic_idx);
 #ifdef CONFIG_DEBUG_HIGHMEM
-	int idx = __this_cpu_dec_return(__kmap_atomic_idx);
-
 	BUG_ON(idx < 0);
-#else
-	__this_cpu_dec(__kmap_atomic_idx);
 #endif
+	return idx;
 }
 
 #endif

@@ -18,7 +18,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/clk.h>
 #include <linux/etherdevice.h>
@@ -598,7 +597,7 @@ static int bcm_enet_set_mac_address(struct net_device *dev, void *p)
 }
 
 /*
- * Change rx mode (promiscuous/allmulti) and update multicast list
+ * Change rx mode (promiscous/allmulti) and update multicast list
  */
 static void bcm_enet_set_multicast_list(struct net_device *dev)
 {
@@ -840,8 +839,8 @@ static int bcm_enet_open(struct net_device *dev)
 	if (ret)
 		goto out_phy_disconnect;
 
-	ret = request_irq(priv->irq_rx, bcm_enet_isr_dma, IRQF_DISABLED,
-			  dev->name, dev);
+	ret = request_irq(priv->irq_rx, bcm_enet_isr_dma,
+			  IRQF_SAMPLE_RANDOM | IRQF_DISABLED, dev->name, dev);
 	if (ret)
 		goto out_freeirq;
 
@@ -1098,7 +1097,7 @@ static int bcm_enet_stop(struct net_device *dev)
 	enet_dma_writel(priv, 0, ENETDMA_IRMASK_REG(priv->tx_chan));
 
 	/* make sure no mib update is scheduled */
-	cancel_work_sync(&priv->mib_update_task);
+	flush_scheduled_work();
 
 	/* disable dma & mac */
 	bcm_enet_disable_dma(priv, priv->tx_chan);
@@ -1347,8 +1346,7 @@ static int bcm_enet_get_settings(struct net_device *dev,
 		return phy_ethtool_gset(priv->phydev, cmd);
 	} else {
 		cmd->autoneg = 0;
-		ethtool_cmd_speed_set(cmd, ((priv->force_speed_100)
-					    ? SPEED_100 : SPEED_10));
+		cmd->speed = (priv->force_speed_100) ? SPEED_100 : SPEED_10;
 		cmd->duplex = (priv->force_duplex_full) ?
 			DUPLEX_FULL : DUPLEX_HALF;
 		cmd->supported = ADVERTISED_10baseT_Half  |
@@ -1647,7 +1645,7 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 	if (ret)
 		goto out;
 
-	iomem_size = resource_size(res_mem);
+	iomem_size = res_mem->end - res_mem->start + 1;
 	if (!request_mem_region(res_mem->start, iomem_size, "bcm63xx_enet")) {
 		ret = -EBUSY;
 		goto out;
@@ -1862,7 +1860,7 @@ static int __devexit bcm_enet_remove(struct platform_device *pdev)
 	/* release device resources */
 	iounmap(priv->base);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
+	release_mem_region(res->start, res->end - res->start + 1);
 
 	/* disable hw block clocks */
 	if (priv->phy_clk) {
@@ -1898,7 +1896,7 @@ static int __devinit bcm_enet_shared_probe(struct platform_device *pdev)
 	if (!res)
 		return -ENODEV;
 
-	iomem_size = resource_size(res);
+	iomem_size = res->end - res->start + 1;
 	if (!request_mem_region(res->start, iomem_size, "bcm63xx_enet_dma"))
 		return -EBUSY;
 
@@ -1916,7 +1914,7 @@ static int __devexit bcm_enet_shared_remove(struct platform_device *pdev)
 
 	iounmap(bcm_enet_shared_base);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
+	release_mem_region(res->start, res->end - res->start + 1);
 	return 0;
 }
 

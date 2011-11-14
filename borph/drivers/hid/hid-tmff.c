@@ -151,23 +151,28 @@ static int tmff_init(struct hid_device *hid, const signed short *ff_bits)
 			switch (field->usage[0].hid) {
 			case THRUSTMASTER_USAGE_FF:
 				if (field->report_count < 2) {
-					hid_warn(hid, "ignoring FF field with report_count < 2\n");
+					dev_warn(&hid->dev, "ignoring FF field "
+						"with report_count < 2\n");
 					continue;
 				}
 
 				if (field->logical_maximum ==
 						field->logical_minimum) {
-					hid_warn(hid, "ignoring FF field with logical_maximum == logical_minimum\n");
+					dev_warn(&hid->dev, "ignoring FF field "
+							"with logical_maximum "
+							"== logical_minimum\n");
 					continue;
 				}
 
 				if (tmff->report && tmff->report != report) {
-					hid_warn(hid, "ignoring FF field in other report\n");
+					dev_warn(&hid->dev, "ignoring FF field "
+							"in other report\n");
 					continue;
 				}
 
 				if (tmff->ff_field && tmff->ff_field != field) {
-					hid_warn(hid, "ignoring duplicate FF field\n");
+					dev_warn(&hid->dev, "ignoring "
+							"duplicate FF field\n");
 					continue;
 				}
 
@@ -180,15 +185,16 @@ static int tmff_init(struct hid_device *hid, const signed short *ff_bits)
 				break;
 
 			default:
-				hid_warn(hid, "ignoring unknown output usage %08x\n",
-					 field->usage[0].hid);
+				dev_warn(&hid->dev, "ignoring unknown output "
+						"usage %08x\n",
+						field->usage[0].hid);
 				continue;
 			}
 		}
 	}
 
 	if (!tmff->report) {
-		hid_err(hid, "can't find FF field in output reports\n");
+		dev_err(&hid->dev, "can't find FF field in output reports\n");
 		error = -ENODEV;
 		goto fail;
 	}
@@ -197,7 +203,8 @@ static int tmff_init(struct hid_device *hid, const signed short *ff_bits)
 	if (error)
 		goto fail;
 
-	hid_info(hid, "force feedback for ThrustMaster devices by Zinx Verituse <zinx@epicsol.org>\n");
+	dev_info(&hid->dev, "force feedback for ThrustMaster devices by Zinx "
+			"Verituse <zinx@epicsol.org>");
 	return 0;
 
 fail:
@@ -217,13 +224,13 @@ static int tm_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		goto err;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_FF);
 	if (ret) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		goto err;
 	}
 

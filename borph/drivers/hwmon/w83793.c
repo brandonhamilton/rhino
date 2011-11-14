@@ -51,6 +51,7 @@
 #define WATCHDOG_TIMEOUT 2	/* 2 minute default timeout */
 
 /* Addresses to scan */
+static DEFINE_MUTEX(watchdog_mutex);
 static const unsigned short normal_i2c[] = { 0x2c, 0x2d, 0x2e, 0x2f,
 						I2C_CLIENT_END };
 
@@ -420,43 +421,18 @@ store_beep_enable(struct device *dev, struct device_attribute *attr,
 
 /* Write any value to clear chassis alarm */
 static ssize_t
-store_chassis_clear_legacy(struct device *dev,
-			   struct device_attribute *attr, const char *buf,
-			   size_t count)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct w83793_data *data = i2c_get_clientdata(client);
-	u8 val;
-
-	dev_warn(dev, "Attribute chassis is deprecated, "
-		 "use intrusion0_alarm instead\n");
-
-	mutex_lock(&data->update_lock);
-	val = w83793_read_value(client, W83793_REG_CLR_CHASSIS);
-	val |= 0x80;
-	w83793_write_value(client, W83793_REG_CLR_CHASSIS, val);
-	mutex_unlock(&data->update_lock);
-	return count;
-}
-
-/* Write 0 to clear chassis alarm */
-static ssize_t
 store_chassis_clear(struct device *dev,
 		    struct device_attribute *attr, const char *buf,
 		    size_t count)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct w83793_data *data = i2c_get_clientdata(client);
-	unsigned long val;
-	u8 reg;
-
-	if (strict_strtoul(buf, 10, &val) || val != 0)
-		return -EINVAL;
+	u8 val;
 
 	mutex_lock(&data->update_lock);
-	reg = w83793_read_value(client, W83793_REG_CLR_CHASSIS);
-	w83793_write_value(client, W83793_REG_CLR_CHASSIS, reg | 0x80);
-	data->valid = 0;		/* Force cache refresh */
+	val = w83793_read_value(client, W83793_REG_CLR_CHASSIS);
+	val |= 0x80;
+	w83793_write_value(client, W83793_REG_CLR_CHASSIS, val);
 	mutex_unlock(&data->update_lock);
 	return count;
 }
@@ -1126,8 +1102,6 @@ static DEVICE_ATTR(vrm, S_IWUSR | S_IRUGO, show_vrm, store_vrm);
 
 static struct sensor_device_attribute_2 sda_single_files[] = {
 	SENSOR_ATTR_2(chassis, S_IWUSR | S_IRUGO, show_alarm_beep,
-		      store_chassis_clear_legacy, ALARM_STATUS, 30),
-	SENSOR_ATTR_2(intrusion0_alarm, S_IWUSR | S_IRUGO, show_alarm_beep,
 		      store_chassis_clear, ALARM_STATUS, 30),
 	SENSOR_ATTR_2(beep_enable, S_IWUSR | S_IRUGO, show_beep_enable,
 		      store_beep_enable, NOT_USED, NOT_USED),
@@ -1349,7 +1323,7 @@ static ssize_t watchdog_write(struct file *filp, const char __user *buf,
 static long watchdog_ioctl(struct file *filp, unsigned int cmd,
 			   unsigned long arg)
 {
-	struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options = WDIOF_KEEPALIVEPING |
 			   WDIOF_SETTIMEOUT |
 			   WDIOF_CARDRESET,
@@ -1359,6 +1333,7 @@ static long watchdog_ioctl(struct file *filp, unsigned int cmd,
 	int val, ret = 0;
 	struct w83793_data *data = filp->private_data;
 
+	mutex_lock(&watchdog_mutex);
 	switch (cmd) {
 	case WDIOC_GETSUPPORT:
 		if (!nowayout)
@@ -1412,6 +1387,7 @@ static long watchdog_ioctl(struct file *filp, unsigned int cmd,
 	default:
 		ret = -ENOTTY;
 	}
+	mutex_unlock(&watchdog_mutex);
 	return ret;
 }
 
@@ -1921,7 +1897,7 @@ static void w83793_update_nonvolatile(struct device *dev)
 	struct w83793_data *data = i2c_get_clientdata(client);
 	int i, j;
 	/*
-	   They are somewhat "stable" registers, and to update them every time
+	   They are somewhat "stable" registers, and to update them everytime
 	   takes so much time, it's just not worthy. Update them in a long
 	   interval to avoid exception.
 	 */

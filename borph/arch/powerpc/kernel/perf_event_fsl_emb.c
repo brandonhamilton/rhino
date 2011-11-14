@@ -568,7 +568,7 @@ static struct pmu fsl_emb_pmu = {
  * here so there is no possibility of being interrupted.
  */
 static void record_and_restart(struct perf_event *event, unsigned long val,
-			       struct pt_regs *regs)
+			       struct pt_regs *regs, int nmi)
 {
 	u64 period = event->hw.sample_period;
 	s64 prev, delta, left;
@@ -596,7 +596,6 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 			if (left <= 0)
 				left = period;
 			record = 1;
-			event->hw.last_period = event->hw.sample_period;
 		}
 		if (left < 0x80000000LL)
 			val = 0x80000000LL - left;
@@ -616,7 +615,7 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 		perf_sample_data_init(&data, 0);
 		data.period = event->hw.last_period;
 
-		if (perf_event_overflow(event, &data, regs))
+		if (perf_event_overflow(event, nmi, &data, regs))
 			fsl_emb_pmu_stop(event, 0);
 	}
 }
@@ -644,7 +643,7 @@ static void perf_event_interrupt(struct pt_regs *regs)
 			if (event) {
 				/* event has overflowed */
 				found = 1;
-				record_and_restart(event, val, regs);
+				record_and_restart(event, val, regs, nmi);
 			} else {
 				/*
 				 * Disabled counter is negative,
@@ -682,7 +681,7 @@ int register_fsl_emb_pmu(struct fsl_emb_pmu *pmu)
 	pr_info("%s performance monitor hardware support registered\n",
 		pmu->name);
 
-	perf_pmu_register(&fsl_emb_pmu, "cpu", PERF_TYPE_RAW);
+	perf_pmu_register(&fsl_emb_pmu);
 
 	return 0;
 }

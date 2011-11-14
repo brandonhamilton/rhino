@@ -45,6 +45,11 @@ static int fdtv_get_ca_flags(struct firedtv_tuner_status *stat)
 	return flags;
 }
 
+static int fdtv_ca_reset(struct firedtv *fdtv)
+{
+	return avc_ca_reset(fdtv) ? -EFAULT : 0;
+}
+
 static int fdtv_ca_get_caps(void *arg)
 {
 	struct ca_caps *cap = arg;
@@ -60,14 +65,12 @@ static int fdtv_ca_get_slot_info(struct firedtv *fdtv, void *arg)
 {
 	struct firedtv_tuner_status stat;
 	struct ca_slot_info *slot = arg;
-	int err;
 
-	err = avc_tuner_status(fdtv, &stat);
-	if (err)
-		return err;
+	if (avc_tuner_status(fdtv, &stat))
+		return -EFAULT;
 
 	if (slot->num != 0)
-		return -EACCES;
+		return -EFAULT;
 
 	slot->type = CA_CI;
 	slot->flags = fdtv_get_ca_flags(&stat);
@@ -78,21 +81,21 @@ static int fdtv_ca_app_info(struct firedtv *fdtv, void *arg)
 {
 	struct ca_msg *reply = arg;
 
-	return avc_ca_app_info(fdtv, reply->msg, &reply->length);
+	return avc_ca_app_info(fdtv, reply->msg, &reply->length) ? -EFAULT : 0;
 }
 
 static int fdtv_ca_info(struct firedtv *fdtv, void *arg)
 {
 	struct ca_msg *reply = arg;
 
-	return avc_ca_info(fdtv, reply->msg, &reply->length);
+	return avc_ca_info(fdtv, reply->msg, &reply->length) ? -EFAULT : 0;
 }
 
 static int fdtv_ca_get_mmi(struct firedtv *fdtv, void *arg)
 {
 	struct ca_msg *reply = arg;
 
-	return avc_ca_get_mmi(fdtv, reply->msg, &reply->length);
+	return avc_ca_get_mmi(fdtv, reply->msg, &reply->length) ? -EFAULT : 0;
 }
 
 static int fdtv_ca_get_msg(struct firedtv *fdtv, void *arg)
@@ -108,15 +111,14 @@ static int fdtv_ca_get_msg(struct firedtv *fdtv, void *arg)
 		err = fdtv_ca_info(fdtv, arg);
 		break;
 	default:
-		err = avc_tuner_status(fdtv, &stat);
-		if (err)
-			break;
-		if (stat.ca_mmi == 1)
+		if (avc_tuner_status(fdtv, &stat))
+			err = -EFAULT;
+		else if (stat.ca_mmi == 1)
 			err = fdtv_ca_get_mmi(fdtv, arg);
 		else {
 			dev_info(fdtv->device, "unhandled CA message 0x%08x\n",
 				 fdtv->ca_last_command);
-			err = -EACCES;
+			err = -EFAULT;
 		}
 	}
 	fdtv->ca_last_command = 0;
@@ -139,7 +141,7 @@ static int fdtv_ca_pmt(struct firedtv *fdtv, void *arg)
 		data_length = msg->msg[3];
 	}
 
-	return avc_ca_pmt(fdtv, &msg->msg[data_pos], data_length);
+	return avc_ca_pmt(fdtv, &msg->msg[data_pos], data_length) ? -EFAULT : 0;
 }
 
 static int fdtv_ca_send_msg(struct firedtv *fdtv, void *arg)
@@ -168,7 +170,7 @@ static int fdtv_ca_send_msg(struct firedtv *fdtv, void *arg)
 	default:
 		dev_err(fdtv->device, "unhandled CA message 0x%08x\n",
 			fdtv->ca_last_command);
-		err = -EACCES;
+		err = -EFAULT;
 	}
 	return err;
 }
@@ -182,7 +184,7 @@ static int fdtv_ca_ioctl(struct file *file, unsigned int cmd, void *arg)
 
 	switch (cmd) {
 	case CA_RESET:
-		err = avc_ca_reset(fdtv);
+		err = fdtv_ca_reset(fdtv);
 		break;
 	case CA_GET_CAP:
 		err = fdtv_ca_get_caps(arg);

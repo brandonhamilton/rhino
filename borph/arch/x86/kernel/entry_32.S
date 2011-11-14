@@ -65,8 +65,6 @@
 #define sysexit_audit	syscall_exit_work
 #endif
 
-	.section .entry.text, "ax"
-
 /*
  * We use macros for low-level operations which need to be overridden
  * for paravirtualization.  The following will never clobber any registers:
@@ -397,7 +395,7 @@ sysenter_past_esp:
 	 * A tiny bit of offset fixup is necessary - 4*4 means the 4 words
 	 * pushed above; +8 corresponds to copy_thread's esp0 setting.
 	 */
-	pushl_cfi ((TI_sysenter_return)-THREAD_SIZE+8+4*4)(%esp)
+	pushl_cfi ((TI_sysenter_return)-THREAD_SIZE_asm+8+4*4)(%esp)
 	CFI_REL_OFFSET eip, 0
 
 	pushl_cfi %eax
@@ -790,7 +788,7 @@ ENDPROC(ptregs_clone)
  */
 .section .init.rodata,"a"
 ENTRY(interrupt)
-.section .entry.text, "ax"
+.text
 	.p2align 5
 	.p2align CONFIG_X86_L1_CACHE_SHIFT
 ENTRY(irq_entries_start)
@@ -809,7 +807,7 @@ vector=FIRST_EXTERNAL_VECTOR
       .endif
       .previous
 	.long 1b
-      .section .entry.text, "ax"
+      .text
 vector=vector+1
     .endif
   .endr
@@ -1407,15 +1405,6 @@ ENTRY(general_protection)
 	jmp error_code
 	CFI_ENDPROC
 END(general_protection)
-
-#ifdef CONFIG_KVM_GUEST
-ENTRY(async_page_fault)
-	RING0_EC_FRAME
-	pushl_cfi $do_async_page_fault
-	jmp error_code
-	CFI_ENDPROC
-END(async_page_fault)
-#endif
 
 /*
  * End of kprobes section

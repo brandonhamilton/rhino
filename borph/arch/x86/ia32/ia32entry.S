@@ -25,8 +25,6 @@
 #define sysretl_audit ia32_ret_from_sys_call
 #endif
 
-	.section .entry.text, "ax"
-
 #define IA32_NR_syscalls ((ia32_syscall_end - ia32_sys_call_table)/8)
 
 	.macro IA32_ARG_FIXUP noebp=0
@@ -128,22 +126,28 @@ ENTRY(ia32_sysenter_target)
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
  	movl	%ebp,%ebp		/* zero extension */
-	pushq_cfi $__USER32_DS
+	pushq	$__USER32_DS
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET ss,0*/
-	pushq_cfi %rbp
+	pushq	%rbp
+	CFI_ADJUST_CFA_OFFSET 8
 	CFI_REL_OFFSET rsp,0
-	pushfq_cfi
+	pushfq
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET rflags,0*/
 	movl	8*3-THREAD_SIZE+TI_sysenter_return(%rsp), %r10d
 	CFI_REGISTER rip,r10
-	pushq_cfi $__USER32_CS
+	pushq	$__USER32_CS
+	CFI_ADJUST_CFA_OFFSET 8
 	/*CFI_REL_OFFSET cs,0*/
 	movl	%eax, %eax
-	pushq_cfi %r10
+	pushq	%r10
+	CFI_ADJUST_CFA_OFFSET 8
 	CFI_REL_OFFSET rip,0
-	pushq_cfi %rax
+	pushq	%rax
+	CFI_ADJUST_CFA_OFFSET 8
 	cld
-	SAVE_ARGS 0,1,0
+	SAVE_ARGS 0,0,1
  	/* no need to do an access_ok check here because rbp has been
  	   32bit zero extended */ 
 1:	movl	(%rbp),%ebp
@@ -173,14 +177,16 @@ sysexit_from_sys_call:
 	andl  $~0x200,EFLAGS-R11(%rsp) 
 	movl	RIP-R11(%rsp),%edx		/* User %eip */
 	CFI_REGISTER rip,rdx
-	RESTORE_ARGS 0,24,0,0,0,0
+	RESTORE_ARGS 1,24,1,1,1,1
 	xorq	%r8,%r8
 	xorq	%r9,%r9
 	xorq	%r10,%r10
 	xorq	%r11,%r11
-	popfq_cfi
+	popfq
+	CFI_ADJUST_CFA_OFFSET -8
 	/*CFI_RESTORE rflags*/
-	popq_cfi %rcx				/* User %esp */
+	popq	%rcx				/* User %esp */
+	CFI_ADJUST_CFA_OFFSET -8
 	CFI_REGISTER rsp,rcx
 	TRACE_IRQS_ON
 	ENABLE_INTERRUPTS_SYSEXIT32
@@ -289,7 +295,7 @@ ENTRY(ia32_cstar_target)
 	 * disabled irqs and here we enable it straight after entry:
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
-	SAVE_ARGS 8,0,0
+	SAVE_ARGS 8,1,1
 	movl 	%eax,%eax	/* zero extension */
 	movq	%rax,ORIG_RAX-ARGOFFSET(%rsp)
 	movq	%rcx,RIP-ARGOFFSET(%rsp)
@@ -328,7 +334,7 @@ cstar_dispatch:
 	jnz sysretl_audit
 sysretl_from_sys_call:
 	andl $~TS_COMPAT,TI_status(%r10)
-	RESTORE_ARGS 0,-ARG_SKIP,0,0,0
+	RESTORE_ARGS 1,-ARG_SKIP,1,1,1
 	movl RIP-ARGOFFSET(%rsp),%ecx
 	CFI_REGISTER rip,rcx
 	movl EFLAGS-ARGOFFSET(%rsp),%r11d	
@@ -415,11 +421,12 @@ ENTRY(ia32_syscall)
 	 */
 	ENABLE_INTERRUPTS(CLBR_NONE)
 	movl %eax,%eax
-	pushq_cfi %rax
+	pushq %rax
+	CFI_ADJUST_CFA_OFFSET 8
 	cld
 	/* note the registers are not zero extended to the sf.
 	   this could be a problem. */
-	SAVE_ARGS 0,1,0
+	SAVE_ARGS 0,0,1
 	GET_THREAD_INFO(%r10)
 	orl   $TS_COMPAT,TI_status(%r10)
 	testl $_TIF_WORK_SYSCALL_ENTRY,TI_flags(%r10)
@@ -844,10 +851,4 @@ ia32_sys_call_table:
 	.quad sys_fanotify_init
 	.quad sys32_fanotify_mark
 	.quad sys_prlimit64		/* 340 */
-	.quad sys_name_to_handle_at
-	.quad compat_sys_open_by_handle_at
-	.quad compat_sys_clock_adjtime
-	.quad sys_syncfs
-	.quad compat_sys_sendmmsg	/* 345 */
-	.quad sys_setns
 ia32_syscall_end:

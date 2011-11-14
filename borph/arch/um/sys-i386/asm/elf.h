@@ -75,8 +75,6 @@ typedef struct user_i387_struct elf_fpregset_t;
 	pr_reg[16] = PT_REGS_SS(regs);		\
 } while (0);
 
-#define task_pt_regs(t) (&(t)->thread.regs)
-
 struct task_struct;
 
 extern int elf_core_copy_fpregs(struct task_struct *t, elf_fpregset_t *fpu);
@@ -104,8 +102,6 @@ extern unsigned long __kernel_vsyscall;
  */
 #define FIXADDR_USER_START      VSYSCALL_BASE
 #define FIXADDR_USER_END        VSYSCALL_END
-
-#define __HAVE_ARCH_GATE_AREA 1
 
 /*
  * Architecture-neutral AT_ values in 0-17, leave some room

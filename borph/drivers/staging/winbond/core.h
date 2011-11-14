@@ -3,9 +3,8 @@
 
 #include <linux/wireless.h>
 #include <linux/types.h>
-#include <linux/delay.h>
 
-#include "wbhal.h"
+#include "wbhal_s.h"
 #include "mto.h"
 
 #include "mac_structures.h"

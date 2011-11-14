@@ -25,8 +25,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -77,14 +75,12 @@ enum chips { dme1737, sch5027, sch311x, sch5127 };
  * in4   +12V
  * in5   VTR   (+3.3V stby)
  * in6   Vbat
- * in7   Vtrip (sch5127 only)
  *
  * --------------------------------------------------------------------- */
 
-/* Voltages (in) numbered 0-7 (ix) */
-#define	DME1737_REG_IN(ix)		((ix) < 5 ? 0x20 + (ix) : \
-					 (ix) < 7 ? 0x94 + (ix) : \
-						    0x1f)
+/* Voltages (in) numbered 0-6 (ix) */
+#define	DME1737_REG_IN(ix)		((ix) < 5 ? 0x20 + (ix) \
+						  : 0x94 + (ix))
 #define	DME1737_REG_IN_MIN(ix)		((ix) < 5 ? 0x44 + (ix) * 2 \
 						  : 0x91 + (ix) * 2)
 #define	DME1737_REG_IN_MAX(ix)		((ix) < 5 ? 0x45 + (ix) * 2 \
@@ -103,11 +99,10 @@ enum chips { dme1737, sch5027, sch311x, sch5127 };
  *    IN_TEMP_LSB(1) = [temp3, temp1]
  *    IN_TEMP_LSB(2) = [in4, temp2]
  *    IN_TEMP_LSB(3) = [in3, in0]
- *    IN_TEMP_LSB(4) = [in2, in1]
- *    IN_TEMP_LSB(5) = [res, in7] */
+ *    IN_TEMP_LSB(4) = [in2, in1] */
 #define DME1737_REG_IN_TEMP_LSB(ix)	(0x84 + (ix))
-static const u8 DME1737_REG_IN_LSB[] = {3, 4, 4, 3, 2, 0, 0, 5};
-static const u8 DME1737_REG_IN_LSB_SHL[] = {4, 4, 0, 0, 0, 0, 4, 4};
+static const u8 DME1737_REG_IN_LSB[] = {3, 4, 4, 3, 2, 0, 0};
+static const u8 DME1737_REG_IN_LSB_SHL[] = {4, 4, 0, 0, 0, 0, 4};
 static const u8 DME1737_REG_TEMP_LSB[] = {1, 2, 1};
 static const u8 DME1737_REG_TEMP_LSB_SHL[] = {4, 4, 0};
 
@@ -148,7 +143,7 @@ static const u8 DME1737_REG_TEMP_LSB_SHL[] = {4, 4, 0};
 #define DME1737_REG_ALARM1		0x41
 #define DME1737_REG_ALARM2		0x42
 #define DME1737_REG_ALARM3		0x83
-static const u8 DME1737_BIT_ALARM_IN[] = {0, 1, 2, 3, 8, 16, 17, 18};
+static const u8 DME1737_BIT_ALARM_IN[] = {0, 1, 2, 3, 8, 16, 17};
 static const u8 DME1737_BIT_ALARM_TEMP[] = {4, 5, 6};
 static const u8 DME1737_BIT_ALARM_FAN[] = {10, 11, 12, 13, 22, 23};
 
@@ -193,7 +188,6 @@ static const u8 DME1737_BIT_ALARM_FAN[] = {10, 11, 12, 13, 22, 23};
 #define HAS_PWM_MIN		(1 << 4)		/* bit 4 */
 #define HAS_FAN(ix)		(1 << ((ix) + 5))	/* bits 5-10 */
 #define HAS_PWM(ix)		(1 << ((ix) + 11))	/* bits 11-16 */
-#define HAS_IN7			(1 << 17)		/* bit 17 */
 
 /* ---------------------------------------------------------------------
  * Data structures and manipulation thereof
@@ -217,9 +211,9 @@ struct dme1737_data {
 	u32 has_features;
 
 	/* Register values */
-	u16 in[8];
-	u8  in_min[8];
-	u8  in_max[8];
+	u16 in[7];
+	u8  in_min[7];
+	u8  in_max[7];
 	s16 temp[3];
 	s8  temp_min[3];
 	s8  temp_max[3];
@@ -251,7 +245,7 @@ static const int IN_NOMINAL_SCH311x[] = {2500, 1500, 3300, 5000, 12000, 3300,
 static const int IN_NOMINAL_SCH5027[] = {5000, 2250, 3300, 1125, 1125, 3300,
 					 3300};
 static const int IN_NOMINAL_SCH5127[] = {2500, 2250, 3300, 1125, 1125, 3300,
-					 3300, 1500};
+					 3300};
 #define IN_NOMINAL(type)	((type) == sch311x ? IN_NOMINAL_SCH311x : \
 				 (type) == sch5027 ? IN_NOMINAL_SCH5027 : \
 				 (type) == sch5127 ? IN_NOMINAL_SCH5127 : \
@@ -584,7 +578,7 @@ static struct dme1737_data *dme1737_update_device(struct device *dev)
 {
 	struct dme1737_data *data = dev_get_drvdata(dev);
 	int ix;
-	u8 lsb[6];
+	u8 lsb[5];
 
 	mutex_lock(&data->update_lock);
 
@@ -607,9 +601,6 @@ static struct dme1737_data *dme1737_update_device(struct device *dev)
 			/* Voltage inputs are stored as 16 bit values even
 			 * though they have only 12 bits resolution. This is
 			 * to make it consistent with the temp inputs. */
-			if (ix == 7 && !(data->has_features & HAS_IN7)) {
-				continue;
-			}
 			data->in[ix] = dme1737_read(data,
 					DME1737_REG_IN(ix)) << 8;
 			data->in_min[ix] = dme1737_read(data,
@@ -642,16 +633,10 @@ static struct dme1737_data *dme1737_update_device(struct device *dev)
 		 * which the registers are read (MSB first, then LSB) is
 		 * important! */
 		for (ix = 0; ix < ARRAY_SIZE(lsb); ix++) {
-			if (ix == 5 && !(data->has_features & HAS_IN7)) {
-				continue;
-			}
 			lsb[ix] = dme1737_read(data,
 					DME1737_REG_IN_TEMP_LSB(ix));
 		}
 		for (ix = 0; ix < ARRAY_SIZE(data->in); ix++) {
-			if (ix == 7 && !(data->has_features & HAS_IN7)) {
-				continue;
-			}
 			data->in[ix] |= (lsb[DME1737_REG_IN_LSB[ix]] <<
 					DME1737_REG_IN_LSB_SHL[ix]) & 0xf0;
 		}
@@ -775,7 +760,7 @@ static struct dme1737_data *dme1737_update_device(struct device *dev)
 
 /* ---------------------------------------------------------------------
  * Voltage sysfs attributes
- * ix = [0-7]
+ * ix = [0-5]
  * --------------------------------------------------------------------- */
 
 #define SYS_IN_INPUT	0
@@ -1452,7 +1437,7 @@ static ssize_t show_name(struct device *dev, struct device_attribute *attr,
  * Sysfs device attribute defines and structs
  * --------------------------------------------------------------------- */
 
-/* Voltages 0-7 */
+/* Voltages 0-6 */
 
 #define SENSOR_DEVICE_ATTR_IN(ix) \
 static SENSOR_DEVICE_ATTR_2(in##ix##_input, S_IRUGO, \
@@ -1471,7 +1456,6 @@ SENSOR_DEVICE_ATTR_IN(3);
 SENSOR_DEVICE_ATTR_IN(4);
 SENSOR_DEVICE_ATTR_IN(5);
 SENSOR_DEVICE_ATTR_IN(6);
-SENSOR_DEVICE_ATTR_IN(7);
 
 /* Temperatures 1-3 */
 
@@ -1590,7 +1574,7 @@ static DEVICE_ATTR(name, S_IRUGO, show_name, NULL);   /* for ISA devices */
  * created unconditionally. The attributes that need modification of their
  * permissions are created read-only and write permissions are added or removed
  * on the fly when required */
-static struct attribute *dme1737_attr[] = {
+static struct attribute *dme1737_attr[] ={
 	/* Voltages */
 	&sensor_dev_attr_in0_input.dev_attr.attr,
 	&sensor_dev_attr_in0_min.dev_attr.attr,
@@ -1695,7 +1679,7 @@ static const struct attribute_group dme1737_zone3_group = {
 };
 
 
-/* The following struct holds temp zone hysteresis related attributes, which
+/* The following struct holds temp zone hysteresis  related attributes, which
  * are not available in all chips. The following chips support them:
  * DME1737, SCH311x */
 static struct attribute *dme1737_zone_hyst_attr[] = {
@@ -1707,21 +1691,6 @@ static struct attribute *dme1737_zone_hyst_attr[] = {
 
 static const struct attribute_group dme1737_zone_hyst_group = {
 	.attrs = dme1737_zone_hyst_attr,
-};
-
-/* The following struct holds voltage in7 related attributes, which
- * are not available in all chips. The following chips support them:
- * SCH5127 */
-static struct attribute *dme1737_in7_attr[] = {
-	&sensor_dev_attr_in7_input.dev_attr.attr,
-	&sensor_dev_attr_in7_min.dev_attr.attr,
-	&sensor_dev_attr_in7_max.dev_attr.attr,
-	&sensor_dev_attr_in7_alarm.dev_attr.attr,
-	NULL
-};
-
-static const struct attribute_group dme1737_in7_group = {
-	.attrs = dme1737_in7_attr,
 };
 
 /* The following structs hold the PWM attributes, some of which are optional.
@@ -2015,9 +1984,6 @@ static void dme1737_remove_files(struct device *dev)
 	if (data->has_features & HAS_ZONE_HYST) {
 		sysfs_remove_group(&dev->kobj, &dme1737_zone_hyst_group);
 	}
-	if (data->has_features & HAS_IN7) {
-		sysfs_remove_group(&dev->kobj, &dme1737_in7_group);
-	}
 	sysfs_remove_group(&dev->kobj, &dme1737_group);
 
 	if (!data->client) {
@@ -2031,58 +1997,43 @@ static int dme1737_create_files(struct device *dev)
 	int err, ix;
 
 	/* Create a name attribute for ISA devices */
-	if (!data->client) {
-		err = sysfs_create_file(&dev->kobj, &dev_attr_name.attr);
-		if (err) {
-			goto exit;
-		}
+	if (!data->client &&
+	    (err = sysfs_create_file(&dev->kobj, &dev_attr_name.attr))) {
+		goto exit;
 	}
 
 	/* Create standard sysfs attributes */
-	err = sysfs_create_group(&dev->kobj, &dme1737_group);
-	if (err) {
+	if ((err = sysfs_create_group(&dev->kobj, &dme1737_group))) {
 		goto exit_remove;
 	}
 
 	/* Create chip-dependent sysfs attributes */
-	if (data->has_features & HAS_TEMP_OFFSET) {
-		err = sysfs_create_group(&dev->kobj,
-					 &dme1737_temp_offset_group);
-		if (err) {
-			goto exit_remove;
-		}
+	if ((data->has_features & HAS_TEMP_OFFSET) &&
+	    (err = sysfs_create_group(&dev->kobj,
+				      &dme1737_temp_offset_group))) {
+		goto exit_remove;
 	}
-	if (data->has_features & HAS_VID) {
-		err = sysfs_create_group(&dev->kobj, &dme1737_vid_group);
-		if (err) {
-			goto exit_remove;
-		}
+	if ((data->has_features & HAS_VID) &&
+	    (err = sysfs_create_group(&dev->kobj,
+				      &dme1737_vid_group))) {
+		goto exit_remove;
 	}
-	if (data->has_features & HAS_ZONE3) {
-		err = sysfs_create_group(&dev->kobj, &dme1737_zone3_group);
-		if (err) {
-			goto exit_remove;
-		}
+	if ((data->has_features & HAS_ZONE3) &&
+	    (err = sysfs_create_group(&dev->kobj,
+				      &dme1737_zone3_group))) {
+		goto exit_remove;
 	}
-	if (data->has_features & HAS_ZONE_HYST) {
-		err = sysfs_create_group(&dev->kobj, &dme1737_zone_hyst_group);
-		if (err) {
-			goto exit_remove;
-		}
-	}
-	if (data->has_features & HAS_IN7) {
-		err = sysfs_create_group(&dev->kobj, &dme1737_in7_group);
-		if (err) {
-			goto exit_remove;
-		}
+	if ((data->has_features & HAS_ZONE_HYST) &&
+	    (err = sysfs_create_group(&dev->kobj,
+				      &dme1737_zone_hyst_group))) {
+		goto exit_remove;
 	}
 
 	/* Create fan sysfs attributes */
 	for (ix = 0; ix < ARRAY_SIZE(dme1737_fan_group); ix++) {
 		if (data->has_features & HAS_FAN(ix)) {
-			err = sysfs_create_group(&dev->kobj,
-						 &dme1737_fan_group[ix]);
-			if (err) {
+			if ((err = sysfs_create_group(&dev->kobj,
+						&dme1737_fan_group[ix]))) {
 				goto exit_remove;
 			}
 		}
@@ -2091,17 +2042,14 @@ static int dme1737_create_files(struct device *dev)
 	/* Create PWM sysfs attributes */
 	for (ix = 0; ix < ARRAY_SIZE(dme1737_pwm_group); ix++) {
 		if (data->has_features & HAS_PWM(ix)) {
-			err = sysfs_create_group(&dev->kobj,
-						 &dme1737_pwm_group[ix]);
-			if (err) {
+			if ((err = sysfs_create_group(&dev->kobj,
+						&dme1737_pwm_group[ix]))) {
 				goto exit_remove;
 			}
-			if ((data->has_features & HAS_PWM_MIN) && (ix < 3)) {
-				err = sysfs_create_file(&dev->kobj,
-						dme1737_auto_pwm_min_attr[ix]);
-				if (err) {
-					goto exit_remove;
-				}
+			if ((data->has_features & HAS_PWM_MIN) && ix < 3 &&
+			    (err = sysfs_create_file(&dev->kobj,
+					dme1737_auto_pwm_min_attr[ix]))) {
+				goto exit_remove;
 			}
 		}
 	}
@@ -2238,7 +2186,7 @@ static int dme1737_init_device(struct device *dev)
 		data->has_features |= HAS_ZONE3;
 		break;
 	case sch5127:
-		data->has_features |= HAS_FAN(2) | HAS_PWM(2) | HAS_IN7;
+		data->has_features |= HAS_FAN(2) | HAS_PWM(2);
 		break;
 	default:
 		break;
@@ -2331,9 +2279,8 @@ static int dme1737_i2c_get_features(int sio_cip, struct dme1737_data *data)
 	dme1737_sio_outb(sio_cip, 0x07, 0x0a);
 
 	/* Get the base address of the runtime registers */
-	addr = (dme1737_sio_inb(sio_cip, 0x60) << 8) |
-		dme1737_sio_inb(sio_cip, 0x61);
-	if (!addr) {
+	if (!(addr = (dme1737_sio_inb(sio_cip, 0x60) << 8) |
+		      dme1737_sio_inb(sio_cip, 0x61))) {
 		err = -ENODEV;
 		goto exit;
 	}
@@ -2414,15 +2361,13 @@ static int dme1737_i2c_probe(struct i2c_client *client,
 	mutex_init(&data->update_lock);
 
 	/* Initialize the DME1737 chip */
-	err = dme1737_init_device(dev);
-	if (err) {
+	if ((err = dme1737_init_device(dev))) {
 		dev_err(dev, "Failed to initialize device.\n");
 		goto exit_kfree;
 	}
 
 	/* Create sysfs files */
-	err = dme1737_create_files(dev);
-	if (err) {
+	if ((err = dme1737_create_files(dev))) {
 		dev_err(dev, "Failed to create sysfs files.\n");
 		goto exit_kfree;
 	}
@@ -2499,10 +2444,9 @@ static int __init dme1737_isa_detect(int sio_cip, unsigned short *addr)
 	dme1737_sio_outb(sio_cip, 0x07, 0x0a);
 
 	/* Get the base address of the runtime registers */
-	base_addr = (dme1737_sio_inb(sio_cip, 0x60) << 8) |
-		     dme1737_sio_inb(sio_cip, 0x61);
-	if (!base_addr) {
-		pr_err("Base address not set\n");
+	if (!(base_addr = (dme1737_sio_inb(sio_cip, 0x60) << 8) |
+			   dme1737_sio_inb(sio_cip, 0x61))) {
+		printk(KERN_ERR "dme1737: Base address not set.\n");
 		err = -ENODEV;
 		goto exit;
 	}
@@ -2530,22 +2474,21 @@ static int __init dme1737_isa_device_add(unsigned short addr)
 	if (err)
 		goto exit;
 
-	pdev = platform_device_alloc("dme1737", addr);
-	if (!pdev) {
-		pr_err("Failed to allocate device\n");
+	if (!(pdev = platform_device_alloc("dme1737", addr))) {
+		printk(KERN_ERR "dme1737: Failed to allocate device.\n");
 		err = -ENOMEM;
 		goto exit;
 	}
 
-	err = platform_device_add_resources(pdev, &res, 1);
-	if (err) {
-		pr_err("Failed to add device resource (err = %d)\n", err);
+	if ((err = platform_device_add_resources(pdev, &res, 1))) {
+		printk(KERN_ERR "dme1737: Failed to add device resource "
+		       "(err = %d).\n", err);
 		goto exit_device_put;
 	}
 
-	err = platform_device_add(pdev);
-	if (err) {
-		pr_err("Failed to add device (err = %d)\n", err);
+	if ((err = platform_device_add(pdev))) {
+		printk(KERN_ERR "dme1737: Failed to add device (err = %d).\n",
+		       err);
 		goto exit_device_put;
 	}
 
@@ -2571,12 +2514,11 @@ static int __devinit dme1737_isa_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to request region 0x%04x-0x%04x.\n",
 			(unsigned short)res->start,
 			(unsigned short)res->start + DME1737_EXTENT - 1);
-		err = -EBUSY;
-		goto exit;
-	}
+                err = -EBUSY;
+                goto exit;
+        }
 
-	data = kzalloc(sizeof(struct dme1737_data), GFP_KERNEL);
-	if (!data) {
+	if (!(data = kzalloc(sizeof(struct dme1737_data), GFP_KERNEL))) {
 		err = -ENOMEM;
 		goto exit_release_region;
 	}
@@ -2623,15 +2565,13 @@ static int __devinit dme1737_isa_probe(struct platform_device *pdev)
 		 data->type == sch5127 ? "SCH5127" : "SCH311x", data->addr);
 
 	/* Initialize the chip */
-	err = dme1737_init_device(dev);
-	if (err) {
+	if ((err = dme1737_init_device(dev))) {
 		dev_err(dev, "Failed to initialize device.\n");
 		goto exit_kfree;
 	}
 
 	/* Create sysfs files */
-	err = dme1737_create_files(dev);
-	if (err) {
+	if ((err = dme1737_create_files(dev))) {
 		dev_err(dev, "Failed to create sysfs files.\n");
 		goto exit_kfree;
 	}
@@ -2688,8 +2628,7 @@ static int __init dme1737_init(void)
 	int err;
 	unsigned short addr;
 
-	err = i2c_add_driver(&dme1737_i2c_driver);
-	if (err) {
+	if ((err = i2c_add_driver(&dme1737_i2c_driver))) {
 		goto exit;
 	}
 
@@ -2702,14 +2641,12 @@ static int __init dme1737_init(void)
 		return 0;
 	}
 
-	err = platform_driver_register(&dme1737_isa_driver);
-	if (err) {
+	if ((err = platform_driver_register(&dme1737_isa_driver))) {
 		goto exit_del_i2c_driver;
 	}
 
 	/* Sets global pdev as a side effect */
-	err = dme1737_isa_device_add(addr);
-	if (err) {
+	if ((err = dme1737_isa_device_add(addr))) {
 		goto exit_del_isa_driver;
 	}
 

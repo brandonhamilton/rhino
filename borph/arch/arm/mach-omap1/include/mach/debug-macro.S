@@ -17,9 +17,6 @@
 
 #include <plat/serial.h>
 
-#define omap_uart_v2p(x)	((x) - PAGE_OFFSET + PLAT_PHYS_OFFSET)
-#define omap_uart_p2v(x)	((x) - PLAT_PHYS_OFFSET + PAGE_OFFSET)
-
 		.pushsection .data
 omap_uart_phys:	.word	0x0
 omap_uart_virt:	.word	0x0
@@ -36,7 +33,7 @@ omap_uart_virt:	.word	0x0
 		/* Use omap_uart_phys/virt if already configured */
 9:		mrc	p15, 0, \rp, c1, c0
 		tst	\rp, #1			@ MMU enabled?
-		ldreq	\rp, =omap_uart_v2p(omap_uart_phys)	@ MMU disabled
+		ldreq	\rp, =__virt_to_phys(omap_uart_phys)	@ MMU not enabled
 		ldrne	\rp, =omap_uart_phys	@ MMU enabled
 		add	\rv, \rp, #4		@ omap_uart_virt
 		ldr	\rp, [\rp, #0]
@@ -49,7 +46,7 @@ omap_uart_virt:	.word	0x0
 		mrc	p15, 0, \rp, c1, c0
 		tst	\rp, #1			@ MMU enabled?
 		ldreq	\rp, =OMAP_UART_INFO	@ MMU not enabled
-		ldrne	\rp, =omap_uart_p2v(OMAP_UART_INFO)	@ MMU enabled
+		ldrne	\rp, =__phys_to_virt(OMAP_UART_INFO)	@ MMU enabled
 		ldr	\rp, [\rp, #0]
 
 		/* Select the UART to use based on the UART1 scratchpad value */
@@ -76,7 +73,7 @@ omap_uart_virt:	.word	0x0
 98:		add	\rp, \rp, #0xff000000	@ phys base
 		mrc	p15, 0, \rv, c1, c0
 		tst	\rv, #1			@ MMU enabled?
-		ldreq	\rv, =omap_uart_v2p(omap_uart_phys)	@ MMU disabled
+		ldreq	\rv, =__virt_to_phys(omap_uart_phys)	@ MMU not enabled
 		ldrne	\rv, =omap_uart_phys	@ MMU enabled
 		str	\rp, [\rv, #0]
 		sub	\rp, \rp, #0xff000000	@ phys base

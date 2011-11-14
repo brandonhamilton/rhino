@@ -33,9 +33,9 @@
 	.macro  arch_ret_to_user, tmp1, tmp2
 	.endm
 
-	@ this macro checks which interrupt occurred
+	@ this macro checks which interrupt occured
 	@ and returns its number in irqnr
-	@ and returns if an interrupt occurred in irqstat
+	@ and returns if an interrupt occured in irqstat
 	.macro	get_irqnr_and_base, irqnr, irqstat, base, tmp
 #ifndef CONFIG_MXC_TZIC
 	@ Load offset & priority of the highest priority
@@ -54,15 +54,15 @@
 #elif defined CONFIG_MXC_TZIC
 	@ Load offset & priority of the highest priority
 	@ interrupt pending.
-	@ 0x080 is INTSEC0 register
 	@ 0xD80 is HIPND0 register
 	mov     \irqnr, #0
-1000:	add	\irqstat, \base, \irqnr, lsr #3
-	ldr	\tmp, [\irqstat, #0xd80]
-	ldr	\irqstat, [\irqstat, #0x080]
-	ands	\tmp, \tmp, \irqstat
-	bne	1001f
-	add	\irqnr, \irqnr, #32
+	mov     \irqstat, #0x0D80
+1000:
+	ldr     \tmp,   [\irqstat, \base]
+	cmp     \tmp, #0
+	bne     1001f
+	addeq   \irqnr, \irqnr, #32
+	addeq   \irqstat, \irqstat, #4
 	cmp     \irqnr, #128
 	blo     1000b
 	b       2001f
@@ -77,4 +77,8 @@
 2002:
 	movs \irqnr, \irqnr
 #endif
+	.endm
+
+	@ irq priority table (not used)
+	.macro	irq_prio_table
 	.endm

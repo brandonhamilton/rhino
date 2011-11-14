@@ -353,7 +353,7 @@ static inline int erase_block (__u32 offset)
    /* put the flash back into command mode */
    write32 (DATA_TO_FLASH (READ_ARRAY),offset);
 
-   /* was the erase successful? */
+   /* was the erase successfull? */
    if ((status & STATUS_ERASE_ERR))
 	 {
 		printk (KERN_WARNING "%s: erase error at address 0x%.8x.\n",module_name,offset);
@@ -508,7 +508,7 @@ static inline int write_dword (__u32 offset,__u32 x)
    /* put the flash back into command mode */
    write32 (DATA_TO_FLASH (READ_ARRAY),offset);
 
-   /* was the write successful? */
+   /* was the write successfull? */
    if ((status & STATUS_PGM_ERR) || read32 (offset) != x)
 	 {
 		printk (KERN_WARNING "%s: write error at address 0x%.8x.\n",module_name,offset);
@@ -684,10 +684,9 @@ static int __init lart_flash_init (void)
 #endif
 
 #ifndef HAVE_PARTITIONS
-   result = mtd_device_register(&mtd, NULL, 0);
+   result = add_mtd_device (&mtd);
 #else
-   result = mtd_device_register(&mtd, lart_partitions,
-                                ARRAY_SIZE(lart_partitions));
+   result = add_mtd_partitions (&mtd,lart_partitions, ARRAY_SIZE(lart_partitions));
 #endif
 
    return (result);
@@ -696,9 +695,9 @@ static int __init lart_flash_init (void)
 static void __exit lart_flash_exit (void)
 {
 #ifndef HAVE_PARTITIONS
-   mtd_device_unregister(&mtd);
+   del_mtd_device (&mtd);
 #else
-   mtd_device_unregister(&mtd);
+   del_mtd_partitions (&mtd);
 #endif
 }
 

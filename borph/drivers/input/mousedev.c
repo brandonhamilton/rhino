@@ -9,8 +9,6 @@
  * the Free Software Foundation.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define MOUSEDEV_MINOR_BASE	32
 #define MOUSEDEV_MINORS		32
 #define MOUSEDEV_MIX		31
@@ -187,7 +185,7 @@ static void mousedev_abs_event(struct input_dev *dev, struct mousedev *mousedev,
 		if (size == 0)
 			size = xres ? : 1;
 
-		value = clamp(value, min, max);
+		clamp(value, min, max);
 
 		mousedev->packet.x = ((value - min) * xres) / size;
 		mousedev->packet.abs_event = 1;
@@ -201,7 +199,7 @@ static void mousedev_abs_event(struct input_dev *dev, struct mousedev *mousedev,
 		if (size == 0)
 			size = yres ? : 1;
 
-		value = clamp(value, min, max);
+		clamp(value, min, max);
 
 		mousedev->packet.y = yres - ((value - min) * yres) / size;
 		mousedev->packet.abs_event = 1;
@@ -508,6 +506,7 @@ static void mousedev_attach_client(struct mousedev *mousedev,
 	spin_lock(&mousedev->client_lock);
 	list_add_tail_rcu(&client->node, &mousedev->client_list);
 	spin_unlock(&mousedev->client_lock);
+	synchronize_rcu();
 }
 
 static void mousedev_detach_client(struct mousedev *mousedev,
@@ -978,7 +977,7 @@ static int mousedev_connect(struct input_handler *handler,
 			break;
 
 	if (minor == MOUSEDEV_MINORS) {
-		pr_err("no more free mousedev devices\n");
+		printk(KERN_ERR "mousedev: no more free mousedev devices\n");
 		return -ENFILE;
 	}
 
@@ -1088,13 +1087,13 @@ static int __init mousedev_init(void)
 #ifdef CONFIG_INPUT_MOUSEDEV_PSAUX
 	error = misc_register(&psaux_mouse);
 	if (error)
-		pr_warning("could not register psaux device, error: %d\n",
-			   error);
+		printk(KERN_WARNING "mice: could not register psaux device, "
+			"error: %d\n", error);
 	else
 		psaux_registered = 1;
 #endif
 
-	pr_info("PS/2 mouse device common for all mice\n");
+	printk(KERN_INFO "mice: PS/2 mouse device common for all mice\n");
 
 	return 0;
 }

@@ -30,6 +30,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
 
@@ -139,6 +140,7 @@
 
 struct wm8900_priv {
 	enum snd_soc_control_type control_type;
+	u16 reg_cache[WM8900_MAXREG];
 
 	u32 fll_in; /* FLL input frequency */
 	u32 fll_out; /* FLL output frequency */
@@ -180,7 +182,7 @@ static const u16 wm8900_reg_defaults[WM8900_MAXREG] = {
 	/* Remaining registers all zero */
 };
 
-static int wm8900_volatile_register(struct snd_soc_codec *codec, unsigned int reg)
+static int wm8900_volatile_register(unsigned int reg)
 {
 	switch (reg) {
 	case WM8900_REG_ID:
@@ -609,11 +611,10 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 static int wm8900_add_widgets(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
-
-	snd_soc_dapm_new_controls(dapm, wm8900_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, wm8900_dapm_widgets,
 				  ARRAY_SIZE(wm8900_dapm_widgets));
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
 	return 0;
 }
@@ -1050,7 +1051,7 @@ static int wm8900_set_bias_level(struct snd_soc_codec *codec,
 
 	case SND_SOC_BIAS_STANDBY:
 		/* Charge capacitors if initial power up */
-		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
+		if (codec->bias_level == SND_SOC_BIAS_OFF) {
 			/* STARTUP_BIAS_ENA on */
 			snd_soc_write(codec, WM8900_REG_POWER1,
 				     WM8900_REG_POWER1_STARTUP_BIAS_ENA);
@@ -1118,7 +1119,7 @@ static int wm8900_set_bias_level(struct snd_soc_codec *codec,
 			     WM8900_REG_POWER2_SYSCLK_ENA);
 		break;
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -1167,7 +1168,6 @@ static int wm8900_resume(struct snd_soc_codec *codec)
 		ret = wm8900_set_fll(codec, 0, fll_in, fll_out);
 		if (ret != 0) {
 			dev_err(codec->dev, "Failed to restart FLL\n");
-			kfree(cache);
 			return ret;
 		}
 	}

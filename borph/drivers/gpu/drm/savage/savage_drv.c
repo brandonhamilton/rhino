@@ -55,6 +55,11 @@ static struct drm_driver driver = {
 		 .llseek = noop_llseek,
 	},
 
+	.pci_driver = {
+		 .name = DRIVER_NAME,
+		 .id_table = pciidlist,
+	},
+
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -63,20 +68,15 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-static struct pci_driver savage_pci_driver = {
-	.name = DRIVER_NAME,
-	.id_table = pciidlist,
-};
-
 static int __init savage_init(void)
 {
 	driver.num_ioctls = savage_max_ioctl;
-	return drm_pci_init(&driver, &savage_pci_driver);
+	return drm_init(&driver);
 }
 
 static void __exit savage_exit(void)
 {
-	drm_pci_exit(&driver, &savage_pci_driver);
+	drm_exit(&driver);
 }
 
 module_init(savage_init);

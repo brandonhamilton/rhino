@@ -13,8 +13,6 @@
 #ifndef __ASM_ARCH_HARDWARE_H
 #define __ASM_ARCH_HARDWARE_H
 
-#include <mach/addr-map.h>
-
 /*
  * Workarounds for at least 2 errata so far require this.
  * The mapping is set in mach-pxa/generic.c.
@@ -195,15 +193,14 @@
 #define __cpu_is_pxa935(id)	(0)
 #endif
 
-#ifdef CONFIG_CPU_PXA955
-#define __cpu_is_pxa955(id)				\
-	({						\
+#ifdef CONFIG_CPU_PXA950
+#define __cpu_is_pxa950(id)                             \
+	({                                              \
 		unsigned int _id = (id) >> 4 & 0xfff;	\
-		_id == 0x581 || _id == 0xc08		\
-			|| _id == 0xb76;		\
-	})
+		_id == 0x697;				\
+	 })
 #else
-#define __cpu_is_pxa955(id)	(0)
+#define __cpu_is_pxa950(id)	(0)
 #endif
 
 #define cpu_is_pxa210()					\
@@ -256,15 +253,16 @@
 		__cpu_is_pxa935(read_cpuid_id());	\
 	 })
 
-#define cpu_is_pxa955()					\
+#define cpu_is_pxa950()					\
 	({						\
-		__cpu_is_pxa955(read_cpuid_id());	\
-	})
+		__cpu_is_pxa950(read_cpuid_id());	\
+	 })
 
 
 /*
  * CPUID Core Generation Bit
  * <= 0x2 for pxa21x/pxa25x/pxa26x/pxa27x
+ * == 0x3 for pxa300/pxa310/pxa320
  */
 #if defined(CONFIG_PXA25x) || defined(CONFIG_PXA27x)
 #define __cpu_is_pxa2xx(id)				\
@@ -279,10 +277,8 @@
 #ifdef CONFIG_PXA3xx
 #define __cpu_is_pxa3xx(id)				\
 	({						\
-		__cpu_is_pxa300(id)			\
-			|| __cpu_is_pxa310(id)		\
-			|| __cpu_is_pxa320(id)		\
-			|| __cpu_is_pxa93x(id);		\
+		unsigned int _id = (id) >> 13 & 0x7;	\
+		_id == 0x3;				\
 	 })
 #else
 #define __cpu_is_pxa3xx(id)	(0)
@@ -291,20 +287,11 @@
 #if defined(CONFIG_CPU_PXA930) || defined(CONFIG_CPU_PXA935)
 #define __cpu_is_pxa93x(id)				\
 	({						\
-		__cpu_is_pxa930(id)			\
-			|| __cpu_is_pxa935(id);		\
+		unsigned int _id = (id) >> 4 & 0xfff;	\
+		_id == 0x683 || _id == 0x693;		\
 	 })
 #else
 #define __cpu_is_pxa93x(id)	(0)
-#endif
-
-#ifdef CONFIG_PXA95x
-#define __cpu_is_pxa95x(id)				\
-	({						\
-		__cpu_is_pxa955(id);			\
-	})
-#else
-#define __cpu_is_pxa95x(id)	(0)
 #endif
 
 #define cpu_is_pxa2xx()					\
@@ -321,12 +308,6 @@
 	({						\
 		__cpu_is_pxa93x(read_cpuid_id());	\
 	 })
-
-#define cpu_is_pxa95x()					\
-	({						\
-		__cpu_is_pxa95x(read_cpuid_id());	\
-	})
-
 /*
  * return current memory and LCD clock frequency in units of 10kHz
  */
@@ -337,6 +318,9 @@ extern unsigned long get_clock_tick_rate(void);
 #endif
 
 #if defined(CONFIG_MACH_ARMCORE) && defined(CONFIG_PCI)
+#define PCIBIOS_MIN_IO		0
+#define PCIBIOS_MIN_MEM		0
+#define pcibios_assign_all_busses()	1
 #define ARCH_HAS_DMA_SET_COHERENT_MASK
 #endif
 

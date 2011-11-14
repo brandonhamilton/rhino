@@ -140,16 +140,17 @@ void __init init_se7724_IRQ(void)
 			return;
 		}
 
-		irq_set_chip_and_handler_name(irq, &se7724_irq_chip,
+		set_irq_chip_and_handler_name(irq,
+					      &se7724_irq_chip,
 					      handle_level_irq, "level");
 	}
 
-	irq_set_chained_handler(IRQ0_IRQ, se7724_irq_demux);
-	irq_set_irq_type(IRQ0_IRQ, IRQ_TYPE_LEVEL_LOW);
+	set_irq_chained_handler(IRQ0_IRQ, se7724_irq_demux);
+	set_irq_type(IRQ0_IRQ, IRQ_TYPE_LEVEL_LOW);
 
-	irq_set_chained_handler(IRQ1_IRQ, se7724_irq_demux);
-	irq_set_irq_type(IRQ1_IRQ, IRQ_TYPE_LEVEL_LOW);
+	set_irq_chained_handler(IRQ1_IRQ, se7724_irq_demux);
+	set_irq_type(IRQ1_IRQ, IRQ_TYPE_LEVEL_LOW);
 
-	irq_set_chained_handler(IRQ2_IRQ, se7724_irq_demux);
-	irq_set_irq_type(IRQ2_IRQ, IRQ_TYPE_LEVEL_LOW);
+	set_irq_chained_handler(IRQ2_IRQ, se7724_irq_demux);
+	set_irq_type(IRQ2_IRQ, IRQ_TYPE_LEVEL_LOW);
 }

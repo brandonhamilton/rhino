@@ -71,12 +71,6 @@ static long madvise_behavior(struct vm_area_struct * vma,
 		if (error)
 			goto out;
 		break;
-	case MADV_HUGEPAGE:
-	case MADV_NOHUGEPAGE:
-		error = hugepage_madvise(vma, &new_flags, behavior);
-		if (error)
-			goto out;
-		break;
 	}
 
 	if (new_flags == vma->vm_flags) {
@@ -218,7 +212,7 @@ static long madvise_remove(struct vm_area_struct *vma,
 	endoff = (loff_t)(end - vma->vm_start - 1)
 			+ ((loff_t)vma->vm_pgoff << PAGE_SHIFT);
 
-	/* vmtruncate_range needs to take i_mutex */
+	/* vmtruncate_range needs to take i_mutex and i_alloc_sem */
 	up_read(&current->mm->mmap_sem);
 	error = vmtruncate_range(mapping->host, offset, endoff);
 	down_read(&current->mm->mmap_sem);
@@ -288,10 +282,6 @@ madvise_behavior_valid(int behavior)
 #ifdef CONFIG_KSM
 	case MADV_MERGEABLE:
 	case MADV_UNMERGEABLE:
-#endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	case MADV_HUGEPAGE:
-	case MADV_NOHUGEPAGE:
 #endif
 		return 1;
 

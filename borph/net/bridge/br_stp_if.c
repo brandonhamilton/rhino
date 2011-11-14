@@ -20,7 +20,7 @@
 
 
 /* Port id is composed of priority and port number.
- * NB: some bits of priority are dropped to
+ * NB: least significant bits of priority are dropped to
  *     make room for more ports.
  */
 static inline port_id br_make_port_id(__u8 priority, __u16 port_no)
@@ -28,8 +28,6 @@ static inline port_id br_make_port_id(__u8 priority, __u16 port_no)
 	return ((u16)priority << BR_PORT_BITS)
 		| (port_no & ((1<<BR_PORT_BITS)-1));
 }
-
-#define BR_MAX_PORT_PRIORITY ((u16)~0 >> BR_PORT_BITS)
 
 /* called under bridge lock */
 void br_init_port(struct net_bridge_port *p)
@@ -88,7 +86,6 @@ void br_stp_enable_port(struct net_bridge_port *p)
 	br_init_port(p);
 	br_port_state_selection(p->br);
 	br_log_state(p);
-	br_ifinfo_notify(RTM_NEWLINK, p);
 }
 
 /* called under bridge lock */
@@ -104,8 +101,6 @@ void br_stp_disable_port(struct net_bridge_port *p)
 	p->state = BR_STATE_DISABLED;
 	p->topology_change_ack = 0;
 	p->config_pending = 0;
-
-	br_ifinfo_notify(RTM_NEWLINK, p);
 
 	del_timer(&p->message_age_timer);
 	del_timer(&p->forward_delay_timer);
@@ -150,7 +145,7 @@ static void br_stp_stop(struct net_bridge *br)
 	char *envp[] = { NULL };
 
 	if (br->stp_enabled == BR_USER_STP) {
-		r = call_usermodehelper(BR_STP_PROG, argv, envp, UMH_WAIT_PROC);
+		r = call_usermodehelper(BR_STP_PROG, argv, envp, 1);
 		br_info(br, "userspace STP stopped, return code %d\n", r);
 
 		/* To start timers on any ports left in blocking */
@@ -209,7 +204,7 @@ void br_stp_change_bridge_id(struct net_bridge *br, const unsigned char *addr)
 static const unsigned short br_mac_zero_aligned[ETH_ALEN >> 1];
 
 /* called under bridge lock */
-bool br_stp_recalculate_bridge_id(struct net_bridge *br)
+void br_stp_recalculate_bridge_id(struct net_bridge *br)
 {
 	const unsigned char *br_mac_zero =
 			(const unsigned char *)br_mac_zero_aligned;
@@ -218,7 +213,7 @@ bool br_stp_recalculate_bridge_id(struct net_bridge *br)
 
 	/* user has chosen a value so keep it */
 	if (br->flags & BR_SET_MAC_ADDR)
-		return false;
+		return;
 
 	list_for_each_entry(p, &br->port_list, list) {
 		if (addr == br_mac_zero ||
@@ -227,11 +222,8 @@ bool br_stp_recalculate_bridge_id(struct net_bridge *br)
 
 	}
 
-	if (compare_ether_addr(br->bridge_id.addr, addr) == 0)
-		return false;	/* no change */
-
-	br_stp_change_bridge_id(br, addr);
-	return true;
+	if (compare_ether_addr(br->bridge_id.addr, addr))
+		br_stp_change_bridge_id(br, addr);
 }
 
 /* called under bridge lock */
@@ -260,14 +252,10 @@ void br_stp_set_bridge_priority(struct net_bridge *br, u16 newprio)
 }
 
 /* called under bridge lock */
-int br_stp_set_port_priority(struct net_bridge_port *p, unsigned long newprio)
+void br_stp_set_port_priority(struct net_bridge_port *p, u8 newprio)
 {
-	port_id new_port_id;
+	port_id new_port_id = br_make_port_id(newprio, p->port_no);
 
-	if (newprio > BR_MAX_PORT_PRIORITY)
-		return -ERANGE;
-
-	new_port_id = br_make_port_id(newprio, p->port_no);
 	if (br_is_designated_port(p))
 		p->designated_port = new_port_id;
 
@@ -278,21 +266,14 @@ int br_stp_set_port_priority(struct net_bridge_port *p, unsigned long newprio)
 		br_become_designated_port(p);
 		br_port_state_selection(p->br);
 	}
-
-	return 0;
 }
 
 /* called under bridge lock */
-int br_stp_set_path_cost(struct net_bridge_port *p, unsigned long path_cost)
+void br_stp_set_path_cost(struct net_bridge_port *p, u32 path_cost)
 {
-	if (path_cost < BR_MIN_PATH_COST ||
-	    path_cost > BR_MAX_PATH_COST)
-		return -ERANGE;
-
 	p->path_cost = path_cost;
 	br_configuration_update(p->br);
 	br_port_state_selection(p->br);
-	return 0;
 }
 
 ssize_t br_show_bridge_id(char *buf, const struct bridge_id *id)

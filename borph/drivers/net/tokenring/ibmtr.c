@@ -123,7 +123,6 @@ in the event that chatty debug messages are desired - jjs 12/30/98 */
 /* some 95 OS send many non UI frame; this allow removing the warning */
 #define TR_FILTERNONUI	1
 
-#include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/netdevice.h>
 #include <linux/ip.h>
@@ -178,7 +177,7 @@ static char __devinit *adapter_def(char type)
 	case 0xD: return "16/4 Adapter/A (short) | 16/4 ISA-16 Adapter";
 	case 0xC: return "Auto 16/4 Adapter";
 	default: return "adapter (unknown type)";
-	}
+	};
 };
 
 #define TRC_INIT 0x01		/*  Trace initialization & PROBEs */
@@ -658,9 +657,8 @@ static int __devinit ibmtr_probe1(struct net_device *dev, int PIOaddr)
 #ifndef PCMCIA
 	/* finish figuring the shared RAM address */
 	if (cardpresent == TR_ISA) {
-		static const __u32 ram_bndry_mask[] = {
-			0xffffe000, 0xffffc000, 0xffff8000, 0xffff0000
-		};
+		static __u32 ram_bndry_mask[] =
+			{ 0xffffe000, 0xffffc000, 0xffff8000, 0xffff0000 };
 		__u32 new_base, rrr_32, chk_base, rbm;
 
 		rrr_32=readb(ti->mmio+ACA_OFFSET+ACA_RW+RRR_ODD) >> 2 & 0x03;

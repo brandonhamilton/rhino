@@ -52,7 +52,7 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #ifdef CONFIG_X86
 /*
@@ -1081,7 +1081,7 @@ ipmi_nmi(struct notifier_block *self, unsigned long val, void *data)
 {
 	struct die_args *args = data;
 
-	if (val != DIE_NMIUNKNOWN)
+	if (val != DIE_NMI)
 		return NOTIFY_OK;
 
 	/* Hack, if it's a memory or I/O error, ignore it. */

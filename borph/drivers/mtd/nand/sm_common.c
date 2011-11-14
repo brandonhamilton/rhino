@@ -121,7 +121,7 @@ int sm_register_device(struct mtd_info *mtd, int smartmedia)
 	if (ret)
 		return ret;
 
-	/* Bad block marker position */
+	/* Bad block marker postion */
 	chip->badblockpos = 0x05;
 	chip->badblockbits = 7;
 	chip->block_markbad = sm_block_markbad;
@@ -139,7 +139,7 @@ int sm_register_device(struct mtd_info *mtd, int smartmedia)
 	if (ret)
 		return ret;
 
-	return mtd_device_register(mtd, NULL, 0);
+	return add_mtd_device(mtd);
 }
 EXPORT_SYMBOL_GPL(sm_register_device);
 

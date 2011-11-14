@@ -176,9 +176,10 @@ void line_flush_buffer(struct tty_struct *tty)
 {
 	struct line *line = tty->driver_data;
 	unsigned long flags;
+	int err;
 
 	spin_lock_irqsave(&line->lock, flags);
-	flush_buffer(line);
+	err = flush_buffer(line);
 	spin_unlock_irqrestore(&line->lock, flags);
 }
 
@@ -254,8 +255,8 @@ static const struct {
 	{ KDSIGACCEPT, KERN_INFO,  "KDSIGACCEPT" },
 };
 
-int line_ioctl(struct tty_struct *tty, unsigned int cmd,
-				unsigned long arg)
+int line_ioctl(struct tty_struct *tty, struct file * file,
+	       unsigned int cmd, unsigned long arg)
 {
 	int ret;
 	int i;
@@ -820,12 +821,12 @@ void register_winch_irq(int fd, int tty_fd, int pid, struct tty_struct *tty,
 
 static void unregister_winch(struct tty_struct *tty)
 {
-	struct list_head *ele, *next;
+	struct list_head *ele;
 	struct winch *winch;
 
 	spin_lock(&winch_handler_lock);
 
-	list_for_each_safe(ele, next, &winch_handlers) {
+	list_for_each(ele, &winch_handlers) {
 		winch = list_entry(ele, struct winch, list);
 		if (winch->tty == tty) {
 			free_winch(winch, 1);

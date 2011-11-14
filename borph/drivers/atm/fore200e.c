@@ -44,7 +44,7 @@
 #include <asm/dma.h>
 #include <asm/byteorder.h>
 #include <asm/uaccess.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #ifdef CONFIG_SBUS
 #include <linux/of.h>
@@ -92,7 +92,7 @@
 
 #define FORE200E_INDEX(virt_addr, type, index)     (&((type *)(virt_addr))[ index ])
 
-#define FORE200E_NEXT_ENTRY(index, modulo)         (index = ((index) + 1) % (modulo))
+#define FORE200E_NEXT_ENTRY(index, modulo)         (index = ++(index) % (modulo))
 
 #if 1
 #define ASSERT(expr)     if (!(expr)) { \
@@ -2643,19 +2643,13 @@ fore200e_init(struct fore200e* fore200e, struct device *parent)
 }
 
 #ifdef CONFIG_SBUS
-static const struct of_device_id fore200e_sba_match[];
-static int __devinit fore200e_sba_probe(struct platform_device *op)
+static int __devinit fore200e_sba_probe(struct platform_device *op,
+					const struct of_device_id *match)
 {
-	const struct of_device_id *match;
-	const struct fore200e_bus *bus;
+	const struct fore200e_bus *bus = match->data;
 	struct fore200e *fore200e;
 	static int index = 0;
 	int err;
-
-	match = of_match_device(fore200e_sba_match, &op->dev);
-	if (!match)
-		return -EINVAL;
-	bus = match->data;
 
 	fore200e = kzalloc(sizeof(struct fore200e), GFP_KERNEL);
 	if (!fore200e)
@@ -2700,7 +2694,7 @@ static const struct of_device_id fore200e_sba_match[] = {
 };
 MODULE_DEVICE_TABLE(of, fore200e_sba_match);
 
-static struct platform_driver fore200e_sba_driver = {
+static struct of_platform_driver fore200e_sba_driver = {
 	.driver = {
 		.name = "fore_200e",
 		.owner = THIS_MODULE,
@@ -2801,7 +2795,7 @@ static int __init fore200e_module_init(void)
 	printk(FORE200E "FORE Systems 200E-series ATM driver - version " FORE200E_VERSION "\n");
 
 #ifdef CONFIG_SBUS
-	err = platform_driver_register(&fore200e_sba_driver);
+	err = of_register_platform_driver(&fore200e_sba_driver);
 	if (err)
 		return err;
 #endif
@@ -2812,7 +2806,7 @@ static int __init fore200e_module_init(void)
 
 #ifdef CONFIG_SBUS
 	if (err)
-		platform_driver_unregister(&fore200e_sba_driver);
+		of_unregister_platform_driver(&fore200e_sba_driver);
 #endif
 
 	return err;
@@ -2824,7 +2818,7 @@ static void __exit fore200e_module_cleanup(void)
 	pci_unregister_driver(&fore200e_pca_driver);
 #endif
 #ifdef CONFIG_SBUS
-	platform_driver_unregister(&fore200e_sba_driver);
+	of_unregister_platform_driver(&fore200e_sba_driver);
 #endif
 }
 

@@ -424,13 +424,6 @@ static const struct dmi_system_id __initconst i8042_dmi_nomux_table[] = {
 			DMI_MATCH(DMI_PRODUCT_VERSION, "0100"),
 		},
 	},
-	{
-		/* Dell Vostro V13 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Vostro V13"),
-		},
-	},
 	{ }
 };
 
@@ -552,17 +545,6 @@ static const struct dmi_system_id __initconst i8042_dmi_laptop_table[] = {
 };
 #endif
 
-static const struct dmi_system_id __initconst i8042_dmi_notimeout_table[] = {
-	{
-		/* Dell Vostro V13 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Vostro V13"),
-		},
-	},
-	{ }
-};
-
 /*
  * Some Wistron based laptops need us to explicitly enable the 'Dritek
  * keyboard extension' to make their extra keys start generating scancodes.
@@ -570,13 +552,6 @@ static const struct dmi_system_id __initconst i8042_dmi_notimeout_table[] = {
  * have turned up in 2007 that also need this again.
  */
 static const struct dmi_system_id __initconst i8042_dmi_dritek_table[] = {
-	{
-		/* Acer Aspire 5100 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Aspire 5100"),
-		},
-	},
 	{
 		/* Acer Aspire 5610 */
 		.matches = {
@@ -777,7 +752,7 @@ static int __init i8042_pnp_init(void)
 #endif
 
 	if (i8042_nopnp) {
-		pr_info("PNP detection disabled\n");
+		printk(KERN_INFO "i8042: PNP detection disabled\n");
 		return 0;
 	}
 
@@ -794,7 +769,7 @@ static int __init i8042_pnp_init(void)
 #if defined(__ia64__)
 		return -ENODEV;
 #else
-		pr_info("PNP: No PS/2 controller found. Probing ports directly.\n");
+		printk(KERN_INFO "PNP: No PS/2 controller found. Probing ports directly.\n");
 		return 0;
 #endif
 	}
@@ -806,7 +781,7 @@ static int __init i8042_pnp_init(void)
 		snprintf(aux_irq_str, sizeof(aux_irq_str),
 			"%d", i8042_pnp_aux_irq);
 
-	pr_info("PNP: PS/2 Controller [%s%s%s] at %#x,%#x irq %s%s%s\n",
+	printk(KERN_INFO "PNP: PS/2 Controller [%s%s%s] at %#x,%#x irq %s%s%s\n",
 		i8042_pnp_kbd_name, (i8042_pnp_kbd_devices && i8042_pnp_aux_devices) ? "," : "",
 		i8042_pnp_aux_name,
 		i8042_pnp_data_reg, i8042_pnp_command_reg,
@@ -823,7 +798,9 @@ static int __init i8042_pnp_init(void)
 	if (((i8042_pnp_data_reg & ~0xf) == (i8042_data_reg & ~0xf) &&
 	      i8042_pnp_data_reg != i8042_data_reg) ||
 	    !i8042_pnp_data_reg) {
-		pr_warn("PNP: PS/2 controller has invalid data port %#x; using default %#x\n",
+		printk(KERN_WARNING
+			"PNP: PS/2 controller has invalid data port %#x; "
+			"using default %#x\n",
 			i8042_pnp_data_reg, i8042_data_reg);
 		i8042_pnp_data_reg = i8042_data_reg;
 		pnp_data_busted = true;
@@ -832,27 +809,33 @@ static int __init i8042_pnp_init(void)
 	if (((i8042_pnp_command_reg & ~0xf) == (i8042_command_reg & ~0xf) &&
 	      i8042_pnp_command_reg != i8042_command_reg) ||
 	    !i8042_pnp_command_reg) {
-		pr_warn("PNP: PS/2 controller has invalid command port %#x; using default %#x\n",
+		printk(KERN_WARNING
+			"PNP: PS/2 controller has invalid command port %#x; "
+			"using default %#x\n",
 			i8042_pnp_command_reg, i8042_command_reg);
 		i8042_pnp_command_reg = i8042_command_reg;
 		pnp_data_busted = true;
 	}
 
 	if (!i8042_nokbd && !i8042_pnp_kbd_irq) {
-		pr_warn("PNP: PS/2 controller doesn't have KBD irq; using default %d\n",
-			i8042_kbd_irq);
+		printk(KERN_WARNING
+			"PNP: PS/2 controller doesn't have KBD irq; "
+			"using default %d\n", i8042_kbd_irq);
 		i8042_pnp_kbd_irq = i8042_kbd_irq;
 		pnp_data_busted = true;
 	}
 
 	if (!i8042_noaux && !i8042_pnp_aux_irq) {
 		if (!pnp_data_busted && i8042_pnp_kbd_irq) {
-			pr_warn("PNP: PS/2 appears to have AUX port disabled, "
-				"if this is incorrect please boot with i8042.nopnp\n");
+			printk(KERN_WARNING
+				"PNP: PS/2 appears to have AUX port disabled, "
+				"if this is incorrect please boot with "
+				"i8042.nopnp\n");
 			i8042_noaux = true;
 		} else {
-			pr_warn("PNP: PS/2 controller doesn't have AUX irq; using default %d\n",
-				i8042_aux_irq);
+			printk(KERN_WARNING
+				"PNP: PS/2 controller doesn't have AUX irq; "
+				"using default %d\n", i8042_aux_irq);
 			i8042_pnp_aux_irq = i8042_aux_irq;
 		}
 	}
@@ -913,9 +896,6 @@ static int __init i8042_platform_init(void)
 
 	if (dmi_check_system(i8042_dmi_nomux_table))
 		i8042_nomux = true;
-
-	if (dmi_check_system(i8042_dmi_notimeout_table))
-		i8042_notimeout = true;
 
 	if (dmi_check_system(i8042_dmi_dritek_table))
 		i8042_dritek = true;

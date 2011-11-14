@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel(R) Gigabit Ethernet Linux driver
-  Copyright(c) 2007-2011 Intel Corporation.
+  Copyright(c) 2007-2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -1421,7 +1421,7 @@ out:
 }
 
 /**
- *  igb_check_downshift - Checks whether a downshift in speed occurred
+ *  igb_check_downshift - Checks whether a downshift in speed occured
  *  @hw: pointer to the HW structure
  *
  *  Success returns 0, Failure returns 1
@@ -1757,12 +1757,11 @@ s32 igb_get_cable_length_igp_2(struct e1000_hw *hw)
 	u16 phy_data, i, agc_value = 0;
 	u16 cur_agc_index, max_agc_index = 0;
 	u16 min_agc_index = IGP02E1000_CABLE_LENGTH_TABLE_SIZE - 1;
-	static const u16 agc_reg_array[IGP02E1000_PHY_CHANNEL_NUM] = {
-	       IGP02E1000_PHY_AGC_A,
-	       IGP02E1000_PHY_AGC_B,
-	       IGP02E1000_PHY_AGC_C,
-	       IGP02E1000_PHY_AGC_D
-	};
+	u16 agc_reg_array[IGP02E1000_PHY_CHANNEL_NUM] =
+							 {IGP02E1000_PHY_AGC_A,
+							  IGP02E1000_PHY_AGC_B,
+							  IGP02E1000_PHY_AGC_C,
+							  IGP02E1000_PHY_AGC_D};
 
 	/* Read the AGC registers for all channels */
 	for (i = 0; i < IGP02E1000_PHY_CHANNEL_NUM; i++) {

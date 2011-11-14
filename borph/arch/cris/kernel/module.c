@@ -30,19 +30,45 @@
 #endif
 
 #ifdef CONFIG_ETRAX_KMALLOCED_MODULES
+#define MALLOC_MODULE(size) kmalloc(size, GFP_KERNEL)
+#define FREE_MODULE(region) kfree(region)
+#else
+#define MALLOC_MODULE(size) vmalloc_exec(size)
+#define FREE_MODULE(region) vfree(region)
+#endif
+
 void *module_alloc(unsigned long size)
 {
 	if (size == 0)
 		return NULL;
-	return kmalloc(size, GFP_KERNEL);
+	return MALLOC_MODULE(size);
 }
+
 
 /* Free memory returned from module_alloc */
 void module_free(struct module *mod, void *module_region)
 {
-	kfree(module_region);
+	FREE_MODULE(module_region);
 }
-#endif
+
+/* We don't need anything special. */
+int module_frob_arch_sections(Elf_Ehdr *hdr,
+			      Elf_Shdr *sechdrs,
+			      char *secstrings,
+			      struct module *mod)
+{
+	return 0;
+}
+
+int apply_relocate(Elf32_Shdr *sechdrs,
+		   const char *strtab,
+		   unsigned int symindex,
+		   unsigned int relsec,
+		   struct module *me)
+{
+	printk(KERN_ERR "module %s: REL relocation unsupported\n", me->name);
+	return -ENOEXEC;
+}
 
 int apply_relocate_add(Elf32_Shdr *sechdrs,
 		       const char *strtab,
@@ -81,4 +107,15 @@ int apply_relocate_add(Elf32_Shdr *sechdrs,
 	}
 
 	return 0;
+}
+
+int module_finalize(const Elf_Ehdr *hdr,
+		    const Elf_Shdr *sechdrs,
+		    struct module *me)
+{
+ 	return 0;
+}
+
+void module_arch_cleanup(struct module *mod)
+{
 }

@@ -23,10 +23,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/of_address.h>
-
 #define DRIVER_NAME "uio_pdrv_genirq"
 
 struct uio_pdrv_genirq_platdata {
@@ -101,27 +97,6 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 	int ret = -EINVAL;
 	int i;
 
-	if (!uioinfo) {
-		int irq;
-
-		/* alloc uioinfo for one device */
-		uioinfo = kzalloc(sizeof(*uioinfo), GFP_KERNEL);
-		if (!uioinfo) {
-			ret = -ENOMEM;
-			dev_err(&pdev->dev, "unable to kmalloc\n");
-			goto bad2;
-		}
-		uioinfo->name = pdev->dev.of_node->name;
-		uioinfo->version = "devicetree";
-
-		/* Multiple IRQs are not supported */
-		irq = platform_get_irq(pdev, 0);
-		if (irq == -ENXIO)
-			uioinfo->irq = UIO_IRQ_NONE;
-		else
-			uioinfo->irq = irq;
-	}
-
 	if (!uioinfo || !uioinfo->name || !uioinfo->version) {
 		dev_err(&pdev->dev, "missing platform_data\n");
 		goto bad0;
@@ -162,7 +137,7 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 
 		uiomem->memtype = UIO_MEM_PHYS;
 		uiomem->addr = r->start;
-		uiomem->size = resource_size(r);
+		uiomem->size = r->end - r->start + 1;
 		++uiomem;
 	}
 
@@ -205,10 +180,6 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 	kfree(priv);
 	pm_runtime_disable(&pdev->dev);
  bad0:
-	/* kfree uioinfo for OF */
-	if (pdev->dev.of_node)
-		kfree(uioinfo);
- bad2:
 	return ret;
 }
 
@@ -218,14 +189,6 @@ static int uio_pdrv_genirq_remove(struct platform_device *pdev)
 
 	uio_unregister_device(priv->uioinfo);
 	pm_runtime_disable(&pdev->dev);
-
-	priv->uioinfo->handler = NULL;
-	priv->uioinfo->irqcontrol = NULL;
-
-	/* kfree uioinfo for OF */
-	if (pdev->dev.of_node)
-		kfree(priv->uioinfo);
-
 	kfree(priv);
 	return 0;
 }
@@ -252,15 +215,6 @@ static const struct dev_pm_ops uio_pdrv_genirq_dev_pm_ops = {
 	.runtime_resume = uio_pdrv_genirq_runtime_nop,
 };
 
-#ifdef CONFIG_OF
-static const struct of_device_id __devinitconst uio_of_genirq_match[] = {
-	{ /* empty for now */ },
-};
-MODULE_DEVICE_TABLE(of, uio_of_genirq_match);
-#else
-# define uio_of_genirq_match NULL
-#endif
-
 static struct platform_driver uio_pdrv_genirq = {
 	.probe = uio_pdrv_genirq_probe,
 	.remove = uio_pdrv_genirq_remove,
@@ -268,7 +222,6 @@ static struct platform_driver uio_pdrv_genirq = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
 		.pm = &uio_pdrv_genirq_dev_pm_ops,
-		.of_match_table = uio_of_genirq_match,
 	},
 };
 

@@ -65,7 +65,6 @@
 #define IPHETH_USBINTF_PROTO    1
 
 #define IPHETH_BUF_SIZE         1516
-#define IPHETH_IP_ALIGN		2	/* padding at front of URB */
 #define IPHETH_TX_TIMEOUT       (5 * HZ)
 
 #define IPHETH_INTFNUM          2
@@ -203,21 +202,18 @@ static void ipheth_rcvbulk_callback(struct urb *urb)
 		return;
 	}
 
-	if (urb->actual_length <= IPHETH_IP_ALIGN) {
-		dev->net->stats.rx_length_errors++;
-		return;
-	}
-	len = urb->actual_length - IPHETH_IP_ALIGN;
-	buf = urb->transfer_buffer + IPHETH_IP_ALIGN;
+	len = urb->actual_length;
+	buf = urb->transfer_buffer;
 
-	skb = dev_alloc_skb(len);
+	skb = dev_alloc_skb(NET_IP_ALIGN + len);
 	if (!skb) {
 		err("%s: dev_alloc_skb: -ENOMEM", __func__);
 		dev->net->stats.rx_dropped++;
 		return;
 	}
 
-	memcpy(skb_put(skb, len), buf, len);
+	skb_reserve(skb, NET_IP_ALIGN);
+	memcpy(skb_put(skb, len), buf + NET_IP_ALIGN, len - NET_IP_ALIGN);
 	skb->dev = dev->net;
 	skb->protocol = eth_type_trans(skb, dev->net);
 
@@ -367,7 +363,7 @@ static int ipheth_tx(struct sk_buff *skb, struct net_device *net)
 
 	/* Paranoid */
 	if (skb->len > IPHETH_BUF_SIZE) {
-		WARN(1, "%s: skb too large: %d bytes\n", __func__, skb->len);
+		WARN(1, "%s: skb too large: %d bytes", __func__, skb->len);
 		dev->net->stats.tx_dropped++;
 		dev_kfree_skb_irq(skb);
 		return NETDEV_TX_OK;
@@ -409,6 +405,12 @@ static void ipheth_tx_timeout(struct net_device *net)
 	usb_unlink_urb(dev->tx_urb);
 }
 
+static struct net_device_stats *ipheth_stats(struct net_device *net)
+{
+	struct ipheth_device *dev = netdev_priv(net);
+	return &dev->net->stats;
+}
+
 static u32 ipheth_ethtool_op_get_link(struct net_device *net)
 {
 	struct ipheth_device *dev = netdev_priv(net);
@@ -420,10 +422,11 @@ static struct ethtool_ops ops = {
 };
 
 static const struct net_device_ops ipheth_netdev_ops = {
-	.ndo_open = ipheth_open,
-	.ndo_stop = ipheth_close,
-	.ndo_start_xmit = ipheth_tx,
-	.ndo_tx_timeout = ipheth_tx_timeout,
+	.ndo_open = &ipheth_open,
+	.ndo_stop = &ipheth_close,
+	.ndo_start_xmit = &ipheth_tx,
+	.ndo_tx_timeout = &ipheth_tx_timeout,
+	.ndo_get_stats = &ipheth_stats,
 };
 
 static int ipheth_probe(struct usb_interface *intf,

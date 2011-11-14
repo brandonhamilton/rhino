@@ -156,16 +156,16 @@ static inline struct wm8994_irq_data *irq_to_wm8994_irq(struct wm8994 *wm8994,
 	return &wm8994_irqs[irq - wm8994->irq_base];
 }
 
-static void wm8994_irq_lock(struct irq_data *data)
+static void wm8994_irq_lock(unsigned int irq)
 {
-	struct wm8994 *wm8994 = irq_data_get_irq_chip_data(data);
+	struct wm8994 *wm8994 = get_irq_chip_data(irq);
 
 	mutex_lock(&wm8994->irq_lock);
 }
 
-static void wm8994_irq_sync_unlock(struct irq_data *data)
+static void wm8994_irq_sync_unlock(unsigned int irq)
 {
-	struct wm8994 *wm8994 = irq_data_get_irq_chip_data(data);
+	struct wm8994 *wm8994 = get_irq_chip_data(irq);
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(wm8994->irq_masks_cur); i++) {
@@ -182,30 +182,28 @@ static void wm8994_irq_sync_unlock(struct irq_data *data)
 	mutex_unlock(&wm8994->irq_lock);
 }
 
-static void wm8994_irq_enable(struct irq_data *data)
+static void wm8994_irq_unmask(unsigned int irq)
 {
-	struct wm8994 *wm8994 = irq_data_get_irq_chip_data(data);
-	struct wm8994_irq_data *irq_data = irq_to_wm8994_irq(wm8994,
-							     data->irq);
+	struct wm8994 *wm8994 = get_irq_chip_data(irq);
+	struct wm8994_irq_data *irq_data = irq_to_wm8994_irq(wm8994, irq);
 
 	wm8994->irq_masks_cur[irq_data->reg - 1] &= ~irq_data->mask;
 }
 
-static void wm8994_irq_disable(struct irq_data *data)
+static void wm8994_irq_mask(unsigned int irq)
 {
-	struct wm8994 *wm8994 = irq_data_get_irq_chip_data(data);
-	struct wm8994_irq_data *irq_data = irq_to_wm8994_irq(wm8994,
-							     data->irq);
+	struct wm8994 *wm8994 = get_irq_chip_data(irq);
+	struct wm8994_irq_data *irq_data = irq_to_wm8994_irq(wm8994, irq);
 
 	wm8994->irq_masks_cur[irq_data->reg - 1] |= irq_data->mask;
 }
 
 static struct irq_chip wm8994_irq_chip = {
-	.name			= "wm8994",
-	.irq_bus_lock		= wm8994_irq_lock,
-	.irq_bus_sync_unlock	= wm8994_irq_sync_unlock,
-	.irq_disable		= wm8994_irq_disable,
-	.irq_enable		= wm8994_irq_enable,
+	.name = "wm8994",
+	.bus_lock = wm8994_irq_lock,
+	.bus_sync_unlock = wm8994_irq_sync_unlock,
+	.mask = wm8994_irq_mask,
+	.unmask = wm8994_irq_unmask,
 };
 
 /* The processing of the primary interrupt occurs in a thread so that
@@ -225,10 +223,14 @@ static irqreturn_t wm8994_irq_thread(int irq, void *data)
 		return IRQ_NONE;
 	}
 
-	/* Bit swap and apply masking */
-	for (i = 0; i < WM8994_NUM_IRQ_REGS; i++) {
-		status[i] = be16_to_cpu(status[i]);
+	/* Apply masking */
+	for (i = 0; i < WM8994_NUM_IRQ_REGS; i++)
 		status[i] &= ~wm8994->irq_masks_cur[i];
+
+	/* Report */
+	for (i = 0; i < ARRAY_SIZE(wm8994_irqs); i++) {
+		if (status[wm8994_irqs[i].reg - 1] & wm8994_irqs[i].mask)
+			handle_nested_irq(wm8994->irq_base + i);
 	}
 
 	/* Ack any unmasked IRQs */
@@ -236,12 +238,6 @@ static irqreturn_t wm8994_irq_thread(int irq, void *data)
 		if (status[i])
 			wm8994_reg_write(wm8994, WM8994_INTERRUPT_STATUS_1 + i,
 					 status[i]);
-	}
-
-	/* Report */
-	for (i = 0; i < ARRAY_SIZE(wm8994_irqs); i++) {
-		if (status[wm8994_irqs[i].reg - 1] & wm8994_irqs[i].mask)
-			handle_nested_irq(wm8994->irq_base + i);
 	}
 
 	return IRQ_HANDLED;
@@ -278,17 +274,17 @@ int wm8994_irq_init(struct wm8994 *wm8994)
 	for (cur_irq = wm8994->irq_base;
 	     cur_irq < ARRAY_SIZE(wm8994_irqs) + wm8994->irq_base;
 	     cur_irq++) {
-		irq_set_chip_data(cur_irq, wm8994);
-		irq_set_chip_and_handler(cur_irq, &wm8994_irq_chip,
+		set_irq_chip_data(cur_irq, wm8994);
+		set_irq_chip_and_handler(cur_irq, &wm8994_irq_chip,
 					 handle_edge_irq);
-		irq_set_nested_thread(cur_irq, 1);
+		set_irq_nested_thread(cur_irq, 1);
 
 		/* ARM needs us to explicitly flag the IRQ as valid
 		 * and will set them noprobe when we do so. */
 #ifdef CONFIG_ARM
 		set_irq_flags(cur_irq, IRQF_VALID);
 #else
-		irq_set_noprobe(cur_irq);
+		set_irq_noprobe(cur_irq);
 #endif
 	}
 

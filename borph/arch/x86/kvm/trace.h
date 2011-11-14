@@ -62,21 +62,21 @@ TRACE_EVENT(kvm_hv_hypercall,
 	TP_ARGS(code, fast, rep_cnt, rep_idx, ingpa, outgpa),
 
 	TP_STRUCT__entry(
+		__field(	__u16, 		code		)
+		__field(	bool,		fast		)
 		__field(	__u16,		rep_cnt		)
 		__field(	__u16,		rep_idx		)
 		__field(	__u64,		ingpa		)
 		__field(	__u64,		outgpa		)
-		__field(	__u16, 		code		)
-		__field(	bool,		fast		)
 	),
 
 	TP_fast_assign(
+		__entry->code		= code;
+		__entry->fast		= fast;
 		__entry->rep_cnt	= rep_cnt;
 		__entry->rep_idx	= rep_idx;
 		__entry->ingpa		= ingpa;
 		__entry->outgpa		= outgpa;
-		__entry->code		= code;
-		__entry->fast		= fast;
 	),
 
 	TP_printk("code 0x%x %s cnt 0x%x idx 0x%x in 0x%llx out 0x%llx",
@@ -178,36 +178,27 @@ TRACE_EVENT(kvm_apic,
 #define trace_kvm_apic_read(reg, val)		trace_kvm_apic(0, reg, val)
 #define trace_kvm_apic_write(reg, val)		trace_kvm_apic(1, reg, val)
 
-#define KVM_ISA_VMX   1
-#define KVM_ISA_SVM   2
-
 /*
  * Tracepoint for kvm guest exit:
  */
 TRACE_EVENT(kvm_exit,
-	TP_PROTO(unsigned int exit_reason, struct kvm_vcpu *vcpu, u32 isa),
-	TP_ARGS(exit_reason, vcpu, isa),
+	TP_PROTO(unsigned int exit_reason, struct kvm_vcpu *vcpu),
+	TP_ARGS(exit_reason, vcpu),
 
 	TP_STRUCT__entry(
 		__field(	unsigned int,	exit_reason	)
 		__field(	unsigned long,	guest_rip	)
-		__field(	u32,	        isa             )
-		__field(	u64,	        info1           )
-		__field(	u64,	        info2           )
 	),
 
 	TP_fast_assign(
 		__entry->exit_reason	= exit_reason;
 		__entry->guest_rip	= kvm_rip_read(vcpu);
-		__entry->isa            = isa;
-		kvm_x86_ops->get_exit_info(vcpu, &__entry->info1,
-					   &__entry->info2);
 	),
 
-	TP_printk("reason %s rip 0x%lx info %llx %llx",
+	TP_printk("reason %s rip 0x%lx",
 		 ftrace_print_symbols_seq(p, __entry->exit_reason,
 					  kvm_x86_ops->exit_reasons_str),
-		 __entry->guest_rip, __entry->info1, __entry->info2)
+		 __entry->guest_rip)
 );
 
 /*
@@ -675,12 +666,12 @@ TRACE_EVENT(kvm_emulate_insn,
 		),
 
 	TP_fast_assign(
-		__entry->rip = vcpu->arch.emulate_ctxt.fetch.start;
+		__entry->rip = vcpu->arch.emulate_ctxt.decode.fetch.start;
 		__entry->csbase = kvm_x86_ops->get_segment_base(vcpu, VCPU_SREG_CS);
-		__entry->len = vcpu->arch.emulate_ctxt._eip
-			       - vcpu->arch.emulate_ctxt.fetch.start;
+		__entry->len = vcpu->arch.emulate_ctxt.decode.eip
+			       - vcpu->arch.emulate_ctxt.decode.fetch.start;
 		memcpy(__entry->insn,
-		       vcpu->arch.emulate_ctxt.fetch.data,
+		       vcpu->arch.emulate_ctxt.decode.fetch.data,
 		       15);
 		__entry->flags = kei_decode_mode(vcpu->arch.emulate_ctxt.mode);
 		__entry->failed = failed;
@@ -698,29 +689,6 @@ TRACE_EVENT(kvm_emulate_insn,
 #define trace_kvm_emulate_insn_start(vcpu) trace_kvm_emulate_insn(vcpu, 0)
 #define trace_kvm_emulate_insn_failed(vcpu) trace_kvm_emulate_insn(vcpu, 1)
 
-TRACE_EVENT(
-	vcpu_match_mmio,
-	TP_PROTO(gva_t gva, gpa_t gpa, bool write, bool gpa_match),
-	TP_ARGS(gva, gpa, write, gpa_match),
-
-	TP_STRUCT__entry(
-		__field(gva_t, gva)
-		__field(gpa_t, gpa)
-		__field(bool, write)
-		__field(bool, gpa_match)
-		),
-
-	TP_fast_assign(
-		__entry->gva = gva;
-		__entry->gpa = gpa;
-		__entry->write = write;
-		__entry->gpa_match = gpa_match
-		),
-
-	TP_printk("gva %#lx gpa %#llx %s %s", __entry->gva, __entry->gpa,
-		  __entry->write ? "Write" : "Read",
-		  __entry->gpa_match ? "GPA" : "GVA")
-);
 #endif /* _TRACE_KVM_H */
 
 #undef TRACE_INCLUDE_PATH

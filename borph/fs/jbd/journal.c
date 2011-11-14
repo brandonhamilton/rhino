@@ -38,9 +38,6 @@
 #include <linux/debugfs.h>
 #include <linux/ratelimit.h>
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/jbd.h>
-
 #include <asm/uaccess.h>
 #include <asm/page.h>
 
@@ -440,12 +437,9 @@ int __log_space_left(journal_t *journal)
 int __log_start_commit(journal_t *journal, tid_t target)
 {
 	/*
-	 * The only transaction we can possibly wait upon is the
-	 * currently running transaction (if it exists).  Otherwise,
-	 * the target tid must be an old one.
+	 * Are we already doing a recent enough commit?
 	 */
-	if (journal->j_running_transaction &&
-	    journal->j_running_transaction->t_tid == target) {
+	if (!tid_geq(journal->j_commit_request, target)) {
 		/*
 		 * We want a new commit: OK, mark the request and wakeup the
 		 * commit thread.  We do _not_ do the commit ourselves.
@@ -457,14 +451,7 @@ int __log_start_commit(journal_t *journal, tid_t target)
 			  journal->j_commit_sequence);
 		wake_up(&journal->j_wait_commit);
 		return 1;
-	} else if (!tid_geq(journal->j_commit_request, target))
-		/* This should never happen, but if it does, preserve
-		   the evidence before kjournald goes into a loop and
-		   increments j_commit_sequence beyond all recognition. */
-		WARN_ONCE(1, "jbd: bad log_start_commit: %u %u %u %u\n",
-		    journal->j_commit_request, journal->j_commit_sequence,
-		    target, journal->j_running_transaction ?
-		    journal->j_running_transaction->t_tid : 0);
+	}
 	return 0;
 }
 
@@ -783,7 +770,7 @@ journal_t * journal_init_dev(struct block_device *bdev,
 	journal->j_wbufsize = n;
 	journal->j_wbuf = kmalloc(n * sizeof(struct buffer_head*), GFP_KERNEL);
 	if (!journal->j_wbuf) {
-		printk(KERN_ERR "%s: Can't allocate bhs for commit thread\n",
+		printk(KERN_ERR "%s: Cant allocate bhs for commit thread\n",
 			__func__);
 		goto out_err;
 	}
@@ -844,7 +831,7 @@ journal_t * journal_init_inode (struct inode *inode)
 	journal->j_wbufsize = n;
 	journal->j_wbuf = kmalloc(n * sizeof(struct buffer_head*), GFP_KERNEL);
 	if (!journal->j_wbuf) {
-		printk(KERN_ERR "%s: Can't allocate bhs for commit thread\n",
+		printk(KERN_ERR "%s: Cant allocate bhs for commit thread\n",
 			__func__);
 		goto out_err;
 	}
@@ -852,7 +839,7 @@ journal_t * journal_init_inode (struct inode *inode)
 	err = journal_bmap(journal, 0, &blocknr);
 	/* If that failed, give up */
 	if (err) {
-		printk(KERN_ERR "%s: Cannot locate journal superblock\n",
+		printk(KERN_ERR "%s: Cannnot locate journal superblock\n",
 		       __func__);
 		goto out_err;
 	}
@@ -1068,7 +1055,6 @@ void journal_update_superblock(journal_t *journal, int wait)
 	} else
 		write_dirty_buffer(bh, WRITE);
 
-	trace_jbd_update_superblock_end(journal, wait);
 out:
 	/* If we have just flushed the log (by marking s_start==0), then
 	 * any future commit will have to be careful to update the
@@ -1803,9 +1789,10 @@ static void journal_free_journal_head(struct journal_head *jh)
  * When a buffer has its BH_JBD bit set it is immune from being released by
  * core kernel code, mainly via ->b_count.
  *
- * A journal_head is detached from its buffer_head when the journal_head's
- * b_jcount reaches zero. Running transaction (b_transaction) and checkpoint
- * transaction (b_cp_transaction) hold their references to b_jcount.
+ * A journal_head may be detached from its buffer_head when the journal_head's
+ * b_transaction, b_cp_transaction and b_next_transaction pointers are NULL.
+ * Various places in JBD call journal_remove_journal_head() to indicate that the
+ * journal_head can be dropped if needed.
  *
  * Various places in the kernel want to attach a journal_head to a buffer_head
  * _before_ attaching the journal_head to a transaction.  To protect the
@@ -1818,16 +1805,17 @@ static void journal_free_journal_head(struct journal_head *jh)
  *	(Attach a journal_head if needed.  Increments b_jcount)
  *	struct journal_head *jh = journal_add_journal_head(bh);
  *	...
- *      (Get another reference for transaction)
- *      journal_grab_journal_head(bh);
- *      jh->b_transaction = xxx;
- *      (Put original reference)
- *      journal_put_journal_head(jh);
+ *	jh->b_transaction = xxx;
+ *	journal_put_journal_head(jh);
+ *
+ * Now, the journal_head's b_jcount is zero, but it is safe from being released
+ * because it has a non-zero b_transaction.
  */
 
 /*
  * Give a buffer_head a journal_head.
  *
+ * Doesn't need the journal lock.
  * May sleep.
  */
 struct journal_head *journal_add_journal_head(struct buffer_head *bh)
@@ -1891,29 +1879,61 @@ static void __journal_remove_journal_head(struct buffer_head *bh)
 	struct journal_head *jh = bh2jh(bh);
 
 	J_ASSERT_JH(jh, jh->b_jcount >= 0);
-	J_ASSERT_JH(jh, jh->b_transaction == NULL);
-	J_ASSERT_JH(jh, jh->b_next_transaction == NULL);
-	J_ASSERT_JH(jh, jh->b_cp_transaction == NULL);
-	J_ASSERT_JH(jh, jh->b_jlist == BJ_None);
-	J_ASSERT_BH(bh, buffer_jbd(bh));
-	J_ASSERT_BH(bh, jh2bh(jh) == bh);
-	BUFFER_TRACE(bh, "remove journal_head");
-	if (jh->b_frozen_data) {
-		printk(KERN_WARNING "%s: freeing b_frozen_data\n", __func__);
-		jbd_free(jh->b_frozen_data, bh->b_size);
+
+	get_bh(bh);
+	if (jh->b_jcount == 0) {
+		if (jh->b_transaction == NULL &&
+				jh->b_next_transaction == NULL &&
+				jh->b_cp_transaction == NULL) {
+			J_ASSERT_JH(jh, jh->b_jlist == BJ_None);
+			J_ASSERT_BH(bh, buffer_jbd(bh));
+			J_ASSERT_BH(bh, jh2bh(jh) == bh);
+			BUFFER_TRACE(bh, "remove journal_head");
+			if (jh->b_frozen_data) {
+				printk(KERN_WARNING "%s: freeing "
+						"b_frozen_data\n",
+						__func__);
+				jbd_free(jh->b_frozen_data, bh->b_size);
+			}
+			if (jh->b_committed_data) {
+				printk(KERN_WARNING "%s: freeing "
+						"b_committed_data\n",
+						__func__);
+				jbd_free(jh->b_committed_data, bh->b_size);
+			}
+			bh->b_private = NULL;
+			jh->b_bh = NULL;	/* debug, really */
+			clear_buffer_jbd(bh);
+			__brelse(bh);
+			journal_free_journal_head(jh);
+		} else {
+			BUFFER_TRACE(bh, "journal_head was locked");
+		}
 	}
-	if (jh->b_committed_data) {
-		printk(KERN_WARNING "%s: freeing b_committed_data\n", __func__);
-		jbd_free(jh->b_committed_data, bh->b_size);
-	}
-	bh->b_private = NULL;
-	jh->b_bh = NULL;	/* debug, really */
-	clear_buffer_jbd(bh);
-	journal_free_journal_head(jh);
 }
 
 /*
- * Drop a reference on the passed journal_head.  If it fell to zero then
+ * journal_remove_journal_head(): if the buffer isn't attached to a transaction
+ * and has a zero b_jcount then remove and release its journal_head.   If we did
+ * see that the buffer is not used by any transaction we also "logically"
+ * decrement ->b_count.
+ *
+ * We in fact take an additional increment on ->b_count as a convenience,
+ * because the caller usually wants to do additional things with the bh
+ * after calling here.
+ * The caller of journal_remove_journal_head() *must* run __brelse(bh) at some
+ * time.  Once the caller has run __brelse(), the buffer is eligible for
+ * reaping by try_to_free_buffers().
+ */
+void journal_remove_journal_head(struct buffer_head *bh)
+{
+	jbd_lock_bh_journal_head(bh);
+	__journal_remove_journal_head(bh);
+	jbd_unlock_bh_journal_head(bh);
+}
+
+/*
+ * Drop a reference on the passed journal_head.  If it fell to zero then try to
  * release the journal_head from the buffer_head.
  */
 void journal_put_journal_head(struct journal_head *jh)
@@ -1923,12 +1943,11 @@ void journal_put_journal_head(struct journal_head *jh)
 	jbd_lock_bh_journal_head(bh);
 	J_ASSERT_JH(jh, jh->b_jcount > 0);
 	--jh->b_jcount;
-	if (!jh->b_jcount) {
+	if (!jh->b_jcount && !jh->b_transaction) {
 		__journal_remove_journal_head(bh);
-		jbd_unlock_bh_journal_head(bh);
 		__brelse(bh);
-	} else
-		jbd_unlock_bh_journal_head(bh);
+	}
+	jbd_unlock_bh_journal_head(bh);
 }
 
 /*

@@ -35,25 +35,7 @@ struct v4l2_ctrl_handler;
    Drivers can clear this flag if they want to block all future
    device access. It is cleared by video_unregister_device. */
 #define V4L2_FL_REGISTERED	(0)
-/* file->private_data points to struct v4l2_fh */
 #define V4L2_FL_USES_V4L2_FH	(1)
-/* Use the prio field of v4l2_fh for core priority checking */
-#define V4L2_FL_USE_FH_PRIO	(2)
-
-/* Priority helper functions */
-
-struct v4l2_prio_state {
-	atomic_t prios[4];
-};
-
-void v4l2_prio_init(struct v4l2_prio_state *global);
-int v4l2_prio_change(struct v4l2_prio_state *global, enum v4l2_priority *local,
-		     enum v4l2_priority new);
-void v4l2_prio_open(struct v4l2_prio_state *global, enum v4l2_priority *local);
-void v4l2_prio_close(struct v4l2_prio_state *global, enum v4l2_priority local);
-enum v4l2_priority v4l2_prio_max(struct v4l2_prio_state *global);
-int v4l2_prio_check(struct v4l2_prio_state *global, enum v4l2_priority local);
-
 
 struct v4l2_file_operations {
 	struct module *owner;
@@ -62,8 +44,6 @@ struct v4l2_file_operations {
 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
 	long (*ioctl) (struct file *, unsigned int, unsigned long);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
-	unsigned long (*get_unmapped_area) (struct file *, unsigned long,
-				unsigned long, unsigned long, unsigned long);
 	int (*mmap) (struct file *, struct vm_area_struct *);
 	int (*open) (struct file *);
 	int (*release) (struct file *);
@@ -93,9 +73,6 @@ struct video_device
 
 	/* Control handler associated with this device node. May be NULL. */
 	struct v4l2_ctrl_handler *ctrl_handler;
-
-	/* Priority state. If NULL, then v4l2_dev->prio will be used. */
-	struct v4l2_prio_state *prio;
 
 	/* device info */
 	char name[32];
@@ -128,8 +105,8 @@ struct video_device
 	struct mutex *lock;
 };
 
-#define media_entity_to_video_device(__e) \
-	container_of(__e, struct video_device, entity)
+#define media_entity_to_video_device(entity) \
+	container_of(entity, struct video_device, entity)
 /* dev to video-device */
 #define to_video_device(cd) container_of(cd, struct video_device, dev)
 

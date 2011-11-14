@@ -484,7 +484,7 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 
 	/*
 	 * Check that we aren't being called after the
-	 * entire buffer has been transferred.
+	 * entire buffer has been transfered.
 	 */
 	if (host->num_sg == 0)
 		return;
@@ -828,7 +828,7 @@ static void wbsd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	/*
 	 * If this is a data transfer the request
 	 * will be finished after the data has
-	 * transferred.
+	 * transfered.
 	 */
 	if (cmd->data && !cmd->error) {
 		/*
@@ -904,7 +904,7 @@ static void wbsd_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			setup &= ~WBSD_DAT3_H;
 
 			/*
-			 * We cannot resume card detection immediately
+			 * We cannot resume card detection immediatly
 			 * because of capacitance and delays in the chip.
 			 */
 			mod_timer(&host->ignore_timer, jiffies + HZ / 100);

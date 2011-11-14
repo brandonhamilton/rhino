@@ -778,9 +778,9 @@ static int jzfb_suspend(struct device *dev)
 {
 	struct jzfb *jzfb = dev_get_drvdata(dev);
 
-	console_lock();
+	acquire_console_sem();
 	fb_set_suspend(jzfb->fb, 1);
-	console_unlock();
+	release_console_sem();
 
 	mutex_lock(&jzfb->lock);
 	if (jzfb->is_enabled)
@@ -800,9 +800,9 @@ static int jzfb_resume(struct device *dev)
 		jzfb_enable(jzfb);
 	mutex_unlock(&jzfb->lock);
 
-	console_lock();
+	acquire_console_sem();
 	fb_set_suspend(jzfb->fb, 0);
-	console_unlock();
+	release_console_sem();
 
 	return 0;
 }

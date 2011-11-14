@@ -636,7 +636,7 @@ struct tlock *txLock(tid_t tid, struct inode *ip, struct metapage * mp,
 	 * the inode of the page and available to all anonymous
 	 * transactions until txCommit() time at which point
 	 * they are transferred to the transaction tlock list of
-	 * the committing transaction of the inode)
+	 * the commiting transaction of the inode)
 	 */
 	if (xtid == 0) {
 		tlck->tid = tid;
@@ -1143,6 +1143,7 @@ int txCommit(tid_t tid,		/* transaction identifier */
 	struct jfs_log *log;
 	struct tblock *tblk;
 	struct lrd *lrd;
+	int lsn;
 	struct inode *ip;
 	struct jfs_inode_info *jfs_ip;
 	int k, n;
@@ -1309,7 +1310,7 @@ int txCommit(tid_t tid,		/* transaction identifier */
 	 */
 	lrd->type = cpu_to_le16(LOG_COMMIT);
 	lrd->length = 0;
-	lmLog(log, tblk, lrd, NULL);
+	lsn = lmLog(log, tblk, lrd, NULL);
 
 	lmGroupCommit(log, tblk);
 
@@ -2934,6 +2935,7 @@ int jfs_sync(void *arg)
 {
 	struct inode *ip;
 	struct jfs_inode_info *jfs_ip;
+	int rc;
 	tid_t tid;
 
 	do {
@@ -2959,7 +2961,7 @@ int jfs_sync(void *arg)
 				 */
 				TXN_UNLOCK();
 				tid = txBegin(ip->i_sb, COMMIT_INODE);
-				txCommit(tid, 1, &ip, 0);
+				rc = txCommit(tid, 1, &ip, 0);
 				txEnd(tid);
 				mutex_unlock(&jfs_ip->commit_mutex);
 

@@ -101,14 +101,14 @@ int uflash_devinit(struct platform_device *op, struct device_node *dp)
 
 	up->mtd->owner = THIS_MODULE;
 
-	mtd_device_register(up->mtd, NULL, 0);
+	add_mtd_device(up->mtd);
 
 	dev_set_drvdata(&op->dev, up);
 
 	return 0;
 }
 
-static int __devinit uflash_probe(struct platform_device *op)
+static int __devinit uflash_probe(struct platform_device *op, const struct of_device_id *match)
 {
 	struct device_node *dp = op->dev.of_node;
 
@@ -126,7 +126,7 @@ static int __devexit uflash_remove(struct platform_device *op)
 	struct uflash_dev *up = dev_get_drvdata(&op->dev);
 
 	if (up->mtd) {
-		mtd_device_unregister(up->mtd);
+		del_mtd_device(up->mtd);
 		map_destroy(up->mtd);
 	}
 	if (up->map.virt) {
@@ -148,7 +148,7 @@ static const struct of_device_id uflash_match[] = {
 
 MODULE_DEVICE_TABLE(of, uflash_match);
 
-static struct platform_driver uflash_driver = {
+static struct of_platform_driver uflash_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
@@ -160,12 +160,12 @@ static struct platform_driver uflash_driver = {
 
 static int __init uflash_init(void)
 {
-	return platform_driver_register(&uflash_driver);
+	return of_register_platform_driver(&uflash_driver);
 }
 
 static void __exit uflash_exit(void)
 {
-	platform_driver_unregister(&uflash_driver);
+	of_unregister_platform_driver(&uflash_driver);
 }
 
 module_init(uflash_init);

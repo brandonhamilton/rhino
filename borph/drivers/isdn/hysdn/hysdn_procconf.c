@@ -23,6 +23,7 @@
 #include "hysdn_defs.h"
 
 static DEFINE_MUTEX(hysdn_conf_mutex);
+static char *hysdn_procconf_revision = "$Revision: 1.8.6.4 $";
 
 #define INFO_OUT_LEN 80		/* length of info line including lf */
 
@@ -403,7 +404,7 @@ hysdn_procconf_init(void)
 		card = card->next;	/* next entry */
 	}
 
-	printk(KERN_NOTICE "HYSDN: procfs initialised\n");
+	printk(KERN_NOTICE "HYSDN: procfs Rev. %s initialised\n", hysdn_getrev(hysdn_procconf_revision));
 	return (0);
 }				/* hysdn_procconf_init */
 

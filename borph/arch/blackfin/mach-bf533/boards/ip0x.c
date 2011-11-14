@@ -22,6 +22,7 @@
 #include <asm/dma.h>
 #include <asm/bfin5xx_spi.h>
 #include <asm/portmux.h>
+#include <mach/fio_flag.h>
 
 /*
  * Name the Board for the /proc/cpuinfo
@@ -110,6 +111,7 @@ static struct platform_device dm9000_device2 = {
 #if defined(CONFIG_MMC_SPI) || defined(CONFIG_MMC_SPI_MODULE)
 static struct bfin5xx_spi_chip mmc_spi_chip_info = {
 	.enable_dma = 0,		/* if 1 - block!!! */
+	.bits_per_word = 8,
 };
 #endif
 
@@ -172,7 +174,7 @@ static struct resource bfin_uart0_resources[] = {
 	},
 };
 
-static unsigned short bfin_uart0_peripherals[] = {
+unsigned short bfin_uart0_peripherals[] = {
 	P_UART0_TX, P_UART0_RX, 0
 };
 
@@ -288,10 +290,20 @@ static struct platform_device *ip0x_devices[] __initdata = {
 
 static int __init ip0x_init(void)
 {
+	int i;
+
 	printk(KERN_INFO "%s(): registering device resources\n", __func__);
 	platform_add_devices(ip0x_devices, ARRAY_SIZE(ip0x_devices));
 
+#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+	for (i = 0; i < ARRAY_SIZE(bfin_spi_board_info); ++i) {
+		int j = 1 << bfin_spi_board_info[i].chip_select;
+		/* set spi cs to 1 */
+		bfin_write_FIO_DIR(bfin_read_FIO_DIR() | j);
+		bfin_write_FIO_FLAG_S(j);
+	}
 	spi_register_board_info(bfin_spi_board_info, ARRAY_SIZE(bfin_spi_board_info));
+#endif
 
 	return 0;
 }

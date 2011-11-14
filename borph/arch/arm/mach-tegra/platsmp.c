@@ -20,8 +20,9 @@
 #include <linux/io.h>
 
 #include <asm/cacheflush.h>
-#include <asm/hardware/gic.h>
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
+#include <asm/localtimer.h>
 #include <asm/smp_scu.h>
 
 #include <mach/iomap.h>
@@ -40,12 +41,14 @@ static void __iomem *scu_base = IO_ADDRESS(TEGRA_ARM_PERIF_BASE);
 
 void __cpuinit platform_secondary_init(unsigned int cpu)
 {
+	trace_hardirqs_off();
+
 	/*
 	 * if any interrupts are already enabled for the primary
 	 * core (e.g. timer irq), then they will not have been enabled
 	 * for us: do so
 	 */
-	gic_secondary_init(0);
+	gic_cpu_init(0, IO_ADDRESS(TEGRA_ARM_PERIF_BASE) + 0x100);
 
 	/*
 	 * Synchronise with the boot thread.
@@ -114,20 +117,40 @@ void __init smp_init_cpus(void)
 {
 	unsigned int i, ncores = scu_get_core_count(scu_base);
 
-	if (ncores > NR_CPUS) {
-		printk(KERN_ERR "Tegra: no. of cores (%u) greater than configured (%u), clipping\n",
-			ncores, NR_CPUS);
-		ncores = NR_CPUS;
-	}
-
 	for (i = 0; i < ncores; i++)
-		set_cpu_possible(i, true);
-
-	set_smp_cross_call(gic_raise_softirq);
+		cpu_set(i, cpu_possible_map);
 }
 
-void __init platform_smp_prepare_cpus(unsigned int max_cpus)
+void __init smp_prepare_cpus(unsigned int max_cpus)
 {
+	unsigned int ncores = scu_get_core_count(scu_base);
+	unsigned int cpu = smp_processor_id();
+	int i;
 
-	scu_enable(scu_base);
+	smp_store_cpu_info(cpu);
+
+	/*
+	 * are we trying to boot more cores than exist?
+	 */
+	if (max_cpus > ncores)
+		max_cpus = ncores;
+
+	/*
+	 * Initialise the present map, which describes the set of CPUs
+	 * actually populated at the present time.
+	 */
+	for (i = 0; i < max_cpus; i++)
+		set_cpu_present(i, true);
+
+	/*
+	 * Initialise the SCU if there are more than one CPU and let
+	 * them know where to start. Note that, on modern versions of
+	 * MILO, the "poke" doesn't actually do anything until each
+	 * individual core is sent a soft interrupt to get it out of
+	 * WFI
+	 */
+	if (max_cpus > 1) {
+		percpu_timer_setup();
+		scu_enable(scu_base);
+	}
 }

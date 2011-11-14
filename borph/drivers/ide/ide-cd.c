@@ -258,10 +258,17 @@ static int ide_cd_breathe(ide_drive_t *drive, struct request *rq)
 	if (time_after(jiffies, info->write_timeout))
 		return 0;
 	else {
+		struct request_queue *q = drive->queue;
+		unsigned long flags;
+
 		/*
-		 * take a breather
+		 * take a breather relying on the unplug timer to kick us again
 		 */
-		blk_delay_queue(drive->queue, 1);
+
+		spin_lock_irqsave(q->queue_lock, flags);
+		blk_plug_device(q);
+		spin_unlock_irqrestore(q->queue_lock, flags);
+
 		return 1;
 	}
 }
@@ -778,8 +785,7 @@ static ide_startstop_t ide_cd_do_request(ide_drive_t *drive, struct request *rq,
 					sector_t block)
 {
 	struct ide_cmd cmd;
-	int uptodate = 0;
-	unsigned int nsectors;
+	int uptodate = 0, nsectors;
 
 	ide_debug_log(IDE_DBG_RQ, "cmd: 0x%x, block: %llu",
 				  rq->cmd[0], (unsigned long long)block);
@@ -1171,7 +1177,7 @@ static struct cdrom_device_ops ide_cdrom_dops = {
 	.open			= ide_cdrom_open_real,
 	.release		= ide_cdrom_release_real,
 	.drive_status		= ide_cdrom_drive_status,
-	.check_events		= ide_cdrom_check_events_real,
+	.media_changed		= ide_cdrom_check_media_change_real,
 	.tray_move		= ide_cdrom_tray_move,
 	.lock_door		= ide_cdrom_lock_door,
 	.select_speed		= ide_cdrom_select_speed,
@@ -1508,6 +1514,8 @@ static int ide_cdrom_setup(ide_drive_t *drive)
 	blk_queue_dma_alignment(q, 31);
 	blk_queue_update_dma_pad(q, 15);
 
+	q->unplug_delay = max((1 * HZ) / 1000, 1);
+
 	drive->dev_flags |= IDE_DFLAG_MEDIA_CHANGED;
 	drive->atapi_flags = IDE_AFLAG_NO_EJECT | ide_cd_flags(id);
 
@@ -1694,11 +1702,10 @@ static int idecd_ioctl(struct block_device *bdev, fmode_t mode,
 }
 
 
-static unsigned int idecd_check_events(struct gendisk *disk,
-				       unsigned int clearing)
+static int idecd_media_changed(struct gendisk *disk)
 {
 	struct cdrom_info *info = ide_drv_g(disk, cdrom_info);
-	return cdrom_check_events(&info->devinfo, clearing);
+	return cdrom_media_changed(&info->devinfo);
 }
 
 static int idecd_revalidate_disk(struct gendisk *disk)
@@ -1716,7 +1723,7 @@ static const struct block_device_operations idecd_ops = {
 	.open			= idecd_open,
 	.release		= idecd_release,
 	.ioctl			= idecd_ioctl,
-	.check_events		= idecd_check_events,
+	.media_changed		= idecd_media_changed,
 	.revalidate_disk	= idecd_revalidate_disk
 };
 
@@ -1782,7 +1789,7 @@ static int ide_cd_probe(ide_drive_t *drive)
 
 	ide_cd_read_toc(drive, &sense);
 	g->fops = &idecd_ops;
-	g->flags |= GENHD_FL_REMOVABLE | GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE;
+	g->flags |= GENHD_FL_REMOVABLE;
 	add_disk(g);
 	return 0;
 

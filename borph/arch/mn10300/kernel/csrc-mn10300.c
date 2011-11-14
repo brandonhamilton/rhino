@@ -29,6 +29,7 @@ static struct clocksource clocksource_mn10300 = {
 int __init init_clocksource(void)
 {
 	startup_timestamp_counter();
-	clocksource_register_hz(&clocksource_mn10300, MN10300_TSCCLK);
+	clocksource_set_clock(&clocksource_mn10300, MN10300_TSCCLK);
+	clocksource_register(&clocksource_mn10300);
 	return 0;
 }

@@ -55,9 +55,8 @@
 #include <asm/io.h>
 #include <asm/byteorder.h>
 
-#include <media/saa6588.h>
+#include <media/rds.h>
 
-#define BTTV_VERSION "0.9.19"
 
 unsigned int bttv_num;			/* number of Bt848s in use */
 struct bttv *bttvs[BTTV_MAX];
@@ -164,7 +163,6 @@ MODULE_PARM_DESC(radio_nr, "radio device numbers");
 MODULE_DESCRIPTION("bttv - v4l/v4l2 driver module for bt848/878 based cards");
 MODULE_AUTHOR("Ralph Metzler & Marcus Metzler & Gerd Knorr");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(BTTV_VERSION);
 
 /* ----------------------------------------------------------------------- */
 /* sysfs                                                                   */
@@ -191,14 +189,8 @@ static void request_modules(struct bttv *dev)
 	INIT_WORK(&dev->request_module_wk, request_module_async);
 	schedule_work(&dev->request_module_wk);
 }
-
-static void flush_request_modules(struct bttv *dev)
-{
-	flush_work_sync(&dev->request_module_wk);
-}
 #else
 #define request_modules(dev)
-#define flush_request_modules(dev)
 #endif /* CONFIG_MODULES */
 
 
@@ -2605,6 +2597,31 @@ static int bttv_s_fmt_vid_overlay(struct file *file, void *priv,
 	return setup_window_lock(fh, btv, &f->fmt.win, 1);
 }
 
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+static int vidiocgmbuf(struct file *file, void *priv, struct video_mbuf *mbuf)
+{
+	int retval;
+	unsigned int i;
+	struct bttv_fh *fh = priv;
+
+	retval = __videobuf_mmap_setup(&fh->cap, gbuffers, gbufsize,
+				     V4L2_MEMORY_MMAP);
+	if (retval < 0) {
+		return retval;
+	}
+
+	gbuffers = retval;
+	memset(mbuf, 0, sizeof(*mbuf));
+	mbuf->frames = gbuffers;
+	mbuf->size   = gbuffers * gbufsize;
+
+	for (i = 0; i < gbuffers; i++)
+		mbuf->offsets[i] = i * gbufsize;
+
+	return 0;
+}
+#endif
+
 static int bttv_querycap(struct file *file, void  *priv,
 				struct v4l2_capability *cap)
 {
@@ -2618,6 +2635,7 @@ static int bttv_querycap(struct file *file, void  *priv,
 	strlcpy(cap->card, btv->video_dev->name, sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "PCI:%s", pci_name(btv->c.pci));
+	cap->version = BTTV_VERSION_CODE;
 	cap->capabilities =
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_VBI_CAPTURE |
@@ -3336,6 +3354,9 @@ static const struct v4l2_ioctl_ops bttv_ioctl_ops = {
 	.vidioc_streamoff               = bttv_streamoff,
 	.vidioc_g_tuner                 = bttv_g_tuner,
 	.vidioc_s_tuner                 = bttv_s_tuner,
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+	.vidiocgmbuf                    = vidiocgmbuf,
+#endif
 	.vidioc_g_crop                  = bttv_g_crop,
 	.vidioc_s_crop                  = bttv_s_crop,
 	.vidioc_g_fbuf                  = bttv_g_fbuf,
@@ -3395,7 +3416,7 @@ static int radio_release(struct file *file)
 {
 	struct bttv_fh *fh = file->private_data;
 	struct bttv *btv = fh->btv;
-	struct saa6588_command cmd;
+	struct rds_command cmd;
 
 	v4l2_prio_close(&btv->prio, fh->prio);
 	file->private_data = NULL;
@@ -3403,7 +3424,7 @@ static int radio_release(struct file *file)
 
 	btv->radio_user--;
 
-	bttv_call_all(btv, core, ioctl, SAA6588_CMD_CLOSE, &cmd);
+	bttv_call_all(btv, core, ioctl, RDS_CMD_CLOSE, &cmd);
 
 	return 0;
 }
@@ -3417,6 +3438,7 @@ static int radio_querycap(struct file *file, void *priv,
 	strcpy(cap->driver, "bttv");
 	strlcpy(cap->card, btv->radio_dev->name, sizeof(cap->card));
 	sprintf(cap->bus_info, "PCI:%s", pci_name(btv->c.pci));
+	cap->version = BTTV_VERSION_CODE;
 	cap->capabilities = V4L2_CAP_TUNER;
 
 	return 0;
@@ -3474,7 +3496,7 @@ static int radio_s_tuner(struct file *file, void *priv,
 	if (0 != t->index)
 		return -EINVAL;
 
-	bttv_call_all(btv, tuner, s_tuner, t);
+	bttv_call_all(btv, tuner, g_tuner, t);
 	return 0;
 }
 
@@ -3529,13 +3551,13 @@ static ssize_t radio_read(struct file *file, char __user *data,
 {
 	struct bttv_fh *fh = file->private_data;
 	struct bttv *btv = fh->btv;
-	struct saa6588_command cmd;
+	struct rds_command cmd;
 	cmd.block_count = count/3;
 	cmd.buffer = data;
 	cmd.instance = file;
 	cmd.result = -ENODEV;
 
-	bttv_call_all(btv, core, ioctl, SAA6588_CMD_READ, &cmd);
+	bttv_call_all(btv, core, ioctl, RDS_CMD_READ, &cmd);
 
 	return cmd.result;
 }
@@ -3544,11 +3566,11 @@ static unsigned int radio_poll(struct file *file, poll_table *wait)
 {
 	struct bttv_fh *fh = file->private_data;
 	struct bttv *btv = fh->btv;
-	struct saa6588_command cmd;
+	struct rds_command cmd;
 	cmd.instance = file;
 	cmd.event_list = wait;
 	cmd.result = -ENODEV;
-	bttv_call_all(btv, core, ioctl, SAA6588_CMD_POLL, &cmd);
+	bttv_call_all(btv, core, ioctl, RDS_CMD_POLL, &cmd);
 
 	return cmd.result;
 }
@@ -4019,6 +4041,9 @@ static irqreturn_t bttv_irq(int irq, void *dev_id)
 
 	btv=(struct bttv *)dev_id;
 
+	if (btv->custom_irq)
+		handled = btv->custom_irq(btv);
+
 	count=0;
 	while (1) {
 		/* get/clear interrupt status bits */
@@ -4054,6 +4079,7 @@ static irqreturn_t bttv_irq(int irq, void *dev_id)
 			btv->field_count++;
 
 		if ((astat & BT848_INT_GPINT) && btv->remote) {
+			wake_up(&btv->gpioq);
 			bttv_input_irq(btv);
 		}
 
@@ -4258,6 +4284,7 @@ static int __devinit bttv_probe(struct pci_dev *dev,
 	mutex_init(&btv->lock);
 	spin_lock_init(&btv->s_lock);
 	spin_lock_init(&btv->gpio_lock);
+	init_waitqueue_head(&btv->gpioq);
 	init_waitqueue_head(&btv->i2c_queue);
 	INIT_LIST_HEAD(&btv->c.subs);
 	INIT_LIST_HEAD(&btv->capture);
@@ -4303,7 +4330,7 @@ static int __devinit bttv_probe(struct pci_dev *dev,
 		goto fail0;
 	}
 
-	btv->revision = dev->revision;
+	pci_read_config_byte(dev, PCI_CLASS_REVISION, &btv->revision);
 	pci_read_config_byte(dev, PCI_LATENCY_TIMER, &lat);
 	printk(KERN_INFO "bttv%d: Bt%d (rev %d) at %s, ",
 	       bttv_num,btv->id, btv->revision, pci_name(dev));
@@ -4435,9 +4462,6 @@ static void __devexit bttv_remove(struct pci_dev *pci_dev)
 	if (bttv_verbose)
 		printk("bttv%d: unloading\n",btv->c.nr);
 
-	if (bttv_tvcards[btv->c.type].has_dvb)
-		flush_request_modules(btv);
-
 	/* shutdown everything (DMA+IRQs) */
 	btand(~15, BT848_GPIO_DMA_CTL);
 	btwrite(0, BT848_INT_MASK);
@@ -4448,6 +4472,7 @@ static void __devexit bttv_remove(struct pci_dev *pci_dev)
 
 	/* tell gpio modules we are leaving ... */
 	btv->shutdown=1;
+	wake_up(&btv->gpioq);
 	bttv_input_fini(btv);
 	bttv_sub_del_devices(&btv->c);
 
@@ -4585,8 +4610,14 @@ static int __init bttv_init_module(void)
 
 	bttv_num = 0;
 
-	printk(KERN_INFO "bttv: driver version %s loaded\n",
-	       BTTV_VERSION);
+	printk(KERN_INFO "bttv: driver version %d.%d.%d loaded\n",
+	       (BTTV_VERSION_CODE >> 16) & 0xff,
+	       (BTTV_VERSION_CODE >> 8) & 0xff,
+	       BTTV_VERSION_CODE & 0xff);
+#ifdef SNAPSHOT
+	printk(KERN_INFO "bttv: snapshot date %04d-%02d-%02d\n",
+	       SNAPSHOT/10000, (SNAPSHOT/100)%100, SNAPSHOT%100);
+#endif
 	if (gbuffers < 2 || gbuffers > VIDEO_MAX_FRAME)
 		gbuffers = 2;
 	if (gbufsize > BTTV_MAX_FBUF)

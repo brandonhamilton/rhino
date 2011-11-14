@@ -80,7 +80,8 @@ endif
 endif
 
 ifeq ($(call cc-option-yn,-mwarn-dynamicstack),y)
-cflags-$(CONFIG_WARN_DYNAMIC_STACK) += -mwarn-dynamicstack
+cflags-$(CONFIG_WARN_STACK) += -mwarn-dynamicstack
+cflags-$(CONFIG_WARN_STACK) += -mwarn-framesize=$(CONFIG_WARN_STACK_SIZE)
 endif
 
 KBUILD_CFLAGS	+= -mbackchain -msoft-float $(cflags-y)

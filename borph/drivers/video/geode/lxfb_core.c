@@ -465,10 +465,10 @@ static int lxfb_suspend(struct pci_dev *pdev, pm_message_t state)
 	struct fb_info *info = pci_get_drvdata(pdev);
 
 	if (state.event == PM_EVENT_SUSPEND) {
-		console_lock();
+		acquire_console_sem();
 		lx_powerdown(info);
 		fb_set_suspend(info, 1);
-		console_unlock();
+		release_console_sem();
 	}
 
 	/* there's no point in setting PCI states; we emulate PCI, so
@@ -482,7 +482,7 @@ static int lxfb_resume(struct pci_dev *pdev)
 	struct fb_info *info = pci_get_drvdata(pdev);
 	int ret;
 
-	console_lock();
+	acquire_console_sem();
 	ret = lx_powerup(info);
 	if (ret) {
 		printk(KERN_ERR "lxfb:  power up failed!\n");
@@ -490,7 +490,7 @@ static int lxfb_resume(struct pci_dev *pdev)
 	}
 
 	fb_set_suspend(info, 0);
-	console_unlock();
+	release_console_sem();
 	return 0;
 }
 #else

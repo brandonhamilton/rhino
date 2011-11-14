@@ -80,7 +80,8 @@ static const struct hc_driver ohci_ppc_of_hc_driver = {
 };
 
 
-static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
+static int __devinit
+ohci_hcd_ppc_of_probe(struct platform_device *op, const struct of_device_id *match)
 {
 	struct device_node *dn = op->dev.of_node;
 	struct usb_hcd *hcd;
@@ -110,7 +111,7 @@ static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
 		return -ENOMEM;
 
 	hcd->rsrc_start = res.start;
-	hcd->rsrc_len = resource_size(&res);
+	hcd->rsrc_len = res.end - res.start + 1;
 
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len, hcd_name)) {
 		printk(KERN_ERR "%s: request_mem_region failed\n", __FILE__);
@@ -200,12 +201,14 @@ static int ohci_hcd_ppc_of_remove(struct platform_device *op)
 	return 0;
 }
 
-static void ohci_hcd_ppc_of_shutdown(struct platform_device *op)
+static int ohci_hcd_ppc_of_shutdown(struct platform_device *op)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(&op->dev);
 
         if (hcd->driver->shutdown)
                 hcd->driver->shutdown(hcd);
+
+	return 0;
 }
 
 
@@ -240,7 +243,7 @@ MODULE_DEVICE_TABLE(of, ohci_hcd_ppc_of_match);
 #endif
 
 
-static struct platform_driver ohci_hcd_ppc_of_driver = {
+static struct of_platform_driver ohci_hcd_ppc_of_driver = {
 	.probe		= ohci_hcd_ppc_of_probe,
 	.remove		= ohci_hcd_ppc_of_remove,
 	.shutdown 	= ohci_hcd_ppc_of_shutdown,

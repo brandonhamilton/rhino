@@ -151,7 +151,6 @@ static char *qperf_names[] = {
 	"Inbound queue full",
 	"Outbound calls",
 	"Outbound handler",
-	"Outbound queue full",
 	"Outbound fast_requeue",
 	"Outbound target_full",
 	"QEBSM eqbs",
@@ -188,13 +187,19 @@ static ssize_t qperf_seq_write(struct file *file, const char __user *ubuf,
 	struct qdio_irq *irq_ptr = seq->private;
 	struct qdio_q *q;
 	unsigned long val;
+	char buf[8];
 	int ret, i;
 
 	if (!irq_ptr)
 		return 0;
+	if (count >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(&buf, ubuf, count))
+		return -EFAULT;
+	buf[count] = 0;
 
-	ret = kstrtoul_from_user(ubuf, count, 10, &val);
-	if (ret)
+	ret = strict_strtoul(buf, 10, &val);
+	if (ret < 0)
 		return ret;
 
 	switch (val) {

@@ -93,10 +93,16 @@ static inline void get_tree(struct audit_tree *tree)
 	atomic_inc(&tree->count);
 }
 
+static void __put_tree(struct rcu_head *rcu)
+{
+	struct audit_tree *tree = container_of(rcu, struct audit_tree, head);
+	kfree(tree);
+}
+
 static inline void put_tree(struct audit_tree *tree)
 {
 	if (atomic_dec_and_test(&tree->count))
-		kfree_rcu(tree, head);
+		call_rcu(&tree->head, __put_tree);
 }
 
 /* to avoid bringing the entire thing in audit.h */
@@ -601,7 +607,7 @@ void audit_trim_trees(void)
 		spin_lock(&hash_lock);
 		list_for_each_entry(node, &tree->chunks, list) {
 			struct audit_chunk *chunk = find_chunk(node);
-			/* this could be NULL if the watch is dying else where... */
+			/* this could be NULL if the watch is dieing else where... */
 			struct inode *inode = chunk->mark.i.inode;
 			node->index |= 1U<<31;
 			if (iterate_mounts(compare_root, inode, root_mnt))

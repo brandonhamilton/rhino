@@ -27,9 +27,9 @@ static void __exit vmic_exit(void);
 /** Base address to access FPGA register */
 static void *vmic_base;
 
-static const char driver_name[] = "vmivme_7805";
+static char driver_name[] = "vmivme_7805";
 
-static DEFINE_PCI_DEVICE_TABLE(vmic_ids) = {
+static struct pci_device_id vmic_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_VMIC, PCI_DEVICE_ID_VTIMR) },
 	{ },
 };

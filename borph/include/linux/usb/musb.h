@@ -62,6 +62,7 @@ struct musb_hdrc_eps_bits {
 struct musb_hdrc_config {
 	struct musb_fifo_cfg	*fifo_cfg;	/* board fifo configuration */
 	unsigned		fifo_cfg_size;	/* size of the fifo configuration */
+	unsigned short		fifo_mode;	/* fifo mode to be selected */
 
 	/* MUSB configuration-specific details */
 	unsigned	multipoint:1;	/* multipoint device */
@@ -119,6 +120,9 @@ struct musb_hdrc_platform_data {
 
 	/* Power the device on or off */
 	int		(*set_power)(int state);
+
+	/* Turn device clock on or off */
+	int		(*set_clock)(struct clk *clock, int is_on);
 
 	/* MUSB configuration-specific details */
 	struct musb_hdrc_config	*config;

@@ -128,8 +128,7 @@ void snd_pcm_playback_silence(struct snd_pcm_substream *substream, snd_pcm_ufram
 	}
 }
 
-#ifdef CONFIG_SND_DEBUG
-void snd_pcm_debug_name(struct snd_pcm_substream *substream,
+static void pcm_debug_name(struct snd_pcm_substream *substream,
 			   char *name, size_t len)
 {
 	snprintf(name, len, "pcmC%dD%d%c:%d",
@@ -138,8 +137,6 @@ void snd_pcm_debug_name(struct snd_pcm_substream *substream,
 		 substream->stream ? 'c' : 'p',
 		 substream->number);
 }
-EXPORT_SYMBOL(snd_pcm_debug_name);
-#endif
 
 #define XRUN_DEBUG_BASIC	(1<<0)
 #define XRUN_DEBUG_STACK	(1<<1)	/* dump also stack */
@@ -171,7 +168,7 @@ static void xrun(struct snd_pcm_substream *substream)
 	snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
 	if (xrun_debug(substream, XRUN_DEBUG_BASIC)) {
 		char name[16];
-		snd_pcm_debug_name(substream, name, sizeof(name));
+		pcm_debug_name(substream, name, sizeof(name));
 		snd_printd(KERN_DEBUG "XRUN: %s\n", name);
 		dump_stack_on_xrun(substream);
 	}
@@ -192,7 +189,6 @@ static void xrun(struct snd_pcm_substream *substream)
 #define XRUN_LOG_CNT	10
 
 struct hwptr_log_entry {
-	unsigned int in_interrupt;
 	unsigned long jiffies;
 	snd_pcm_uframes_t pos;
 	snd_pcm_uframes_t period_size;
@@ -208,7 +204,7 @@ struct snd_pcm_hwptr_log {
 };
 
 static void xrun_log(struct snd_pcm_substream *substream,
-		     snd_pcm_uframes_t pos, int in_interrupt)
+		     snd_pcm_uframes_t pos)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_pcm_hwptr_log *log = runtime->hwptr_log;
@@ -224,7 +220,6 @@ static void xrun_log(struct snd_pcm_substream *substream,
 			return;
 	}
 	entry = &log->entries[log->idx];
-	entry->in_interrupt = in_interrupt;
 	entry->jiffies = jiffies;
 	entry->pos = pos;
 	entry->period_size = runtime->period_size;
@@ -246,16 +241,14 @@ static void xrun_log_show(struct snd_pcm_substream *substream)
 		return;
 	if (xrun_debug(substream, XRUN_DEBUG_LOGONCE) && log->hit)
 		return;
-	snd_pcm_debug_name(substream, name, sizeof(name));
+	pcm_debug_name(substream, name, sizeof(name));
 	for (cnt = 0, idx = log->idx; cnt < XRUN_LOG_CNT; cnt++) {
 		entry = &log->entries[idx];
 		if (entry->period_size == 0)
 			break;
-		snd_printd("hwptr log: %s: %sj=%lu, pos=%ld/%ld/%ld, "
+		snd_printd("hwptr log: %s: j=%lu, pos=%ld/%ld/%ld, "
 			   "hwptr=%ld/%ld\n",
-			   name, entry->in_interrupt ? "[Q] " : "",
-			   entry->jiffies,
-			   (unsigned long)entry->pos,
+			   name, entry->jiffies, (unsigned long)entry->pos,
 			   (unsigned long)entry->period_size,
 			   (unsigned long)entry->buffer_size,
 			   (unsigned long)entry->old_hw_ptr,
@@ -269,7 +262,7 @@ static void xrun_log_show(struct snd_pcm_substream *substream)
 #else /* ! CONFIG_SND_PCM_XRUN_DEBUG */
 
 #define hw_ptr_error(substream, fmt, args...) do { } while (0)
-#define xrun_log(substream, pos, in_interrupt)	do { } while (0)
+#define xrun_log(substream, pos)	do { } while (0)
 #define xrun_log_show(substream)	do { } while (0)
 
 #endif
@@ -322,7 +315,7 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 	if (pos >= runtime->buffer_size) {
 		if (printk_ratelimit()) {
 			char name[16];
-			snd_pcm_debug_name(substream, name, sizeof(name));
+			pcm_debug_name(substream, name, sizeof(name));
 			xrun_log_show(substream);
 			snd_printd(KERN_ERR  "BUG: %s, pos = %ld, "
 				   "buffer size = %ld, period size = %ld\n",
@@ -333,7 +326,7 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 	}
 	pos -= pos % runtime->min_align;
 	if (xrun_debug(substream, XRUN_DEBUG_LOG))
-		xrun_log(substream, pos, in_interrupt);
+		xrun_log(substream, pos);
 	hw_base = runtime->hw_ptr_base;
 	new_hw_ptr = hw_base + pos;
 	if (in_interrupt) {
@@ -367,7 +360,7 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 	if (xrun_debug(substream, in_interrupt ?
 			XRUN_DEBUG_PERIODUPDATE : XRUN_DEBUG_HWPTRUPDATE)) {
 		char name[16];
-		snd_pcm_debug_name(substream, name, sizeof(name));
+		pcm_debug_name(substream, name, sizeof(name));
 		snd_printd("%s_update: %s: pos=%u/%u/%u, "
 			   "hwptr=%ld/%ld/%ld/%ld\n",
 			   in_interrupt ? "period" : "hwptr",
@@ -380,29 +373,6 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 			   (unsigned long)new_hw_ptr,
 			   (unsigned long)runtime->hw_ptr_base);
 	}
-
-	if (runtime->no_period_wakeup) {
-		snd_pcm_sframes_t xrun_threshold;
-		/*
-		 * Without regular period interrupts, we have to check
-		 * the elapsed time to detect xruns.
-		 */
-		jdelta = jiffies - runtime->hw_ptr_jiffies;
-		if (jdelta < runtime->hw_ptr_buffer_jiffies / 2)
-			goto no_delta_check;
-		hdelta = jdelta - delta * HZ / runtime->rate;
-		xrun_threshold = runtime->hw_ptr_buffer_jiffies / 2 + 1;
-		while (hdelta > xrun_threshold) {
-			delta += runtime->buffer_size;
-			hw_base += runtime->buffer_size;
-			if (hw_base >= runtime->boundary)
-				hw_base = 0;
-			new_hw_ptr = hw_base + pos;
-			hdelta -= runtime->hw_ptr_buffer_jiffies;
-		}
-		goto no_delta_check;
-	}
-
 	/* something must be really wrong */
 	if (delta >= runtime->buffer_size + runtime->period_size) {
 		hw_ptr_error(substream,
@@ -472,7 +442,6 @@ static int snd_pcm_update_hw_ptr0(struct snd_pcm_substream *substream,
 			     (long)old_hw_ptr);
 	}
 
- no_delta_check:
 	if (runtime->status->hw_ptr == new_hw_ptr)
 		return 0;
 
@@ -1759,18 +1728,8 @@ static int wait_for_avail(struct snd_pcm_substream *substream,
 	wait_queue_t wait;
 	int err = 0;
 	snd_pcm_uframes_t avail = 0;
-	long wait_time, tout;
+	long tout;
 
-	if (runtime->no_period_wakeup)
-		wait_time = MAX_SCHEDULE_TIMEOUT;
-	else {
-		wait_time = 10;
-		if (runtime->rate) {
-			long t = runtime->period_size * 2 / runtime->rate;
-			wait_time = max(t, wait_time);
-		}
-		wait_time = msecs_to_jiffies(wait_time * 1000);
-	}
 	init_waitqueue_entry(&wait, current);
 	add_wait_queue(&runtime->tsleep, &wait);
 	for (;;) {
@@ -1778,8 +1737,9 @@ static int wait_for_avail(struct snd_pcm_substream *substream,
 			err = -ERESTARTSYS;
 			break;
 		}
+		set_current_state(TASK_INTERRUPTIBLE);
 		snd_pcm_stream_unlock_irq(substream);
-		tout = schedule_timeout_interruptible(wait_time);
+		tout = schedule_timeout(msecs_to_jiffies(10000));
 		snd_pcm_stream_lock_irq(substream);
 		switch (runtime->status->state) {
 		case SNDRV_PCM_STATE_SUSPENDED:

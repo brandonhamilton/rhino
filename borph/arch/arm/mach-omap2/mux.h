@@ -11,6 +11,7 @@
 #include "mux2430.h"
 #include "mux34xx.h"
 #include "mux44xx.h"
+#include "mux81xx.h"
 
 #define OMAP_MUX_TERMINATOR	0xffff
 
@@ -159,6 +160,7 @@ struct omap_board_mux {
 	u16	value;
 };
 
+#define OMAP_DEVICE_PAD_ENABLED		BIT(7)	/* Not needed for board-*.c */
 #define OMAP_DEVICE_PAD_REMUX		BIT(1)	/* Dynamically remux a pad,
 						   needs enable, idle and off
 						   values */
@@ -185,12 +187,6 @@ struct omap_device_pad {
 };
 
 struct omap_hwmod_mux_info;
-
-#define OMAP_MUX_STATIC(signal, mode)					\
-{									\
-	.name	= (signal),						\
-	.enable	= (mode),						\
-}
 
 #if defined(CONFIG_OMAP_MUX)
 
@@ -323,12 +319,16 @@ int omap3_mux_init(struct omap_board_mux *board_mux, int flags);
 
 /**
  * omap4_mux_init() - initialize mux system with board specific set
- * @board_subset:	Board specific mux table
- * @board_wkup_subset:	Board specific mux table for wakeup instance
+ * @board_mux:		Board specific mux table
  * @flags:		OMAP package type used for the board
  */
-int omap4_mux_init(struct omap_board_mux *board_subset,
-	struct omap_board_mux *board_wkup_subset, int flags);
+int omap4_mux_init(struct omap_board_mux *board_mux, int flags);
+
+/**
+ * ti81xx_mux_init() - initialize mux system along with board specific set
+ * @board_mux:		Board specific mux table
+ */
+int ti81xx_mux_init(struct omap_board_mux *board_mux);
 
 /**
  * omap_mux_init - private mux init function, do not call

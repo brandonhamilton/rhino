@@ -89,11 +89,12 @@ static int __init init_ts5500_map(void)
 	}
 
 	mymtd->owner = THIS_MODULE;
-	mtd_device_register(mymtd, ts5500_partitions, NUM_PARTITIONS);
+	add_mtd_partitions(mymtd, ts5500_partitions, NUM_PARTITIONS);
 
 	return 0;
 
 err1:
+	map_destroy(mymtd);
 	iounmap(ts5500_map.virt);
 err2:
 	return rc;
@@ -102,7 +103,7 @@ err2:
 static void __exit cleanup_ts5500_map(void)
 {
 	if (mymtd) {
-		mtd_device_unregister(mymtd);
+		del_mtd_partitions(mymtd);
 		map_destroy(mymtd);
 	}
 

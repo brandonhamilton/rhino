@@ -107,6 +107,20 @@ badkey:
 	goto out;
 }
 
+static void authenc_chain(struct scatterlist *head, struct scatterlist *sg,
+			  int chain)
+{
+	if (chain) {
+		head->length += sg->length;
+		sg = scatterwalk_sg_next(sg);
+	}
+
+	if (sg)
+		scatterwalk_sg_chain(head, 2, sg);
+	else
+		sg_mark_end(head);
+}
+
 static void authenc_geniv_ahash_update_done(struct crypto_async_request *areq,
 					    int err)
 {
@@ -331,7 +345,7 @@ static int crypto_authenc_genicv(struct aead_request *req, u8 *iv,
 	if (ivsize) {
 		sg_init_table(cipher, 2);
 		sg_set_buf(cipher, iv, ivsize);
-		scatterwalk_crypto_chain(cipher, dst, vdst == iv + ivsize, 2);
+		authenc_chain(cipher, dst, vdst == iv + ivsize);
 		dst = cipher;
 		cryptlen += ivsize;
 	}
@@ -340,7 +354,7 @@ static int crypto_authenc_genicv(struct aead_request *req, u8 *iv,
 		authenc_ahash_fn = crypto_authenc_ahash;
 		sg_init_table(asg, 2);
 		sg_set_page(asg, sg_page(assoc), assoc->length, assoc->offset);
-		scatterwalk_crypto_chain(asg, dst, 0, 2);
+		authenc_chain(asg, dst, 0);
 		dst = asg;
 		cryptlen += req->assoclen;
 	}
@@ -485,7 +499,7 @@ static int crypto_authenc_iverify(struct aead_request *req, u8 *iv,
 	if (ivsize) {
 		sg_init_table(cipher, 2);
 		sg_set_buf(cipher, iv, ivsize);
-		scatterwalk_crypto_chain(cipher, src, vsrc == iv + ivsize, 2);
+		authenc_chain(cipher, src, vsrc == iv + ivsize);
 		src = cipher;
 		cryptlen += ivsize;
 	}
@@ -494,7 +508,7 @@ static int crypto_authenc_iverify(struct aead_request *req, u8 *iv,
 		authenc_ahash_fn = crypto_authenc_ahash;
 		sg_init_table(asg, 2);
 		sg_set_page(asg, sg_page(assoc), assoc->length, assoc->offset);
-		scatterwalk_crypto_chain(asg, src, 0, 2);
+		authenc_chain(asg, src, 0);
 		src = asg;
 		cryptlen += req->assoclen;
 	}

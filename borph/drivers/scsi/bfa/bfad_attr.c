@@ -25,7 +25,7 @@
 /*
  * FC transport template entry, get SCSI target port ID.
  */
-static void
+void
 bfad_im_get_starget_port_id(struct scsi_target *starget)
 {
 	struct Scsi_Host *shost;
@@ -40,7 +40,7 @@ bfad_im_get_starget_port_id(struct scsi_target *starget)
 	bfad = im_port->bfad;
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 
-	itnim = bfad_get_itnim(im_port, starget->id);
+	itnim = bfad_os_get_itnim(im_port, starget->id);
 	if (itnim)
 		fc_id = bfa_fcs_itnim_get_fcid(&itnim->fcs_itnim);
 
@@ -51,7 +51,7 @@ bfad_im_get_starget_port_id(struct scsi_target *starget)
 /*
  * FC transport template entry, get SCSI target nwwn.
  */
-static void
+void
 bfad_im_get_starget_node_name(struct scsi_target *starget)
 {
 	struct Scsi_Host *shost;
@@ -66,7 +66,7 @@ bfad_im_get_starget_node_name(struct scsi_target *starget)
 	bfad = im_port->bfad;
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 
-	itnim = bfad_get_itnim(im_port, starget->id);
+	itnim = bfad_os_get_itnim(im_port, starget->id);
 	if (itnim)
 		node_name = bfa_fcs_itnim_get_nwwn(&itnim->fcs_itnim);
 
@@ -77,7 +77,7 @@ bfad_im_get_starget_node_name(struct scsi_target *starget)
 /*
  * FC transport template entry, get SCSI target pwwn.
  */
-static void
+void
 bfad_im_get_starget_port_name(struct scsi_target *starget)
 {
 	struct Scsi_Host *shost;
@@ -92,7 +92,7 @@ bfad_im_get_starget_port_name(struct scsi_target *starget)
 	bfad = im_port->bfad;
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 
-	itnim = bfad_get_itnim(im_port, starget->id);
+	itnim = bfad_os_get_itnim(im_port, starget->id);
 	if (itnim)
 		port_name = bfa_fcs_itnim_get_pwwn(&itnim->fcs_itnim);
 
@@ -103,7 +103,7 @@ bfad_im_get_starget_port_name(struct scsi_target *starget)
 /*
  * FC transport template entry, get SCSI host port ID.
  */
-static void
+void
 bfad_im_get_host_port_id(struct Scsi_Host *shost)
 {
 	struct bfad_im_port_s *im_port =
@@ -111,7 +111,7 @@ bfad_im_get_host_port_id(struct Scsi_Host *shost)
 	struct bfad_port_s    *port = im_port->port;
 
 	fc_host_port_id(shost) =
-			bfa_hton3b(bfa_fcs_lport_get_fcid(port->fcs_port));
+			bfa_os_hton3b(bfa_fcs_lport_get_fcid(port->fcs_port));
 }
 
 /*
@@ -217,9 +217,6 @@ bfad_im_get_host_speed(struct Scsi_Host *shost)
 	switch (attr.speed) {
 	case BFA_PORT_SPEED_10GBPS:
 		fc_host_speed(shost) = FC_PORTSPEED_10GBIT;
-		break;
-	case BFA_PORT_SPEED_16GBPS:
-		fc_host_speed(shost) = FC_PORTSPEED_16GBIT;
 		break;
 	case BFA_PORT_SPEED_8GBPS:
 		fc_host_speed(shost) = FC_PORTSPEED_8GBIT;
@@ -490,7 +487,7 @@ bfad_im_vport_delete(struct fc_vport *fc_vport)
 	wait_for_completion(vport->comp_del);
 
 free_scsi_host:
-	bfad_scsi_host_free(bfad, im_port);
+	bfad_os_scsi_host_free(bfad, im_port);
 
 	kfree(vport);
 
@@ -583,8 +580,6 @@ struct fc_function_template bfad_im_fc_function_template = {
 	.vport_create = bfad_im_vport_create,
 	.vport_delete = bfad_im_vport_delete,
 	.vport_disable = bfad_im_vport_disable,
-	.bsg_request = bfad_im_bsg_request,
-	.bsg_timeout = bfad_im_bsg_timeout,
 };
 
 struct fc_function_template bfad_im_vport_fc_function_template = {
@@ -679,10 +674,8 @@ bfad_im_model_desc_show(struct device *dev, struct device_attribute *attr,
 	struct bfad_s *bfad = im_port->bfad;
 	char model[BFA_ADAPTER_MODEL_NAME_LEN];
 	char model_descr[BFA_ADAPTER_MODEL_DESCR_LEN];
-	int nports = 0;
 
 	bfa_get_adapter_model(&bfad->bfa, model);
-	nports = bfa_get_nports(&bfad->bfa);
 	if (!strcmp(model, "Brocade-425"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
 			"Brocade 4Gbps PCIe dual port FC HBA");
@@ -691,10 +684,10 @@ bfad_im_model_desc_show(struct device *dev, struct device_attribute *attr,
 			"Brocade 8Gbps PCIe dual port FC HBA");
 	else if (!strcmp(model, "Brocade-42B"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 4Gbps PCIe dual port FC HBA for HP");
+			"HP 4Gbps PCIe dual port FC HBA");
 	else if (!strcmp(model, "Brocade-82B"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 8Gbps PCIe dual port FC HBA for HP");
+			"HP 8Gbps PCIe dual port FC HBA");
 	else if (!strcmp(model, "Brocade-1010"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
 			"Brocade 10Gbps single port CNA");
@@ -703,7 +696,7 @@ bfad_im_model_desc_show(struct device *dev, struct device_attribute *attr,
 			"Brocade 10Gbps dual port CNA");
 	else if (!strcmp(model, "Brocade-1007"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 10Gbps CNA for IBM Blade Center");
+			"Brocade 10Gbps CNA");
 	else if (!strcmp(model, "Brocade-415"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
 			"Brocade 4Gbps PCIe single port FC HBA");
@@ -712,45 +705,17 @@ bfad_im_model_desc_show(struct device *dev, struct device_attribute *attr,
 			"Brocade 8Gbps PCIe single port FC HBA");
 	else if (!strcmp(model, "Brocade-41B"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 4Gbps PCIe single port FC HBA for HP");
+			"HP 4Gbps PCIe single port FC HBA");
 	else if (!strcmp(model, "Brocade-81B"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 8Gbps PCIe single port FC HBA for HP");
+			"HP 8Gbps PCIe single port FC HBA");
 	else if (!strcmp(model, "Brocade-804"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 8Gbps FC HBA for HP Bladesystem C-class");
-	else if (!strcmp(model, "Brocade-902") ||
-		 !strcmp(model, "Brocade-1741"))
+			"HP Bladesystem C-class 8Gbps FC HBA");
+	else if (!strcmp(model, "Brocade-902"))
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-			"Brocade 10Gbps CNA for Dell M-Series Blade Servers");
-	else if (strstr(model, "Brocade-1560")) {
-		if (nports == 1)
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 16Gbps PCIe single port FC HBA");
-		else
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 16Gbps PCIe dual port FC HBA");
-	} else if (strstr(model, "Brocade-1710")) {
-		if (nports == 1)
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 10Gbps single port CNA");
-		else
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 10Gbps dual port CNA");
-	} else if (strstr(model, "Brocade-1860")) {
-		if (nports == 1 && bfa_ioc_is_cna(&bfad->bfa.ioc))
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 10Gbps single port CNA");
-		else if (nports == 1 && !bfa_ioc_is_cna(&bfad->bfa.ioc))
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 16Gbps PCIe single port FC HBA");
-		else if (nports == 2 && bfa_ioc_is_cna(&bfad->bfa.ioc))
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 10Gbps dual port CNA");
-		else if (nports == 2 && !bfa_ioc_is_cna(&bfad->bfa.ioc))
-			snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
-				"Brocade 16Gbps PCIe dual port FC HBA");
-	} else
+			"Brocade 10Gbps CNA");
+	else
 		snprintf(model_descr, BFA_ADAPTER_MODEL_DESCR_LEN,
 			"Invalid Model");
 

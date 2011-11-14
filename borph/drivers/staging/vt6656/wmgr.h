@@ -218,7 +218,7 @@ typedef enum tagWMAC_POWER_MODE {
 
 
 
-// Tx Management Packet descriptor
+// Tx Managment Packet descriptor
 typedef struct tagSTxMgmtPacket {
 
     PUWLAN_80211HDR     p80211Header;
@@ -228,7 +228,7 @@ typedef struct tagSTxMgmtPacket {
 } STxMgmtPacket, *PSTxMgmtPacket;
 
 
-// Rx Management Packet descriptor
+// Rx Managment Packet descriptor
 typedef struct tagSRxMgmtPacket {
 
     PUWLAN_80211HDR     p80211Header;

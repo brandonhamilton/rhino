@@ -92,14 +92,13 @@ unsigned long task_vsize(struct mm_struct *mm)
 	return vsize;
 }
 
-unsigned long task_statm(struct mm_struct *mm,
-			 unsigned long *shared, unsigned long *text,
-			 unsigned long *data, unsigned long *resident)
+int task_statm(struct mm_struct *mm, int *shared, int *text,
+	       int *data, int *resident)
 {
 	struct vm_area_struct *vma;
 	struct vm_region *region;
 	struct rb_node *p;
-	unsigned long size = kobjsize(mm);
+	int size = kobjsize(mm);
 
 	down_read(&mm->mmap_sem);
 	for (p = rb_first(&mm->mm_rb); p; p = rb_next(p)) {
@@ -199,13 +198,13 @@ static void *m_start(struct seq_file *m, loff_t *pos)
 	/* pin the task and mm whilst we play with them */
 	priv->task = get_pid_task(priv->pid, PIDTYPE_PID);
 	if (!priv->task)
-		return ERR_PTR(-ESRCH);
+		return NULL;
 
 	mm = mm_for_maps(priv->task);
-	if (!mm || IS_ERR(mm)) {
+	if (!mm) {
 		put_task_struct(priv->task);
 		priv->task = NULL;
-		return mm;
+		return NULL;
 	}
 	down_read(&mm->mmap_sem);
 

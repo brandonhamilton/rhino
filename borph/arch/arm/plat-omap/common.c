@@ -21,14 +21,14 @@
 #include <plat/vram.h>
 #include <plat/dsp.h>
 
+#include <plat/ti81xx_ram.h>
 
 #define NO_LENGTH_CHECK 0xffffffff
 
-struct omap_board_config_kernel *omap_board_config __initdata;
+struct omap_board_config_kernel *omap_board_config;
 int omap_board_config_size;
 
-static const void *__init get_config(u16 tag, size_t len,
-		int skip, size_t *len_out)
+static const void *get_config(u16 tag, size_t len, int skip, size_t *len_out)
 {
 	struct omap_board_config_kernel *kinfo = NULL;
 	int i;
@@ -50,14 +50,21 @@ static const void *__init get_config(u16 tag, size_t len,
 	return kinfo->data;
 }
 
-const void *__init __omap_get_config(u16 tag, size_t len, int nr)
+const void *__omap_get_config(u16 tag, size_t len, int nr)
 {
         return get_config(tag, len, nr, NULL);
 }
+EXPORT_SYMBOL(__omap_get_config);
 
-const void *__init omap_get_var_config(u16 tag, size_t *len)
+const void *omap_get_var_config(u16 tag, size_t *len)
 {
         return get_config(tag, NO_LENGTH_CHECK, 0, len);
+}
+EXPORT_SYMBOL(omap_get_var_config);
+
+void  __init ti81xx_reserve(void)
+{
+   ti81xxfb_reserve_sdram_memblock();
 }
 
 void __init omap_reserve(void)

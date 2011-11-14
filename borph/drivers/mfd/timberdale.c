@@ -40,7 +40,6 @@
 #include <linux/spi/mc33880.h>
 
 #include <media/timb_radio.h>
-#include <media/timb_video.h>
 
 #include <linux/timb_dma.h>
 
@@ -247,23 +246,7 @@ static const __devinitconst struct resource timberdale_uartlite_resources[] = {
 	},
 };
 
-static __devinitdata struct i2c_board_info timberdale_adv7180_i2c_board_info = {
-	/* Requires jumper JP9 to be off */
-	I2C_BOARD_INFO("adv7180", 0x42 >> 1),
-	.irq = IRQ_TIMBERDALE_ADV7180
-};
-
-static __devinitdata struct timb_video_platform_data
-	timberdale_video_platform_data = {
-	.dma_channel = DMA_VIDEO_RX,
-	.i2c_adapter = 0,
-	.encoder = {
-		.info = &timberdale_adv7180_i2c_board_info
-	}
-};
-
-static const __devinitconst struct resource
-timberdale_radio_resources[] = {
+static const __devinitconst struct resource timberdale_radio_resources[] = {
 	{
 		.start	= RDSOFFSET,
 		.end	= RDSEND,
@@ -287,20 +270,14 @@ static __devinitdata struct i2c_board_info timberdale_saa7706_i2c_board_info = {
 static __devinitdata struct timb_radio_platform_data
 	timberdale_radio_platform_data = {
 	.i2c_adapter = 0,
-	.tuner = &timberdale_tef6868_i2c_board_info,
-	.dsp = &timberdale_saa7706_i2c_board_info
-};
-
-static const __devinitconst struct resource timberdale_video_resources[] = {
-	{
-		.start	= LOGIWOFFSET,
-		.end	= LOGIWEND,
-		.flags	= IORESOURCE_MEM,
+	.tuner = {
+		.module_name = "tef6862",
+		.info = &timberdale_tef6868_i2c_board_info
 	},
-	/*
-	note that the "frame buffer" is located in DMA area
-	starting at 0x1200000
-	*/
+	.dsp = {
+		.module_name = "saa7706h",
+		.info = &timberdale_saa7706_i2c_board_info
+	}
 };
 
 static __devinitdata struct timb_dma_platform_data timb_dma_platform_data = {
@@ -381,7 +358,7 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg0[] = {
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
 		.platform_data = &timb_dma_platform_data,
-		.pdata_size = sizeof(timb_dma_platform_data),
+		.data_size = sizeof(timb_dma_platform_data),
 	},
 	{
 		.name = "timb-uart",
@@ -393,42 +370,35 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg0[] = {
 		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
 		.resources = timberdale_xiic_resources,
 		.platform_data = &timberdale_xiic_platform_data,
-		.pdata_size = sizeof(timberdale_xiic_platform_data),
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
 		.num_resources = ARRAY_SIZE(timberdale_gpio_resources),
 		.resources = timberdale_gpio_resources,
 		.platform_data = &timberdale_gpio_platform_data,
-		.pdata_size = sizeof(timberdale_gpio_platform_data),
-	},
-	{
-		.name = "timb-video",
-		.num_resources = ARRAY_SIZE(timberdale_video_resources),
-		.resources = timberdale_video_resources,
-		.platform_data = &timberdale_video_platform_data,
-		.pdata_size = sizeof(timberdale_video_platform_data),
+		.data_size = sizeof(timberdale_gpio_platform_data),
 	},
 	{
 		.name = "timb-radio",
 		.num_resources = ARRAY_SIZE(timberdale_radio_resources),
 		.resources = timberdale_radio_resources,
 		.platform_data = &timberdale_radio_platform_data,
-		.pdata_size = sizeof(timberdale_radio_platform_data),
+		.data_size = sizeof(timberdale_radio_platform_data),
 	},
 	{
 		.name = "xilinx_spi",
 		.num_resources = ARRAY_SIZE(timberdale_spi_resources),
 		.resources = timberdale_spi_resources,
 		.platform_data = &timberdale_xspi_platform_data,
-		.pdata_size = sizeof(timberdale_xspi_platform_data),
+		.data_size = sizeof(timberdale_xspi_platform_data),
 	},
 	{
 		.name = "ks8842",
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
 		.platform_data = &timberdale_ks8842_platform_data,
-		.pdata_size = sizeof(timberdale_ks8842_platform_data),
+		.data_size = sizeof(timberdale_ks8842_platform_data)
 	},
 };
 
@@ -438,7 +408,7 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
 		.platform_data = &timb_dma_platform_data,
-		.pdata_size = sizeof(timb_dma_platform_data),
+		.data_size = sizeof(timb_dma_platform_data),
 	},
 	{
 		.name = "timb-uart",
@@ -455,14 +425,14 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
 		.resources = timberdale_xiic_resources,
 		.platform_data = &timberdale_xiic_platform_data,
-		.pdata_size = sizeof(timberdale_xiic_platform_data),
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
 		.num_resources = ARRAY_SIZE(timberdale_gpio_resources),
 		.resources = timberdale_gpio_resources,
 		.platform_data = &timberdale_gpio_platform_data,
-		.pdata_size = sizeof(timberdale_gpio_platform_data),
+		.data_size = sizeof(timberdale_gpio_platform_data),
 	},
 	{
 		.name = "timb-mlogicore",
@@ -470,32 +440,25 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 		.resources = timberdale_mlogicore_resources,
 	},
 	{
-		.name = "timb-video",
-		.num_resources = ARRAY_SIZE(timberdale_video_resources),
-		.resources = timberdale_video_resources,
-		.platform_data = &timberdale_video_platform_data,
-		.pdata_size = sizeof(timberdale_video_platform_data),
-	},
-	{
 		.name = "timb-radio",
 		.num_resources = ARRAY_SIZE(timberdale_radio_resources),
 		.resources = timberdale_radio_resources,
 		.platform_data = &timberdale_radio_platform_data,
-		.pdata_size = sizeof(timberdale_radio_platform_data),
+		.data_size = sizeof(timberdale_radio_platform_data),
 	},
 	{
 		.name = "xilinx_spi",
 		.num_resources = ARRAY_SIZE(timberdale_spi_resources),
 		.resources = timberdale_spi_resources,
 		.platform_data = &timberdale_xspi_platform_data,
-		.pdata_size = sizeof(timberdale_xspi_platform_data),
+		.data_size = sizeof(timberdale_xspi_platform_data),
 	},
 	{
 		.name = "ks8842",
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
 		.platform_data = &timberdale_ks8842_platform_data,
-		.pdata_size = sizeof(timberdale_ks8842_platform_data),
+		.data_size = sizeof(timberdale_ks8842_platform_data)
 	},
 };
 
@@ -505,7 +468,7 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg2[] = {
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
 		.platform_data = &timb_dma_platform_data,
-		.pdata_size = sizeof(timb_dma_platform_data),
+		.data_size = sizeof(timb_dma_platform_data),
 	},
 	{
 		.name = "timb-uart",
@@ -517,35 +480,28 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg2[] = {
 		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
 		.resources = timberdale_xiic_resources,
 		.platform_data = &timberdale_xiic_platform_data,
-		.pdata_size = sizeof(timberdale_xiic_platform_data),
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
 		.num_resources = ARRAY_SIZE(timberdale_gpio_resources),
 		.resources = timberdale_gpio_resources,
 		.platform_data = &timberdale_gpio_platform_data,
-		.pdata_size = sizeof(timberdale_gpio_platform_data),
-	},
-	{
-		.name = "timb-video",
-		.num_resources = ARRAY_SIZE(timberdale_video_resources),
-		.resources = timberdale_video_resources,
-		.platform_data = &timberdale_video_platform_data,
-		.pdata_size = sizeof(timberdale_video_platform_data),
+		.data_size = sizeof(timberdale_gpio_platform_data),
 	},
 	{
 		.name = "timb-radio",
 		.num_resources = ARRAY_SIZE(timberdale_radio_resources),
 		.resources = timberdale_radio_resources,
 		.platform_data = &timberdale_radio_platform_data,
-		.pdata_size = sizeof(timberdale_radio_platform_data),
+		.data_size = sizeof(timberdale_radio_platform_data),
 	},
 	{
 		.name = "xilinx_spi",
 		.num_resources = ARRAY_SIZE(timberdale_spi_resources),
 		.resources = timberdale_spi_resources,
 		.platform_data = &timberdale_xspi_platform_data,
-		.pdata_size = sizeof(timberdale_xspi_platform_data),
+		.data_size = sizeof(timberdale_xspi_platform_data),
 	},
 };
 
@@ -555,7 +511,7 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg3[] = {
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
 		.platform_data = &timb_dma_platform_data,
-		.pdata_size = sizeof(timb_dma_platform_data),
+		.data_size = sizeof(timb_dma_platform_data),
 	},
 	{
 		.name = "timb-uart",
@@ -567,42 +523,35 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg3[] = {
 		.num_resources = ARRAY_SIZE(timberdale_ocores_resources),
 		.resources = timberdale_ocores_resources,
 		.platform_data = &timberdale_ocores_platform_data,
-		.pdata_size = sizeof(timberdale_ocores_platform_data),
+		.data_size = sizeof(timberdale_ocores_platform_data),
 	},
 	{
 		.name = "timb-gpio",
 		.num_resources = ARRAY_SIZE(timberdale_gpio_resources),
 		.resources = timberdale_gpio_resources,
 		.platform_data = &timberdale_gpio_platform_data,
-		.pdata_size = sizeof(timberdale_gpio_platform_data),
-	},
-	{
-		.name = "timb-video",
-		.num_resources = ARRAY_SIZE(timberdale_video_resources),
-		.resources = timberdale_video_resources,
-		.platform_data = &timberdale_video_platform_data,
-		.pdata_size = sizeof(timberdale_video_platform_data),
+		.data_size = sizeof(timberdale_gpio_platform_data),
 	},
 	{
 		.name = "timb-radio",
 		.num_resources = ARRAY_SIZE(timberdale_radio_resources),
 		.resources = timberdale_radio_resources,
 		.platform_data = &timberdale_radio_platform_data,
-		.pdata_size = sizeof(timberdale_radio_platform_data),
+		.data_size = sizeof(timberdale_radio_platform_data),
 	},
 	{
 		.name = "xilinx_spi",
 		.num_resources = ARRAY_SIZE(timberdale_spi_resources),
 		.resources = timberdale_spi_resources,
 		.platform_data = &timberdale_xspi_platform_data,
-		.pdata_size = sizeof(timberdale_xspi_platform_data),
+		.data_size = sizeof(timberdale_xspi_platform_data),
 	},
 	{
 		.name = "ks8842",
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
 		.platform_data = &timberdale_ks8842_platform_data,
-		.pdata_size = sizeof(timberdale_ks8842_platform_data),
+		.data_size = sizeof(timberdale_ks8842_platform_data)
 	},
 };
 

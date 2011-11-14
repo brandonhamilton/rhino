@@ -1478,13 +1478,10 @@ void ConfigMainWindow::loadConfig(void)
 	ConfigView::updateListAll();
 }
 
-bool ConfigMainWindow::saveConfig(void)
+void ConfigMainWindow::saveConfig(void)
 {
-	if (conf_write(NULL)) {
+	if (conf_write(NULL))
 		QMessageBox::information(this, "qconf", _("Unable to save configuration!"));
-		return false;
-	}
-	return true;
 }
 
 void ConfigMainWindow::saveConfigAs(void)
@@ -1492,7 +1489,8 @@ void ConfigMainWindow::saveConfigAs(void)
 	QString s = Q3FileDialog::getSaveFileName(conf_get_configname(), NULL, this);
 	if (s.isNull())
 		return;
-	saveConfig();
+	if (conf_write(QFile::encodeName(s)))
+		QMessageBox::information(this, "qconf", _("Unable to save configuration!"));
 }
 
 void ConfigMainWindow::searchConfig(void)
@@ -1645,11 +1643,7 @@ void ConfigMainWindow::closeEvent(QCloseEvent* e)
 	mb.setButtonText(QMessageBox::Cancel, _("Cancel Exit"));
 	switch (mb.exec()) {
 	case QMessageBox::Yes:
-		if (saveConfig())
-			e->accept();
-		else
-			e->ignore();
-		break;
+		conf_write(NULL);
 	case QMessageBox::No:
 		e->accept();
 		break;
@@ -1751,6 +1745,10 @@ int main(int ac, char** av)
 
 	bindtextdomain(PACKAGE, LOCALEDIR);
 	textdomain(PACKAGE);
+
+#ifndef LKC_DIRECT_LINK
+	kconfig_load();
+#endif
 
 	progname = av[0];
 	configApp = new QApplication(ac, av);

@@ -645,7 +645,7 @@ static int set_stream_hw(struct ua101 *ua, struct snd_pcm_substream *substream,
 	err = snd_pcm_hw_constraint_minmax(substream->runtime,
 					   SNDRV_PCM_HW_PARAM_PERIOD_TIME,
 					   1500000 / ua->packets_per_second,
-					   UINT_MAX);
+					   8192000);
 	if (err < 0)
 		return err;
 	err = snd_pcm_hw_constraint_msbits(substream->runtime, 0, 32, 24);

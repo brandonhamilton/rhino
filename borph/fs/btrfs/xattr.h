@@ -37,7 +37,6 @@ extern int btrfs_setxattr(struct dentry *dentry, const char *name,
 extern int btrfs_removexattr(struct dentry *dentry, const char *name);
 
 extern int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
-				     struct inode *inode, struct inode *dir,
-				     const struct qstr *qstr);
+				     struct inode *inode, struct inode *dir);
 
 #endif /* __XATTR__ */

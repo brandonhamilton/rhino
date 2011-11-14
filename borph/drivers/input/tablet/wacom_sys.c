@@ -193,16 +193,16 @@ static int wacom_parse_hid(struct usb_interface *intf, struct hid_descriptor *hi
 			case HID_USAGE_X:
 				if (usage == WCM_DESKTOP) {
 					if (finger) {
-						features->device_type = BTN_TOOL_FINGER;
+						features->device_type = BTN_TOOL_DOUBLETAP;
 						if (features->type == TABLETPC2FG) {
 							/* need to reset back */
 							features->pktlen = WACOM_PKGLEN_TPC2FG;
-							features->device_type = BTN_TOOL_DOUBLETAP;
+							features->device_type = BTN_TOOL_TRIPLETAP;
 						}
 						if (features->type == BAMBOO_PT) {
 							/* need to reset back */
 							features->pktlen = WACOM_PKGLEN_BBTOUCH;
-							features->device_type = BTN_TOOL_DOUBLETAP;
+							features->device_type = BTN_TOOL_TRIPLETAP;
 							features->x_phy =
 								get_unaligned_le16(&report[i + 5]);
 							features->x_max =
@@ -241,11 +241,11 @@ static int wacom_parse_hid(struct usb_interface *intf, struct hid_descriptor *hi
 			case HID_USAGE_Y:
 				if (usage == WCM_DESKTOP) {
 					if (finger) {
-						features->device_type = BTN_TOOL_FINGER;
+						features->device_type = BTN_TOOL_DOUBLETAP;
 						if (features->type == TABLETPC2FG) {
 							/* need to reset back */
 							features->pktlen = WACOM_PKGLEN_TPC2FG;
-							features->device_type = BTN_TOOL_DOUBLETAP;
+							features->device_type = BTN_TOOL_TRIPLETAP;
 							features->y_max =
 								get_unaligned_le16(&report[i + 3]);
 							features->y_phy =
@@ -254,7 +254,7 @@ static int wacom_parse_hid(struct usb_interface *intf, struct hid_descriptor *hi
 						} else if (features->type == BAMBOO_PT) {
 							/* need to reset back */
 							features->pktlen = WACOM_PKGLEN_BBTOUCH;
-							features->device_type = BTN_TOOL_DOUBLETAP;
+							features->device_type = BTN_TOOL_TRIPLETAP;
 							features->y_phy =
 								get_unaligned_le16(&report[i + 3]);
 							features->y_max =
@@ -519,7 +519,7 @@ static int wacom_probe(struct usb_interface *intf, const struct usb_device_id *i
 	/* Retrieve the physical and logical size for OEM devices */
 	error = wacom_retrieve_hid_descriptor(intf, features);
 	if (error)
-		goto fail3;
+		goto fail2;
 
 	wacom_setup_device_quirks(features);
 

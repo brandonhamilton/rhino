@@ -1383,7 +1383,7 @@ force_link:
 		if (ep == NULL || ep->autoneg == AUTONEG_ENABLE) {
 			hp->sw_bmcr = BMCR_SPEED100;
 		} else {
-			if (ethtool_cmd_speed(ep) == SPEED_100)
+			if (ep->speed == SPEED_100)
 				hp->sw_bmcr = BMCR_SPEED100;
 			else
 				hp->sw_bmcr = 0;
@@ -1524,11 +1524,17 @@ static int happy_meal_init(struct happy_meal *hp)
 	} else if ((hp->dev->flags & IFF_PROMISC) == 0) {
 		u16 hash_table[4];
 		struct netdev_hw_addr *ha;
+		char *addrs;
 		u32 crc;
 
 		memset(hash_table, 0, sizeof(hash_table));
 		netdev_for_each_mc_addr(ha, hp->dev) {
-			crc = ether_crc_le(6, ha->addr);
+			addrs = ha->addr;
+
+			if (!(*addrs & 1))
+				continue;
+
+			crc = ether_crc_le(6, addrs);
 			crc >>= 26;
 			hash_table[crc >> 4] |= 1 << (crc & 0xf);
 		}
@@ -2260,7 +2266,7 @@ static netdev_tx_t happy_meal_start_xmit(struct sk_buff *skb,
 
 	tx_flags = TXFLAG_OWN;
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		const u32 csum_start_off = skb_checksum_start_offset(skb);
+		const u32 csum_start_off = skb_transport_offset(skb);
 		const u32 csum_stuff_off = csum_start_off + skb->csum_offset;
 
 		tx_flags = (TXFLAG_OWN | TXFLAG_CSENABLE |
@@ -2355,6 +2361,7 @@ static void happy_meal_set_multicast(struct net_device *dev)
 	struct happy_meal *hp = netdev_priv(dev);
 	void __iomem *bregs = hp->bigmacregs;
 	struct netdev_hw_addr *ha;
+	char *addrs;
 	u32 crc;
 
 	spin_lock_irq(&hp->happy_lock);
@@ -2372,7 +2379,12 @@ static void happy_meal_set_multicast(struct net_device *dev)
 
 		memset(hash_table, 0, sizeof(hash_table));
 		netdev_for_each_mc_addr(ha, dev) {
-			crc = ether_crc_le(6, ha->addr);
+			addrs = ha->addr;
+
+			if (!(*addrs & 1))
+				continue;
+
+			crc = ether_crc_le(6, addrs);
 			crc >>= 26;
 			hash_table[crc >> 4] |= 1 << (crc & 0xf);
 		}
@@ -2389,7 +2401,6 @@ static void happy_meal_set_multicast(struct net_device *dev)
 static int hme_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	struct happy_meal *hp = netdev_priv(dev);
-	u32 speed;
 
 	cmd->supported =
 		(SUPPORTED_10baseT_Half | SUPPORTED_10baseT_Full |
@@ -2409,9 +2420,10 @@ static int hme_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 
 	if (hp->sw_bmcr & BMCR_ANENABLE) {
 		cmd->autoneg = AUTONEG_ENABLE;
-		speed = ((hp->sw_lpa & (LPA_100HALF | LPA_100FULL)) ?
-			 SPEED_100 : SPEED_10);
-		if (speed == SPEED_100)
+		cmd->speed =
+			(hp->sw_lpa & (LPA_100HALF | LPA_100FULL)) ?
+			SPEED_100 : SPEED_10;
+		if (cmd->speed == SPEED_100)
 			cmd->duplex =
 				(hp->sw_lpa & (LPA_100FULL)) ?
 				DUPLEX_FULL : DUPLEX_HALF;
@@ -2421,12 +2433,13 @@ static int hme_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 				DUPLEX_FULL : DUPLEX_HALF;
 	} else {
 		cmd->autoneg = AUTONEG_DISABLE;
-		speed = (hp->sw_bmcr & BMCR_SPEED100) ? SPEED_100 : SPEED_10;
+		cmd->speed =
+			(hp->sw_bmcr & BMCR_SPEED100) ?
+			SPEED_100 : SPEED_10;
 		cmd->duplex =
 			(hp->sw_bmcr & BMCR_FULLDPLX) ?
 			DUPLEX_FULL : DUPLEX_HALF;
 	}
-	ethtool_cmd_speed_set(cmd, speed);
 	return 0;
 }
 
@@ -2439,8 +2452,8 @@ static int hme_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	    cmd->autoneg != AUTONEG_DISABLE)
 		return -EINVAL;
 	if (cmd->autoneg == AUTONEG_DISABLE &&
-	    ((ethtool_cmd_speed(cmd) != SPEED_100 &&
-	      ethtool_cmd_speed(cmd) != SPEED_10) ||
+	    ((cmd->speed != SPEED_100 &&
+	      cmd->speed != SPEED_10) ||
 	     (cmd->duplex != DUPLEX_HALF &&
 	      cmd->duplex != DUPLEX_FULL)))
 		return -EINVAL;
@@ -2775,8 +2788,7 @@ static int __devinit happy_meal_sbus_probe_one(struct platform_device *op, int i
 	dev->ethtool_ops = &hme_ethtool_ops;
 
 	/* Happy Meal can do it all... */
-	dev->hw_features = NETIF_F_SG | NETIF_F_HW_CSUM;
-	dev->features |= dev->hw_features | NETIF_F_RXCSUM;
+	dev->features |= NETIF_F_SG | NETIF_F_HW_CSUM;
 
 	dev->irq = op->archdata.irqs[0];
 
@@ -3101,8 +3113,7 @@ static int __devinit happy_meal_pci_probe(struct pci_dev *pdev,
 	dev->dma = 0;
 
 	/* Happy Meal can do it all... */
-	dev->hw_features = NETIF_F_SG | NETIF_F_HW_CSUM;
-	dev->features |= dev->hw_features | NETIF_F_RXCSUM;
+	dev->features |= NETIF_F_SG | NETIF_F_HW_CSUM;
 
 #if defined(CONFIG_SBUS) && defined(CONFIG_PCI)
 	/* Hook up PCI register/descriptor accessors. */
@@ -3226,18 +3237,11 @@ static void happy_meal_pci_exit(void)
 #endif
 
 #ifdef CONFIG_SBUS
-static const struct of_device_id hme_sbus_match[];
-static int __devinit hme_sbus_probe(struct platform_device *op)
+static int __devinit hme_sbus_probe(struct platform_device *op, const struct of_device_id *match)
 {
-	const struct of_device_id *match;
 	struct device_node *dp = op->dev.of_node;
 	const char *model = of_get_property(dp, "model", NULL);
-	int is_qfe;
-
-	match = of_match_device(hme_sbus_match, &op->dev);
-	if (!match)
-		return -EINVAL;
-	is_qfe = (match->data != NULL);
+	int is_qfe = (match->data != NULL);
 
 	if (!is_qfe && model && !strcmp(model, "SUNW,sbus-qfe"))
 		is_qfe = 1;
@@ -3288,7 +3292,7 @@ static const struct of_device_id hme_sbus_match[] = {
 
 MODULE_DEVICE_TABLE(of, hme_sbus_match);
 
-static struct platform_driver hme_sbus_driver = {
+static struct of_platform_driver hme_sbus_driver = {
 	.driver = {
 		.name = "hme",
 		.owner = THIS_MODULE,
@@ -3302,7 +3306,7 @@ static int __init happy_meal_sbus_init(void)
 {
 	int err;
 
-	err = platform_driver_register(&hme_sbus_driver);
+	err = of_register_platform_driver(&hme_sbus_driver);
 	if (!err)
 		err = quattro_sbus_register_irqs();
 
@@ -3311,7 +3315,7 @@ static int __init happy_meal_sbus_init(void)
 
 static void happy_meal_sbus_exit(void)
 {
-	platform_driver_unregister(&hme_sbus_driver);
+	of_unregister_platform_driver(&hme_sbus_driver);
 	quattro_sbus_free_irqs();
 
 	while (qfe_sbus_list) {

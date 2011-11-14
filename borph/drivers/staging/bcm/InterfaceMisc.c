@@ -1,5 +1,17 @@
 #include "headers.h"
 
+#ifndef BCM_SHM_INTERFACE
+
+PS_INTERFACE_ADAPTER
+InterfaceAdapterGet(PMINI_ADAPTER psAdapter)
+{
+	if(psAdapter == NULL)
+	{
+		return NULL;
+	}
+	return (PS_INTERFACE_ADAPTER)(psAdapter->pvInterfaceAdapter);
+}
+
 INT
 InterfaceRDM(PS_INTERFACE_ADAPTER psIntfAdapter,
             UINT addr,
@@ -90,7 +102,7 @@ InterfaceWRM(PS_INTERFACE_ADAPTER psIntfAdapter,
 	if((psIntfAdapter->psAdapter->StopAllXaction == TRUE) && (psIntfAdapter->psAdapter->chip_id >= T3LPB))
 	{
 		BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_OTHERS, WRM, DBG_LVL_ALL,"Currently Xaction is not allowed on the bus...");
-		return -EACCES;
+		return EACCES;
 	}
 
 	if(psIntfAdapter->bSuspended ==TRUE || psIntfAdapter->bPreparingForBusSuspend == TRUE)
@@ -224,7 +236,9 @@ VOID Bcm_kill_all_URBs(PS_INTERFACE_ADAPTER psIntfAdapter)
 	}
 
 	/* Cancel All submitted TX URB's */
-	for(i = 0; i < MAXIMUM_USB_TCB; i++)
+	BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_PRINTK, 0, 0, "Cancelling All Submitted TX Urbs \n");
+
+    for(i = 0; i < MAXIMUM_USB_TCB; i++)
 	{
 		tempUrb = psIntfAdapter->asUsbTcb[i].urb;
 		if(tempUrb)
@@ -233,6 +247,9 @@ VOID Bcm_kill_all_URBs(PS_INTERFACE_ADAPTER psIntfAdapter)
 				usb_kill_urb(tempUrb);
 		}
 	}
+
+
+    BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_PRINTK, 0, 0, "Cancelling All submitted Rx Urbs \n");
 
 	for(i = 0; i < MAXIMUM_USB_RCB; i++)
 	{
@@ -244,11 +261,16 @@ VOID Bcm_kill_all_URBs(PS_INTERFACE_ADAPTER psIntfAdapter)
 		}
 	}
 
+
 	atomic_set(&psIntfAdapter->uNumTcbUsed, 0);
 	atomic_set(&psIntfAdapter->uCurrTcb, 0);
 
 	atomic_set(&psIntfAdapter->uNumRcbUsed, 0);
 	atomic_set(&psIntfAdapter->uCurrRcb, 0);
+
+	BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_PRINTK, 0, 0, "TCB: used- %d cur-%d\n", atomic_read(&psIntfAdapter->uNumTcbUsed), atomic_read(&psIntfAdapter->uCurrTcb));
+	BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_PRINTK, 0, 0, "RCB: used- %d cur-%d\n", atomic_read(&psIntfAdapter->uNumRcbUsed), atomic_read(&psIntfAdapter->uCurrRcb));
+
 }
 
 VOID putUsbSuspend(struct work_struct *work)
@@ -260,6 +282,9 @@ VOID putUsbSuspend(struct work_struct *work)
 
 	if(psIntfAdapter->bSuspended == FALSE)
 		usb_autopm_put_interface(intf);
+	else
+		BCM_DEBUG_PRINT(psIntfAdapter->psAdapter,DBG_TYPE_TX, NEXT_SEND, DBG_LVL_ALL, "Interface Resumed Completely\n");
 
 }
 
+#endif

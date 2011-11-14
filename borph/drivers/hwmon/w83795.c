@@ -458,7 +458,6 @@ static void w83795_update_limits(struct i2c_client *client)
 {
 	struct w83795_data *data = i2c_get_clientdata(client);
 	int i, limit;
-	u8 lsb;
 
 	/* Read the voltage limits */
 	for (i = 0; i < ARRAY_SIZE(data->in); i++) {
@@ -480,8 +479,9 @@ static void w83795_update_limits(struct i2c_client *client)
 	}
 
 	/* Read the fan limits */
-	lsb = 0; /* Silent false gcc warning */
 	for (i = 0; i < ARRAY_SIZE(data->fan); i++) {
+		u8 lsb;
+
 		/* Each register contains LSB for 2 fans, but we want to
 		 * read it only once to save time */
 		if ((i & 1) == 0 && (data->has_fan & (3 << i)))

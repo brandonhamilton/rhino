@@ -11,6 +11,10 @@ typedef struct arch_spinlock {
 
 #define __ARCH_SPIN_LOCK_UNLOCKED	{ 0 }
 
-#include <asm/rwlock.h>
+typedef struct {
+	unsigned int lock;
+} arch_rwlock_t;
+
+#define __ARCH_RW_LOCK_UNLOCKED		{ RW_LOCK_BIAS }
 
 #endif /* _ASM_X86_SPINLOCK_TYPES_H */

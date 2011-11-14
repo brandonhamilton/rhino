@@ -34,7 +34,7 @@
 
 #include <linux/i2c/tps65010.h>
 
-#include <linux/gpio.h>
+#include <asm/gpio.h>
 
 
 /*-------------------------------------------------------------------------*/
@@ -242,7 +242,7 @@ static int dbg_show(struct seq_file *s, void *_)
 	seq_printf(s, "mask2     %s\n", buf);
 	/* ignore ackint2 */
 
-	schedule_delayed_work(&tps->work, POWER_POLL_DELAY);
+	(void) schedule_delayed_work(&tps->work, POWER_POLL_DELAY);
 
 
 	/* VMAIN voltage, enable lowpower, etc */
@@ -400,7 +400,7 @@ static void tps65010_interrupt(struct tps65010 *tps)
 			&& (tps->chgstatus & (TPS_CHG_USB|TPS_CHG_AC)))
 		poll = 1;
 	if (poll)
-		schedule_delayed_work(&tps->work, POWER_POLL_DELAY);
+		(void) schedule_delayed_work(&tps->work, POWER_POLL_DELAY);
 
 	/* also potentially gpio-in rise or fall */
 }
@@ -410,7 +410,7 @@ static void tps65010_work(struct work_struct *work)
 {
 	struct tps65010		*tps;
 
-	tps = container_of(to_delayed_work(work), struct tps65010, work);
+	tps = container_of(work, struct tps65010, work.work);
 	mutex_lock(&tps->lock);
 
 	tps65010_interrupt(tps);
@@ -448,7 +448,7 @@ static irqreturn_t tps65010_irq(int irq, void *_tps)
 
 	disable_irq_nosync(irq);
 	set_bit(FLAG_IRQ_ENABLE, &tps->flags);
-	schedule_delayed_work(&tps->work, 0);
+	(void) schedule_work(&tps->work.work);
 	return IRQ_HANDLED;
 }
 
@@ -527,7 +527,8 @@ static int __exit tps65010_remove(struct i2c_client *client)
 	}
 	if (client->irq > 0)
 		free_irq(client->irq, tps);
-	cancel_delayed_work_sync(&tps->work);
+	cancel_delayed_work(&tps->work);
+	flush_scheduled_work();
 	debugfs_remove(tps->file);
 	kfree(tps);
 	the_tps = NULL;
@@ -719,7 +720,7 @@ int tps65010_set_vbus_draw(unsigned mA)
 			&& test_and_set_bit(
 				FLAG_VBUS_CHANGED, &the_tps->flags)) {
 		/* gadget drivers call this in_irq() */
-		schedule_delayed_work(&the_tps->work, 0);
+		(void) schedule_work(&the_tps->work.work);
 	}
 	local_irq_restore(flags);
 

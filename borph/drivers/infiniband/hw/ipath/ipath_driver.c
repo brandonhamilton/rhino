@@ -199,11 +199,12 @@ static struct ipath_devdata *ipath_alloc_devdata(struct pci_dev *pdev)
 		goto bail;
 	}
 
-	dd = vzalloc(sizeof(*dd));
+	dd = vmalloc(sizeof(*dd));
 	if (!dd) {
 		dd = ERR_PTR(-ENOMEM);
 		goto bail;
 	}
+	memset(dd, 0, sizeof(*dd));
 	dd->ipath_unit = -1;
 
 	spin_lock_irqsave(&ipath_devs_lock, flags);
@@ -398,6 +399,7 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	struct ipath_devdata *dd;
 	unsigned long long addr;
 	u32 bar0 = 0, bar1 = 0;
+	u8 rev;
 
 	dd = ipath_alloc_devdata(pdev);
 	if (IS_ERR(dd)) {
@@ -528,8 +530,9 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	for (j = 0; j < 6; j++) {
 		if (!pdev->resource[j].start)
 			continue;
-		ipath_cdbg(VERBOSE, "BAR %d %pR, len %llx\n",
-			   j, &pdev->resource[j],
+		ipath_cdbg(VERBOSE, "BAR %d start %llx, end %llx, len %llx\n",
+			   j, (unsigned long long)pdev->resource[j].start,
+			   (unsigned long long)pdev->resource[j].end,
 			   (unsigned long long)pci_resource_len(pdev, j));
 	}
 
@@ -539,7 +542,13 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 		goto bail_regions;
 	}
 
-	dd->ipath_pcirev = pdev->revision;
+	ret = pci_read_config_byte(pdev, PCI_REVISION_ID, &rev);
+	if (ret) {
+		ipath_dev_err(dd, "Failed to read PCI revision ID unit "
+			      "%u: err %d\n", dd->ipath_unit, -ret);
+		goto bail_regions;	/* shouldn't ever happen */
+	}
+	dd->ipath_pcirev = rev;
 
 #if defined(__powerpc__)
 	/* There isn't a generic way to specify writethrough mappings */
@@ -748,7 +757,7 @@ static void __devexit ipath_remove_one(struct pci_dev *pdev)
 	 */
 	ipath_shutdown_device(dd);
 
-	flush_workqueue(ib_wq);
+	flush_scheduled_work();
 
 	if (dd->verbs_dev)
 		ipath_unregister_ib_device(dd->verbs_dev);
@@ -2385,7 +2394,7 @@ void ipath_shutdown_device(struct ipath_devdata *dd)
 	/*
 	 * clear SerdesEnable and turn the leds off; do this here because
 	 * we are unloading, so don't count on interrupts to move along
-	 * Turn the LEDs off explicitly for the same reason.
+	 * Turn the LEDs off explictly for the same reason.
 	 */
 	dd->ipath_f_quiet_serdes(dd);
 

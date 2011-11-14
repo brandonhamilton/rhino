@@ -330,11 +330,9 @@ void __init find_legacy_serial_ports(void)
 		if (!parent)
 			continue;
 		if (of_match_node(legacy_serial_parents, parent) != NULL) {
-			if (of_device_is_available(np)) {
-				index = add_legacy_soc_port(np, np);
-				if (index >= 0 && np == stdout)
-					legacy_serial_console = index;
-			}
+			index = add_legacy_soc_port(np, np);
+			if (index >= 0 && np == stdout)
+				legacy_serial_console = index;
 		}
 		of_node_put(parent);
 	}

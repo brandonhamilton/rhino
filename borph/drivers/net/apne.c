@@ -36,7 +36,6 @@
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
-#include <linux/interrupt.h>
 #include <linux/jiffies.h>
 
 #include <asm/system.h>

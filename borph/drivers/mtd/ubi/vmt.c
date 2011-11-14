@@ -28,7 +28,7 @@
 #include <linux/slab.h>
 #include "ubi.h"
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 static int paranoid_check_volumes(struct ubi_device *ubi);
 #else
 #define paranoid_check_volumes(ubi) 0
@@ -711,7 +711,7 @@ void ubi_free_volume(struct ubi_device *ubi, struct ubi_volume *vol)
 	volume_sysfs_close(vol);
 }
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 
 /**
  * paranoid_check_volume - check volume information.
@@ -787,6 +787,11 @@ static int paranoid_check_volume(struct ubi_device *ubi, int vol_id)
 
 	if (vol->name_len > UBI_VOL_NAME_MAX) {
 		ubi_err("too long volume name, max is %d", UBI_VOL_NAME_MAX);
+		goto fail;
+	}
+
+	if (!vol->name) {
+		ubi_err("NULL volume name");
 		goto fail;
 	}
 
@@ -870,9 +875,6 @@ fail:
 static int paranoid_check_volumes(struct ubi_device *ubi)
 {
 	int i, err = 0;
-
-	if (!ubi->dbg->chk_gen)
-		return 0;
 
 	for (i = 0; i < ubi->vtbl_slots; i++) {
 		err = paranoid_check_volume(ubi, i);

@@ -81,7 +81,6 @@
 #include <linux/pm.h>
 #include <linux/io.h>
 #include <linux/bitmap.h>
-#include <linux/prefetch.h>
 
 #include <asm/irq.h>
 #include <asm/system.h>
@@ -227,6 +226,7 @@ static int claim_ptd_buffers(struct isp1362_ep_queue *epq,
 
 static inline void release_ptd_buffers(struct isp1362_ep_queue *epq, struct isp1362_ep *ep)
 {
+	int index = ep->ptd_index;
 	int last = ep->ptd_index + ep->num_ptds;
 
 	if (last > epq->buf_count)
@@ -236,8 +236,10 @@ static inline void release_ptd_buffers(struct isp1362_ep_queue *epq, struct isp1
 		    epq->buf_map, epq->skip_map);
 	BUG_ON(last > epq->buf_count);
 
-	bitmap_clear(&epq->buf_map, ep->ptd_index, ep->num_ptds);
-	bitmap_set(&epq->skip_map, ep->ptd_index, ep->num_ptds);
+	for (; index < last; index++) {
+		__clear_bit(index, &epq->buf_map);
+		__set_bit(index, &epq->skip_map);
+	}
 	epq->buf_avail += ep->num_ptds;
 	epq->ptd_count--;
 
@@ -547,7 +549,7 @@ static void postproc_ep(struct isp1362_hcd *isp1362_hcd, struct isp1362_ep *ep)
 			if (usb_pipecontrol(urb->pipe)) {
 				ep->nextpid = USB_PID_ACK;
 				/* save the data underrun error code for later and
-				 * proceed with the status stage
+				 * procede with the status stage
 				 */
 				urb->actual_length += PTD_GET_COUNT(ptd);
 				BUG_ON(urb->actual_length > urb->transfer_buffer_length);
@@ -1553,9 +1555,9 @@ static void isp1362_hub_descriptor(struct isp1362_hcd *isp1362_hcd,
 	desc->wHubCharacteristics = cpu_to_le16((reg >> 8) & 0x1f);
 	DBG(0, "%s: hubcharacteristics = %02x\n", __func__, cpu_to_le16((reg >> 8) & 0x1f));
 	desc->bPwrOn2PwrGood = (reg >> 24) & 0xff;
-	/* ports removable, and legacy PortPwrCtrlMask */
-	desc->u.hs.DeviceRemovable[0] = desc->bNbrPorts == 1 ? 1 << 1 : 3 << 1;
-	desc->u.hs.DeviceRemovable[1] = ~0;
+	/* two bitmaps:  ports removable, and legacy PortPwrCtrlMask */
+	desc->bitmap[0] = desc->bNbrPorts == 1 ? 1 << 1 : 3 << 1;
+	desc->bitmap[1] = ~0;
 
 	DBG(3, "%s: exit\n", __func__);
 }

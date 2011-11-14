@@ -4,7 +4,7 @@
  * Copyright (C) 2010 Nokia Corporation
  *
  * Contacts: Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *	     Sakari Ailus <sakari.ailus@iki.fi>
+ *	     Sakari Ailus <sakari.ailus@maxwell.research.nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -64,9 +64,9 @@ static int media_device_get_info(struct media_device *dev,
 static struct media_entity *find_entity(struct media_device *mdev, u32 id)
 {
 	struct media_entity *entity;
-	int next = id & MEDIA_ENT_ID_FLAG_NEXT;
+	int next = id & MEDIA_ENTITY_ID_FLAG_NEXT;
 
-	id &= ~MEDIA_ENT_ID_FLAG_NEXT;
+	id &= ~MEDIA_ENTITY_ID_FLAG_NEXT;
 
 	spin_lock(&mdev->lock);
 

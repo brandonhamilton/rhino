@@ -15,6 +15,7 @@
 #include "lockspace.h"
 #include "member.h"
 #include "recoverd.h"
+#include "ast.h"
 #include "dir.h"
 #include "lowcomms.h"
 #include "config.h"
@@ -23,7 +24,6 @@
 #include "recover.h"
 #include "requestqueue.h"
 #include "user.h"
-#include "ast.h"
 
 static int			ls_count;
 static struct mutex		ls_lock;
@@ -243,6 +243,7 @@ static struct dlm_ls *find_ls_to_scan(void)
 static int dlm_scand(void *data)
 {
 	struct dlm_ls *ls;
+	int timeout_jiffies = dlm_config.ci_scan_secs * HZ;
 
 	while (!kthread_should_stop()) {
 		ls = find_ls_to_scan();
@@ -251,14 +252,13 @@ static int dlm_scand(void *data)
 				ls->ls_scan_time = jiffies;
 				dlm_scan_rsbs(ls);
 				dlm_scan_timeout(ls);
-				dlm_scan_waiters(ls);
 				dlm_unlock_recovery(ls);
 			} else {
 				ls->ls_scan_time += HZ;
 			}
-			continue;
+		} else {
+			schedule_timeout_interruptible(timeout_jiffies);
 		}
-		schedule_timeout_interruptible(dlm_config.ci_scan_secs * HZ);
 	}
 	return 0;
 }
@@ -359,10 +359,17 @@ static int threads_start(void)
 {
 	int error;
 
+	/* Thread which process lock requests for all lockspace's */
+	error = dlm_astd_start();
+	if (error) {
+		log_print("cannot start dlm_astd thread %d", error);
+		goto fail;
+	}
+
 	error = dlm_scand_start();
 	if (error) {
 		log_print("cannot start dlm_scand thread %d", error);
-		goto fail;
+		goto astd_fail;
 	}
 
 	/* Thread for sending/receiving messages for all lockspace's */
@@ -376,6 +383,8 @@ static int threads_start(void)
 
  scand_fail:
 	dlm_scand_stop();
+ astd_fail:
+	dlm_astd_stop();
  fail:
 	return error;
 }
@@ -384,6 +393,7 @@ static void threads_stop(void)
 {
 	dlm_scand_stop();
 	dlm_lowcomms_stop();
+	dlm_astd_stop();
 }
 
 static int new_lockspace(const char *name, int namelen, void **lockspace,
@@ -453,7 +463,7 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 	size = dlm_config.ci_rsbtbl_size;
 	ls->ls_rsbtbl_size = size;
 
-	ls->ls_rsbtbl = vmalloc(sizeof(struct dlm_rsbtable) * size);
+	ls->ls_rsbtbl = kmalloc(sizeof(struct dlm_rsbtable) * size, GFP_NOFS);
 	if (!ls->ls_rsbtbl)
 		goto out_lsfree;
 	for (i = 0; i < size; i++) {
@@ -462,13 +472,22 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 		spin_lock_init(&ls->ls_rsbtbl[i].lock);
 	}
 
-	idr_init(&ls->ls_lkbidr);
-	spin_lock_init(&ls->ls_lkbidr_spin);
+	size = dlm_config.ci_lkbtbl_size;
+	ls->ls_lkbtbl_size = size;
+
+	ls->ls_lkbtbl = kmalloc(sizeof(struct dlm_lkbtable) * size, GFP_NOFS);
+	if (!ls->ls_lkbtbl)
+		goto out_rsbfree;
+	for (i = 0; i < size; i++) {
+		INIT_LIST_HEAD(&ls->ls_lkbtbl[i].list);
+		rwlock_init(&ls->ls_lkbtbl[i].lock);
+		ls->ls_lkbtbl[i].counter = 1;
+	}
 
 	size = dlm_config.ci_dirtbl_size;
 	ls->ls_dirtbl_size = size;
 
-	ls->ls_dirtbl = vmalloc(sizeof(struct dlm_dirtable) * size);
+	ls->ls_dirtbl = kmalloc(sizeof(struct dlm_dirtable) * size, GFP_NOFS);
 	if (!ls->ls_dirtbl)
 		goto out_lkbfree;
 	for (i = 0; i < size; i++) {
@@ -482,9 +501,6 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 	mutex_init(&ls->ls_orphans_mutex);
 	INIT_LIST_HEAD(&ls->ls_timeout);
 	mutex_init(&ls->ls_timeout_mutex);
-
-	INIT_LIST_HEAD(&ls->ls_new_rsb);
-	spin_lock_init(&ls->ls_new_rsb_spin);
 
 	INIT_LIST_HEAD(&ls->ls_nodes);
 	INIT_LIST_HEAD(&ls->ls_nodes_gone);
@@ -503,9 +519,6 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 	ls->ls_uevent_result = 0;
 	init_completion(&ls->ls_members_done);
 	ls->ls_members_result = -1;
-
-	mutex_init(&ls->ls_cb_mutex);
-	INIT_LIST_HEAD(&ls->ls_cb_delay);
 
 	ls->ls_recoverd_task = NULL;
 	mutex_init(&ls->ls_recoverd_active);
@@ -540,26 +553,18 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 	list_add(&ls->ls_list, &lslist);
 	spin_unlock(&lslist_lock);
 
-	if (flags & DLM_LSFL_FS) {
-		error = dlm_callback_start(ls);
-		if (error) {
-			log_error(ls, "can't start dlm_callback %d", error);
-			goto out_delist;
-		}
-	}
-
 	/* needs to find ls in lslist */
 	error = dlm_recoverd_start(ls);
 	if (error) {
 		log_error(ls, "can't start dlm_recoverd %d", error);
-		goto out_callback;
+		goto out_delist;
 	}
 
 	ls->ls_kobj.kset = dlm_kset;
 	error = kobject_init_and_add(&ls->ls_kobj, &dlm_ktype, NULL,
 				     "%s", ls->ls_name);
 	if (error)
-		goto out_recoverd;
+		goto out_stop;
 	kobject_uevent(&ls->ls_kobj, KOBJ_ADD);
 
 	/* let kobject handle freeing of ls if there's an error */
@@ -573,7 +578,7 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 
 	error = do_uevent(ls, 1);
 	if (error)
-		goto out_recoverd;
+		goto out_stop;
 
 	wait_for_completion(&ls->ls_members_done);
 	error = ls->ls_members_result;
@@ -590,20 +595,19 @@ static int new_lockspace(const char *name, int namelen, void **lockspace,
 	do_uevent(ls, 0);
 	dlm_clear_members(ls);
 	kfree(ls->ls_node_array);
- out_recoverd:
+ out_stop:
 	dlm_recoverd_stop(ls);
- out_callback:
-	dlm_callback_stop(ls);
  out_delist:
 	spin_lock(&lslist_lock);
 	list_del(&ls->ls_list);
 	spin_unlock(&lslist_lock);
 	kfree(ls->ls_recover_buf);
  out_dirfree:
-	vfree(ls->ls_dirtbl);
+	kfree(ls->ls_dirtbl);
  out_lkbfree:
-	idr_destroy(&ls->ls_lkbidr);
-	vfree(ls->ls_rsbtbl);
+	kfree(ls->ls_lkbtbl);
+ out_rsbfree:
+	kfree(ls->ls_rsbtbl);
  out_lsfree:
 	if (do_unreg)
 		kobject_put(&ls->ls_kobj);
@@ -637,64 +641,50 @@ int dlm_new_lockspace(const char *name, int namelen, void **lockspace,
 	return error;
 }
 
-static int lkb_idr_is_local(int id, void *p, void *data)
+/* Return 1 if the lockspace still has active remote locks,
+ *        2 if the lockspace still has active local locks.
+ */
+static int lockspace_busy(struct dlm_ls *ls)
 {
-	struct dlm_lkb *lkb = p;
+	int i, lkb_found = 0;
+	struct dlm_lkb *lkb;
 
-	if (!lkb->lkb_nodeid)
-		return 1;
-	return 0;
-}
+	/* NOTE: We check the lockidtbl here rather than the resource table.
+	   This is because there may be LKBs queued as ASTs that have been
+	   unlinked from their RSBs and are pending deletion once the AST has
+	   been delivered */
 
-static int lkb_idr_is_any(int id, void *p, void *data)
-{
-	return 1;
-}
-
-static int lkb_idr_free(int id, void *p, void *data)
-{
-	struct dlm_lkb *lkb = p;
-
-	if (lkb->lkb_lvbptr && lkb->lkb_flags & DLM_IFL_MSTCPY)
-		dlm_free_lvb(lkb->lkb_lvbptr);
-
-	dlm_free_lkb(lkb);
-	return 0;
-}
-
-/* NOTE: We check the lkbidr here rather than the resource table.
-   This is because there may be LKBs queued as ASTs that have been unlinked
-   from their RSBs and are pending deletion once the AST has been delivered */
-
-static int lockspace_busy(struct dlm_ls *ls, int force)
-{
-	int rv;
-
-	spin_lock(&ls->ls_lkbidr_spin);
-	if (force == 0) {
-		rv = idr_for_each(&ls->ls_lkbidr, lkb_idr_is_any, ls);
-	} else if (force == 1) {
-		rv = idr_for_each(&ls->ls_lkbidr, lkb_idr_is_local, ls);
-	} else {
-		rv = 0;
+	for (i = 0; i < ls->ls_lkbtbl_size; i++) {
+		read_lock(&ls->ls_lkbtbl[i].lock);
+		if (!list_empty(&ls->ls_lkbtbl[i].list)) {
+			lkb_found = 1;
+			list_for_each_entry(lkb, &ls->ls_lkbtbl[i].list,
+					    lkb_idtbl_list) {
+				if (!lkb->lkb_nodeid) {
+					read_unlock(&ls->ls_lkbtbl[i].lock);
+					return 2;
+				}
+			}
+		}
+		read_unlock(&ls->ls_lkbtbl[i].lock);
 	}
-	spin_unlock(&ls->ls_lkbidr_spin);
-	return rv;
+	return lkb_found;
 }
 
 static int release_lockspace(struct dlm_ls *ls, int force)
 {
+	struct dlm_lkb *lkb;
 	struct dlm_rsb *rsb;
 	struct list_head *head;
 	int i, busy, rv;
 
-	busy = lockspace_busy(ls, force);
+	busy = lockspace_busy(ls);
 
 	spin_lock(&lslist_lock);
 	if (ls->ls_create_count == 1) {
-		if (busy) {
+		if (busy > force)
 			rv = -EBUSY;
-		} else {
+		else {
 			/* remove_lockspace takes ls off lslist */
 			ls->ls_create_count = 0;
 			rv = 0;
@@ -718,11 +708,11 @@ static int release_lockspace(struct dlm_ls *ls, int force)
 
 	dlm_recoverd_stop(ls);
 
-	dlm_callback_stop(ls);
-
 	remove_lockspace(ls);
 
 	dlm_delete_debug_file(ls);
+
+	dlm_astd_suspend();
 
 	kfree(ls->ls_recover_buf);
 
@@ -731,15 +721,31 @@ static int release_lockspace(struct dlm_ls *ls, int force)
 	 */
 
 	dlm_dir_clear(ls);
-	vfree(ls->ls_dirtbl);
+	kfree(ls->ls_dirtbl);
 
 	/*
-	 * Free all lkb's in idr
+	 * Free all lkb's on lkbtbl[] lists.
 	 */
 
-	idr_for_each(&ls->ls_lkbidr, lkb_idr_free, ls);
-	idr_remove_all(&ls->ls_lkbidr);
-	idr_destroy(&ls->ls_lkbidr);
+	for (i = 0; i < ls->ls_lkbtbl_size; i++) {
+		head = &ls->ls_lkbtbl[i].list;
+		while (!list_empty(head)) {
+			lkb = list_entry(head->next, struct dlm_lkb,
+					 lkb_idtbl_list);
+
+			list_del(&lkb->lkb_idtbl_list);
+
+			dlm_del_ast(lkb);
+
+			if (lkb->lkb_lvbptr && lkb->lkb_flags & DLM_IFL_MSTCPY)
+				dlm_free_lvb(lkb->lkb_lvbptr);
+
+			dlm_free_lkb(lkb);
+		}
+	}
+	dlm_astd_resume();
+
+	kfree(ls->ls_lkbtbl);
 
 	/*
 	 * Free all rsb's on rsbtbl[] lists
@@ -764,14 +770,7 @@ static int release_lockspace(struct dlm_ls *ls, int force)
 		}
 	}
 
-	vfree(ls->ls_rsbtbl);
-
-	while (!list_empty(&ls->ls_new_rsb)) {
-		rsb = list_first_entry(&ls->ls_new_rsb, struct dlm_rsb,
-				       res_hashchain);
-		list_del(&rsb->res_hashchain);
-		dlm_free_rsb(rsb);
-	}
+	kfree(ls->ls_rsbtbl);
 
 	/*
 	 * Free structures on any other lists

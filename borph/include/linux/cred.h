@@ -1,4 +1,4 @@
-/* Credentials management - see Documentation/security/credentials.txt
+/* Credentials management - see Documentation/credentials.txt
  *
  * Copyright (C) 2008 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -16,7 +16,7 @@
 #include <linux/init.h>
 #include <linux/key.h>
 #include <linux/selinux.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct user_struct;
 struct cred;
@@ -146,7 +146,6 @@ struct cred {
 	void		*security;	/* subjective LSM security */
 #endif
 	struct user_struct *user;	/* real user ID subscription */
-	struct user_namespace *user_ns; /* cached user->user_ns */
 	struct group_info *group_info;	/* supplementary groups for euid/fsgid */
 	struct rcu_head	rcu;		/* RCU deletion hook */
 };
@@ -265,11 +264,10 @@ static inline void put_cred(const struct cred *_cred)
 /**
  * current_cred - Access the current task's subjective credentials
  *
- * Access the subjective credentials of the current task.  RCU-safe,
- * since nobody else can modify it.
+ * Access the subjective credentials of the current task.
  */
 #define current_cred() \
-	(*(__force struct cred **)&current->cred)
+	(current->cred)
 
 /**
  * __task_cred - Access a task's objective credentials
@@ -285,6 +283,7 @@ static inline void put_cred(const struct cred *_cred)
 	({								\
 		const struct task_struct *__t = (task);			\
 		rcu_dereference_check(__t->real_cred,			\
+				      rcu_read_lock_held() ||		\
 				      task_is_dead(__t));		\
 	})
 
@@ -308,7 +307,7 @@ static inline void put_cred(const struct cred *_cred)
 ({							\
 	struct user_struct *__u;			\
 	struct cred *__cred;				\
-	__cred = current_cred();			\
+	__cred = (struct cred *) current_cred();	\
 	__u = get_uid(__cred->user);			\
 	__u;						\
 })
@@ -323,7 +322,7 @@ static inline void put_cred(const struct cred *_cred)
 ({							\
 	struct group_info *__groups;			\
 	struct cred *__cred;				\
-	__cred = current_cred();			\
+	__cred = (struct cred *) current_cred();	\
 	__groups = get_group_info(__cred->group_info);	\
 	__groups;					\
 })
@@ -342,7 +341,7 @@ static inline void put_cred(const struct cred *_cred)
 
 #define current_cred_xxx(xxx)			\
 ({						\
-	current_cred()->xxx;			\
+	current->cred->xxx;			\
 })
 
 #define current_uid()		(current_cred_xxx(uid))
@@ -355,15 +354,8 @@ static inline void put_cred(const struct cred *_cred)
 #define current_fsgid() 	(current_cred_xxx(fsgid))
 #define current_cap()		(current_cred_xxx(cap_effective))
 #define current_user()		(current_cred_xxx(user))
+#define current_user_ns()	(current_cred_xxx(user)->user_ns)
 #define current_security()	(current_cred_xxx(security))
-
-#ifdef CONFIG_USER_NS
-#define current_user_ns() (current_cred_xxx(user_ns))
-#else
-extern struct user_namespace init_user_ns;
-#define current_user_ns() (&init_user_ns)
-#endif
-
 
 #define current_uid_gid(_uid, _gid)		\
 do {						\

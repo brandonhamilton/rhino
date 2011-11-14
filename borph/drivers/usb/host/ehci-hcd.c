@@ -1,8 +1,4 @@
 /*
- * Enhanced Host Controller Interface (EHCI) driver for USB.
- *
- * Maintainer: Alan Stern <stern@rowland.harvard.edu>
- *
  * Copyright (c) 2000-2004 by David Brownell
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -69,6 +65,8 @@
 
 static const char	hcd_name [] = "ehci_hcd";
 
+static void ehci_hcd_cleanup(void);
+static int ehci_hcd_init(void);
 
 #undef VERBOSE_DEBUG
 #undef EHCI_URB_TRACE
@@ -94,8 +92,7 @@ static const char	hcd_name [] = "ehci_hcd";
 #define EHCI_IAA_MSECS		10		/* arbitrary */
 #define EHCI_IO_JIFFIES		(HZ/10)		/* io watchdog > irq_thresh */
 #define EHCI_ASYNC_JIFFIES	(HZ/20)		/* async idle timeout */
-#define EHCI_SHRINK_JIFFIES	(DIV_ROUND_UP(HZ, 200) + 1)
-						/* 200-ms async qh unlink delay */
+#define EHCI_SHRINK_FRAMES	5		/* async qh unlink delay */
 
 /* Initial IRQ latency:  faster than hw default */
 static int log2_irq_thresh = 0;		// 0 to 6
@@ -115,7 +112,7 @@ MODULE_PARM_DESC (ignore_oc, "ignore bogus hardware overcurrent indications");
 /* for link power management(LPM) feature */
 static unsigned int hird;
 module_param(hird, int, S_IRUGO);
-MODULE_PARM_DESC(hird, "host initiated resume duration, +1 for each 75us");
+MODULE_PARM_DESC(hird, "host initiated resume duration, +1 for each 75us\n");
 
 #define	INTR_MASK (STS_IAA | STS_FATAL | STS_PCD | STS_ERR | STS_INT)
 
@@ -123,7 +120,6 @@ MODULE_PARM_DESC(hird, "host initiated resume duration, +1 for each 75us");
 
 #include "ehci.h"
 #include "ehci-dbg.c"
-#include "pci-quirks.h"
 
 /*-------------------------------------------------------------------------*/
 
@@ -153,7 +149,10 @@ timer_action(struct ehci_hcd *ehci, enum ehci_timer_action action)
 			break;
 		/* case TIMER_ASYNC_SHRINK: */
 		default:
-			t = EHCI_SHRINK_JIFFIES;
+			/* add a jiffie since we synch against the
+			 * 8 KHz uframe counter.
+			 */
+			t = DIV_ROUND_UP(EHCI_SHRINK_FRAMES * HZ, 1000) + 1;
 			break;
 		}
 		mod_timer(&ehci->watchdog, t + jiffies);
@@ -338,7 +337,6 @@ static void ehci_work(struct ehci_hcd *ehci);
 #include "ehci-mem.c"
 #include "ehci-q.c"
 #include "ehci-sched.c"
-#include "ehci-sysfs.c"
 
 /*-------------------------------------------------------------------------*/
 
@@ -523,7 +521,7 @@ static void ehci_stop (struct usb_hcd *hcd)
 	ehci_reset (ehci);
 	spin_unlock_irq(&ehci->lock);
 
-	remove_sysfs_files(ehci);
+	remove_companion_file(ehci);
 	remove_debug_files (ehci);
 
 	/* root hub is shut down separately (first, when possible) */
@@ -532,9 +530,6 @@ static void ehci_stop (struct usb_hcd *hcd)
 		ehci_work (ehci);
 	spin_unlock_irq (&ehci->lock);
 	ehci_mem_cleanup (ehci);
-
-	if (ehci->amd_pll_fix == 1)
-		usb_amd_dev_put();
 
 #ifdef	EHCI_STATS
 	ehci_dbg (ehci, "irq normal %ld err %ld reclaim %ld (lost %ld)\n",
@@ -572,12 +567,6 @@ static int ehci_init(struct usb_hcd *hcd)
 	ehci->iaa_watchdog.data = (unsigned long) ehci;
 
 	hcc_params = ehci_readl(ehci, &ehci->caps->hcc_params);
-
-	/*
-	 * by default set standard 80% (== 100 usec/uframe) max periodic
-	 * bandwidth as required by USB 2.0
-	 */
-	ehci->uframe_periodic_max = 100;
 
 	/*
 	 * hw default: 1K periodic list heads, one per frame.
@@ -684,12 +673,7 @@ static int ehci_run (struct usb_hcd *hcd)
 	hcd->uses_new_polling = 1;
 
 	/* EHCI spec section 4.1 */
-	/*
-	 * TDI driver does the ehci_reset in their reset callback.
-	 * Don't reset here, because configuration settings will
-	 * vanish.
-	 */
-	if (!ehci_is_TDI(ehci) && (retval = ehci_reset(ehci)) != 0) {
+	if ((retval = ehci_reset(ehci)) != 0) {
 		ehci_mem_cleanup(ehci);
 		return retval;
 	}
@@ -748,7 +732,7 @@ static int ehci_run (struct usb_hcd *hcd)
 	up_write(&ehci_cf_port_reset_rwsem);
 	ehci->last_periodic_enable = ktime_get_real();
 
-	temp = HC_VERSION(ehci, ehci_readl(ehci, &ehci->caps->hc_capbase));
+	temp = HC_VERSION(ehci_readl(ehci, &ehci->caps->hc_capbase));
 	ehci_info (ehci,
 		"USB %x.%x started, EHCI %x.%02x%s\n",
 		((ehci->sbrn & 0xf0)>>4), (ehci->sbrn & 0x0f),
@@ -763,7 +747,7 @@ static int ehci_run (struct usb_hcd *hcd)
 	 * since the class device isn't created that early.
 	 */
 	create_debug_files(ehci);
-	create_sysfs_files(ehci);
+	create_companion_file(ehci);
 
 	return 0;
 }
@@ -786,9 +770,8 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 		goto dead;
 	}
 
-	/* Shared IRQ? */
 	masked_status = status & INTR_MASK;
-	if (!masked_status || unlikely(hcd->state == HC_STATE_HALT)) {
+	if (!masked_status) {		/* irq sharing? */
 		spin_unlock(&ehci->lock);
 		return IRQ_NONE;
 	}
@@ -883,7 +866,6 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 dead:
 		ehci_reset(ehci);
 		ehci_writel(ehci, 0, &ehci->regs->configured_flag);
-		usb_hc_died(hcd);
 		/* generic layer kills/unlinks all urbs, then
 		 * uses ehci_stop to clean up the rest
 		 */
@@ -1170,6 +1152,11 @@ static int ehci_get_frame (struct usb_hcd *hcd)
 		ehci->periodic_size;
 }
 
+static void ehci_omap_recover_work(struct work_struct *data)
+{
+	ehci_hcd_cleanup();
+	ehci_hcd_init();
+}
 /*-------------------------------------------------------------------------*/
 
 MODULE_DESCRIPTION(DRIVER_DESC);
@@ -1191,17 +1178,12 @@ MODULE_LICENSE ("GPL");
 #define PLATFORM_DRIVER		ehci_mxc_driver
 #endif
 
-#ifdef CONFIG_USB_EHCI_SH
-#include "ehci-sh.c"
-#define PLATFORM_DRIVER		ehci_hcd_sh_driver
-#endif
-
 #ifdef CONFIG_SOC_AU1200
 #include "ehci-au1xxx.c"
 #define	PLATFORM_DRIVER		ehci_hcd_au1xxx_driver
 #endif
 
-#ifdef CONFIG_USB_EHCI_HCD_OMAP
+#ifdef CONFIG_ARCH_OMAP3
 #include "ehci-omap.c"
 #define        PLATFORM_DRIVER         ehci_hcd_omap_driver
 #endif
@@ -1246,58 +1228,13 @@ MODULE_LICENSE ("GPL");
 #define PLATFORM_DRIVER		ehci_octeon_driver
 #endif
 
-#ifdef CONFIG_USB_CNS3XXX_EHCI
-#include "ehci-cns3xxx.c"
-#define PLATFORM_DRIVER		cns3xxx_ehci_driver
-#endif
-
-#ifdef CONFIG_ARCH_VT8500
-#include "ehci-vt8500.c"
-#define	PLATFORM_DRIVER		vt8500_ehci_driver
-#endif
-
-#ifdef CONFIG_PLAT_SPEAR
-#include "ehci-spear.c"
-#define PLATFORM_DRIVER		spear_ehci_hcd_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_MSM
-#include "ehci-msm.c"
-#define PLATFORM_DRIVER		ehci_msm_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_HCD_PMC_MSP
-#include "ehci-pmcmsp.c"
-#define	PLATFORM_DRIVER		ehci_hcd_msp_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_TEGRA
-#include "ehci-tegra.c"
-#define PLATFORM_DRIVER		tegra_ehci_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_S5P
-#include "ehci-s5p.c"
-#define PLATFORM_DRIVER		s5p_ehci_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_ATH79
-#include "ehci-ath79.c"
-#define PLATFORM_DRIVER		ehci_ath79_driver
-#endif
-
-#ifdef CONFIG_SPARC_LEON
-#include "ehci-grlib.c"
-#define PLATFORM_DRIVER		ehci_grlib_driver
-#endif
-
 #if !defined(PCI_DRIVER) && !defined(PLATFORM_DRIVER) && \
     !defined(PS3_SYSTEM_BUS_DRIVER) && !defined(OF_PLATFORM_DRIVER) && \
     !defined(XILINX_OF_PLATFORM_DRIVER)
 #error "missing bus glue for ehci-hcd"
 #endif
 
-static int __init ehci_hcd_init(void)
+static int ehci_hcd_init(void)
 {
 	int retval = 0;
 
@@ -1343,24 +1280,24 @@ static int __init ehci_hcd_init(void)
 #endif
 
 #ifdef OF_PLATFORM_DRIVER
-	retval = platform_driver_register(&OF_PLATFORM_DRIVER);
+	retval = of_register_platform_driver(&OF_PLATFORM_DRIVER);
 	if (retval < 0)
 		goto clean3;
 #endif
 
 #ifdef XILINX_OF_PLATFORM_DRIVER
-	retval = platform_driver_register(&XILINX_OF_PLATFORM_DRIVER);
+	retval = of_register_platform_driver(&XILINX_OF_PLATFORM_DRIVER);
 	if (retval < 0)
 		goto clean4;
 #endif
 	return retval;
 
 #ifdef XILINX_OF_PLATFORM_DRIVER
-	/* platform_driver_unregister(&XILINX_OF_PLATFORM_DRIVER); */
+	/* of_unregister_platform_driver(&XILINX_OF_PLATFORM_DRIVER); */
 clean4:
 #endif
 #ifdef OF_PLATFORM_DRIVER
-	platform_driver_unregister(&OF_PLATFORM_DRIVER);
+	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
 clean3:
 #endif
 #ifdef PS3_SYSTEM_BUS_DRIVER
@@ -1385,13 +1322,13 @@ err_debug:
 }
 module_init(ehci_hcd_init);
 
-static void __exit ehci_hcd_cleanup(void)
+static void ehci_hcd_cleanup(void)
 {
 #ifdef XILINX_OF_PLATFORM_DRIVER
-	platform_driver_unregister(&XILINX_OF_PLATFORM_DRIVER);
+	of_unregister_platform_driver(&XILINX_OF_PLATFORM_DRIVER);
 #endif
 #ifdef OF_PLATFORM_DRIVER
-	platform_driver_unregister(&OF_PLATFORM_DRIVER);
+	of_unregister_platform_driver(&OF_PLATFORM_DRIVER);
 #endif
 #ifdef PLATFORM_DRIVER
 	platform_driver_unregister(&PLATFORM_DRIVER);

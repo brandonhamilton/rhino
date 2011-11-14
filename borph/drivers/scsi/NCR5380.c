@@ -936,7 +936,8 @@ static void NCR5380_exit(struct Scsi_Host *instance)
 {
 	struct NCR5380_hostdata *hostdata = (struct NCR5380_hostdata *) instance->hostdata;
 
-	cancel_delayed_work_sync(&hostdata->coroutine);
+	cancel_delayed_work(&hostdata->coroutine);
+	flush_scheduled_work();
 }
 
 /**
@@ -1198,12 +1199,12 @@ static irqreturn_t NCR5380_intr(int dummy, void *dev_id)
 				 */
 
 				if ((NCR5380_read(MODE_REG) & MR_DMA) && ((basr & BASR_END_DMA_TRANSFER) || !(basr & BASR_PHASE_MATCH))) {
-					int transferred;
+					int transfered;
 
 					if (!hostdata->connected)
 						panic("scsi%d : received end of DMA interrupt with no connected cmd\n", instance->hostno);
 
-					transferred = (hostdata->dmalen - NCR5380_dma_residual(instance));
+					transfered = (hostdata->dmalen - NCR5380_dma_residual(instance));
 					hostdata->connected->SCp.this_residual -= transferred;
 					hostdata->connected->SCp.ptr += transferred;
 					hostdata->dmalen = 0;
@@ -1563,7 +1564,7 @@ failed:
  *      bytes to transfer, **data - pointer to data pointer.
  * 
  * Returns : -1 when different phase is entered without transferring
- *      maximum number of bytes, 0 if all bytes or transferred or exit
+ *      maximum number of bytes, 0 if all bytes or transfered or exit
  *      is in same phase.
  *
  *      Also, *phase, *count, *data are modified in place.
@@ -1800,7 +1801,7 @@ static int do_abort(struct Scsi_Host *host) {
  *      bytes to transfer, **data - pointer to data pointer.
  * 
  * Returns : -1 when different phase is entered without transferring
- *      maximum number of bytes, 0 if all bytes or transferred or exit
+ *      maximum number of bytes, 0 if all bytes or transfered or exit
  *      is in same phase.
  *
  *      Also, *phase, *count, *data are modified in place.

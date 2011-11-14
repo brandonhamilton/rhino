@@ -27,7 +27,7 @@
  * 2. We assume printascii is called at least once before paging_init,
  *    and addruart has a chance to read OMAP_UART_INFO
  */
-#define OMAP_UART_INFO		(PLAT_PHYS_OFFSET + 0x3ffc)
+#define OMAP_UART_INFO		(PHYS_OFFSET + 0x3ffc)
 
 /* OMAP1 serial ports */
 #define OMAP1_UART1_BASE	0xfffb0000
@@ -51,13 +51,13 @@
 #define OMAP4_UART3_BASE	0x48020000
 #define OMAP4_UART4_BASE	0x4806e000
 
-/* TI816X serial ports */
-#define TI816X_UART1_BASE	0x48020000
-#define TI816X_UART2_BASE	0x48022000
-#define TI816X_UART3_BASE	0x48024000
-
-/* AM3505/3517 UART4 */
-#define AM35XX_UART4_BASE	0x4809E000	/* Only on AM3505/3517 */
+/* TI81XX serial ports */
+#define TI81XX_UART1_BASE	0x48020000
+#define TI81XX_UART2_BASE	0x48022000
+#define TI81XX_UART3_BASE	0x48024000
+#define TI814X_UART4_BASE	0x481A6000
+#define TI814X_UART5_BASE	0x481A8000
+#define TI814X_UART6_BASE	0x481AA000
 
 /* External port on Zoom2/3 */
 #define ZOOM_UART_BASE		0x10000000
@@ -89,9 +89,12 @@
 #define OMAP4UART2		OMAP2UART2
 #define OMAP4UART3		43
 #define OMAP4UART4		44
-#define TI816XUART1		81
-#define TI816XUART2		82
-#define TI816XUART3		83
+#define TI81XXUART1		81
+#define TI81XXUART2		82
+#define TI81XXUART3		83
+#define TI814XUART4		84
+#define TI814XUART5		85
+#define TI814XUART6		86
 #define ZOOM_UART		95		/* Only on zoom2/3 */
 
 /* This is only used by 8250.c for omap1510 */
@@ -107,6 +110,7 @@
 
 struct omap_board_data;
 
+extern void __init omap_serial_early_init(void);
 extern void omap_serial_init(void);
 extern void omap_serial_init_port(struct omap_board_data *bdata);
 extern int omap_uart_can_sleep(void);

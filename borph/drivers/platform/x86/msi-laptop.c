@@ -51,8 +51,6 @@
  * laptop as MSI S270. YMMV.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -62,8 +60,6 @@
 #include <linux/platform_device.h>
 #include <linux/rfkill.h>
 #include <linux/i8042.h>
-#include <linux/input.h>
-#include <linux/input/sparse-keymap.h>
 
 #define MSI_DRIVER_VERSION "0.5"
 
@@ -82,9 +78,6 @@
 #define MSI_STANDARD_EC_SCM_LOAD_ADDRESS	0x2d
 #define MSI_STANDARD_EC_SCM_LOAD_MASK		(1 << 0)
 
-#define MSI_STANDARD_EC_TOUCHPAD_ADDRESS	0xe4
-#define MSI_STANDARD_EC_TOUCHPAD_MASK		(1 << 4)
-
 static int msi_laptop_resume(struct platform_device *device);
 
 #define MSI_STANDARD_EC_DEVICES_EXISTS_ADDRESS	0x2f
@@ -96,14 +89,6 @@ MODULE_PARM_DESC(force, "Force driver load, ignore DMI data");
 static int auto_brightness;
 module_param(auto_brightness, int, 0);
 MODULE_PARM_DESC(auto_brightness, "Enable automatic brightness control (0: disabled; 1: enabled; 2: don't touch)");
-
-static const struct key_entry msi_laptop_keymap[] = {
-	{KE_KEY, KEY_TOUCHPAD_ON, {KEY_TOUCHPAD_ON} },	/* Touch Pad On */
-	{KE_KEY, KEY_TOUCHPAD_OFF, {KEY_TOUCHPAD_OFF} },/* Touch Pad On */
-	{KE_END, 0}
-};
-
-static struct input_dev *msi_laptop_input_dev;
 
 static bool old_ec_model;
 static int wlan_s, bluetooth_s, threeg_s;
@@ -135,7 +120,7 @@ static int set_lcd_level(int level)
 	buf[1] = (u8) (level*31);
 
 	return ec_transaction(MSI_EC_COMMAND_LCD_LEVEL, buf, sizeof(buf),
-			      NULL, 0);
+			      NULL, 0, 1);
 }
 
 static int get_lcd_level(void)
@@ -144,7 +129,7 @@ static int get_lcd_level(void)
 	int result;
 
 	result = ec_transaction(MSI_EC_COMMAND_LCD_LEVEL, &wdata, 1,
-				&rdata, 1);
+				&rdata, 1, 1);
 	if (result < 0)
 		return result;
 
@@ -157,7 +142,7 @@ static int get_auto_brightness(void)
 	int result;
 
 	result = ec_transaction(MSI_EC_COMMAND_LCD_LEVEL, &wdata, 1,
-				&rdata, 1);
+				&rdata, 1, 1);
 	if (result < 0)
 		return result;
 
@@ -172,7 +157,7 @@ static int set_auto_brightness(int enable)
 	wdata[0] = 4;
 
 	result = ec_transaction(MSI_EC_COMMAND_LCD_LEVEL, wdata, 1,
-				&rdata, 1);
+				&rdata, 1, 1);
 	if (result < 0)
 		return result;
 
@@ -180,7 +165,7 @@ static int set_auto_brightness(int enable)
 	wdata[1] = (rdata & 0xF7) | (enable ? 8 : 0);
 
 	return ec_transaction(MSI_EC_COMMAND_LCD_LEVEL, wdata, 2,
-			      NULL, 0);
+			      NULL, 0, 1);
 }
 
 static ssize_t set_device_state(const char *buf, size_t count, u8 mask)
@@ -217,7 +202,7 @@ static int get_wireless_state(int *wlan, int *bluetooth)
 	u8 wdata = 0, rdata;
 	int result;
 
-	result = ec_transaction(MSI_EC_COMMAND_WIRELESS, &wdata, 1, &rdata, 1);
+	result = ec_transaction(MSI_EC_COMMAND_WIRELESS, &wdata, 1, &rdata, 1, 1);
 	if (result < 0)
 		return -1;
 
@@ -447,7 +432,8 @@ static struct platform_device *msipf_device;
 
 static int dmi_check_cb(const struct dmi_system_id *id)
 {
-	pr_info("Identified laptop model '%s'\n", id->ident);
+	printk(KERN_INFO "msi-laptop: Identified laptop model '%s'.\n",
+	       id->ident);
 	return 1;
 }
 
@@ -538,15 +524,6 @@ static struct dmi_system_id __initdata msi_load_scm_models_dmi_table[] = {
 		},
 		.callback = dmi_check_cb
 	},
-	{
-		.ident = "MSI U270",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR,
-				"Micro-Star International Co., Ltd."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "U270 series"),
-		},
-		.callback = dmi_check_cb
-	},
 	{ }
 };
 
@@ -628,21 +605,6 @@ static void msi_update_rfkill(struct work_struct *ignored)
 }
 static DECLARE_DELAYED_WORK(msi_rfkill_work, msi_update_rfkill);
 
-static void msi_send_touchpad_key(struct work_struct *ignored)
-{
-	u8 rdata;
-	int result;
-
-	result = ec_read(MSI_STANDARD_EC_TOUCHPAD_ADDRESS, &rdata);
-	if (result < 0)
-		return;
-
-	sparse_keymap_report_event(msi_laptop_input_dev,
-		(rdata & MSI_STANDARD_EC_TOUCHPAD_MASK) ?
-		KEY_TOUCHPAD_ON : KEY_TOUCHPAD_OFF, 1, true);
-}
-static DECLARE_DELAYED_WORK(msi_touchpad_work, msi_send_touchpad_key);
-
 static bool msi_laptop_i8042_filter(unsigned char data, unsigned char str,
 				struct serio *port)
 {
@@ -651,17 +613,12 @@ static bool msi_laptop_i8042_filter(unsigned char data, unsigned char str,
 	if (str & 0x20)
 		return false;
 
-	/* 0x54 wwan, 0x62 bluetooth, 0x76 wlan, 0xE4 touchpad toggle*/
+	/* 0x54 wwan, 0x62 bluetooth, 0x76 wlan*/
 	if (unlikely(data == 0xe0)) {
 		extended = true;
 		return false;
 	} else if (unlikely(extended)) {
-		extended = false;
 		switch (data) {
-		case 0xE4:
-			schedule_delayed_work(&msi_touchpad_work,
-				round_jiffies_relative(0.5 * HZ));
-			break;
 		case 0x54:
 		case 0x62:
 		case 0x76:
@@ -669,6 +626,7 @@ static bool msi_laptop_i8042_filter(unsigned char data, unsigned char str,
 				round_jiffies_relative(0.5 * HZ));
 			break;
 		}
+		extended = false;
 	}
 
 	return false;
@@ -773,43 +731,7 @@ static int msi_laptop_resume(struct platform_device *device)
 	return 0;
 }
 
-static int __init msi_laptop_input_setup(void)
-{
-	int err;
-
-	msi_laptop_input_dev = input_allocate_device();
-	if (!msi_laptop_input_dev)
-		return -ENOMEM;
-
-	msi_laptop_input_dev->name = "MSI Laptop hotkeys";
-	msi_laptop_input_dev->phys = "msi-laptop/input0";
-	msi_laptop_input_dev->id.bustype = BUS_HOST;
-
-	err = sparse_keymap_setup(msi_laptop_input_dev,
-		msi_laptop_keymap, NULL);
-	if (err)
-		goto err_free_dev;
-
-	err = input_register_device(msi_laptop_input_dev);
-	if (err)
-		goto err_free_keymap;
-
-	return 0;
-
-err_free_keymap:
-	sparse_keymap_free(msi_laptop_input_dev);
-err_free_dev:
-	input_free_device(msi_laptop_input_dev);
-	return err;
-}
-
-static void msi_laptop_input_destroy(void)
-{
-	sparse_keymap_free(msi_laptop_input_dev);
-	input_unregister_device(msi_laptop_input_dev);
-}
-
-static int __init load_scm_model_init(struct platform_device *sdev)
+static int load_scm_model_init(struct platform_device *sdev)
 {
 	u8 data;
 	int result;
@@ -837,23 +759,16 @@ static int __init load_scm_model_init(struct platform_device *sdev)
 	if (result < 0)
 		goto fail_rfkill;
 
-	/* setup input device */
-	result = msi_laptop_input_setup();
-	if (result)
-		goto fail_input;
-
 	result = i8042_install_filter(msi_laptop_i8042_filter);
 	if (result) {
-		pr_err("Unable to install key filter\n");
+		printk(KERN_ERR
+			"msi-laptop: Unable to install key filter\n");
 		goto fail_filter;
 	}
 
 	return 0;
 
 fail_filter:
-	msi_laptop_input_destroy();
-
-fail_input:
 	rfkill_cleanup();
 
 fail_rfkill:
@@ -884,11 +799,11 @@ static int __init msi_init(void)
 	/* Register backlight stuff */
 
 	if (acpi_video_backlight_support()) {
-		pr_info("Brightness ignored, must be controlled by ACPI video driver\n");
+		printk(KERN_INFO "MSI: Brightness ignored, must be controlled "
+		       "by ACPI video driver\n");
 	} else {
 		struct backlight_properties props;
 		memset(&props, 0, sizeof(struct backlight_properties));
-		props.type = BACKLIGHT_PLATFORM;
 		props.max_brightness = MSI_LCD_LEVEL_MAX - 1;
 		msibl_device = backlight_device_register("msi-laptop-bl", NULL,
 							 NULL, &msibl_ops,
@@ -938,7 +853,7 @@ static int __init msi_init(void)
 	if (auto_brightness != 2)
 		set_auto_brightness(auto_brightness);
 
-	pr_info("driver " MSI_DRIVER_VERSION " successfully loaded\n");
+	printk(KERN_INFO "msi-laptop: driver "MSI_DRIVER_VERSION" successfully loaded.\n");
 
 	return 0;
 
@@ -970,7 +885,6 @@ static void __exit msi_cleanup(void)
 {
 	if (load_scm_model) {
 		i8042_remove_filter(msi_laptop_i8042_filter);
-		msi_laptop_input_destroy();
 		cancel_delayed_work_sync(&msi_rfkill_work);
 		rfkill_cleanup();
 	}
@@ -986,7 +900,7 @@ static void __exit msi_cleanup(void)
 	if (auto_brightness != 2)
 		set_auto_brightness(1);
 
-	pr_info("driver unloaded\n");
+	printk(KERN_INFO "msi-laptop: driver unloaded.\n");
 }
 
 module_init(msi_init);
@@ -1005,4 +919,3 @@ MODULE_ALIAS("dmi:*:svnMICRO-STARINTERNATIONAL*:pnMS-N034:*");
 MODULE_ALIAS("dmi:*:svnMICRO-STARINTERNATIONAL*:pnMS-N051:*");
 MODULE_ALIAS("dmi:*:svnMICRO-STARINTERNATIONAL*:pnMS-N014:*");
 MODULE_ALIAS("dmi:*:svnMicro-StarInternational*:pnCR620:*");
-MODULE_ALIAS("dmi:*:svnMicro-StarInternational*:pnU270series:*");

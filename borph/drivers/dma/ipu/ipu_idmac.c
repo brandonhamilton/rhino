@@ -9,7 +9,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
@@ -1146,6 +1145,29 @@ static int ipu_disable_channel(struct idmac *idmac, struct idmac_channel *ichan,
 	reg = idmac_read_icreg(ipu, IDMAC_CHA_EN);
 	idmac_write_icreg(ipu, reg & ~chan_mask, IDMAC_CHA_EN);
 
+	/*
+	 * Problem (observed with channel DMAIC_7): after enabling the channel
+	 * and initialising buffers, there comes an interrupt with current still
+	 * pointing at buffer 0, whereas it should use buffer 0 first and only
+	 * generate an interrupt when it is done, then current should already
+	 * point to buffer 1. This spurious interrupt also comes on channel
+	 * DMASDC_0. With DMAIC_7 normally, is we just leave the ISR after the
+	 * first interrupt, there comes the second with current correctly
+	 * pointing to buffer 1 this time. But sometimes this second interrupt
+	 * doesn't come and the channel hangs. Clearing BUFx_RDY when disabling
+	 * the channel seems to prevent the channel from hanging, but it doesn't
+	 * prevent the spurious interrupt. This might also be unsafe. Think
+	 * about the IDMAC controller trying to switch to a buffer, when we
+	 * clear the ready bit, and re-enable it a moment later.
+	 */
+	reg = idmac_read_ipureg(ipu, IPU_CHA_BUF0_RDY);
+	idmac_write_ipureg(ipu, 0, IPU_CHA_BUF0_RDY);
+	idmac_write_ipureg(ipu, reg & ~(1UL << channel), IPU_CHA_BUF0_RDY);
+
+	reg = idmac_read_ipureg(ipu, IPU_CHA_BUF1_RDY);
+	idmac_write_ipureg(ipu, 0, IPU_CHA_BUF1_RDY);
+	idmac_write_ipureg(ipu, reg & ~(1UL << channel), IPU_CHA_BUF1_RDY);
+
 	spin_unlock_irqrestore(&ipu->lock, flags);
 
 	return 0;
@@ -1224,6 +1246,33 @@ static irqreturn_t idmac_interrupt(int irq, void *dev_id)
 
 	/* Other interrupts do not interfere with this channel */
 	spin_lock(&ichan->lock);
+	if (unlikely(chan_id != IDMAC_SDC_0 && chan_id != IDMAC_SDC_1 &&
+		     ((curbuf >> chan_id) & 1) == ichan->active_buffer &&
+		     !list_is_last(ichan->queue.next, &ichan->queue))) {
+		int i = 100;
+
+		/* This doesn't help. See comment in ipu_disable_channel() */
+		while (--i) {
+			curbuf = idmac_read_ipureg(&ipu_data, IPU_CHA_CUR_BUF);
+			if (((curbuf >> chan_id) & 1) != ichan->active_buffer)
+				break;
+			cpu_relax();
+		}
+
+		if (!i) {
+			spin_unlock(&ichan->lock);
+			dev_dbg(dev,
+				"IRQ on active buffer on channel %x, active "
+				"%d, ready %x, %x, current %x!\n", chan_id,
+				ichan->active_buffer, ready0, ready1, curbuf);
+			return IRQ_NONE;
+		} else
+			dev_dbg(dev,
+				"Buffer deactivated on channel %x, active "
+				"%d, ready %x, %x, current %x, rest %d!\n", chan_id,
+				ichan->active_buffer, ready0, ready1, curbuf, i);
+	}
+
 	if (unlikely((ichan->active_buffer && (ready1 >> chan_id) & 1) ||
 		     (!ichan->active_buffer && (ready0 >> chan_id) & 1)
 		     )) {
@@ -1706,14 +1755,16 @@ static int __init ipu_probe(struct platform_device *pdev)
 		ipu_data.irq_fn, ipu_data.irq_err, ipu_data.irq_base);
 
 	/* Remap IPU common registers */
-	ipu_data.reg_ipu = ioremap(mem_ipu->start, resource_size(mem_ipu));
+	ipu_data.reg_ipu = ioremap(mem_ipu->start,
+				   mem_ipu->end - mem_ipu->start + 1);
 	if (!ipu_data.reg_ipu) {
 		ret = -ENOMEM;
 		goto err_ioremap_ipu;
 	}
 
 	/* Remap Image Converter and Image DMA Controller registers */
-	ipu_data.reg_ic = ioremap(mem_ic->start, resource_size(mem_ic));
+	ipu_data.reg_ic = ioremap(mem_ic->start,
+				  mem_ic->end - mem_ic->start + 1);
 	if (!ipu_data.reg_ic) {
 		ret = -ENOMEM;
 		goto err_ioremap_ic;

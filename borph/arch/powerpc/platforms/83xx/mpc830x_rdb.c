@@ -57,19 +57,16 @@ static void __init mpc830x_rdb_init_IRQ(void)
 	ipic_set_default_priority();
 }
 
-static const char *board[] __initdata = {
-	"MPC8308RDB",
-	"fsl,mpc8308rdb",
-	"denx,mpc8308_p1m",
-	NULL
-};
-
 /*
  * Called very early, MMU is off, device-tree isn't unflattened
  */
 static int __init mpc830x_rdb_probe(void)
 {
-	return of_flat_dt_match(of_get_flat_dt_root(), board);
+	unsigned long root = of_get_flat_dt_root();
+
+	return of_flat_dt_is_compatible(root, "MPC8308RDB") ||
+	       of_flat_dt_is_compatible(root, "fsl,mpc8308rdb") ||
+	       of_flat_dt_is_compatible(root, "denx,mpc8308_p1m");
 }
 
 static struct of_device_id __initdata of_bus_ids[] = {

@@ -36,6 +36,7 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/time.h>
+#include <linux/version.h>
 #include <linux/kmod.h>
 
 #include <linux/i2c.h>
@@ -60,7 +61,8 @@
 // #define VINO_DEBUG
 // #define VINO_DEBUG_INT
 
-#define VINO_MODULE_VERSION "0.0.7"
+#define VINO_MODULE_VERSION "0.0.6"
+#define VINO_VERSION_CODE KERNEL_VERSION(0, 0, 6)
 
 MODULE_DESCRIPTION("SGI VINO Video4Linux2 driver");
 MODULE_VERSION(VINO_MODULE_VERSION);
@@ -2932,6 +2934,7 @@ static int vino_querycap(struct file *file, void *__fh,
 	strcpy(cap->driver, vino_driver_name);
 	strcpy(cap->card, vino_driver_description);
 	strcpy(cap->bus_info, vino_bus_name);
+	cap->version = VINO_VERSION_CODE;
 	cap->capabilities =
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_STREAMING;
@@ -2951,6 +2954,9 @@ static int vino_enum_input(struct file *file, void *__fh,
 	if (input == VINO_INPUT_NONE)
 		return -EINVAL;
 
+	memset(i, 0, sizeof(struct v4l2_input));
+
+	i->index = index;
 	i->type = V4L2_INPUT_TYPE_CAMERA;
 	i->std = vino_inputs[input].std;
 	strcpy(i->name, vino_inputs[input].name);

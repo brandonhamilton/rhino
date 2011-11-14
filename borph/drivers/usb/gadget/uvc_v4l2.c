@@ -124,12 +124,24 @@ uvc_v4l2_open(struct file *file)
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_device *uvc = video_get_drvdata(vdev);
 	struct uvc_file_handle *handle;
+	int ret;
 
 	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
 	if (handle == NULL)
 		return -ENOMEM;
 
-	v4l2_fh_init(&handle->vfh, vdev);
+	ret = v4l2_fh_init(&handle->vfh, vdev);
+	if (ret < 0)
+		goto error;
+
+	ret = v4l2_event_init(&handle->vfh);
+	if (ret < 0)
+		goto error;
+
+	ret = v4l2_event_alloc(&handle->vfh, 8);
+	if (ret < 0)
+		goto error;
+
 	v4l2_fh_add(&handle->vfh);
 
 	handle->device = &uvc->video;
@@ -137,6 +149,10 @@ uvc_v4l2_open(struct file *file)
 
 	uvc_function_connect(uvc);
 	return 0;
+
+error:
+	v4l2_fh_exit(&handle->vfh);
+	return ret;
 }
 
 static int
@@ -298,7 +314,7 @@ uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		if (sub->type < UVC_EVENT_FIRST || sub->type > UVC_EVENT_LAST)
 			return -EINVAL;
 
-		return v4l2_event_subscribe(&handle->vfh, arg, 2);
+		return v4l2_event_subscribe(&handle->vfh, arg);
 	}
 
 	case VIDIOC_UNSUBSCRIBE_EVENT:
@@ -338,7 +354,7 @@ uvc_v4l2_poll(struct file *file, poll_table *wait)
 	struct uvc_file_handle *handle = to_uvc_file_handle(file->private_data);
 	unsigned int mask = 0;
 
-	poll_wait(file, &handle->vfh.wait, wait);
+	poll_wait(file, &handle->vfh.events->wait, wait);
 	if (v4l2_event_pending(&handle->vfh))
 		mask |= POLLPRI;
 

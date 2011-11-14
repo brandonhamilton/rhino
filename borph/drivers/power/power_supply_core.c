@@ -171,8 +171,6 @@ int power_supply_register(struct device *parent, struct power_supply *psy)
 	dev_set_drvdata(dev, psy);
 	psy->dev = dev;
 
-	INIT_WORK(&psy->changed_work, power_supply_changed_work);
-
 	rc = kobject_set_name(&dev->kobj, "%s", psy->name);
 	if (rc)
 		goto kobject_set_name_failed;
@@ -180,6 +178,8 @@ int power_supply_register(struct device *parent, struct power_supply *psy)
 	rc = device_add(dev);
 	if (rc)
 		goto device_add_failed;
+
+	INIT_WORK(&psy->changed_work, power_supply_changed_work);
 
 	rc = power_supply_create_triggers(psy);
 	if (rc)
@@ -190,10 +190,10 @@ int power_supply_register(struct device *parent, struct power_supply *psy)
 	goto success;
 
 create_triggers_failed:
-	device_del(dev);
+	device_unregister(psy->dev);
 kobject_set_name_failed:
 device_add_failed:
-	put_device(dev);
+	kfree(dev);
 success:
 	return rc;
 }
@@ -201,7 +201,7 @@ EXPORT_SYMBOL_GPL(power_supply_register);
 
 void power_supply_unregister(struct power_supply *psy)
 {
-	cancel_work_sync(&psy->changed_work);
+	flush_scheduled_work();
 	power_supply_remove_triggers(psy);
 	device_unregister(psy->dev);
 }

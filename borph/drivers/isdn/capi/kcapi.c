@@ -38,7 +38,6 @@
 #include <linux/rcupdate.h>
 
 static int showcapimsgs = 0;
-static struct workqueue_struct *kcapi_wq;
 
 MODULE_DESCRIPTION("CAPI4Linux: kernel CAPI layer");
 MODULE_AUTHOR("Carsten Paeth");
@@ -292,7 +291,7 @@ static int notify_push(unsigned int event_type, u32 controller)
 	event->type = event_type;
 	event->controller = controller;
 
-	queue_work(kcapi_wq, &event->work);
+	schedule_work(&event->work);
 	return 0;
 }
 
@@ -409,7 +408,7 @@ void capi_ctr_handle_message(struct capi_ctr *ctr, u16 appl,
 		goto error;
 	}
 	skb_queue_tail(&ap->recv_queue, skb);
-	queue_work(kcapi_wq, &ap->recv_work);
+	schedule_work(&ap->recv_work);
 	rcu_read_unlock();
 
 	return;
@@ -744,7 +743,7 @@ u16 capi20_release(struct capi20_appl *ap)
 
 	mutex_unlock(&capi_controller_lock);
 
-	flush_workqueue(kcapi_wq);
+	flush_scheduled_work();
 	skb_queue_purge(&ap->recv_queue);
 
 	if (showcapimsgs & 1) {
@@ -1286,30 +1285,21 @@ static int __init kcapi_init(void)
 {
 	int err;
 
-	kcapi_wq = alloc_workqueue("kcapi", 0, 0);
-	if (!kcapi_wq)
-		return -ENOMEM;
-
 	register_capictr_notifier(&capictr_nb);
 
 	err = cdebug_init();
-	if (err) {
-		unregister_capictr_notifier(&capictr_nb);
-		destroy_workqueue(kcapi_wq);
-		return err;
-	}
-
-	kcapi_proc_init();
-	return 0;
+	if (!err)
+		kcapi_proc_init();
+	return err;
 }
 
 static void __exit kcapi_exit(void)
 {
         kcapi_proc_exit();
 
-	unregister_capictr_notifier(&capictr_nb);
+	/* make sure all notifiers are finished */
+	flush_scheduled_work();
 	cdebug_exit();
-	destroy_workqueue(kcapi_wq);
 }
 
 module_init(kcapi_init);

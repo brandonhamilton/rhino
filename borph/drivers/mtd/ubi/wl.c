@@ -1,5 +1,4 @@
 /*
- * @ubi: UBI device description object
  * Copyright (c) International Business Machines Corp., 2006
  *
  * This program is free software; you can redistribute it and/or modify
@@ -162,16 +161,14 @@ struct ubi_work {
 	int torture;
 };
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 static int paranoid_check_ec(struct ubi_device *ubi, int pnum, int ec);
-static int paranoid_check_in_wl_tree(const struct ubi_device *ubi,
-				     struct ubi_wl_entry *e,
+static int paranoid_check_in_wl_tree(struct ubi_wl_entry *e,
 				     struct rb_root *root);
-static int paranoid_check_in_pq(const struct ubi_device *ubi,
-				struct ubi_wl_entry *e);
+static int paranoid_check_in_pq(struct ubi_device *ubi, struct ubi_wl_entry *e);
 #else
 #define paranoid_check_ec(ubi, pnum, ec) 0
-#define paranoid_check_in_wl_tree(ubi, e, root)
+#define paranoid_check_in_wl_tree(e, root)
 #define paranoid_check_in_pq(ubi, e) 0
 #endif
 
@@ -452,7 +449,7 @@ retry:
 		BUG();
 	}
 
-	paranoid_check_in_wl_tree(ubi, e, &ubi->free);
+	paranoid_check_in_wl_tree(e, &ubi->free);
 
 	/*
 	 * Move the physical eraseblock to the protection queue where it will
@@ -616,7 +613,7 @@ static void schedule_ubi_work(struct ubi_device *ubi, struct ubi_work *wrk)
 	list_add_tail(&wrk->list, &ubi->works);
 	ubi_assert(ubi->works_count >= 0);
 	ubi->works_count += 1;
-	if (ubi->thread_enabled && !ubi_dbg_is_bgt_disabled(ubi))
+	if (ubi->thread_enabled)
 		wake_up_process(ubi->bgt_thread);
 	spin_unlock(&ubi->wl_lock);
 }
@@ -715,7 +712,7 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 			       e1->ec, e2->ec);
 			goto out_cancel;
 		}
-		paranoid_check_in_wl_tree(ubi, e1, &ubi->used);
+		paranoid_check_in_wl_tree(e1, &ubi->used);
 		rb_erase(&e1->u.rb, &ubi->used);
 		dbg_wl("move PEB %d EC %d to PEB %d EC %d",
 		       e1->pnum, e1->ec, e2->pnum, e2->ec);
@@ -724,12 +721,12 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 		scrubbing = 1;
 		e1 = rb_entry(rb_first(&ubi->scrub), struct ubi_wl_entry, u.rb);
 		e2 = find_wl_entry(&ubi->free, WL_FREE_MAX_DIFF);
-		paranoid_check_in_wl_tree(ubi, e1, &ubi->scrub);
+		paranoid_check_in_wl_tree(e1, &ubi->scrub);
 		rb_erase(&e1->u.rb, &ubi->scrub);
 		dbg_wl("scrub PEB %d to PEB %d", e1->pnum, e2->pnum);
 	}
 
-	paranoid_check_in_wl_tree(ubi, e2, &ubi->free);
+	paranoid_check_in_wl_tree(e2, &ubi->free);
 	rb_erase(&e2->u.rb, &ubi->free);
 	ubi->move_from = e1;
 	ubi->move_to = e2;
@@ -1172,13 +1169,13 @@ retry:
 		return 0;
 	} else {
 		if (in_wl_tree(e, &ubi->used)) {
-			paranoid_check_in_wl_tree(ubi, e, &ubi->used);
+			paranoid_check_in_wl_tree(e, &ubi->used);
 			rb_erase(&e->u.rb, &ubi->used);
 		} else if (in_wl_tree(e, &ubi->scrub)) {
-			paranoid_check_in_wl_tree(ubi, e, &ubi->scrub);
+			paranoid_check_in_wl_tree(e, &ubi->scrub);
 			rb_erase(&e->u.rb, &ubi->scrub);
 		} else if (in_wl_tree(e, &ubi->erroneous)) {
-			paranoid_check_in_wl_tree(ubi, e, &ubi->erroneous);
+			paranoid_check_in_wl_tree(e, &ubi->erroneous);
 			rb_erase(&e->u.rb, &ubi->erroneous);
 			ubi->erroneous_peb_count -= 1;
 			ubi_assert(ubi->erroneous_peb_count >= 0);
@@ -1245,7 +1242,7 @@ retry:
 	}
 
 	if (in_wl_tree(e, &ubi->used)) {
-		paranoid_check_in_wl_tree(ubi, e, &ubi->used);
+		paranoid_check_in_wl_tree(e, &ubi->used);
 		rb_erase(&e->u.rb, &ubi->used);
 	} else {
 		int err;
@@ -1367,7 +1364,7 @@ int ubi_thread(void *u)
 
 		spin_lock(&ubi->wl_lock);
 		if (list_empty(&ubi->works) || ubi->ro_mode ||
-		    !ubi->thread_enabled || ubi_dbg_is_bgt_disabled(ubi)) {
+			       !ubi->thread_enabled) {
 			set_current_state(TASK_INTERRUPTIBLE);
 			spin_unlock(&ubi->wl_lock);
 			schedule();
@@ -1564,7 +1561,7 @@ void ubi_wl_close(struct ubi_device *ubi)
 	kfree(ubi->lookuptbl);
 }
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 
 /**
  * paranoid_check_ec - make sure that the erase counter of a PEB is correct.
@@ -1573,17 +1570,13 @@ void ubi_wl_close(struct ubi_device *ubi)
  * @ec: the erase counter to check
  *
  * This function returns zero if the erase counter of physical eraseblock @pnum
- * is equivalent to @ec, and a negative error code if not or if an error
- * occurred.
+ * is equivalent to @ec, and a negative error code if not or if an error occurred.
  */
 static int paranoid_check_ec(struct ubi_device *ubi, int pnum, int ec)
 {
 	int err;
 	long long read_ec;
 	struct ubi_ec_hdr *ec_hdr;
-
-	if (!ubi->dbg->chk_gen)
-		return 0;
 
 	ec_hdr = kzalloc(ubi->ec_hdr_alsize, GFP_NOFS);
 	if (!ec_hdr)
@@ -1612,20 +1605,15 @@ out_free:
 
 /**
  * paranoid_check_in_wl_tree - check that wear-leveling entry is in WL RB-tree.
- * @ubi: UBI device description object
  * @e: the wear-leveling entry to check
  * @root: the root of the tree
  *
  * This function returns zero if @e is in the @root RB-tree and %-EINVAL if it
  * is not.
  */
-static int paranoid_check_in_wl_tree(const struct ubi_device *ubi,
-				     struct ubi_wl_entry *e,
+static int paranoid_check_in_wl_tree(struct ubi_wl_entry *e,
 				     struct rb_root *root)
 {
-	if (!ubi->dbg->chk_gen)
-		return 0;
-
 	if (in_wl_tree(e, root))
 		return 0;
 
@@ -1643,14 +1631,10 @@ static int paranoid_check_in_wl_tree(const struct ubi_device *ubi,
  *
  * This function returns zero if @e is in @ubi->pq and %-EINVAL if it is not.
  */
-static int paranoid_check_in_pq(const struct ubi_device *ubi,
-				struct ubi_wl_entry *e)
+static int paranoid_check_in_pq(struct ubi_device *ubi, struct ubi_wl_entry *e)
 {
 	struct ubi_wl_entry *p;
 	int i;
-
-	if (!ubi->dbg->chk_gen)
-		return 0;
 
 	for (i = 0; i < UBI_PROT_QUEUE_LEN; ++i)
 		list_for_each_entry(p, &ubi->pq[i], u.list)
@@ -1662,5 +1646,4 @@ static int paranoid_check_in_pq(const struct ubi_device *ubi,
 	ubi_dbg_dump_stack();
 	return -EINVAL;
 }
-
-#endif /* CONFIG_MTD_UBI_DEBUG */
+#endif /* CONFIG_MTD_UBI_DEBUG_PARANOID */

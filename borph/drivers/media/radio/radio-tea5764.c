@@ -39,8 +39,10 @@
 #include <linux/i2c.h>			/* I2C				*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
+#include <linux/version.h>      	/* for KERNEL_VERSION MACRO     */
 
-#define DRIVER_VERSION	"0.0.2"
+#define DRIVER_VERSION	"v0.01"
+#define RADIO_VERSION	KERNEL_VERSION(0, 0, 1)
 
 #define DRIVER_AUTHOR	"Fabio Belavenuto <belavenuto@gmail.com>"
 #define DRIVER_DESC	"A driver for the TEA5764 radio chip for EZX Phones."
@@ -298,6 +300,7 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	strlcpy(v->card, dev->name, sizeof(v->card));
 	snprintf(v->bus_info, sizeof(v->bus_info),
 		 "I2C:%s", dev_name(&dev->dev));
+	v->version = RADIO_VERSION;
 	v->capabilities = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	return 0;
 }
@@ -592,9 +595,8 @@ static void __exit tea5764_exit(void)
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-MODULE_VERSION(DRIVER_VERSION);
 
-module_param(use_xtal, int, 0);
+module_param(use_xtal, int, 1);
 MODULE_PARM_DESC(use_xtal, "Chip have a xtal connected in board");
 module_param(radio_nr, int, 0);
 MODULE_PARM_DESC(radio_nr, "video4linux device number to use");

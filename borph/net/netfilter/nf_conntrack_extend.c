@@ -68,6 +68,12 @@ nf_ct_ext_create(struct nf_ct_ext **ext, enum nf_ct_ext_id id, gfp_t gfp)
 	return (void *)(*ext) + off;
 }
 
+static void __nf_ct_ext_free_rcu(struct rcu_head *head)
+{
+	struct nf_ct_ext *ext = container_of(head, struct nf_ct_ext, rcu);
+	kfree(ext);
+}
+
 void *__nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
 {
 	struct nf_ct_ext *old, *new;
@@ -108,7 +114,7 @@ void *__nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
 					(void *)old + old->offset[i]);
 			rcu_read_unlock();
 		}
-		kfree_rcu(old, rcu);
+		call_rcu(&old->rcu, __nf_ct_ext_free_rcu);
 		ct->ext = new;
 	}
 
@@ -134,16 +140,15 @@ static void update_alloc_size(struct nf_ct_ext_type *type)
 	/* This assumes that extended areas in conntrack for the types
 	   whose NF_CT_EXT_F_PREALLOC bit set are allocated in order */
 	for (i = min; i <= max; i++) {
-		t1 = rcu_dereference_protected(nf_ct_ext_types[i],
-				lockdep_is_held(&nf_ct_ext_type_mutex));
+		t1 = nf_ct_ext_types[i];
 		if (!t1)
 			continue;
 
-		t1->alloc_size = ALIGN(sizeof(struct nf_ct_ext), t1->align) +
-				 t1->len;
+		t1->alloc_size = sizeof(struct nf_ct_ext)
+				 + ALIGN(sizeof(struct nf_ct_ext), t1->align)
+				 + t1->len;
 		for (j = 0; j < NF_CT_EXT_NUM; j++) {
-			t2 = rcu_dereference_protected(nf_ct_ext_types[j],
-				lockdep_is_held(&nf_ct_ext_type_mutex));
+			t2 = nf_ct_ext_types[j];
 			if (t2 == NULL || t2 == t1 ||
 			    (t2->flags & NF_CT_EXT_F_PREALLOC) == 0)
 				continue;

@@ -5,8 +5,7 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2000-2007 Adaptec, Inc. (aacraid@adaptec.com)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -55,10 +54,11 @@
 
 #include "aacraid.h"
 
-#define AAC_DRIVER_VERSION		"1.1-7"
+#define AAC_DRIVER_VERSION		"1.1-5"
 #ifndef AAC_DRIVER_BRANCH
 #define AAC_DRIVER_BRANCH		""
 #endif
+#define AAC_DRIVER_BUILD_DATE		__DATE__ " " __TIME__
 #define AAC_DRIVERNAME			"aacraid"
 
 #ifdef AAC_DRIVER_BUILD
@@ -66,7 +66,7 @@
 #define str(x) _str(x)
 #define AAC_DRIVER_FULL_VERSION	AAC_DRIVER_VERSION "[" str(AAC_DRIVER_BUILD) "]" AAC_DRIVER_BRANCH
 #else
-#define AAC_DRIVER_FULL_VERSION	AAC_DRIVER_VERSION AAC_DRIVER_BRANCH
+#define AAC_DRIVER_FULL_VERSION	AAC_DRIVER_VERSION AAC_DRIVER_BRANCH " " AAC_DRIVER_BUILD_DATE
 #endif
 
 MODULE_AUTHOR("Red Hat Inc and Adaptec");
@@ -161,7 +161,6 @@ static const struct pci_device_id aac_pci_tbl[] __devinitdata = {
 	{ 0x9005, 0x0285, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 59 }, /* Adaptec Catch All */
 	{ 0x9005, 0x0286, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 60 }, /* Adaptec Rocket Catch All */
 	{ 0x9005, 0x0288, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 61 }, /* Adaptec NEMER/ARK Catch All */
-	{ 0x9005, 0x028b, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 62 }, /* Adaptec PMC Catch All */
 	{ 0,}
 };
 MODULE_DEVICE_TABLE(pci, aac_pci_tbl);
@@ -236,8 +235,7 @@ static struct aac_driver_ident aac_drivers[] = {
 	{ aac_rx_init, "aacraid",  "Legend  ", "RAID            ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Legend Catchall */
 	{ aac_rx_init, "aacraid",  "ADAPTEC ", "RAID            ", 2 }, /* Adaptec Catch All */
 	{ aac_rkt_init, "aacraid", "ADAPTEC ", "RAID            ", 2 }, /* Adaptec Rocket Catch All */
-	{ aac_nark_init, "aacraid", "ADAPTEC ", "RAID           ", 2 }, /* Adaptec NEMER/ARK Catch All */
-	{ aac_src_init, "aacraid", "ADAPTEC ", "RAID            ", 2 } /* Adaptec PMC Catch All */
+	{ aac_nark_init, "aacraid", "ADAPTEC ", "RAID            ", 2 } /* Adaptec NEMER/ARK Catch All */
 };
 
 /**
@@ -655,10 +653,8 @@ static int aac_eh_reset(struct scsi_cmnd* cmd)
 	 * This adapter needs a blind reset, only do so for Adapters that
 	 * support a register, instead of a commanded, reset.
 	 */
-	if (((aac->supplement_adapter_info.SupportedOptions2 &
-	  AAC_OPTION_MU_RESET) ||
-	  (aac->supplement_adapter_info.SupportedOptions2 &
-	  AAC_OPTION_DOORBELL_RESET)) &&
+	if ((aac->supplement_adapter_info.SupportedOptions2 &
+	   AAC_OPTION_MU_RESET) &&
 	  aac_check_reset &&
 	  ((aac_check_reset != 1) ||
 	   !(aac->supplement_adapter_info.SupportedOptions2 &

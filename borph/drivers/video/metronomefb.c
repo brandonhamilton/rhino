@@ -628,9 +628,11 @@ static int __devinit metronomefb_probe(struct platform_device *dev)
 	/* we need to add a spare page because our csum caching scheme walks
 	 * to the end of the page */
 	videomemorysize = PAGE_SIZE + (fw * fh);
-	videomemory = vzalloc(videomemorysize);
+	videomemory = vmalloc(videomemorysize);
 	if (!videomemory)
 		goto err_fb_rel;
+
+	memset(videomemory, 0, videomemorysize);
 
 	info->screen_base = (char __force __iomem *)videomemory;
 	info->fbops = &metronomefb_ops;
@@ -763,7 +765,7 @@ static int __devexit metronomefb_remove(struct platform_device *dev)
 
 static struct platform_driver metronomefb_driver = {
 	.probe	= metronomefb_probe,
-	.remove = __devexit_p(metronomefb_remove),
+	.remove = metronomefb_remove,
 	.driver	= {
 		.owner	= THIS_MODULE,
 		.name	= "metronomefb",

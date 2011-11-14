@@ -413,7 +413,7 @@ static int pohmelfs_readdir_response(struct netfs_state *st)
 				if (dentry) {
 					alias = d_materialise_unique(dentry, &npi->vfs_inode);
 					if (alias)
-						dput(alias);
+						dput(dentry);
 				}
 
 				dput(dentry);

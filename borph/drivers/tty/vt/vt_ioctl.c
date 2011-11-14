@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/char/vt_ioctl.c
+ *
  *  Copyright (C) 1992 obz under the linux copyright
  *
  *  Dynamic diacritical handling - aeb@cwi.nl - Dec 1993
@@ -25,6 +27,7 @@
 #include <linux/console.h>
 #include <linux/consolemap.h>
 #include <linux/signal.h>
+#include <linux/smp_lock.h>
 #include <linux/timex.h>
 
 #include <asm/io.h>
@@ -492,7 +495,7 @@ do_unimap_ioctl(int cmd, struct unimapdesc __user *user_ud, int perm, struct vc_
  * We handle the console-specific ioctl's here.  We allow the
  * capability to modify any console, not just the fg_console. 
  */
-int vt_ioctl(struct tty_struct *tty,
+int vt_ioctl(struct tty_struct *tty, struct file * file,
 	     unsigned int cmd, unsigned long arg)
 {
 	struct vc_data *vc = tty->driver_data;
@@ -646,12 +649,12 @@ int vt_ioctl(struct tty_struct *tty,
 		/*
 		 * explicitly blank/unblank the screen if switching modes
 		 */
-		console_lock();
+		acquire_console_sem();
 		if (arg == KD_TEXT)
 			do_unblank_screen(1);
 		else
 			do_blank_screen(1);
-		console_unlock();
+		release_console_sem();
 		break;
 
 	case KDGETMODE:
@@ -685,9 +688,6 @@ int vt_ioctl(struct tty_struct *tty,
 			kbd->kbdmode = VC_UNICODE;
 			compute_shiftstate();
 			break;
-		  case K_OFF:
-			kbd->kbdmode = VC_OFF;
-			break;
 		  default:
 			ret = -EINVAL;
 			goto out;
@@ -696,23 +696,10 @@ int vt_ioctl(struct tty_struct *tty,
 		break;
 
 	case KDGKBMODE:
-		switch (kbd->kbdmode) {
-		case VC_RAW:
-			uival = K_RAW;
-			break;
-		case VC_MEDIUMRAW:
-			uival = K_MEDIUMRAW;
-			break;
-		case VC_UNICODE:
-			uival = K_UNICODE;
-			break;
-		case VC_OFF:
-			uival = K_OFF;
-			break;
-		default:
-			uival = K_XLATE;
-			break;
-		}
+		uival = ((kbd->kbdmode == VC_RAW) ? K_RAW :
+				 (kbd->kbdmode == VC_MEDIUMRAW) ? K_MEDIUMRAW :
+				 (kbd->kbdmode == VC_UNICODE) ? K_UNICODE :
+				 K_XLATE);
 		goto setint;
 
 	/* this could be folded into KDSKBMODE, but for compatibility
@@ -906,7 +893,7 @@ int vt_ioctl(struct tty_struct *tty,
 			ret = -EINVAL;
 			goto out;
 		}
-		console_lock();
+		acquire_console_sem();
 		vc->vt_mode = tmp;
 		/* the frsig is ignored, so we set it to 0 */
 		vc->vt_mode.frsig = 0;
@@ -914,7 +901,7 @@ int vt_ioctl(struct tty_struct *tty,
 		vc->vt_pid = get_pid(task_pid(current));
 		/* no switch is required -- saw@shade.msu.ru */
 		vc->vt_newvt = -1;
-		console_unlock();
+		release_console_sem();
 		break;
 	}
 
@@ -923,9 +910,9 @@ int vt_ioctl(struct tty_struct *tty,
 		struct vt_mode tmp;
 		int rc;
 
-		console_lock();
+		acquire_console_sem();
 		memcpy(&tmp, &vc->vt_mode, sizeof(struct vt_mode));
-		console_unlock();
+		release_console_sem();
 
 		rc = copy_to_user(up, &tmp, sizeof(struct vt_mode));
 		if (rc)
@@ -978,9 +965,9 @@ int vt_ioctl(struct tty_struct *tty,
 			ret =  -ENXIO;
 		else {
 			arg--;
-			console_lock();
+			acquire_console_sem();
 			ret = vc_allocate(arg);
-			console_unlock();
+			release_console_sem();
 			if (ret)
 				break;
 			set_console(arg);
@@ -1003,7 +990,7 @@ int vt_ioctl(struct tty_struct *tty,
 			ret = -ENXIO;
 		else {
 			vsa.console--;
-			console_lock();
+			acquire_console_sem();
 			ret = vc_allocate(vsa.console);
 			if (ret == 0) {
 				struct vc_data *nvc;
@@ -1016,13 +1003,12 @@ int vt_ioctl(struct tty_struct *tty,
 				put_pid(nvc->vt_pid);
 				nvc->vt_pid = get_pid(task_pid(current));
 			}
-			console_unlock();
+			release_console_sem();
 			if (ret)
 				break;
 			/* Commence switch and lock */
-			set_console(vsa.console);
+			set_console(arg);
 		}
-		break;
 	}
 
 	/*
@@ -1058,7 +1044,7 @@ int vt_ioctl(struct tty_struct *tty,
 		/*
 		 * Switching-from response
 		 */
-		console_lock();
+		acquire_console_sem();
 		if (vc->vt_newvt >= 0) {
 			if (arg == 0)
 				/*
@@ -1077,7 +1063,7 @@ int vt_ioctl(struct tty_struct *tty,
 				vc->vt_newvt = -1;
 				ret = vc_allocate(newvt);
 				if (ret) {
-					console_unlock();
+					release_console_sem();
 					break;
 				}
 				/*
@@ -1097,7 +1083,7 @@ int vt_ioctl(struct tty_struct *tty,
 			if (arg != VT_ACKACQ)
 				ret = -EINVAL;
 		}
-		console_unlock();
+		release_console_sem();
 		break;
 
 	 /*
@@ -1110,20 +1096,20 @@ int vt_ioctl(struct tty_struct *tty,
 		}
 		if (arg == 0) {
 		    /* deallocate all unused consoles, but leave 0 */
-			console_lock();
+			acquire_console_sem();
 			for (i=1; i<MAX_NR_CONSOLES; i++)
 				if (! VT_BUSY(i))
 					vc_deallocate(i);
-			console_unlock();
+			release_console_sem();
 		} else {
 			/* deallocate a single console, if possible */
 			arg--;
 			if (VT_BUSY(arg))
 				ret = -EBUSY;
 			else if (arg) {			      /* leave 0 */
-				console_lock();
+				acquire_console_sem();
 				vc_deallocate(arg);
-				console_unlock();
+				release_console_sem();
 			}
 		}
 		break;
@@ -1140,7 +1126,7 @@ int vt_ioctl(struct tty_struct *tty,
 		    get_user(cc, &vtsizes->v_cols))
 			ret = -EFAULT;
 		else {
-			console_lock();
+			acquire_console_sem();
 			for (i = 0; i < MAX_NR_CONSOLES; i++) {
 				vc = vc_cons[i].d;
 
@@ -1149,7 +1135,7 @@ int vt_ioctl(struct tty_struct *tty,
 					vc_resize(vc_cons[i].d, cc, ll);
 				}
 			}
-			console_unlock();
+			release_console_sem();
 		}
 		break;
 	}
@@ -1201,14 +1187,14 @@ int vt_ioctl(struct tty_struct *tty,
 		for (i = 0; i < MAX_NR_CONSOLES; i++) {
 			if (!vc_cons[i].d)
 				continue;
-			console_lock();
+			acquire_console_sem();
 			if (vlin)
 				vc_cons[i].d->vc_scan_lines = vlin;
 			if (clin)
 				vc_cons[i].d->vc_font.height = clin;
 			vc_cons[i].d->vc_resize_user = 1;
 			vc_resize(vc_cons[i].d, cc, ll);
-			console_unlock();
+			release_console_sem();
 		}
 		break;
 	}
@@ -1381,7 +1367,7 @@ void vc_SAK(struct work_struct *work)
 	struct vc_data *vc;
 	struct tty_struct *tty;
 
-	console_lock();
+	acquire_console_sem();
 	vc = vc_con->d;
 	if (vc) {
 		tty = vc->port.tty;
@@ -1393,7 +1379,7 @@ void vc_SAK(struct work_struct *work)
 			__do_SAK(tty);
 		reset_vc(vc);
 	}
-	console_unlock();
+	release_console_sem();
 }
 
 #ifdef CONFIG_COMPAT
@@ -1505,11 +1491,12 @@ compat_unimap_ioctl(unsigned int cmd, struct compat_unimapdesc __user *user_ud,
 	return 0;
 }
 
-long vt_compat_ioctl(struct tty_struct *tty,
+long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
 	     unsigned int cmd, unsigned long arg)
 {
 	struct vc_data *vc = tty->driver_data;
 	struct console_font_op op;	/* used in multiple places here */
+	struct kbd_struct *kbd;
 	unsigned int console;
 	void __user *up = (void __user *)arg;
 	int perm;
@@ -1532,6 +1519,7 @@ long vt_compat_ioctl(struct tty_struct *tty,
 	if (current->signal->tty == tty || capable(CAP_SYS_TTY_CONFIG))
 		perm = 1;
 
+	kbd = kbd_table + console;
 	switch (cmd) {
 	/*
 	 * these need special handlers for incompatible data structures
@@ -1589,7 +1577,7 @@ out:
 
 fallback:
 	tty_unlock();
-	return vt_ioctl(tty, cmd, arg);
+	return vt_ioctl(tty, file, cmd, arg);
 }
 
 
@@ -1749,10 +1737,10 @@ int vt_move_to_console(unsigned int vt, int alloc)
 {
 	int prev;
 
-	console_lock();
+	acquire_console_sem();
 	/* Graphics mode - up to X */
 	if (disable_vt_switch) {
-		console_unlock();
+		release_console_sem();
 		return 0;
 	}
 	prev = fg_console;
@@ -1760,7 +1748,7 @@ int vt_move_to_console(unsigned int vt, int alloc)
 	if (alloc && vc_allocate(vt)) {
 		/* we can't have a free VC for now. Too bad,
 		 * we don't want to mess the screen for now. */
-		console_unlock();
+		release_console_sem();
 		return -ENOSPC;
 	}
 
@@ -1770,10 +1758,10 @@ int vt_move_to_console(unsigned int vt, int alloc)
 		 * Let the calling function know so it can decide
 		 * what to do.
 		 */
-		console_unlock();
+		release_console_sem();
 		return -EIO;
 	}
-	console_unlock();
+	release_console_sem();
 	tty_lock();
 	if (vt_waitactive(vt + 1)) {
 		pr_debug("Suspend: Can't switch VCs.");
@@ -1793,8 +1781,8 @@ int vt_move_to_console(unsigned int vt, int alloc)
  */
 void pm_set_vt_switch(int do_switch)
 {
-	console_lock();
+	acquire_console_sem();
 	disable_vt_switch = !do_switch;
-	console_unlock();
+	release_console_sem();
 }
 EXPORT_SYMBOL(pm_set_vt_switch);

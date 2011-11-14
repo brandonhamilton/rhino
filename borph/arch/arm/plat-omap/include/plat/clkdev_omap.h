@@ -8,7 +8,7 @@
 #ifndef __ARCH_ARM_PLAT_OMAP_INCLUDE_PLAT_CLKDEV_OMAP_H
 #define __ARCH_ARM_PLAT_OMAP_INCLUDE_PLAT_CLKDEV_OMAP_H
 
-#include <linux/clkdev.h>
+#include <asm/clkdev.h>
 
 struct omap_clk {
 	u16				cpu;
@@ -38,8 +38,8 @@ struct omap_clk {
 #define CK_3517		(1 << 9)
 #define CK_36XX		(1 << 10)	/* 36xx/37xx-specific clocks */
 #define CK_443X		(1 << 11)
-#define CK_TI816X	(1 << 12)
-#define CK_446X		(1 << 13)
+#define CK_TI814X	(1 << 12)
+#define CK_TI816X	(1 << 13)
 
 
 #define CK_34XX		(CK_3430ES1 | CK_3430ES2PLUS)

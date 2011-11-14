@@ -4,7 +4,7 @@
 
   Copyright (c) 2005 Martin Langer <martin-langer@gmx.de>,
 		     Stefano Brivio <stefano.brivio@polimi.it>
-		     Michael Buesch <m@bues.ch>
+		     Michael Buesch <mbuesch@freenet.de>
 		     Danny van Dyk <kugelfang@gentoo.org>
      Andreas Jaggi <andreas.jaggi@waterwave.ch>
   Copyright (c) 2007 Larry Finger <Larry.Finger@lwfinger.net>
@@ -153,7 +153,7 @@ void b43legacy_phy_calibrate(struct b43legacy_wldev *dev)
 	phy->calibrated = 1;
 }
 
-/* initialize B PHY power control
+/* intialize B PHY power control
  * as described in http://bcm-specs.sipsolutions.net/InitPowerControl
  */
 static void b43legacy_phy_init_pctl(struct b43legacy_wldev *dev)

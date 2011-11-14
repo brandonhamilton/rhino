@@ -98,13 +98,13 @@ void fhci_usb_enable_interrupt(struct fhci_usb *usb)
 	usb->intr_nesting_cnt--;
 }
 
-/* disable the usb interrupt */
+/* diable the usb interrupt */
 void fhci_usb_disable_interrupt(struct fhci_usb *usb)
 {
 	struct fhci_hcd *fhci = usb->fhci;
 
 	if (usb->intr_nesting_cnt == 0) {
-		/* disable the timer interrupt */
+		/* diable the timer interrupt */
 		disable_irq_nosync(fhci->timer->irq);
 
 		/* disable the usb interrupt */
@@ -401,7 +401,7 @@ static int fhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 		/* 1 td fro setup,1 for ack */
 		size = 2;
 	case PIPE_BULK:
-		/* one td for every 4096 bytes(can be up to 8k) */
+		/* one td for every 4096 bytes(can be upto 8k) */
 		size += urb->transfer_buffer_length / 4096;
 		/* ...add for any remaining bytes... */
 		if ((urb->transfer_buffer_length % 4096) != 0)
@@ -561,7 +561,8 @@ static const struct hc_driver fhci_driver = {
 	.hub_control = fhci_hub_control,
 };
 
-static int __devinit of_fhci_probe(struct platform_device *ofdev)
+static int __devinit of_fhci_probe(struct platform_device *ofdev,
+				   const struct of_device_id *ofid)
 {
 	struct device *dev = &ofdev->dev;
 	struct device_node *node = dev->of_node;
@@ -605,7 +606,7 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 		goto err_regs;
 	}
 
-	hcd->regs = ioremap(usb_regs.start, resource_size(&usb_regs));
+	hcd->regs = ioremap(usb_regs.start, usb_regs.end - usb_regs.start + 1);
 	if (!hcd->regs) {
 		dev_err(dev, "could not ioremap regs\n");
 		ret = -ENOMEM;
@@ -811,7 +812,7 @@ static const struct of_device_id of_fhci_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_fhci_match);
 
-static struct platform_driver of_fhci_driver = {
+static struct of_platform_driver of_fhci_driver = {
 	.driver = {
 		.name = "fsl,usb-fhci",
 		.owner = THIS_MODULE,
@@ -823,13 +824,13 @@ static struct platform_driver of_fhci_driver = {
 
 static int __init fhci_module_init(void)
 {
-	return platform_driver_register(&of_fhci_driver);
+	return of_register_platform_driver(&of_fhci_driver);
 }
 module_init(fhci_module_init);
 
 static void __exit fhci_module_exit(void)
 {
-	platform_driver_unregister(&of_fhci_driver);
+	of_unregister_platform_driver(&of_fhci_driver);
 }
 module_exit(fhci_module_exit);
 

@@ -32,7 +32,7 @@ static inline struct hostfs_inode_info *HOSTFS_I(struct inode *inode)
 
 #define FILE_HOSTFS_I(file) HOSTFS_I((file)->f_path.dentry->d_inode)
 
-static int hostfs_d_delete(const struct dentry *dentry)
+static int hostfs_d_delete(struct dentry *dentry)
 {
 	return 1;
 }
@@ -92,9 +92,11 @@ __uml_setup("hostfs=", hostfs_args,
 
 static char *__dentry_name(struct dentry *dentry, char *name)
 {
-	char *p = dentry_path_raw(dentry, name, PATH_MAX);
+	char *p = __dentry_path(dentry, name, PATH_MAX);
 	char *root;
 	size_t len;
+
+	spin_unlock(&dcache_lock);
 
 	root = dentry->d_sb->s_fs_info;
 	len = strlen(root);
@@ -121,23 +123,25 @@ static char *dentry_name(struct dentry *dentry)
 	if (!name)
 		return NULL;
 
+	spin_lock(&dcache_lock);
 	return __dentry_name(dentry, name); /* will unlock */
 }
 
 static char *inode_name(struct inode *ino)
 {
 	struct dentry *dentry;
-	char *name;
-
-	dentry = d_find_alias(ino);
-	if (!dentry)
+	char *name = __getname();
+	if (!name)
 		return NULL;
 
-	name = dentry_name(dentry);
-
-	dput(dentry);
-
-	return name;
+	spin_lock(&dcache_lock);
+	if (list_empty(&ino->i_dentry)) {
+		spin_unlock(&dcache_lock);
+		__putname(name);
+		return NULL;
+	}
+	dentry = list_first_entry(&ino->i_dentry, struct dentry, d_alias);
+	return __dentry_name(dentry, name); /* will unlock */
 }
 
 static char *follow_link(char *link)
@@ -247,16 +251,9 @@ static void hostfs_evict_inode(struct inode *inode)
 	}
 }
 
-static void hostfs_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kfree(HOSTFS_I(inode));
-}
-
 static void hostfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, hostfs_i_callback);
+	kfree(HOSTFS_I(inode));
 }
 
 static int hostfs_show_options(struct seq_file *seq, struct vfsmount *vfs)
@@ -362,20 +359,9 @@ retry:
 	return 0;
 }
 
-int hostfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
+int hostfs_fsync(struct file *file, int datasync)
 {
-	struct inode *inode = file->f_mapping->host;
-	int ret;
-
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (ret)
-		return ret;
-
-	mutex_lock(&inode->i_mutex);
-	ret = fsync_file(HOSTFS_I(inode)->fd, datasync);
-	mutex_unlock(&inode->i_mutex);
-
-	return ret;
+	return fsync_file(HOSTFS_I(file->f_mapping->host)->fd, datasync);
 }
 
 static const struct file_operations hostfs_file_fops = {
@@ -623,6 +609,7 @@ struct dentry *hostfs_lookup(struct inode *ino, struct dentry *dentry,
 		goto out_put;
 
 	d_add(dentry, inode);
+	dentry->d_op = &hostfs_dentry_ops;
 	return NULL;
 
  out_put:
@@ -764,9 +751,6 @@ int hostfs_permission(struct inode *ino, int desired)
 	char *name;
 	int r = 0, w = 0, x = 0, err;
 
-	if (desired & MAY_NOT_BLOCK)
-		return -ECHILD;
-
 	if (desired & MAY_READ) r = 1;
 	if (desired & MAY_WRITE) w = 1;
 	if (desired & MAY_EXEC) x = 1;
@@ -781,7 +765,7 @@ int hostfs_permission(struct inode *ino, int desired)
 		err = access_file(name, r, w, x);
 	__putname(name);
 	if (!err)
-		err = generic_permission(ino, desired);
+		err = generic_permission(ino, desired, NULL);
 	return err;
 }
 
@@ -932,7 +916,6 @@ static int hostfs_fill_sb_common(struct super_block *sb, void *d, int silent)
 	sb->s_blocksize_bits = 10;
 	sb->s_magic = HOSTFS_SUPER_MAGIC;
 	sb->s_op = &hostfs_sbops;
-	sb->s_d_op = &hostfs_dentry_ops;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 
 	/* NULL is printed as <NULL> by sprintf: avoid that. */

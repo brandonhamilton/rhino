@@ -211,7 +211,6 @@ int em28xx_write_reg(struct em28xx *dev, u16 reg, u8 val)
 {
 	return em28xx_write_regs(dev, reg, &val, 1);
 }
-EXPORT_SYMBOL_GPL(em28xx_write_reg);
 
 /*
  * em28xx_write_reg_bits()
@@ -287,7 +286,6 @@ int em28xx_read_ac97(struct em28xx *dev, u8 reg)
 		return ret;
 	return le16_to_cpu(val);
 }
-EXPORT_SYMBOL_GPL(em28xx_read_ac97);
 
 /*
  * em28xx_write_ac97()
@@ -315,14 +313,13 @@ int em28xx_write_ac97(struct em28xx *dev, u8 reg, u16 val)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(em28xx_write_ac97);
 
-struct em28xx_vol_itable {
+struct em28xx_vol_table {
 	enum em28xx_amux mux;
 	u8		 reg;
 };
 
-static struct em28xx_vol_itable inputs[] = {
+static struct em28xx_vol_table inputs[] = {
 	{ EM28XX_AMUX_VIDEO, 	AC97_VIDEO_VOL   },
 	{ EM28XX_AMUX_LINE_IN,	AC97_LINEIN_VOL  },
 	{ EM28XX_AMUX_PHONE,	AC97_PHONE_VOL   },
@@ -406,12 +403,7 @@ static int em28xx_set_audio_source(struct em28xx *dev)
 	return ret;
 }
 
-struct em28xx_vol_otable {
-	enum em28xx_aout mux;
-	u8		 reg;
-};
-
-static const struct em28xx_vol_otable outputs[] = {
+static const struct em28xx_vol_table outputs[] = {
 	{ EM28XX_AOUT_MASTER, AC97_MASTER_VOL      },
 	{ EM28XX_AOUT_LINE,   AC97_LINE_LEVEL_VOL  },
 	{ EM28XX_AOUT_MONO,   AC97_MASTER_MONO_VOL },
@@ -497,16 +489,19 @@ int em28xx_audio_setup(struct em28xx *dev)
 	int vid1, vid2, feat, cfg;
 	u32 vid;
 
-	if (dev->chip_id == CHIP_ID_EM2870 || dev->chip_id == CHIP_ID_EM2874
-		|| dev->chip_id == CHIP_ID_EM28174) {
+	if (dev->chip_id == CHIP_ID_EM2870 || dev->chip_id == CHIP_ID_EM2874) {
 		/* Digital only device - don't load any alsa module */
-		dev->audio_mode.has_audio = false;
-		dev->has_audio_class = false;
-		dev->has_alsa_audio = false;
+		dev->audio_mode.has_audio = 0;
+		dev->has_audio_class = 0;
+		dev->has_alsa_audio = 0;
 		return 0;
 	}
 
-	dev->audio_mode.has_audio = true;
+	/* If device doesn't support Usb Audio Class, use vendor class */
+	if (!dev->has_audio_class)
+		dev->has_alsa_audio = 1;
+
+	dev->audio_mode.has_audio = 1;
 
 	/* See how this device is configured */
 	cfg = em28xx_read_reg(dev, EM28XX_R00_CHIPCFG);
@@ -516,8 +511,8 @@ int em28xx_audio_setup(struct em28xx *dev)
 		cfg = EM28XX_CHIPCFG_AC97; /* Be conservative */
 	} else if ((cfg & EM28XX_CHIPCFG_AUDIOMASK) == 0x00) {
 		/* The device doesn't have vendor audio at all */
-		dev->has_alsa_audio = false;
-		dev->audio_mode.has_audio = false;
+		dev->has_alsa_audio = 0;
+		dev->audio_mode.has_audio = 0;
 		return 0;
 	} else if ((cfg & EM28XX_CHIPCFG_AUDIOMASK) ==
 		   EM28XX_CHIPCFG_I2S_3_SAMPRATES) {
@@ -546,8 +541,8 @@ int em28xx_audio_setup(struct em28xx *dev)
 		 */
 		em28xx_warn("AC97 chip type couldn't be determined\n");
 		dev->audio_mode.ac97 = EM28XX_NO_AC97;
-		dev->has_alsa_audio = false;
-		dev->audio_mode.has_audio = false;
+		dev->has_alsa_audio = 0;
+		dev->audio_mode.has_audio = 0;
 		goto init_audio;
 	}
 
@@ -619,9 +614,7 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 {
 	int rc;
 
-	if (dev->chip_id == CHIP_ID_EM2874 ||
-	    dev->chip_id == CHIP_ID_EM2884 ||
-	    dev->chip_id == CHIP_ID_EM28174) {
+	if (dev->chip_id == CHIP_ID_EM2874) {
 		/* The Transport Stream Enable Register moved in em2874 */
 		if (!start) {
 			rc = em28xx_write_reg_bits(dev, EM2874_R5F_TS_ENABLE,
@@ -890,7 +883,6 @@ int em28xx_gpio_set(struct em28xx *dev, struct em28xx_reg_seq *gpio)
 	}
 	return rc;
 }
-EXPORT_SYMBOL_GPL(em28xx_gpio_set);
 
 int em28xx_set_mode(struct em28xx *dev, enum em28xx_mode set_mode)
 {
@@ -924,7 +916,7 @@ EXPORT_SYMBOL_GPL(em28xx_set_mode);
 static void em28xx_irq_callback(struct urb *urb)
 {
 	struct em28xx *dev = urb->context;
-	int i;
+	int rc, i;
 
 	switch (urb->status) {
 	case 0:             /* success */
@@ -941,7 +933,7 @@ static void em28xx_irq_callback(struct urb *urb)
 
 	/* Copy data from URB */
 	spin_lock(&dev->slock);
-	dev->isoc_ctl.isoc_copy(dev, urb);
+	rc = dev->isoc_ctl.isoc_copy(dev, urb);
 	spin_unlock(&dev->slock);
 
 	/* Reset urb buffers */
@@ -1113,19 +1105,13 @@ EXPORT_SYMBOL_GPL(em28xx_init_isoc);
 int em28xx_isoc_dvb_max_packetsize(struct em28xx *dev)
 {
 	unsigned int chip_cfg2;
-	unsigned int packet_size;
+	unsigned int packet_size = 564;
 
-	switch (dev->chip_id) {
-	case CHIP_ID_EM2710:
-	case CHIP_ID_EM2750:
-	case CHIP_ID_EM2800:
-	case CHIP_ID_EM2820:
-	case CHIP_ID_EM2840:
-	case CHIP_ID_EM2860:
-		/* No DVB support */
-		return -EINVAL;
-	case CHIP_ID_EM2870:
-	case CHIP_ID_EM2883:
+	if (dev->chip_id == CHIP_ID_EM2874) {
+		/* FIXME - for now assume 564 like it was before, but the
+		   em2874 code should be added to return the proper value... */
+		packet_size = 564;
+	} else {
 		/* TS max packet size stored in bits 1-0 of R01 */
 		chip_cfg2 = em28xx_read_reg(dev, EM28XX_R01_CHIPCFG2);
 		switch (chip_cfg2 & EM28XX_CHIPCFG2_TS_PACKETSIZE_MASK) {
@@ -1142,24 +1128,9 @@ int em28xx_isoc_dvb_max_packetsize(struct em28xx *dev)
 			packet_size = 752;
 			break;
 		}
-		break;
-	case CHIP_ID_EM2874:
-		/*
-		 * FIXME: for now assumes 564 like it was before, but the
-		 * em2874 code should be added to return the proper value
-		 */
-		packet_size = 564;
-		break;
-	case CHIP_ID_EM2884:
-	case CHIP_ID_EM28174:
-	default:
-		/*
-		 * FIXME: same as em2874. 564 was enough for 22 Mbit DVB-T
-		 * but not enough for 44 Mbit DVB-C.
-		 */
-		packet_size = 752;
 	}
 
+	em28xx_coredbg("dvb max packet size=%d\n", packet_size);
 	return packet_size;
 }
 EXPORT_SYMBOL_GPL(em28xx_isoc_dvb_max_packetsize);
