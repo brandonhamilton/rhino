@@ -89,7 +89,7 @@ int main(void)
 		}
 		else
 		{
-			current =  ((reg_val[0] << 5) + (reg_val[1] >> 3)) * 4;
+			current =  ((reg_val[0] << 8) + (reg_val[1]) * 4;
 		}
 
 		power = ((float)voltage*(float)current)/1000000;

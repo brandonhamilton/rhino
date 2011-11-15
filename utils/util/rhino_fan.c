@@ -22,7 +22,8 @@ void usage()
 int main(int argc, char **argv)
 {
     int option;
-    int fan, clear_flag, speed_flag, pulse_flag, fault_flag;
+    int fan, clear_flag, mode_flag, speed_flag, pulse_flag, fault_flag;
+    unsigned char mode;
     unsigned char dutycycle;
     unsigned char pulses;
     unsigned short threshold;
@@ -30,15 +31,18 @@ int main(int argc, char **argv)
     
     fan = 1;
     clear_flag = 0;
+    mode_flag = 0;
     speed_flag = 0;
     pulse_flag = 0;
     fault_flag = 0;
+    mode = 'a';
     dutycycle = 2;
     pulses = 2;
     threshold = 500;
     
     struct option opts[] = 
     {
+        {"mode", required_argument, NULL, 'm'},
         {"speed", required_argument, NULL, 's'},
         {"clear", no_argument, NULL, 'c'},
         {"ppr", required_argument, NULL, 'p'},
@@ -66,10 +70,19 @@ int main(int argc, char **argv)
         return 1;
     }
         
-    while((option = getopt_long(argc, argv, "s:cp:f:", opts, NULL)) != -1)
+    while((option = getopt_long(argc, argv, "m:s:cp:f:", opts, NULL)) != -1)
     {
         switch(option)
         {
+        case 'm':
+            mode_flag = 1;
+            mode = (unsigned char)optarg[0];
+            if(mode != 'a' && mode != 'd')
+            {
+                printf("Error: MODE must be either 'd' or 'a'\n");
+                return 1;
+            }
+            break;
         case 's':
             speed_flag = 1;
             dutycycle = (unsigned char)strtol(optarg, &endptr, 10);
@@ -111,6 +124,35 @@ int main(int argc, char **argv)
     
     if(i2c_open("/dev/i2c-1"))
         return 1;
+    
+    if(mode_flag)
+    {
+        unsigned char config;
+        char *cs;
+        if(TC654readConfig(FAN_CONTRLR_ADDR, &config) == 0)
+        {
+            if(mode == 'd')
+            {
+                config = config | 0x20;
+                cs = "digital";
+            }
+            else
+            {
+                config = config & 0xDF;
+                cs = "analog";
+            }
+            
+            if(TC654writeConfig(FAN_CONTRLR_ADDR, config) == 0)
+            {
+                printf("Fan PWM set to %s control\n", cs);
+            }
+            else
+            {
+                printf("Error setting fan PWM control\n");
+                return 1;
+            }
+        }
+    }
     
     if(speed_flag)
     {

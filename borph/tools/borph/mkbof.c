@@ -177,7 +177,7 @@ void UsageExit()
 	    "  -o filename    : output file name (default is bitfile.bof)\n"
 	    "  -s filename    : symbol file name\n"
 	    "  -t hwr_typ     : 1=HAC_BEE2FPGA, 3=HAC_ROACHV5, 4=NetFPGA, 5=RHINO\n"
-	    "  -e filename    : embedded ELF file name"
+	    "  -e filename    : embedded ELF file name\n"
 	    "  -v             : be verbose\n"
 	    "\n\n"
 	    "mkbof version 2.0\n"
@@ -292,7 +292,7 @@ int Initialize(int argc, char** argv)
 
     fbof = fopen(fbofname, "wb");
     if (!fbof) {
-		fprintf(stderr, "Error: Failed to create output file '%s'\n");
+		fprintf(stderr, "Error: Failed to create output file '%s'\n", fbofname);
 		return 1;
     }
 

@@ -11,6 +11,8 @@ else
   CFLAGS += -O2
 endif
 
+all: mkbof showbof
+
 mkbof: mkbof.c
 	$(CC) $(CFLAGS) -o mkbof mkbof.c -Iinclude -I../../include
 
