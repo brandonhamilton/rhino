@@ -10,3 +10,10 @@
 /smc911x_eeprom
 *.bin
 *.srec
+rhino_fmc_control
+rhino_fpga_prog
+rhino_gpmc_test
+rhino_leds
+rhino_psu_enable
+rhino_rtc_test
+rhino_system_monitor

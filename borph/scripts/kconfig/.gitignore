@@ -6,6 +6,7 @@ lex.*.c
 *.tab.c
 *.tab.h
 zconf.hash.c
+zconf.lex.c
 *.moc
 lkc_defs.h
 gconf.glade.h
