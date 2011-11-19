@@ -84,7 +84,6 @@ static table_entry_t uimage_arch[] = {
 	{	IH_ARCH_MICROBLAZE,	"microblaze",	"MicroBlaze",	},
 	{	IH_ARCH_MIPS,		"mips",		"MIPS",		},
 	{	IH_ARCH_MIPS64,		"mips64",	"MIPS 64 Bit",	},
-	{	IH_ARCH_NIOS,		"nios",		"NIOS",		},
 	{	IH_ARCH_NIOS2,		"nios2",	"NIOS II",	},
 	{	IH_ARCH_PPC,		"powerpc",	"PowerPC",	},
 	{	IH_ARCH_PPC,		"ppc",		"PowerPC",	},
@@ -140,6 +139,8 @@ static table_entry_t uimage_type[] = {
 	{	IH_TYPE_STANDALONE, "standalone", "Standalone Program", },
 	{	IH_TYPE_FLATDT,     "flat_dt",    "Flat Device Tree",	},
 	{	IH_TYPE_KWBIMAGE,   "kwbimage",   "Kirkwood Boot Image",},
+	{	IH_TYPE_IMXIMAGE,   "imximage",   "Freescale i.MX Boot Image",},
+	{	IH_TYPE_TIIMAGE,    "tiimage",    "Texas Instruments Boot Image",},
 	{	-1,		    "",		  "",			},
 };
 
@@ -148,6 +149,7 @@ static table_entry_t uimage_comp[] = {
 	{	IH_COMP_BZIP2,	"bzip2",	"bzip2 compressed",	},
 	{	IH_COMP_GZIP,	"gzip",		"gzip compressed",	},
 	{	IH_COMP_LZMA,	"lzma",		"lzma compressed",	},
+	{	IH_COMP_LZO,	"lzo",		"lzo compressed",	},
 	{	-1,		"",		"",			},
 };
 
@@ -435,11 +437,7 @@ phys_size_t getenv_bootm_size(void)
 	char *s = getenv ("bootm_size");
 	if (s) {
 		phys_size_t tmp;
-#ifdef CONFIG_SYS_64BIT_STRTOUL
 		tmp = (phys_size_t)simple_strtoull (s, NULL, 16);
-#else
-		tmp = (phys_size_t)simple_strtoul (s, NULL, 16);
-#endif
 		return tmp;
 	}
 
@@ -452,6 +450,9 @@ phys_size_t getenv_bootm_size(void)
 
 void memmove_wd (void *to, void *from, size_t len, ulong chunksz)
 {
+	if (to == from)
+		return;
+
 #if defined(CONFIG_HW_WATCHDOG) || defined(CONFIG_WATCHDOG)
 	while (len > 0) {
 		size_t tail = (len > chunksz) ? chunksz : len;

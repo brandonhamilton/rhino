@@ -30,12 +30,11 @@
 #include <common.h>
 #include <netdev.h>
 #include <asm/io.h>
-#include <asm/mach-types.h>
 #include <asm/arch/mem.h>
 #include <asm/arch/mux.h>
-#include <asm/arch/omap_gpmc.h>
 #include <asm/arch/sys_proto.h>
 #include <i2c.h>
+#include <asm/mach-types.h>
 #include "evm.h"
 
 static u8 omap3_evm_version;

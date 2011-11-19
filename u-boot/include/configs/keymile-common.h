@@ -68,7 +68,6 @@
 #define CONFIG_SYS_MAXARGS		16	/* max number of command args */
 #define CONFIG_SYS_BARGSIZE		CONFIG_SYS_CBSIZE	/* Boot Argument Buffer Size  */
 #define CONFIG_CMDLINE_EDITING		1	/* add command line history     */
-#define CONFIG_COMMAND_HISTORY		1
 #define CONFIG_AUTO_COMPLETE		/* add autocompletion support	*/
 
 #define CONFIG_HUSH_INIT_VAR	1
@@ -125,9 +124,7 @@
 
 #define CONFIG_ENV_SIZE		0x04000 /* Size of Environment */
 
-#define CONFIG_SYS_MALLOC_LEN	(1024 * 1024)	/* Reserved for malloc */
-
-#define CONFIG_SYS_64BIT_VSPRINTF	/* needed for UBI/UBIFS */
+#define CONFIG_SYS_MALLOC_LEN	(4 * 1024 * 1024)
 
 /* UBI Support for all Keymile boards */
 #define CONFIG_CMD_UBI

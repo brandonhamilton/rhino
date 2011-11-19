@@ -61,6 +61,7 @@ block_dev_desc_t *mmc_get_dev(int dev)
 
 unsigned char mmc_board_init(void)
 {
+#ifdef CONFIG_OMAP
 	t2_t *t2_base = (t2_t *)T2_BASE;
 
 #if defined(CONFIG_TWL4030_POWER)
@@ -73,7 +74,7 @@ unsigned char mmc_board_init(void)
 
 	writel(readl(&t2_base->devconf0) | MMCSDIO1ADPCLKISEL,
 		&t2_base->devconf0);
-
+#endif
 	return 1;
 }
 

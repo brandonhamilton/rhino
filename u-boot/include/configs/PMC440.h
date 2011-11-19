@@ -226,6 +226,7 @@
  *----------------------------------------------------------------------*/
 #define CONFIG_HARD_I2C		1	/* I2C with hardware support    */
 #undef	CONFIG_SOFT_I2C		/* I2C bit-banged               */
+#define CONFIG_PPC4XX_I2C		/* use PPC4xx driver		*/
 #define CONFIG_SYS_I2C_SPEED		400000	/* I2C speed and slave address  */
 #define CONFIG_SYS_I2C_SLAVE		0x7F
 
@@ -287,12 +288,8 @@
 	"addtty=setenv bootargs ${bootargs} console=ttyS0,${baudrate}\0" \
 	"addmisc=setenv bootargs ${bootargs} mem=${mem}\0"		\
 	"nandargs=setenv bootargs root=/dev/mtdblock6 rootfstype=jffs2 rw\0" \
-	"nand_boot=run nandargs addip addtty addmisc;bootm ${kernel_addr}\0" \
 	"nand_boot_fdt=run nandargs addip addtty addmisc;"		\
 		"bootm ${kernel_addr} - ${fdt_addr}\0"			\
-	"net_nfs=tftp ${kernel_addr_r} ${bootfile};"			\
-		"run nfsargs addip addtty addmisc;"			\
-		"bootm\0"						\
 	"net_nfs_fdt=tftp ${kernel_addr_r} ${bootfile};"		\
 		"tftp  ${fdt_addr_r} ${fdt_file};"			\
 		"run nfsargs addip addtty addmisc;"			\
@@ -351,15 +348,12 @@
 
 #define CONFIG_CMD_BSP
 #define CONFIG_CMD_DATE
-#define CONFIG_CMD_ASKENV
 #define CONFIG_CMD_DHCP
 #define CONFIG_CMD_DTT
-#define CONFIG_CMD_DIAG
 #define CONFIG_CMD_EEPROM
 #define CONFIG_CMD_ELF
 #define CONFIG_CMD_FAT
 #define CONFIG_CMD_I2C
-#define CONFIG_CMD_IRQ
 #define CONFIG_CMD_MII
 #define CONFIG_CMD_NAND
 #define CONFIG_CMD_NET
@@ -368,7 +362,6 @@
 #define CONFIG_CMD_PING
 #define CONFIG_CMD_USB
 #define CONFIG_CMD_REGINFO
-#define CONFIG_CMD_SDRAM
 
 /* POST support */
 #define CONFIG_POST		(CONFIG_SYS_POST_MEMORY |	\
@@ -435,11 +428,14 @@
 /* Board-specific PCI */
 #define CONFIG_SYS_PCI_TARGET_INIT
 #define CONFIG_SYS_PCI_MASTER_INIT
+#define CONFIG_SYS_PCI_BOARD_FIXUP_IRQ
 
 /* PCI identification */
 #define CONFIG_SYS_PCI_SUBSYS_VENDORID 0x12FE	/* PCI Vendor ID: esd gmbh      */
 #define CONFIG_SYS_PCI_SUBSYS_ID_NONMONARCH 0x0441	/* PCI Device ID: Non-Monarch */
 #define CONFIG_SYS_PCI_SUBSYS_ID_MONARCH 0x0440	/* PCI Device ID: Monarch */
+/* for weak __pci_target_init() */
+#define CONFIG_SYS_PCI_SUBSYS_ID	CONFIG_SYS_PCI_SUBSYS_ID_MONARCH
 #define CONFIG_SYS_PCI_CLASSCODE_NONMONARCH	PCI_CLASS_PROCESSOR_POWERPC
 #define CONFIG_SYS_PCI_CLASSCODE_MONARCH	PCI_CLASS_BRIDGE_HOST
 

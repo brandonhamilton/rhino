@@ -53,4 +53,3 @@ enum {
 #endif
 
 #endif /* _MUSB_OMAP3_H */
-

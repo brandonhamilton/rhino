@@ -38,7 +38,7 @@
 #include <asm/mp.h>
 #include <netdev.h>
 
-#include "../common/pixis.h"
+#include "../common/ngpixis.h"
 #include "../common/sgmii_riser.h"
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -47,30 +47,24 @@ phys_size_t fixed_sdram(void);
 
 int checkboard(void)
 {
-	u8 sw7;
-	u8 *pixis_base = (u8 *)PIXIS_BASE;
+	u8 sw;
 
 	puts("Board: P2020DS ");
 #ifdef CONFIG_PHYS_64BIT
 	puts("(36-bit addrmap) ");
 #endif
 
-	printf("Sys ID: 0x%02x, "
-		"Sys Ver: 0x%02x, FPGA Ver: 0x%02x, ",
-		in_8(pixis_base + PIXIS_ID), in_8(pixis_base + PIXIS_VER),
-		in_8(pixis_base + PIXIS_PVER));
+	printf("Sys ID: 0x%02x, Sys Ver: 0x%02x, FPGA Ver: 0x%02x, ",
+		in_8(&pixis->id), in_8(&pixis->arch), in_8(&pixis->scver));
 
-	sw7 = in_8(pixis_base + PIXIS_SW(7));
-	switch ((sw7 & PIXIS_SW7_LBMAP) >> 6) {
-		case 0:
-		case 1:
-			printf ("vBank: %d\n", ((sw7 & PIXIS_SW7_VBANK) >> 4));
-			break;
-		case 2:
-		case 3:
-			puts ("Promjet\n");
-			break;
-	}
+	sw = in_8(&PIXIS_SW(PIXIS_LBMAP_SWITCH));
+	sw = (sw & PIXIS_LBMAP_MASK) >> PIXIS_LBMAP_SHIFT;
+
+	if (sw < 0x8)
+		/* The lower two bits are the actual vbank number */
+		printf("vBank: %d\n", sw & 3);
+	else
+		puts("Promjet\n");
 
 	return 0;
 }
@@ -197,7 +191,7 @@ void pci_init_board(void)
 {
 	volatile ccsr_gur_t *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
 	struct fsl_pci_info pci_info[3];
-	u32 devdisr, pordevsr, io_sel, host_agent;
+	u32 devdisr, pordevsr, io_sel;
 	int first_free_busno = 0;
 	int num = 0;
 
@@ -206,10 +200,8 @@ void pci_init_board(void)
 	devdisr = in_be32(&gur->devdisr);
 	pordevsr = in_be32(&gur->pordevsr);
 	io_sel = (pordevsr & MPC85xx_PORDEVSR_IO_SEL) >> 19;
-	host_agent = (in_be32(&gur->porbmsr) & MPC85xx_PORBMSR_HA) >> 16;
 
-	debug("   pci_init_board: devdisr=%x, io_sel=%x, host_agent=%x\n",
-			devdisr, io_sel, host_agent);
+	debug ("   pci_init_board: devdisr=%x, io_sel=%x\n", devdisr, io_sel);
 
 	if (!(pordevsr & MPC85xx_PORDEVSR_SGMII2_DIS))
 		printf("    eTSEC2 is in sgmii mode.\n");
@@ -218,13 +210,13 @@ void pci_init_board(void)
 
 	puts("\n");
 #ifdef CONFIG_PCIE2
-	pcie_ep = is_fsl_pci_agent(LAW_TRGT_IF_PCIE_2, host_agent);
 	pcie_configured = is_fsl_pci_cfg(LAW_TRGT_IF_PCIE_2, io_sel);
 
 	if (pcie_configured && !(devdisr & MPC85xx_DEVDISR_PCIE2)) {
 		SET_STD_PCIE_INFO(pci_info[num], 2);
+		pcie_ep = fsl_setup_hose(&pcie2_hose, pci_info[num].regs);
 		printf("    PCIE2 connected to ULI as %s (base addr %lx)\n",
-				pcie_ep ? "End Point" : "Root Complex",
+				pcie_ep ? "Endpoint" : "Root Complex",
 				pci_info[num].regs);
 		first_free_busno = fsl_pci_init_port(&pci_info[num++],
 					&pcie2_hose, first_free_busno);
@@ -258,13 +250,13 @@ void pci_init_board(void)
 #endif
 
 #ifdef CONFIG_PCIE3
-	pcie_ep = is_fsl_pci_agent(LAW_TRGT_IF_PCIE_3, host_agent);
 	pcie_configured = is_fsl_pci_cfg(LAW_TRGT_IF_PCIE_3, io_sel);
 
 	if (pcie_configured && !(devdisr & MPC85xx_DEVDISR_PCIE3)) {
 		SET_STD_PCIE_INFO(pci_info[num], 3);
+		pcie_ep = fsl_setup_hose(&pcie3_hose, pci_info[num].regs);
 		printf("    PCIE3 connected to Slot 1 as %s (base addr %lx)\n",
-				pcie_ep ? "End Point" : "Root Complex",
+				pcie_ep ? "Endpoint" : "Root Complex",
 				pci_info[num].regs);
 		first_free_busno = fsl_pci_init_port(&pci_info[num++],
 					&pcie3_hose, first_free_busno);
@@ -277,13 +269,13 @@ void pci_init_board(void)
 #endif
 
 #ifdef CONFIG_PCIE1
-	pcie_ep = is_fsl_pci_agent(LAW_TRGT_IF_PCIE_1, host_agent);
 	pcie_configured = is_fsl_pci_cfg(LAW_TRGT_IF_PCIE_1, io_sel);
 
 	if (pcie_configured && !(devdisr & MPC85xx_DEVDISR_PCIE)) {
 		SET_STD_PCIE_INFO(pci_info[num], 1);
+		pcie_ep = fsl_setup_hose(&pcie1_hose, pci_info[num].regs);
 		printf("    PCIE1 connected to Slot 2 as %s (base addr %lx)\n",
-				pcie_ep ? "End Point" : "Root Complex",
+				pcie_ep ? "Endpoint" : "Root Complex",
 				pci_info[num].regs);
 		first_free_busno = fsl_pci_init_port(&pci_info[num++],
 					&pcie1_hose, first_free_busno);
@@ -300,7 +292,7 @@ void pci_init_board(void)
 int board_early_init_r(void)
 {
 	const unsigned int flashbase = CONFIG_SYS_FLASH_BASE;
-	const u8 flash_esel = 2;
+	const u8 flash_esel = find_tlb_idx((void *)flashbase, 1);
 
 	/*
 	 * Remap Boot flash + PROMJET region to caching-inhibited
@@ -373,30 +365,22 @@ unsigned long get_board_ddr_clk(ulong dummy)
 	return gd->mem_clk;
 }
 
-unsigned long
-calculate_board_sys_clk(ulong dummy)
+unsigned long calculate_board_sys_clk(ulong dummy)
 {
 	ulong val;
-	u8 *pixis_base = (u8 *)PIXIS_BASE;
 
-	val = ics307_clk_freq(
-	    in_8(pixis_base + PIXIS_VSYSCLK0),
-	    in_8(pixis_base + PIXIS_VSYSCLK1),
-	    in_8(pixis_base + PIXIS_VSYSCLK2));
+	val = ics307_clk_freq(in_8(&pixis->sclk[0]), in_8(&pixis->sclk[1]),
+			      in_8(&pixis->sclk[2]));
 	debug("sysclk val = %lu\n", val);
 	return val;
 }
 
-unsigned long
-calculate_board_ddr_clk(ulong dummy)
+unsigned long calculate_board_ddr_clk(ulong dummy)
 {
 	ulong val;
-	u8 *pixis_base = (u8 *)PIXIS_BASE;
 
-	val = ics307_clk_freq(
-	    in_8(pixis_base + PIXIS_VDDRCLK0),
-	    in_8(pixis_base + PIXIS_VDDRCLK1),
-	    in_8(pixis_base + PIXIS_VDDRCLK2));
+	val = ics307_clk_freq(in_8(&pixis->dclk[0]), in_8(&pixis->dclk[1]),
+			      in_8(&pixis->dclk[2]));
 	debug("ddrclk val = %lu\n", val);
 	return val;
 }
@@ -405,9 +389,8 @@ unsigned long get_board_sys_clk(ulong dummy)
 {
 	u8 i;
 	ulong val = 0;
-	u8 *pixis_base = (u8 *)PIXIS_BASE;
 
-	i = in_8(pixis_base + PIXIS_SPD);
+	i = in_8(&pixis->spd);
 	i &= 0x07;
 
 	switch (i) {
@@ -444,9 +427,8 @@ unsigned long get_board_ddr_clk(ulong dummy)
 {
 	u8 i;
 	ulong val = 0;
-	u8 *pixis_base = (u8 *)PIXIS_BASE;
 
-	i = in_8(pixis_base + PIXIS_SPD);
+	i = in_8(&pixis->spd);
 	i &= 0x38;
 	i >>= 3;
 

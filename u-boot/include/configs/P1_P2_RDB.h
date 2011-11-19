@@ -149,8 +149,6 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_SYS_DDR_ERR_DIS		0x00000000
 #define CONFIG_SYS_DDR_SBE		0x00FF0000
 
-#define CONFIG_SYS_DDR_TLB_START 9
-
 /*
  * Memory map
  *
@@ -205,6 +203,7 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_SYS_FLASH_AMD_CHECK_DQ7
 
 #define CONFIG_BOARD_EARLY_INIT_R	/* call board_early_init_r function */
+#define CONFIG_HWCONFIG
 
 #define CONFIG_SYS_INIT_RAM_LOCK	1
 #define CONFIG_SYS_INIT_RAM_ADDR      0xffd00000	/* stack in RAM */
@@ -287,6 +286,9 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_SYS_NS16550_SERIAL
 #define CONFIG_SYS_NS16550_REG_SIZE	1
 #define CONFIG_SYS_NS16550_CLK		get_bus_freq(0)
+#ifdef CONFIG_NAND_SPL
+#define CONFIG_NS16550_MIN_FUNCTIONS
+#endif
 
 #define CONFIG_SERIAL_MULTI	1 /* Enable both serial ports */
 #define CONFIG_SYS_CONSOLE_IS_IN_ENV	/* determine from environment */
@@ -309,9 +311,6 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_OF_LIBFDT		1
 #define CONFIG_OF_BOARD_SETUP		1
 #define CONFIG_OF_STDOUT_VIA_ALIAS	1
-
-#define CONFIG_SYS_64BIT_VSPRINTF	1
-#define CONFIG_SYS_64BIT_STRTOUL	1
 
 /* new uImage format support */
 #define CONFIG_FIT		1
@@ -426,6 +425,15 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_ETHPRIME		"eTSEC1"
 
 #define CONFIG_PHY_GIGE		1	/* Include GbE speed/duplex detection */
+
+/* TBI PHY configuration for SGMII mode */
+#define CONFIG_TSEC_TBICR_SETTINGS ( \
+		TBICR_PHY_RESET \
+		| TBICR_ANEG_ENABLE \
+		| TBICR_FULL_DUPLEX \
+		| TBICR_SPEED1_SET \
+		)
+
 #endif	/* CONFIG_TSEC_ENET */
 
 /*
@@ -569,7 +577,6 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 	"netdev=eth0\0"						\
 	"uboot=" MK_STR(CONFIG_UBOOTPATH) "\0"				\
 	"loadaddr=1000000\0"			\
-	"bootfile=uImage\0"	\
 	"tftpflash=tftpboot $loadaddr $uboot; "			\
 		"protect off " MK_STR(TEXT_BASE) " +$filesize; "	\
 		"erase " MK_STR(TEXT_BASE) " +$filesize; "		\

@@ -387,7 +387,7 @@ int do_usbboot(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 
 	dev = simple_strtoul(boot_device, &ep, 16);
 	stor_dev = usb_stor_get_dev(dev);
-	if (stor_dev->type == DEV_TYPE_UNKNOWN) {
+	if (stor_dev == NULL || stor_dev->type == DEV_TYPE_UNKNOWN) {
 		printf("\n** Device %d not available\n", dev);
 		return 1;
 	}
@@ -516,6 +516,11 @@ int do_usb(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 	block_dev_desc_t *stor_dev;
 #endif
 
+	if (argc < 2) {
+		cmd_usage(cmdtp);
+		return 1;
+	}
+
 	if ((strncmp(argv[1], "reset", 5) == 0) ||
 		 (strncmp(argv[1], "start", 5) == 0)) {
 		usb_stop();
@@ -595,22 +600,25 @@ int do_usb(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 	if (strncmp(argv[1], "part", 4) == 0) {
 		int devno, ok = 0;
 		if (argc == 2) {
-			for (devno = 0; devno < USB_MAX_STOR_DEV; ++devno) {
+			for (devno = 0; ; ++devno) {
 				stor_dev = usb_stor_get_dev(devno);
+				if (stor_dev == NULL)
+					break;
 				if (stor_dev->type != DEV_TYPE_UNKNOWN) {
 					ok++;
 					if (devno)
 						printf("\n");
-					printf("print_part of %x\n", devno);
+					debug("print_part of %x\n", devno);
 					print_part(stor_dev);
 				}
 			}
 		} else {
 			devno = simple_strtoul(argv[2], NULL, 16);
 			stor_dev = usb_stor_get_dev(devno);
-			if (stor_dev->type != DEV_TYPE_UNKNOWN) {
+			if (stor_dev != NULL &&
+			    stor_dev->type != DEV_TYPE_UNKNOWN) {
 				ok++;
-				printf("print_part of %x\n", devno);
+				debug("print_part of %x\n", devno);
 				print_part(stor_dev);
 			}
 		}
@@ -642,16 +650,38 @@ int do_usb(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 			return 1;
 		}
 	}
+	if (strcmp(argv[1], "write") == 0) {
+		if (usb_stor_curr_dev < 0) {
+			printf("no current device selected\n");
+			return 1;
+		}
+		if (argc == 5) {
+			unsigned long addr = simple_strtoul(argv[2], NULL, 16);
+			unsigned long blk  = simple_strtoul(argv[3], NULL, 16);
+			unsigned long cnt  = simple_strtoul(argv[4], NULL, 16);
+			unsigned long n;
+			printf("\nUSB write: device %d block # %ld, count %ld"
+				" ... ", usb_stor_curr_dev, blk, cnt);
+			stor_dev = usb_stor_get_dev(usb_stor_curr_dev);
+			n = stor_dev->block_write(usb_stor_curr_dev, blk, cnt,
+						(ulong *)addr);
+			printf("%ld blocks write: %s\n", n,
+				(n == cnt) ? "OK" : "ERROR");
+			if (n == cnt)
+				return 0;
+			return 1;
+		}
+	}
 	if (strncmp(argv[1], "dev", 3) == 0) {
 		if (argc == 3) {
 			int dev = (int)simple_strtoul(argv[2], NULL, 10);
 			printf("\nUSB device %d: ", dev);
-			if (dev >= USB_MAX_STOR_DEV) {
+			stor_dev = usb_stor_get_dev(dev);
+			if (stor_dev == NULL) {
 				printf("unknown device\n");
 				return 1;
 			}
 			printf("\n    Device %d: ", dev);
-			stor_dev = usb_stor_get_dev(dev);
 			dev_print(stor_dev);
 			if (stor_dev->type == DEV_TYPE_UNKNOWN)
 				return 1;
@@ -687,6 +717,8 @@ U_BOOT_CMD(
 	" devices\n"
 	"usb read addr blk# cnt - read `cnt' blocks starting at block `blk#'\n"
 	"    to memory address `addr'"
+	"usb write addr blk# cnt - write `cnt' blocks starting at block `blk#'\n"
+	"    from memory address `addr'"
 );
 
 

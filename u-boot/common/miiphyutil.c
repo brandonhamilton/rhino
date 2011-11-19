@@ -293,7 +293,7 @@ int miiphy_info (char *devname, unsigned char addr, unsigned int *oui,
 int miiphy_reset (char *devname, unsigned char addr)
 {
 	unsigned short reg;
-	int loop_cnt;
+	int timeout = 500;
 
 	if (miiphy_read (devname, addr, PHY_BMCR, &reg) != 0) {
 		debug ("PHY status read failed\n");
@@ -311,13 +311,13 @@ int miiphy_reset (char *devname, unsigned char addr)
 	 * auto-clearing).  This should happen within 0.5 seconds per the
 	 * IEEE spec.
 	 */
-	loop_cnt = 0;
 	reg = 0x8000;
-	while (((reg & 0x8000) != 0) && (loop_cnt++ < 1000000)) {
-		if (miiphy_read (devname, addr, PHY_BMCR, &reg) != 0) {
-			debug ("PHY status read failed\n");
-			return (-1);
+	while (((reg & 0x8000) != 0) && timeout--) {
+		if (miiphy_read(devname, addr, PHY_BMCR, &reg) != 0) {
+			debug("PHY status read failed\n");
+			return -1;
 		}
+		udelay(1000);
 	}
 	if ((reg & 0x8000) == 0) {
 		return (0);
@@ -377,7 +377,7 @@ int miiphy_speed (char *devname, unsigned char addr)
 	/* Get speed from basic control settings. */
 	return (bmcr & PHY_BMCR_100MB) ? _100BASET : _10BASET;
 
-      miiphy_read_failed:
+miiphy_read_failed:
 	printf (" read failed, assuming 10BASE-T\n");
 	return _10BASET;
 }
@@ -436,7 +436,7 @@ int miiphy_duplex (char *devname, unsigned char addr)
 	/* Get speed from basic control settings. */
 	return (bmcr & PHY_BMCR_DPLX) ? FULL : HALF;
 
-      miiphy_read_failed:
+miiphy_read_failed:
 	printf (" read failed, assuming half duplex\n");
 	return HALF;
 }

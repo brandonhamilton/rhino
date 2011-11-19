@@ -31,6 +31,8 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
+#define CONFIG_AT91_LEGACY
+
 /* Common stuff */
 #define CONFIG_SYS_HZ			1000	/* decrementer freq */
 #define CONFIG_MEESC			1	/* Board is esd MEESC */
@@ -48,6 +50,7 @@
 
 #define CONFIG_SKIP_LOWLEVEL_INIT
 #define CONFIG_SKIP_RELOCATE_UBOOT
+#define CONFIG_MISC_INIT_R			/* Call misc_init_r */
 
 #define CONFIG_ARCH_CPU_INIT
 
@@ -56,6 +59,7 @@
  */
 
 /* Console output */
+#define CONFIG_AT91_GPIO			1
 #define CONFIG_ATMEL_USART			1
 #undef CONFIG_USART0
 #undef CONFIG_USART1
@@ -78,7 +82,6 @@
  */
 #include <config_cmd_default.h>
 #undef CONFIG_CMD_BDI
-#undef CONFIG_CMD_AUTOSCRIPT
 #undef CONFIG_CMD_FPGA
 #undef CONFIG_CMD_LOADS
 #undef CONFIG_CMD_IMLS
@@ -121,7 +124,6 @@
 #define CONFIG_SYS_NAND_ENABLE_PIN		AT91_PIN_PD15
 #define CONFIG_SYS_NAND_READY_PIN		AT91_PIN_PA22
 
-#define CONFIG_SYS_64BIT_VSPRINTF		/* needed for nand_util.c */
 #endif
 
 /* Ethernet */

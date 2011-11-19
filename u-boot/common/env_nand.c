@@ -268,7 +268,13 @@ int readenv (size_t offset, u_char * buf)
 
 	u_char *char_ptr;
 
+	/* fail if no nand detected */
+	if (nand_info[0].type == 0)
+		return 1;
+
 	blocksize = nand_info[0].erasesize;
+	if (!blocksize)
+		return 1;
 	len = min(blocksize, CONFIG_ENV_SIZE);
 
 	while (amount_loaded < CONFIG_ENV_SIZE && offset < end) {
@@ -297,6 +303,13 @@ void env_relocate_spec (void)
 
 	tmp_env1 = (env_t *) malloc(CONFIG_ENV_SIZE);
 	tmp_env2 = (env_t *) malloc(CONFIG_ENV_SIZE);
+
+	if ((tmp_env1 == NULL) || (tmp_env2 == NULL)) {
+		puts("Can't allocate buffers for environment\n");
+		free (tmp_env1);
+		free (tmp_env2);
+		return use_default();
+	}
 
 	if (readenv(CONFIG_ENV_OFFSET, (u_char *) tmp_env1))
 		puts("No Valid Environment Area Found\n");

@@ -41,7 +41,7 @@
 #define CONFIG_OMAP3430		1	/* which is in a 3430 */
 #define CONFIG_OMAP3_ZOOM2	1	/* working with Zoom II */
 
-#define CONFIG_SDRC		1	/* The chip has SDRC controller */
+#define CONFIG_SDRC	/* The chip has SDRC controller */
 
 #include <asm/arch/cpu.h>	/* get chip and board defs */
 #include <asm/arch/omap3.h>
@@ -102,6 +102,9 @@
 #define CONFIG_OMAP3_MMC		1
 #define CONFIG_DOS_PARTITION		1
 
+/* DDR - I use Micron DDR */
+#define CONFIG_OMAP3_MICRON_DDR		1
+
 /* Status LED */
 #define CONFIG_STATUS_LED		1 /* Status LED enabled	*/
 #define CONFIG_BOARD_SPECIFIC_LED	1
@@ -125,6 +128,20 @@
 #endif
 #define CONFIG_OMAP3_GPIO_3 /* board revision */
 #define CONFIG_OMAP3_GPIO_5 /* debug board detection, ZOOM2_LED_BLUE */
+
+/* USB */
+#define CONFIG_MUSB_UDC			1
+#define CONFIG_USB_OMAP3		1
+#define CONFIG_TWL4030_USB		1
+
+/* USB device configuration */
+#define CONFIG_USB_DEVICE		1
+#define CONFIG_USB_TTY			1
+/* Change these to suit your needs */
+#define CONFIG_USBD_VENDORID		0x0451
+#define CONFIG_USBD_PRODUCTID		0x5678
+#define CONFIG_USBD_MANUFACTURER	"Texas Instruments"
+#define CONFIG_USBD_PRODUCT_NAME	"Zoom2"
 
 /* commands to include */
 #include <config_cmd_default.h>
@@ -168,10 +185,11 @@
 #define GPMC_NAND_ECC_LP_x16_LAYOUT	1
 #define CONFIG_SYS_MAX_NAND_DEVICE	1
 
-#define CONFIG_SYS_64BIT_VSPRINTF		/* needed for nand_util.c */
-
 /* Environment information */
 #define CONFIG_BOOTDELAY		10
+
+#define CONFIG_EXTRA_ENV_SETTINGS \
+	"usbtty=cdc_acm\0" \
 
 /*
  * Miscellaneous configurable options
@@ -255,10 +273,12 @@
 #define CONFIG_SYS_FLASH_ERASE_TOUT	(100 * CONFIG_SYS_HZ)
 #define CONFIG_SYS_FLASH_WRITE_TOUT	(100 * CONFIG_SYS_HZ)
 
-
-/*
- * Include flash related variables
- */
-#include <asm/arch/omap3_flash.h>
+#ifndef __ASSEMBLY__
+extern unsigned int boot_flash_base;
+extern volatile unsigned int boot_flash_env_addr;
+extern unsigned int boot_flash_off;
+extern unsigned int boot_flash_sec;
+extern unsigned int boot_flash_type;
+#endif
 
 #endif /* __CONFIG_H */

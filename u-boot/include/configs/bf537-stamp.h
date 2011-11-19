@@ -113,7 +113,7 @@
 #if (CONFIG_BFIN_BOOT_MODE == BFIN_BOOT_BYPASS)
 #define ENV_IS_EMBEDDED
 #else
-#define ENV_IS_EMBEDDED_CUSTOM
+#define CONFIG_ENV_IS_EMBEDDED_IN_LDR
 #endif
 #ifdef ENV_IS_EMBEDDED
 /* WARNING - the following is hand-optimized to fit within
@@ -122,11 +122,11 @@
  * it linked after the configuration sector.
  */
 # define LDS_BOARD_TEXT \
-	cpu/blackfin/traps.o		(.text .text.*); \
-	cpu/blackfin/interrupt.o	(.text .text.*); \
-	cpu/blackfin/serial.o		(.text .text.*); \
+	arch/blackfin/cpu/traps.o		(.text .text.*); \
+	arch/blackfin/cpu/interrupt.o	(.text .text.*); \
+	arch/blackfin/cpu/serial.o		(.text .text.*); \
 	common/dlmalloc.o		(.text .text.*); \
-	lib_generic/crc32.o		(.text .text.*); \
+	lib/crc32.o		(.text .text.*); \
 	. = DEFINED(env_offset) ? env_offset : .; \
 	common/env_embedded.o		(.text .text.*);
 #endif
@@ -145,7 +145,7 @@
  * SPI_MMC Settings
  */
 #define CONFIG_MMC
-#define CONFIG_BFIN_SPI_MMC
+#define CONFIG_SPI_MMC
 
 
 /*
@@ -275,6 +275,15 @@
 #ifdef CONFIG_POST
 #define FLASH_START_POST_BLOCK	11	/* Should > = 11 */
 #define FLASH_END_POST_BLOCK	71	/* Should < = 71 */
+#endif
+
+/* These are for board tests */
+#if 0
+#define CONFIG_BOOTCOMMAND       "bootldr 0x203f0100"
+#define CONFIG_AUTOBOOT_KEYED
+#define CONFIG_AUTOBOOT_PROMPT \
+	"autoboot in %d seconds: press space to stop\n", bootdelay
+#define CONFIG_AUTOBOOT_STOP_STR " "
 #endif
 
 

@@ -31,7 +31,7 @@ DECLARE_GLOBAL_DATA_PTR;
 
 static void print_num(const char *, ulong);
 
-#if !defined(CONFIG_ARM) || defined(CONFIG_CMD_NET)
+#if !(defined(CONFIG_ARM) || defined(CONFIG_M68K)) || defined(CONFIG_CMD_NET)
 static void print_eth(int idx);
 #endif
 
@@ -115,25 +115,7 @@ int do_bdinfo ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 #endif
 	printf ("IP addr     = %pI4\n", &bd->bi_ip_addr);
 	printf ("baudrate    = %6ld bps\n", bd->bi_baudrate   );
-	return 0;
-}
-
-#elif defined(CONFIG_NIOS) /* NIOS*/
-
-int do_bdinfo ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
-{
-	bd_t *bd = gd->bd;
-
-	print_num ("memstart",		(ulong)bd->bi_memstart);
-	print_lnum ("memsize",		(u64)bd->bi_memsize);
-	print_num ("flashstart",	(ulong)bd->bi_flashstart);
-	print_num ("flashsize",		(ulong)bd->bi_flashsize);
-	print_num ("flashoffset",	(ulong)bd->bi_flashoffset);
-
-	print_eth(0);
-	printf ("ip_addr     = %pI4\n", &bd->bi_ip_addr);
-	printf ("baudrate    = %ld bps\n", bd->bi_baudrate);
-
+	print_num ("relocaddr", gd->relocaddr);
 	return 0;
 }
 
@@ -349,7 +331,7 @@ static void print_num(const char *name, ulong value)
 	printf ("%-12s= 0x%08lX\n", name, value);
 }
 
-#if !defined(CONFIG_ARM) || defined(CONFIG_CMD_NET)
+#if !(defined(CONFIG_ARM) || defined(CONFIG_M68K)) || defined(CONFIG_CMD_NET)
 static void print_eth(int idx)
 {
 	char name[10], *val;
