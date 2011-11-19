@@ -94,6 +94,14 @@
 #define SYNC_32KTIMER_BASE		(0x48320000)
 #define S32K_CR				(SYNC_32KTIMER_BASE+0x10)
 
+/* omap3 GPIO registers */
+#define OMAP34XX_GPIO1_BASE		0x48310000
+#define OMAP34XX_GPIO2_BASE		0x49050000
+#define OMAP34XX_GPIO3_BASE		0x49052000
+#define OMAP34XX_GPIO4_BASE		0x49054000
+#define OMAP34XX_GPIO5_BASE		0x49056000
+#define OMAP34XX_GPIO6_BASE		0x49058000
+
 /*
  * SDP3430 specific Section
  */
@@ -130,7 +138,7 @@
 #define ENHANCED_UI_EE_NAME		"750-2075"
 #endif
 
-#if defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_AM3517RHINO)
+#if defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_RHINO)
 /* EMIF 4 replaces SDRC in AM3517 for DDR */
 #define EMIF4_MOD_ID			0x00
 #define EMIF4_STATUS			0x04

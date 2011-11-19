@@ -20,7 +20,7 @@ The free CodeSourcery G++ LITE toolchain (ARM GNU/Linux 2009q1) can be downloade
 --------------------
 
 $ cd x-loader
-$ make am3517rhino_config
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_config
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm
 $ ../utils/sign-gp/signGP x-load.bin
 $ cp x-load.bin.ift MLO

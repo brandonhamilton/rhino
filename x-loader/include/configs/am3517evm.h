@@ -108,8 +108,21 @@
  * Board NAND Info.
  */
 
+/* NOR Device Configuration */
+/* NOR is partitioned:
+ * 0x00000000 - 0x00020000  X-loader image (4 32K blocks - 128KB)
+ * 0x00020000 - 0x000C0000  U-Boot Image (5 128K blocks - 640KB)
+ * 0x000C0000 - 0x00100000  U-Boot Env Data (2 128K blocks - 256K)
+ * 0x00100000 - 0x00500000  Kernel Image (32 128K blocks - 4MB)
+ * 0x00500000 - 0x07FFFFFF  Depends on application, Data storage, FS
+ */
+#define NOR_UBOOT_START_OFF	0x00020000 /* Leaving first 4 blocks for x-load */
+#define NOR_UBOOT_SIZE		0x000A0000 /* Giving a space of 5 blocks = 640KB */
+
+/* NAND Device Configuration */
 #define CFG_NAND_K9F1G08R0A    /* Samsung 8-bit 128MB chip large page NAND chip*/
 #define NAND_16BIT
+#define ECC_HW_ENABLE
 
 /* NAND is partitioned:
  * 0x00000000 - 0x0007FFFF  Booting Image
@@ -132,6 +145,16 @@
 #define GPMC_NAND_COMMAND_0      (OMAP34XX_GPMC_BASE+0xDC)
 #define GPMC_NAND_ADDRESS_0      (OMAP34XX_GPMC_BASE+0xE0)
 #define GPMC_NAND_DATA_0         (OMAP34XX_GPMC_BASE+0xE4)
+#endif
+
+#ifdef ECC_HW_ENABLE
+/* ECC values brought over from u-boot to support hw ecc read */
+#define ECCCLEAR        (0x1 << 8)
+#define ECCRESULTREG1   (0x1 << 0)
+#define ECCSIZE512BYTE  0xFF
+#define ECCSIZE1        (ECCSIZE512BYTE << 22)
+#define ECCSIZE0        (ECCSIZE512BYTE << 12)
+#define ECCSIZE0SEL     (0x000 << 0)
 #endif
 
 #ifdef NAND_16BIT

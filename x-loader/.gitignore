@@ -1,55 +1,52 @@
 #
-# NOTE! Don't add files that are generated in specific
-# subdirectories here. Add them in the ".gitignore" file
-# in that subdirectory instead.
+# Common extensions to be excluded
 #
-# Normal rules
-#
-
-*.rej
-*.orig
-*.a
+.*
 *.o
-*~
-*.swp
+*.o.*
+*.a
+*.s
+*.i
+*.lst
+*.depend
+*.elf
+*.bin
+*.tar
+*.zip
+*.gz
+*.bz2
 *.patch
+*.diff
 
 #
 # Top-level generic files
 #
-
+/MLO
+/TAGS
 /System.map
 /x-load
-/x-load.bin
 /x-load.map
-/MLO
+/x-load.bin
+/x-load.bin.ift
 
 #
-# Generated files
+# git files that we don't want to ignore even it they are dot-files
 #
+!.gitignore
+!.mailmap
 
-*.depend
-/LOG
-/errlog
-/reloc_off
-/include/config.h
-/include/config.mk
+#
+# Generated include files
+#
+include/config.mk
+include/config.h
 
-# stgit generated dirs
-patches-*
-.stgit-edit.txt
-
-# quilt's files
-patches
-series
-
-# gdb files
-.gdb_history
-
+#
 # cscope files
+#
 cscope.*
+ncscope.*
 
-# tags files
-/tags
-/ctags
-/etags
+*.orig
+*~
+\#*#

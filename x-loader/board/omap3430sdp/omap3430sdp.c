@@ -303,7 +303,7 @@ void prcm_init(void)
 			sil_index = 0;
 		else if(get_cpu_rev() == CPU_3430_ES2)
 			sil_index = 1;
-	}	
+	}
 
 	/* Unlock MPU DPLL (slows things down, and needed later) */
 	sr32(CM_CLKEN_PLL_MPU, 0, 3, PLL_LOW_POWER_BYPASS);
@@ -445,7 +445,7 @@ void s_init(void)
 {
 	watchdog_init();
 #ifdef CONFIG_3430_AS_3410
-	/* setup the scalability control register for 
+	/* setup the scalability control register for
 	 * 3430 to work in 3410 mode
 	 */
 	__raw_writel(0x5ABF,CONTROL_SCALABLE_OMAP_OCP);
@@ -672,6 +672,11 @@ void per_clocks_enable(void)
 void set_muxconf_regs(void)
 {
 	MUX_DEFAULT();
+}
+
+int nor_read_boot(unsigned char *buf)
+{
+	return 0;
 }
 
 /**********************************************************

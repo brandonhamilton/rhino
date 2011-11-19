@@ -120,25 +120,25 @@ config_sdram_ddr(u32 rev)
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
 
 
-	/* 
+	/*
 	 * CS0 SDRC Mode Register
 	 * Burst length = 4 - DDR memory
 	 * Serial mode
-	 * CAS latency = 3 
+	 * CAS latency = 3
 	 */
 	__raw_writel(0x00000032, SDRC_MR_0);
 
  	/* SDRC DLLA control register */
 	/* Delay is 90 degrees */
-	/* Enable DLL, Load counter with 115 (middle of range) */ 
+	/* Enable DLL, Load counter with 115 (middle of range) */
 	__raw_writel(0x00000008, SDRC_DLLA_CTRL);	// ES2.x
-	/* Enable DLL, Load counter with 128 (middle of range) */ 
+	/* Enable DLL, Load counter with 128 (middle of range) */
 	__raw_writel(0x00000008, SDRC_DLLB_CTRL);	// ES2.x
 
 }
 #endif // CFG_SDRAM_DDR
 
-#ifdef CFG_SDRAM_COMBO 
+#ifdef CFG_SDRAM_COMBO
 void
 config_sdram_combo(u32 rev)
 {
@@ -171,7 +171,7 @@ config_sdram_combo(u32 rev)
         __raw_writel(H4_2420_COMBO_MDCFG_0_DDR, SDRC_MCFG_0);
         __raw_writel(H4_2420_SDRC_ACTIM_CTRLA_0, SDRC_ACTIM_CTRLA_0);
         __raw_writel(H4_2420_SDRC_ACTIM_CTRLB_0, SDRC_ACTIM_CTRLB_0);
-	
+
 	/* This is reqd only for ES1 */
 	if (rev == CPU_242X_ES1)
         	__raw_writel(H4_242x_SDRC_RFR_CTRL_ES1, SDRC_RFR_CTRL);
@@ -217,7 +217,7 @@ config_sdram_combo(u32 rev)
 	if (rev == CPU_242X_ES1)
 		dllctrl = (BIT0|BIT3);
 	else
-		dllctrl = BIT0;		
+		dllctrl = BIT0;
 
         if (rev == CPU_2420_2422_ES1) {
                 /* Enable DLL, Load counter with 115 (middle of range) */
@@ -272,7 +272,7 @@ config_2430sdram_ddr(u32 rev)
 	__raw_writel(CMD_PRECHARGE, SDRC_MANUAL_0);
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
- 
+
 	/* CS0 SDRC Mode Register */
 	/* Burst length = 2 - SDR memory */
 	/* Serial mode */
@@ -283,7 +283,7 @@ config_2430sdram_ddr(u32 rev)
 	dllctrl = (SDP_2430_SDRC_DLLAB_CTRL & ~BIT2); /* set target ctrl val */
 	__raw_writel(dllctrl, SDRC_DLLA_CTRL);	/* set lock mode */
 	__raw_writel(dllctrl, SDRC_DLLB_CTRL);	/* set lock mode */
-	delay(0x1000); /* time to track to center */	
+	delay(0x1000); /* time to track to center */
 	dllstat = __raw_readl(SDRC_DLLA_STATUS) & 0xFF00; /* get status */
 	dllctrl = (dllctrl & 0x00FF) | dllstat | BIT2; /* build unlock value */
 	__raw_writel(dllctrl, SDRC_DLLA_CTRL);	/* set unlock mode */
@@ -291,7 +291,7 @@ config_2430sdram_ddr(u32 rev)
 }
 #endif // CFG_2430SDRAM_DDR
 
-#ifdef CFG_SDRAM_STACKED 
+#ifdef CFG_SDRAM_STACKED
 void
 config_sdram_stacked(u32 rev)
 {
@@ -343,15 +343,15 @@ config_sdram_stacked(u32 rev)
  	/* SDRC DLLA control register */
 	/* Delay is 90 degrees */
 	if (rev == CPU_2420_2422_ES1) {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00007302, SDRC_DLLA_CTRL);
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00007302, SDRC_DLLB_CTRL);
 	}
 	else {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00003108, SDRC_DLLA_CTRL);	// ES2.x
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00003108, SDRC_DLLB_CTRL);	// ES2.x
 	}
 }
@@ -537,7 +537,7 @@ int s_init(int skip)
         rev = get_cpu_rev();
 
         watchdog_init();
-	try_unlock_sram();   
+	try_unlock_sram();
         muxSetupAll();
         delay(100);
 	prcm_init();
@@ -608,7 +608,7 @@ int dram_init (void)
 {
 	return 0;
 }
- 
+
 /*****************************************************************
  * Routine: peripheral_enable
  * Description: Enable the clks & power for perifs (GPT2, UART1,...)
@@ -677,6 +677,11 @@ static void muxSetupAll(void)
 	MUX_VAL(0x0085, 0x1B)        /* gpmc_a10- EN, HI, 3, ->gpio_3 */
 }
 
+int nor_read_boot(unsigned char *buf)
+{
+	return 0;
+}
+
 int nand_init(void)
 {
 	u32	rev;
@@ -694,7 +699,7 @@ int nand_init(void)
 
 	/* Set the GPMC Vals . For NAND boot on 2430SDP, NAND is mapped at CS0
          *  , NOR at CS1 and MPDB at CS5. And oneNAND boot, we map oneNAND at CS0.
-	 *  We configure only GPMC CS0 with required values. Configiring other devices 
+	 *  We configure only GPMC CS0 with required values. Configiring other devices
 	 *  at other CS in done in u-boot anyway. So we don't have to bother doing it here.
          */
 	__raw_writel(0, GPMC_CONFIG7_0);

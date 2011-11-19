@@ -83,25 +83,25 @@ config_sdram_ddr(u32 rev)
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
 
 
-	/* 
+	/*
 	 * CS0 SDRC Mode Register
 	 * Burst length = 4 - DDR memory
 	 * Serial mode
-	 * CAS latency = 3 
+	 * CAS latency = 3
 	 */
 	__raw_writel(0x00000032, SDRC_MR_0);
 
  	/* SDRC DLLA control register */
 	/* Delay is 90 degrees */
 	if (rev == CPU_2420_2422_ES1) {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00000002, SDRC_DLLA_CTRL);
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00000002, SDRC_DLLB_CTRL);
 	} else {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00000008, SDRC_DLLA_CTRL);	// ES2.x
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00000008, SDRC_DLLB_CTRL);	// ES2.x
 	}
 
@@ -109,7 +109,7 @@ config_sdram_ddr(u32 rev)
 #endif // CFG_SDRAM_DDR
 
 
-#ifdef CFG_SDRAM_COMBO 
+#ifdef CFG_SDRAM_COMBO
 void
 config_sdram_combo(u32 rev)
 {
@@ -178,7 +178,7 @@ config_sdram_combo(u32 rev)
 	if (rev == CPU_242X_ES1)
 		dllctrl = (BIT0|BIT3);
 	else
-		dllctrl = BIT0;		
+		dllctrl = BIT0;
 
         if (rev == CPU_2420_2422_ES1) {
                 /* Enable DLL, Load counter with 115 (middle of range) */
@@ -199,7 +199,7 @@ config_sdram_combo(u32 rev)
 
 #endif // CFG_SDRAM_COMBO
 
-#ifdef CFG_SDRAM_SDR 
+#ifdef CFG_SDRAM_SDR
 void
 config_sdram_sdr(u32 rev)
 {
@@ -234,7 +234,7 @@ config_sdram_sdr(u32 rev)
 	__raw_writel(CMD_PRECHARGE, SDRC_MANUAL_0);
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
 	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
- 
+
 	/* CS0 SDRC Mode Register */
 	/* Burst length = 2 - SDR memory */
 	/* Serial mode */
@@ -242,7 +242,7 @@ config_sdram_sdr(u32 rev)
 	__raw_writel(H4_2420_SDRC_MR_0_SDR, SDRC_MR_0);  /* diff from combo case */
 
 	/* SDRC DLLA control register */
-	/* Enable DLL, Load counter with 115 (middle of range) */ 
+	/* Enable DLL, Load counter with 115 (middle of range) */
 	/* Delay is 90 degrees */
 
 	if (rev == CPU_242X_ES1)
@@ -253,22 +253,22 @@ config_sdram_sdr(u32 rev)
 	if (rev == CPU_2420_2422_ES1) {
 		__raw_writel(0x00007306, SDRC_DLLA_CTRL);
 		__raw_writel(0x00007302, SDRC_DLLA_CTRL);
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00007306, SDRC_DLLB_CTRL); /* load ctr value */
 		__raw_writel(0x00007302, SDRC_DLLB_CTRL); /* lock and go */
 	}
 	else {
 		__raw_writel(H4_2420_SDRC_DLLAB_CTRL, SDRC_DLLA_CTRL);	// ES2.x
 		__raw_writel(H4_2420_SDRC_DLLAB_CTRL & ~(LOADDLL|dllctrl), SDRC_DLLA_CTRL);	// ES2.x
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(H4_2420_SDRC_DLLAB_CTRL, SDRC_DLLB_CTRL);	// ES2.x
 		__raw_writel(H4_2420_SDRC_DLLAB_CTRL & ~(LOADDLL|dllctrl), SDRC_DLLB_CTRL);	// ES2.x
 	}
-   
+
 }
 #endif // CFG_SDRAM_SDR
 
-#ifdef CFG_SDRAM_STACKED 
+#ifdef CFG_SDRAM_STACKED
 void
 config_sdram_stacked(u32 rev)
 {
@@ -320,15 +320,15 @@ config_sdram_stacked(u32 rev)
  	/* SDRC DLLA control register */
 	/* Delay is 90 degrees */
 	if (rev == CPU_2420_2422_ES1) {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00007302, SDRC_DLLA_CTRL);
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00007302, SDRC_DLLB_CTRL);
 	}
 	else {
-		/* Enable DLL, Load counter with 115 (middle of range) */ 
+		/* Enable DLL, Load counter with 115 (middle of range) */
 		__raw_writel(0x00003108, SDRC_DLLA_CTRL);	// ES2.x
-		/* Enable DLL, Load counter with 128 (middle of range) */ 
+		/* Enable DLL, Load counter with 128 (middle of range) */
 		__raw_writel(0x00003108, SDRC_DLLB_CTRL);	// ES2.x
 	}
 }
@@ -388,7 +388,7 @@ int s_init(int skip)
 	config_sdram_stacked(rev);
 #else
 #error SDRAM type not supported
-#endif	
+#endif
 
 	delay(20000);
 	peripheral_enable();
@@ -454,7 +454,7 @@ int dram_init (void)
 {
 	return 0;
 }
- 
+
 /*****************************************************************
  * Routine: peripheral_enable
  * Description: Enable the clks & power for perifs (GPT2, UART1,...)
@@ -525,6 +525,11 @@ static void muxSetupUART1(void)
 	*MuxConfigReg = 0x00 ; /* Mode = 0, PUPD=Disabled */
 }
 
+int nor_read_boot(unsigned char *buf)
+{
+	return 0;
+}
+
 int nand_init(void)
 {
 	u32	rev;
@@ -532,7 +537,7 @@ int nand_init(void)
 	rev = get_cpu_rev();
 
 
-	/* GPMC pin muxing */ 
+	/* GPMC pin muxing */
 	(*(volatile int*)0x48000070) &= 0x000000FF;
 	(*(volatile int*)0x48000074) &= 0x00000000;
 	(*(volatile int*)0x48000078) &= 0x00000000;
@@ -546,11 +551,11 @@ int nand_init(void)
 	(*(volatile int*)0x6800A010) = 0x0000000A;
 	while (((*(volatile int *)0x6800A014) & 0x00000001) == 0);
 
-	(*(volatile int*)0x6800A050) = 0x00000001;	
-	(*(volatile int*)0x6800A060) = 0x00001800;	
-	(*(volatile int*)0x6800A064) = 0x00141400;	
-	(*(volatile int*)0x6800A068) = 0x00141400;	
-	(*(volatile int*)0x6800A06C) = 0x0F010F01;	
+	(*(volatile int*)0x6800A050) = 0x00000001;
+	(*(volatile int*)0x6800A060) = 0x00001800;
+	(*(volatile int*)0x6800A064) = 0x00141400;
+	(*(volatile int*)0x6800A068) = 0x00141400;
+	(*(volatile int*)0x6800A06C) = 0x0F010F01;
 	(*(volatile int*)0x6800A070) = 0x010C1414;
 	(*(volatile int*)0x6800A074) = 0x00000A80;
 	(*(volatile int*)0x6800A078) = 0x00000C44; 	//base 0x04000000

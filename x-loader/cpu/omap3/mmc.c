@@ -1,4 +1,6 @@
 /*
+ * Modified by Simon Scott
+ *
  * (C) Copyright 2008
  * Texas Instruments, <www.ti.com>
  * Syed Mohammed Khasim <khasim@ti.com>
@@ -46,7 +48,7 @@ block_dev_desc_t *mmc_get_dev(int dev)
 
 unsigned char mmc_board_init(void)
 {
-#if defined (CONFIG_OMAP34XX) && !defined (CONFIG_AM3517EVM) && !defined (CONFIG_AM3517RHINO)
+#if defined (CONFIG_OMAP34XX) && !defined (CONFIG_AM3517EVM) && !defined (CONFIG_RHINO)
 	unsigned int value = 0;
 
 	value = CONTROL_PBIAS_LITE;
@@ -55,7 +57,6 @@ unsigned char mmc_board_init(void)
 	value = CONTROL_DEV_CONF0;
 	CONTROL_DEV_CONF0 = value | (1 << 24);
 #endif
-
 	return 1;
 }
 
@@ -117,7 +118,7 @@ unsigned char mmc_init_setup(void)
 
 	mmc_board_init();
 
-#if defined (CONFIG_AM3517RHINO) 
+#if defined (CONFIG_RHINO) 
     /*Set bit MMCSDIO2ADPCLKISEL of CONTROL_DEVCONF1 so that it generates its own MMC clock*/
     reg_val = CONTROL_DEV_CONF1;
     CONTROL_DEV_CONF1 = reg_val | (1 << 6);
@@ -133,8 +134,8 @@ unsigned char mmc_init_setup(void)
 	OMAP_HSMMC_HCTL = DTW_1_BITMODE | SDBP_PWROFF | SDVS_1V8;
     OMAP_HSMMC_CAPA |= VS18_1V8SUP;
 #else
-    OMAP_HSMMC_HCTL = DTW_1_BITMODE | SDBP_PWROFF | SDVS_3V0;
-    OMAP_HSMMC_CAPA |= VS30_3V0SUP | VS18_1V8SUP;
+	OMAP_HSMMC_HCTL = DTW_1_BITMODE | SDBP_PWROFF | SDVS_3V0;
+	OMAP_HSMMC_CAPA |= VS30_3V0SUP | VS18_1V8SUP;
 #endif
 
 	reg_val = OMAP_HSMMC_CON & RESERVED_MASK;

@@ -1,8 +1,11 @@
 /*
- * (C) Copyright 2006-2008
+ * (C) Copyright 2006
  * Texas Instruments, <www.ti.com>
  * Jian Zhang <jzhang@ti.com>
  * Richard Woodruff <r-woodruff2@ti.com>
+ *
+ * Modified for overo
+ * Steve Sakoman <steve@sakoman.com>
  *
  * See file CREDITS for list of people who contributed to this
  * project.
@@ -22,7 +25,11 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
  * MA 02111-1307 USA
  */
+
 #include <common.h>
+#include <command.h>
+#include <part.h>
+#include <fat.h>
 #include <asm/arch/cpu.h>
 #include <asm/arch/bits.h>
 #include <asm/arch/mux.h>
@@ -33,26 +40,24 @@
 
 /* Used to index into DPLL parameter tables */
 struct dpll_param {
-        unsigned int m;
-        unsigned int n;
-        unsigned int fsel;
-        unsigned int m2;
+	unsigned int m;
+	unsigned int n;
+	unsigned int fsel;
+	unsigned int m2;
 };
 
 typedef struct dpll_param dpll_param;
 
-#define MAX_SIL_INDEX	3
-
 /* Following functions are exported from lowlevel_init.S */
-extern dpll_param * get_mpu_dpll_param(void);
-extern dpll_param * get_iva_dpll_param(void);
-extern dpll_param * get_core_dpll_param(void);
-extern dpll_param * get_per_dpll_param(void);
+extern dpll_param *get_mpu_dpll_param();
+extern dpll_param *get_iva_dpll_param();
+extern dpll_param *get_core_dpll_param();
+extern dpll_param *get_per_dpll_param();
 
-#define __raw_readl(a)    (*(volatile unsigned int *)(a))
-#define __raw_writel(v,a) (*(volatile unsigned int *)(a) = (v))
-#define __raw_readw(a)    (*(volatile unsigned short *)(a))
-#define __raw_writew(v,a) (*(volatile unsigned short *)(a) = (v))
+#define __raw_readl(a)		(*(volatile unsigned int *)(a))
+#define __raw_writel(v, a)	(*(volatile unsigned int *)(a) = (v))
+#define __raw_readw(a)		(*(volatile unsigned short *)(a))
+#define __raw_writew(v, a)	(*(volatile unsigned short *)(a) = (v))
 
 /*******************************************************
  * Routine: delay
@@ -68,7 +73,7 @@ static inline void delay(unsigned long loops)
  * Routine: board_init
  * Description: Early hardware init.
  *****************************************/
-int board_init (void)
+int board_init(void)
 {
 	return 0;
 }
@@ -78,9 +83,67 @@ int board_init (void)
  *************************************************************/
 u32 get_device_type(void)
 {
-        int mode;
-        mode = __raw_readl(CONTROL_STATUS) & (DEVICE_MASK);
-        return(mode >>= 8);
+	int mode;
+	mode = __raw_readl(CONTROL_STATUS) & (DEVICE_MASK);
+	return mode >>= 8;
+}
+
+/************************************************
+ * get_sysboot_value(void) - return SYS_BOOT[4:0]
+ ************************************************/
+u32 get_sysboot_value(void)
+{
+	int mode;
+	mode = __raw_readl(CONTROL_STATUS) & (SYSBOOT_MASK);
+	return mode;
+}
+
+/*************************************************************
+ * Routine: get_mem_type(void) - returns the kind of memory connected
+ * to GPMC that we are trying to boot form. Uses SYS BOOT settings.
+ *************************************************************/
+u32 get_mem_type(void)
+{
+	u32   mem_type = get_sysboot_value();
+	switch (mem_type) {
+	case 0:
+	case 2:
+	case 4:
+	case 16:
+	case 22:
+		return GPMC_ONENAND;
+
+	case 1:
+	case 12:
+	case 15:
+	case 21:
+	case 27:
+		return GPMC_NAND;
+
+	case 3:
+	case 6:
+		return MMC_ONENAND;
+
+	case 8:
+	case 11:
+	case 14:
+	case 20:
+	case 26:
+		return GPMC_MDOC;
+
+	case 17:
+	case 18:
+	case 24:
+		return MMC_NAND;
+
+	case 7:
+	case 10:
+	case 13:
+	case 19:
+	case 25:
+	default:
+		return GPMC_NOR;
+	}
 }
 
 /******************************************
@@ -88,13 +151,13 @@ u32 get_device_type(void)
  ******************************************/
 u32 get_cpu_rev(void)
 {
-	u32 cpuid=0;
+	u32 cpuid = 0;
 	/* On ES1.0 the IDCODE register is not exposed on L4
 	 * so using CPU ID to differentiate
 	 * between ES2.0 and ES1.0.
 	 */
 	__asm__ __volatile__("mrc p15, 0, %0, c0, c0, 0":"=r" (cpuid));
-	if((cpuid  & 0xf) == 0x0)
+	if ((cpuid  & 0xf) == 0x0)
 		return CPU_3430_ES1;
 	else
 		return CPU_3430_ES2;
@@ -107,7 +170,7 @@ u32 get_cpu_rev(void)
 u32 cpu_is_3410(void)
 {
 	int status;
-	if(get_cpu_rev() < CPU_3430_ES2) {
+	if (get_cpu_rev() < CPU_3430_ES2) {
 		return 0;
 	} else {
 		/* read scalability status and return 1 for 3410*/
@@ -146,9 +209,9 @@ u32 wait_on_value(u32 read_bit_mask, u32 match_value, u32 read_addr, u32 bound)
 		++i;
 		val = __raw_readl(read_addr) & read_bit_mask;
 		if (val == match_value)
-			return (1);
+			return 1;
 		if (i == bound)
-			return (0);
+			return 0;
 	} while (1);
 }
 
@@ -158,38 +221,57 @@ u32 wait_on_value(u32 read_bit_mask, u32 match_value, u32 read_addr, u32 bound)
  *********************************************************************/
 void config_3430sdram_ddr(void)
 {
-	/* reset sdrc controller */
-	__raw_writel(SOFTRESET, SDRC_SYSCONFIG);
-	wait_on_value(BIT0, BIT0, SDRC_STATUS, 12000000);
-	__raw_writel(0, SDRC_SYSCONFIG);
+        /* reset sdrc controller */
+        __raw_writel(SOFTRESET, SDRC_SYSCONFIG);
+        wait_on_value(BIT0, BIT0, SDRC_STATUS, 12000000);
+        __raw_writel(0, SDRC_SYSCONFIG);
 
-	/* setup sdrc to ball mux */
-	__raw_writel(SDP_SDRC_SHARING, SDRC_SHARING);
+        /* setup sdrc to ball mux */
+        __raw_writel(SDP_SDRC_SHARING, SDRC_SHARING);
 
-	/* set mdcfg */
-	__raw_writel(SDP_SDRC_MDCFG_0_DDR, SDRC_MCFG_0);
+        /* SDRC put in weak */
+//        (*(unsigned int*)0x6D00008C) = 0x00000020;
 
-	/* set timing */
-	__raw_writel(SDP_SDRC_ACTIM_CTRLA_0, SDRC_ACTIM_CTRLA_0);
-	__raw_writel(SDP_SDRC_ACTIM_CTRLB_0, SDRC_ACTIM_CTRLB_0);
-	__raw_writel(SDP_SDRC_RFR_CTRL, SDRC_RFR_CTRL);
+        /* SDRC_MCFG0 register */
+        (*(unsigned int*)0x6D000080) = 0x02584099;//from Micron
 
-	/* init sequence for mDDR/mSDR using manual commands (DDR is different) */
-	__raw_writel(CMD_NOP, SDRC_MANUAL_0);
-	delay(5000);
-	__raw_writel(CMD_PRECHARGE, SDRC_MANUAL_0);
-	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
-	__raw_writel(CMD_AUTOREFRESH, SDRC_MANUAL_0);
+        /* SDRC_ACTIM_CTRLA0 register */
+//our value        (*(unsigned int*)0x6D00009c) = 0xa29db4c6;// for 166M
+        (*(unsigned int*)0x6D00009c) = 0xaa9db4c6;// for 166M from rkw
 
-	/* set mr0 */
-	__raw_writel(SDP_SDRC_MR_0_DDR, SDRC_MR_0);
+        /* SDRC_ACTIM_CTRLB0 register */
+//from micron   (*(unsigned int*)0x6D0000a0) = 0x12214;// for 166M
 
-	/* set up dll */
-	__raw_writel(SDP_SDRC_DLLAB_CTRL, SDRC_DLLA_CTRL);
-	delay(0x2000);	/* give time to lock */
+//        (*(unsigned int*)0x6D0000a0) = 0x00011417; our value
+        (*(unsigned int*)0x6D0000a0) = 0x00011517;
+
+        /* SDRC_RFR_CTRL0 register */
+//from micron   (*(unsigned int*)0x6D0000a4) =0x54601; // for 166M
+
+        (*(unsigned int*)0x6D0000a4) =0x0004DC01;
+
+        /* Disble Power Down of CKE cuz of 1 CKE on combo part */
+        (*(unsigned int*)0x6D000070) = 0x00000081;
+
+        /* SDRC_Manual command register */
+        (*(unsigned int*)0x6D0000a8) = 0x00000000; // NOP command
+        delay(5000);
+        (*(unsigned int*)0x6D0000a8) = 0x00000001; // Precharge command
+        (*(unsigned int*)0x6D0000a8) = 0x00000002; // Auto-refresh command
+        (*(unsigned int*)0x6D0000a8) = 0x00000002; // Auto-refresh command
+
+        /* SDRC MR0 register */
+        (*(int*)0x6D000084) = 0x00000032; // Burst length =4
+        // CAS latency = 3
+        // Write Burst = Read Burst
+        // Serial Mode
+
+        /* SDRC DLLA control register */
+        (*(unsigned int*)0x6D000060) = 0x0000A;
+        delay(0x20000); // some delay
 
 }
-#endif // CFG_3430SDRAM_DDR
+#endif /* CFG_3430SDRAM_DDR */
 
 /*************************************************************
  * get_sys_clk_speed - determine reference oscillator speed
@@ -214,9 +296,10 @@ u32 get_osc_clk_speed(void)
 	val = __raw_readl(CM_FCLKEN_WKUP) | BIT0;
 	__raw_writel(val, CM_FCLKEN_WKUP);
 
-	__raw_writel(0, OMAP34XX_GPT1 + TLDR);	/* start counting at 0 */
-	__raw_writel(GPT_EN, OMAP34XX_GPT1 + TCLR);     /* enable clock */
-	/* enable 32kHz source *//* enabled out of reset */
+	__raw_writel(0, OMAP34XX_GPT1 + TLDR);		/* start counting at 0 */
+	__raw_writel(GPT_EN, OMAP34XX_GPT1 + TCLR);	/* enable clock */
+	/* enable 32kHz source */
+	/* enabled out of reset */
 	/* determine sys_clk via gauging */
 
 	start = 20 + __raw_readl(S32K_CR);	/* start time in 20 cycles */
@@ -228,17 +311,17 @@ u32 get_osc_clk_speed(void)
 
 	/* based on number of ticks assign speed */
 	if (cdiff > 19000)
-		return (S38_4M);
+		return S38_4M;
 	else if (cdiff > 15200)
-		return (S26M);
+		return S26M;
 	else if (cdiff > 13000)
-		return (S24M);
+		return S24M;
 	else if (cdiff > 9000)
-		return (S19_2M);
+		return S19_2M;
 	else if (cdiff > 7600)
-		return (S13M);
+		return S13M;
 	else
-		return (S12M);
+		return S12M;
 }
 
 /******************************************************************************
@@ -248,15 +331,15 @@ u32 get_osc_clk_speed(void)
  *****************************************************************************/
 void get_sys_clkin_sel(u32 osc_clk, u32 *sys_clkin_sel)
 {
-	if(osc_clk == S38_4M)
-		*sys_clkin_sel=  4;
-	else if(osc_clk == S26M)
+	if (osc_clk == S38_4M)
+		*sys_clkin_sel =  4;
+	else if (osc_clk == S26M)
 		*sys_clkin_sel = 3;
-	else if(osc_clk == S19_2M)
+	else if (osc_clk == S19_2M)
 		*sys_clkin_sel = 2;
-	else if(osc_clk == S13M)
+	else if (osc_clk == S13M)
 		*sys_clkin_sel = 1;
-	else if(osc_clk == S12M)
+	else if (osc_clk == S12M)
 		*sys_clkin_sel = 0;
 }
 
@@ -266,7 +349,7 @@ void get_sys_clkin_sel(u32 osc_clk, u32 *sys_clkin_sel)
  *****************************************************************************/
 void prcm_init(void)
 {
-	u32 osc_clk=0, sys_clkin_sel;
+	u32 osc_clk = 0, sys_clkin_sel;
 	dpll_param *dpll_param_p;
 	u32 clk_index, sil_index;
 
@@ -279,7 +362,7 @@ void prcm_init(void)
 	sr32(PRM_CLKSEL, 0, 3, sys_clkin_sel); /* set input crystal speed */
 
 	/* If the input clock is greater than 19.2M always divide/2 */
-	if(sys_clkin_sel > 2) {
+	if (sys_clkin_sel > 2) {
 		sr32(PRM_CLKSRC_CTRL, 6, 2, 2);/* input clock divider */
 		clk_index = sys_clkin_sel/2;
 	} else {
@@ -287,22 +370,13 @@ void prcm_init(void)
 		clk_index = sys_clkin_sel;
 	}
 
-	sr32(PRM_CLKSRC_CTRL, 0, 2, 0);/* Bypass mode: T2 inputs a square clock */
-
 	/* The DPLL tables are defined according to sysclk value and
 	 * silicon revision. The clk_index value will be used to get
 	 * the values for that input sysclk from the DPLL param table
 	 * and sil_index will get the values for that SysClk for the
 	 * appropriate silicon rev.
 	 */
-	if(cpu_is_3410())
-		sil_index = 2;
-	else {
-		if(get_cpu_rev() == CPU_3430_ES1)
-			sil_index = 0;
-		else if(get_cpu_rev() == CPU_3430_ES2)
-			sil_index = 1;
-	}
+	sil_index = get_cpu_rev() - 1;
 
 	/* Unlock MPU DPLL (slows things down, and needed later) */
 	sr32(CM_CLKEN_PLL_MPU, 0, 3, PLL_LOW_POWER_BYPASS);
@@ -311,21 +385,18 @@ void prcm_init(void)
 	/* Getting the base address of Core DPLL param table*/
 	dpll_param_p = (dpll_param *)get_core_dpll_param();
 	/* Moving it to the right sysclk and ES rev base */
-	dpll_param_p = dpll_param_p + MAX_SIL_INDEX*clk_index + sil_index;
+	dpll_param_p = dpll_param_p + 2*clk_index + sil_index;
 	/* CORE DPLL */
 	/* sr32(CM_CLKSEL2_EMU) set override to work when asleep */
 	sr32(CM_CLKEN_PLL, 0, 3, PLL_FAST_RELOCK_BYPASS);
 	wait_on_value(BIT0, 0, CM_IDLEST_CKGEN, LDELAY);
-		/* For 3430 ES1.0 Errata 1.50, default value directly doesnt
-		   work. write another value and then default value. */
-	sr32(CM_CLKSEL1_EMU, 16, 5, CORE_M3X2 + 1);	/* m3x2 */
-	sr32(CM_CLKSEL1_EMU, 16, 5, CORE_M3X2);		/* m3x2 */
+	sr32(CM_CLKSEL1_EMU, 16, 5, CORE_M3X2);	/* m3x2 */
 	sr32(CM_CLKSEL1_PLL, 27, 2, dpll_param_p->m2);	/* Set M2 */
 	sr32(CM_CLKSEL1_PLL, 16, 11, dpll_param_p->m);	/* Set M */
 	sr32(CM_CLKSEL1_PLL, 8, 7, dpll_param_p->n);	/* Set N */
 	sr32(CM_CLKSEL1_PLL, 6, 1, 0);			/* 96M Src */
 	sr32(CM_CLKSEL_CORE, 8, 4, CORE_SSI_DIV);	/* ssi */
-	sr32(CM_CLKSEL_CORE, 4, 2, CORE_FUSB_DIV);	/* fsusb ES1 only */
+	sr32(CM_CLKSEL_CORE, 4, 2, CORE_FUSB_DIV);	/* fsusb */
 	sr32(CM_CLKSEL_CORE, 2, 2, CORE_L4_DIV);	/* l4 */
 	sr32(CM_CLKSEL_CORE, 0, 2, CORE_L3_DIV);	/* l3 */
 	sr32(CM_CLKSEL_GFX, 0, 3, GFX_DIV);		/* gfx */
@@ -355,7 +426,7 @@ void prcm_init(void)
 	/* Getting the base address to MPU DPLL param table*/
 	dpll_param_p = (dpll_param *)get_mpu_dpll_param();
 	/* Moving it to the right sysclk and ES rev base */
-	dpll_param_p = dpll_param_p + MAX_SIL_INDEX*clk_index + sil_index;
+	dpll_param_p = dpll_param_p + 2*clk_index + sil_index;
 	/* MPU DPLL (unlocked already) */
 	sr32(CM_CLKSEL2_PLL_MPU, 0, 5, dpll_param_p->m2);	/* Set M2 */
 	sr32(CM_CLKSEL1_PLL_MPU, 8, 11, dpll_param_p->m);	/* Set M */
@@ -367,19 +438,19 @@ void prcm_init(void)
 	/* Getting the base address to IVA DPLL param table*/
 	dpll_param_p = (dpll_param *)get_iva_dpll_param();
 	/* Moving it to the right sysclk and ES rev base */
-	dpll_param_p = dpll_param_p + MAX_SIL_INDEX*clk_index + sil_index;
+	dpll_param_p = dpll_param_p + 2*clk_index + sil_index;
 	/* IVA DPLL (set to 12*20=240MHz) */
 	sr32(CM_CLKEN_PLL_IVA2, 0, 3, PLL_STOP);
 	wait_on_value(BIT0, 0, CM_IDLEST_PLL_IVA2, LDELAY);
 	sr32(CM_CLKSEL2_PLL_IVA2, 0, 5, dpll_param_p->m2);	/* set M2 */
 	sr32(CM_CLKSEL1_PLL_IVA2, 8, 11, dpll_param_p->m);	/* set M */
-  	sr32(CM_CLKSEL1_PLL_IVA2, 0, 7, dpll_param_p->n);	/* set N */
+	sr32(CM_CLKSEL1_PLL_IVA2, 0, 7, dpll_param_p->n);	/* set N */
 	sr32(CM_CLKEN_PLL_IVA2, 4, 4, dpll_param_p->fsel);	/* FREQSEL */
 	sr32(CM_CLKEN_PLL_IVA2, 0, 3, PLL_LOCK);	/* lock mode */
 	wait_on_value(BIT0, 1, CM_IDLEST_PLL_IVA2, LDELAY);
 
 	/* Set up GPTimers to sys_clk source only */
- 	sr32(CM_CLKSEL_PER, 0, 8, 0xff);
+	sr32(CM_CLKSEL_PER, 0, 8, 0xff);
 	sr32(CM_CLKSEL_WKUP, 0, 1, 1);
 
 	delay(5000);
@@ -431,9 +502,8 @@ void try_unlock_memory(void)
 	/* if GP device unlock device SRAM for general use */
 	/* secure code breaks for Secure/Emulation device - HS/E/T*/
 	mode = get_device_type();
-	if (mode == GP_DEVICE) {
+	if (mode == GP_DEVICE)
 		secure_unlock();
-	}
 	return;
 }
 
@@ -450,7 +520,7 @@ void s_init(void)
 	/* setup the scalability control register for
 	 * 3430 to work in 3410 mode
 	 */
-	__raw_writel(0x5ABF,CONTROL_SCALABLE_OMAP_OCP);
+	__raw_writel(0x5ABF, CONTROL_SCALABLE_OMAP_OCP);
 #endif
 	try_unlock_memory();
 	set_muxconf_regs();
@@ -464,9 +534,9 @@ void s_init(void)
  * Routine: misc_init_r
  * Description: Init ethernet (done here so udelay works)
  ********************************************************/
-int misc_init_r (void)
+int misc_init_r(void)
 {
-	return(0);
+	return 0;
 }
 
 /******************************************************
@@ -505,7 +575,7 @@ void watchdog_init(void)
  * Routine: dram_init
  * Description: sets uboots idea of sdram size
  **********************************************/
-int dram_init (void)
+int dram_init(void)
 {
 	return 0;
 }
@@ -522,14 +592,14 @@ void per_clocks_enable(void)
 	sr32(CM_FCLKEN_PER, 3, 1, 0x1); /* FCKen GPT2 */
 
 #ifdef CFG_NS16550
-////#ifdef CONFIG_SERIAL3
-	sr32(CM_FCLKEN_PER, 11, 1, 0x1);
-	sr32(CM_ICLKEN_PER, 11, 1, 0x1);
-////#else
-	/* Enable UART1 clocks */
+	/* UART1 clocks */
 	sr32(CM_FCLKEN1_CORE, 13, 1, 0x1);
 	sr32(CM_ICLKEN1_CORE, 13, 1, 0x1);
-////#endif
+
+	/* UART 3 Clocks */
+	sr32(CM_FCLKEN_PER, 11, 1, 0x1);
+	sr32(CM_ICLKEN_PER, 11, 1, 0x1);
+
 #endif
 	delay(1000);
 }
@@ -551,7 +621,6 @@ void per_clocks_enable(void)
  * The commented string gives the final mux configuration for that pin
  */
 #define MUX_DEFAULT()\
-	/*SDRC*/\
 	MUX_VAL(CP(SDRC_D0),        (IEN  | PTD | DIS | M0)) /*SDRC_D0*/\
 	MUX_VAL(CP(SDRC_D1),        (IEN  | PTD | DIS | M0)) /*SDRC_D1*/\
 	MUX_VAL(CP(SDRC_D2),        (IEN  | PTD | DIS | M0)) /*SDRC_D2*/\
@@ -589,7 +658,6 @@ void per_clocks_enable(void)
 	MUX_VAL(CP(SDRC_DQS1),      (IEN  | PTD | DIS | M0)) /*SDRC_DQS1*/\
 	MUX_VAL(CP(SDRC_DQS2),      (IEN  | PTD | DIS | M0)) /*SDRC_DQS2*/\
 	MUX_VAL(CP(SDRC_DQS3),      (IEN  | PTD | DIS | M0)) /*SDRC_DQS3*/\
-	/*GPMC*/\
 	MUX_VAL(CP(GPMC_A1),        (IDIS | PTD | DIS | M0)) /*GPMC_A1*/\
 	MUX_VAL(CP(GPMC_A2),        (IDIS | PTD | DIS | M0)) /*GPMC_A2*/\
 	MUX_VAL(CP(GPMC_A3),        (IDIS | PTD | DIS | M0)) /*GPMC_A3*/\
@@ -620,30 +688,34 @@ void per_clocks_enable(void)
 	MUX_VAL(CP(GPMC_nCS1),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS1*/\
 	MUX_VAL(CP(GPMC_nCS2),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS2*/\
 	MUX_VAL(CP(GPMC_nCS3),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS3*/\
-	MUX_VAL(CP(GPMC_nCS4),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS4 lab*/\
-	MUX_VAL(CP(GPMC_nCS5),      (IDIS | PTD | DIS | M0)) /*GPMC_nCS5 lab*/\
-	MUX_VAL(CP(GPMC_nCS6),      (IEN  | PTD | DIS | M1)) /*sys_ndmareq1 lab*/\
-	MUX_VAL(CP(GPMC_nCS7),      (IEN  | PTU | EN  | M1)) /*GPMC_IO_DIR lab*/\
+	MUX_VAL(CP(GPMC_nCS4),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS4*/\
+	MUX_VAL(CP(GPMC_nCS5),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS5*/\
+	MUX_VAL(CP(GPMC_nCS6),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS6*/\
+	MUX_VAL(CP(GPMC_nCS7),      (IDIS | PTU | EN  | M0)) /*GPMC_nCS7*/\
 	MUX_VAL(CP(GPMC_CLK),       (IDIS | PTD | DIS | M0)) /*GPMC_CLK*/\
 	MUX_VAL(CP(GPMC_nADV_ALE),  (IDIS | PTD | DIS | M0)) /*GPMC_nADV_ALE*/\
 	MUX_VAL(CP(GPMC_nOE),       (IDIS | PTD | DIS | M0)) /*GPMC_nOE*/\
 	MUX_VAL(CP(GPMC_nWE),       (IDIS | PTD | DIS | M0)) /*GPMC_nWE*/\
 	MUX_VAL(CP(GPMC_nBE0_CLE),  (IDIS | PTD | DIS | M0)) /*GPMC_nBE0_CLE*/\
-	MUX_VAL(CP(GPMC_nBE1),      (IEN  | PTD | DIS | M0)) /*GPMC_nBE1 lab*/\
+	MUX_VAL(CP(GPMC_nBE1),      (IDIS | PTD | DIS | M4)) /*GPIO_61*/\
 	MUX_VAL(CP(GPMC_nWP),       (IEN  | PTD | DIS | M0)) /*GPMC_nWP*/\
 	MUX_VAL(CP(GPMC_WAIT0),     (IEN  | PTU | EN  | M0)) /*GPMC_WAIT0*/\
 	MUX_VAL(CP(GPMC_WAIT1),     (IEN  | PTU | EN  | M0)) /*GPMC_WAIT1*/\
-	MUX_VAL(CP(GPMC_WAIT2),     (IEN  | PTU | EN  | M0)) /*gpmc_nWait lab*/\
-	MUX_VAL(CP(GPMC_WAIT3),     (IEN  | PTU | EN  | M0)) /*gpmc_nWait lab*/\
-	MUX_VAL(CP(DSS_DATA18),     (IDIS | PTD | DIS | M0)) /*DSS_DATA18*/\
-	MUX_VAL(CP(DSS_DATA19),     (IDIS | PTD | DIS | M0)) /*DSS_DATA19*/\
-	MUX_VAL(CP(DSS_DATA20),     (IDIS | PTD | DIS | M0)) /*DSS_DATA20*/\
-	MUX_VAL(CP(CAM_XCLKB),      (IDIS | PTD | DIS | M0)) /*CAM_XCLKB*/\
+	MUX_VAL(CP(GPMC_WAIT2),     (IEN  | PTU | EN  | M4)) /*GPIO_64*/\
+	MUX_VAL(CP(GPMC_WAIT3),     (IEN  | PTU | EN  | M4)) /*GPIO_65*/\
+	MUX_VAL(CP(DSS_DATA18),     (IEN  | PTD | DIS | M4)) /*GPIO_88*/\
+	MUX_VAL(CP(DSS_DATA19),     (IEN  | PTD | DIS | M4)) /*GPIO_89*/\
+	MUX_VAL(CP(DSS_DATA20),     (IEN  | PTD | DIS | M4)) /*GPIO_90*/\
+	MUX_VAL(CP(DSS_DATA21),     (IEN  | PTD | DIS | M4)) /*GPIO_91*/\
 	MUX_VAL(CP(CAM_WEN),        (IEN  | PTD | DIS | M4)) /*GPIO_167*/\
 	MUX_VAL(CP(UART1_TX),       (IDIS | PTD | DIS | M0)) /*UART1_TX*/\
 	MUX_VAL(CP(UART1_RTS),      (IDIS | PTD | DIS | M0)) /*UART1_RTS*/\
 	MUX_VAL(CP(UART1_CTS),      (IEN  | PTU | DIS | M0)) /*UART1_CTS*/\
 	MUX_VAL(CP(UART1_RX),       (IEN  | PTD | DIS | M0)) /*UART1_RX*/\
+	MUX_VAL(CP(UART3_CTS_RCTX), (IEN  | PTD | EN  | M0)) /*UART3_CTS_RCTX */\
+	MUX_VAL(CP(UART3_RTS_SD),   (IDIS | PTD | DIS | M0)) /*UART3_RTS_SD */\
+	MUX_VAL(CP(UART3_RX_IRRX),  (IEN  | PTD | DIS | M0)) /*UART3_RX_IRRX*/\
+	MUX_VAL(CP(UART3_TX_IRTX),  (IDIS | PTD | DIS | M0)) /*UART3_TX_IRTX*/\
 	MUX_VAL(CP(McBSP1_DX),      (IEN  | PTD | DIS | M4)) /*GPIO_158*/\
 	MUX_VAL(CP(SYS_32K),        (IEN  | PTD | DIS | M0)) /*SYS_32K*/\
 	MUX_VAL(CP(SYS_BOOT0),      (IEN  | PTD | DIS | M4)) /*GPIO_2 */\
@@ -653,8 +725,7 @@ void per_clocks_enable(void)
 	MUX_VAL(CP(SYS_BOOT4),      (IEN  | PTD | DIS | M4)) /*GPIO_6 */\
 	MUX_VAL(CP(SYS_BOOT5),      (IEN  | PTD | DIS | M4)) /*GPIO_7 */\
 	MUX_VAL(CP(SYS_BOOT6),      (IEN  | PTD | DIS | M4)) /*GPIO_8 */\
-	MUX_VAL(CP(SYS_CLKOUT1),    (IDIS | PTD | DIS | M0)) /*sys_clkout2 lab*/\
-	MUX_VAL(CP(SYS_CLKOUT2),    (IDIS | PTD | DIS | M0)) /*sys_clkout2 lab*/\
+	MUX_VAL(CP(SYS_CLKOUT2),    (IEN  | PTU | EN  | M4)) /*GPIO_186*/\
 	MUX_VAL(CP(JTAG_nTRST),     (IEN  | PTD | DIS | M0)) /*JTAG_nTRST*/\
 	MUX_VAL(CP(JTAG_TCK),       (IEN  | PTD | DIS | M0)) /*JTAG_TCK*/\
 	MUX_VAL(CP(JTAG_TMS),       (IEN  | PTD | DIS | M0)) /*JTAG_TMS*/\
@@ -663,21 +734,16 @@ void per_clocks_enable(void)
 	MUX_VAL(CP(JTAG_EMU1),      (IEN  | PTD | DIS | M0)) /*JTAG_EMU1*/\
 	MUX_VAL(CP(ETK_CLK),        (IEN  | PTD | DIS | M4)) /*GPIO_12*/\
 	MUX_VAL(CP(ETK_CTL),        (IEN  | PTD | DIS | M4)) /*GPIO_13*/\
-	MUX_VAL(CP(ETK_D0 ),        (IEN  | PTD | DIS | M4)) /*GPIO_14*/\
-	MUX_VAL(CP(ETK_D1 ),        (IEN  | PTD | DIS | M4)) /*GPIO_15*/\
-	MUX_VAL(CP(ETK_D2 ),        (IEN  | PTD | DIS | M4)) /*GPIO_16*/\
+	MUX_VAL(CP(ETK_D0),         (IEN  | PTD | DIS | M4)) /*GPIO_14*/\
+	MUX_VAL(CP(ETK_D1),         (IEN  | PTD | DIS | M4)) /*GPIO_15*/\
+	MUX_VAL(CP(ETK_D2),         (IEN  | PTD | DIS | M4)) /*GPIO_16*/\
 	MUX_VAL(CP(ETK_D10),        (IEN  | PTD | DIS | M4)) /*GPIO_24*/\
 	MUX_VAL(CP(ETK_D11),        (IEN  | PTD | DIS | M4)) /*GPIO_25*/\
 	MUX_VAL(CP(ETK_D12),        (IEN  | PTD | DIS | M4)) /*GPIO_26*/\
 	MUX_VAL(CP(ETK_D13),        (IEN  | PTD | DIS | M4)) /*GPIO_27*/\
 	MUX_VAL(CP(ETK_D14),        (IEN  | PTD | DIS | M4)) /*GPIO_28*/\
-	MUX_VAL(CP(ETK_D15),        (IEN  | PTD | DIS | M4)) /*GPIO_29*/\
-	MUX_VAL(CP(UART3_CTS_RCTX), (IEN  | PTD | EN  | M0)) /*UART3_CTS_RCTX */\
-	MUX_VAL(CP(UART3_RTS_SD),   (IDIS | PTD | DIS | M0)) /*UART3_RTS_SD */\
-	MUX_VAL(CP(UART3_RX_IRRX ), (IEN  | PTD | DIS | M0)) /*UART3_RX_IRRX*/\
-	MUX_VAL(CP(UART3_TX_IRTX ), (IDIS | PTD | DIS | M0)) /*UART3_TX_IRTX*/\
-	MUX_VAL(CP(sdrc_cke0),      (IDIS | PTU | EN  | M0)) /*sdrc_cke0 */\
-	MUX_VAL(CP(sdrc_cke1),      (IDIS | PTD | DIS | M7)) /*sdrc_cke1 not used*/
+	MUX_VAL(CP(ETK_D15),        (IEN  | PTD | DIS | M4)) /*GPIO_29*/
+
 /**********************************************************
  * Routine: set_muxconf_regs
  * Description: Setting up the configuration Mux registers
@@ -698,61 +764,102 @@ int nor_read_boot(unsigned char *buf)
  * Routine: nand+_init
  * Description: Set up nand for nand and jffs2 commands
  *********************************************************/
+
 int nand_init(void)
 {
 	/* global settings */
 	__raw_writel(0x10, GPMC_SYSCONFIG);	/* smart idle */
 	__raw_writel(0x0, GPMC_IRQENABLE);	/* isr's sources masked */
 	__raw_writel(0, GPMC_TIMEOUT_CONTROL);/* timeout disable */
-#ifdef CFG_NAND
-	__raw_writel(0x001, GPMC_CONFIG);	/* set nWP, disable limited addr */
-#endif
 
-	/* setup CS0 for Micron NAND, leave other CS's to u-boot */
+	/* Set the GPMC Vals, NAND is mapped at CS0, oneNAND at CS0.
+	 *  We configure only GPMC CS0 with required values. Configiring other devices
+	 *  at other CS is done in u-boot. So we don't have to bother doing it here.
+	 */
 	__raw_writel(0 , GPMC_CONFIG7 + GPMC_CONFIG_CS0);
 	delay(1000);
 
-#ifdef CFG_NAND
-	__raw_writel( M_NAND_GPMC_CONFIG1, GPMC_CONFIG1 + GPMC_CONFIG_CS0);
-	__raw_writel( M_NAND_GPMC_CONFIG2, GPMC_CONFIG2 + GPMC_CONFIG_CS0);
-	__raw_writel( M_NAND_GPMC_CONFIG3, GPMC_CONFIG3 + GPMC_CONFIG_CS0);
-	__raw_writel( M_NAND_GPMC_CONFIG4, GPMC_CONFIG4 + GPMC_CONFIG_CS0);
-	__raw_writel( M_NAND_GPMC_CONFIG5, GPMC_CONFIG5 + GPMC_CONFIG_CS0);
-	__raw_writel( M_NAND_GPMC_CONFIG6, GPMC_CONFIG6 + GPMC_CONFIG_CS0);
+	if ((get_mem_type() == GPMC_NAND) || (get_mem_type() == MMC_NAND)) {
+		__raw_writel(M_NAND_GPMC_CONFIG1, GPMC_CONFIG1 + GPMC_CONFIG_CS0);
+		__raw_writel(M_NAND_GPMC_CONFIG2, GPMC_CONFIG2 + GPMC_CONFIG_CS0);
+		__raw_writel(M_NAND_GPMC_CONFIG3, GPMC_CONFIG3 + GPMC_CONFIG_CS0);
+		__raw_writel(M_NAND_GPMC_CONFIG4, GPMC_CONFIG4 + GPMC_CONFIG_CS0);
+		__raw_writel(M_NAND_GPMC_CONFIG5, GPMC_CONFIG5 + GPMC_CONFIG_CS0);
+		__raw_writel(M_NAND_GPMC_CONFIG6, GPMC_CONFIG6 + GPMC_CONFIG_CS0);
 
-#else /* CFG_ONENAND */
-	__raw_writel( ONENAND_GPMC_CONFIG1, GPMC_CONFIG1 + GPMC_CONFIG_CS0);
-	__raw_writel( ONENAND_GPMC_CONFIG2, GPMC_CONFIG2 + GPMC_CONFIG_CS0);
-	__raw_writel( ONENAND_GPMC_CONFIG3, GPMC_CONFIG3 + GPMC_CONFIG_CS0);
-	__raw_writel( ONENAND_GPMC_CONFIG4, GPMC_CONFIG4 + GPMC_CONFIG_CS0);
-	__raw_writel( ONENAND_GPMC_CONFIG5, GPMC_CONFIG5 + GPMC_CONFIG_CS0);
-	__raw_writel( ONENAND_GPMC_CONFIG6, GPMC_CONFIG6 + GPMC_CONFIG_CS0);
-#endif
+		/* Enable the GPMC Mapping */
+		__raw_writel((((OMAP34XX_GPMC_CS0_SIZE & 0xF)<<8) |
+			     ((NAND_BASE_ADR>>24) & 0x3F) |
+			     (1<<6)),  (GPMC_CONFIG7 + GPMC_CONFIG_CS0));
+		delay(2000);
 
-	/* Enable the GPMC Mapping */
-	__raw_writel(( ((OMAP34XX_GPMC_CS0_SIZE & 0xF)<<8) |
-		     ((OMAP34XX_GPMC_CS0_MAP>>24) & 0x3F) |
-		     (1<<6) ),  (GPMC_CONFIG7 + GPMC_CONFIG_CS0));
-	delay(2000);
-
-#ifdef CFG_NAND
- 	if (nand_chip()){
+		if (nand_chip()) {
 #ifdef CFG_PRINTF
-		printf("Unsupported Chip!\n");
+			printf("Unsupported Chip!\n");
 #endif
-		return 1;
+			return 1;
+		}
+
 	}
-#else
-	if (onenand_chip()){
+
+	if ((get_mem_type() == GPMC_ONENAND) || (get_mem_type() == MMC_ONENAND)) {
+		__raw_writel(ONENAND_GPMC_CONFIG1, GPMC_CONFIG1 + GPMC_CONFIG_CS0);
+		__raw_writel(ONENAND_GPMC_CONFIG2, GPMC_CONFIG2 + GPMC_CONFIG_CS0);
+		__raw_writel(ONENAND_GPMC_CONFIG3, GPMC_CONFIG3 + GPMC_CONFIG_CS0);
+		__raw_writel(ONENAND_GPMC_CONFIG4, GPMC_CONFIG4 + GPMC_CONFIG_CS0);
+		__raw_writel(ONENAND_GPMC_CONFIG5, GPMC_CONFIG5 + GPMC_CONFIG_CS0);
+		__raw_writel(ONENAND_GPMC_CONFIG6, GPMC_CONFIG6 + GPMC_CONFIG_CS0);
+
+		/* Enable the GPMC Mapping */
+		__raw_writel((((OMAP34XX_GPMC_CS0_SIZE & 0xF)<<8) |
+			     ((ONENAND_BASE>>24) & 0x3F) |
+			     (1<<6)),  (GPMC_CONFIG7 + GPMC_CONFIG_CS0));
+		delay(2000);
+
+		if (onenand_chip()) {
 #ifdef CFG_PRINTF
-		printf("OneNAND Unsupported !\n");
+			printf("OneNAND Unsupported !\n");
 #endif
-		return 1;
+			return 1;
+		}
 	}
-#endif
 	return 0;
 }
 
+
+typedef int (mmc_boot_addr) (void);
+int mmc_boot(unsigned char *buf)
+{
+
+	long size = 0;
+#ifdef CFG_CMD_FAT
+	block_dev_desc_t *dev_desc = NULL;
+	unsigned char ret = 0;
+
+	printf("Starting X-loader on MMC \n");
+
+	ret = mmc_init(1);
+	if (ret == 0) {
+		printf("\n MMC init failed \n");
+		return 0;
+	}
+
+	dev_desc = mmc_get_dev(0);
+	fat_register_device(dev_desc, 1);
+	size = file_fat_read("u-boot.bin", buf, 0);
+	if (size == -1)
+		return 0;
+
+	printf("\n%ld Bytes Read from MMC \n", size);
+
+	printf("Starting OS Bootloader from MMC...\n");
+#endif
+	return size;
+}
+
 /* optionally do something like blinking LED */
-void board_hang (void)
-{ while (0) {};}
+void board_hang(void)
+{
+	while (0)
+		;
+}

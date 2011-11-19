@@ -1,6 +1,8 @@
 #
-# (C) Copyright 2000-2003
-# Wolfgang Denk, DENX Software Engineering, wd@denx.de.
+# (C) Copyright 2009
+# Texas Instruments, <www.ti.com>
+# Manikandan Pillai<mani.pillai@ti.com>
+# This file is copied from board/am3517evm/Makefile
 #
 # See file CREDITS for list of people who contributed to this
 # project.
@@ -23,21 +25,25 @@
 
 include $(TOPDIR)/config.mk
 
-LIB	= lib$(CPU).a
+LIB	= lib$(BOARD).a
 
-START	= start.o
-OBJS	= cpu.o mmc.o gpio.o
+OBJS	:= rhino.o
+SOBJS	:= platform.o
 
-all:	.depend $(START) $(LIB)
+$(LIB):	$(OBJS) $(SOBJS)
+	$(AR) crv $@ $^
 
-$(LIB):	$(OBJS)
-	$(AR) crv $@ $(OBJS)
+clean:
+	rm -f $(SOBJS) $(OBJS)
+
+distclean:	clean
+	rm -f $(LIB) core *.bak .depend
 
 #########################################################################
 
-.depend:	Makefile $(START:.o=.S) $(OBJS:.o=.c)
-		$(CC) -M $(CFLAGS) $(START:.o=.S) $(OBJS:.o=.c) > $@
+.depend:	Makefile $(SOBJS:.o=.S) $(OBJS:.o=.c)
+		$(CC) -M $(CPPFLAGS) $(SOBJS:.o=.S) $(OBJS:.o=.c) > $@
 
-sinclude .depend
+-include .depend
 
 #########################################################################

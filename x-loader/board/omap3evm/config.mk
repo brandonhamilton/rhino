@@ -17,3 +17,4 @@
 # The run time stack is (above xloader, 2k below)
 # If any globals exist there needs to be room for them also
 TEXT_BASE = 0x40200800
+PLATFORM_RELFLAGS	+=	-DONE_BIT_ERROR_CORRECT

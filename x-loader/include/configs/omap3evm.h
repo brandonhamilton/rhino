@@ -126,6 +126,7 @@
 
 #define CFG_NAND_K9F1G08R0A    /* Samsung 8-bit 128MB chip large page NAND chip*/
 #define NAND_16BIT
+#define ECC_HW_ENABLE
 
 /* NAND is partitioned:
  * 0x00000000 - 0x0007FFFF  Booting Image
@@ -142,6 +143,16 @@
 #define GPMC_NAND_COMMAND_0      (OMAP34XX_GPMC_BASE+0x7C)
 #define GPMC_NAND_ADDRESS_0      (OMAP34XX_GPMC_BASE+0x80)
 #define GPMC_NAND_DATA_0         (OMAP34XX_GPMC_BASE+0x84)
+
+#ifdef ECC_HW_ENABLE
+/* ECC values brought over from u-boot to support hw ecc read */
+#define ECCCLEAR        (0x1 << 8)
+#define ECCRESULTREG1   (0x1 << 0)
+#define ECCSIZE512BYTE  0xFF
+#define ECCSIZE1        (ECCSIZE512BYTE << 22)
+#define ECCSIZE0        (ECCSIZE512BYTE << 12)
+#define ECCSIZE0SEL     (0x000 << 0)
+#endif
 
 #ifdef NAND_16BIT
 #define WRITE_NAND_COMMAND(d, adr) \
