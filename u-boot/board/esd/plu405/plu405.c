@@ -47,22 +47,6 @@ const unsigned char fpgadata[] =
 #include "../common/fpga.c"
 
 /*
- * include common auto-update code (for esd boards)
- */
-#include "../common/auto_update.h"
-
-au_image_t au_image[] = {
-	{"plu405/preinst.img", 0, -1, AU_SCRIPT},
-	{"plu405/u-boot.img", 0xfffc0000, 0x00040000, AU_FIRMWARE},
-	{"plu405/pImage_${bd_type}", 0x00000000, 0x00100000, AU_NAND},
-	{"plu405/pImage.initrd", 0x00100000, 0x00200000, AU_NAND},
-	{"plu405/yaffsmt2.img", 0x00300000, 0x01c00000, AU_NAND},
-	{"plu405/postinst.img", 0, 0, AU_SCRIPT},
-};
-
-int N_AU_IMAGES = (sizeof(au_image) / sizeof(au_image[0]));
-
-/*
  * generate a short spike on the CAN tx line
  * to bring the couplers in sync
  */
@@ -89,9 +73,6 @@ void init_coupler(u32 addr)
 	/* reset */
 	out_8(&ctrl->cr, CR_RR);
 }
-
-/* Prototypes */
-int gunzip(void *, int, unsigned char *, unsigned long *);
 
 int board_early_init_f(void)
 {

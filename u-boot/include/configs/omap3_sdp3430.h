@@ -42,7 +42,7 @@
 #define CONFIG_OMAP3430		1	/* which is in a 3430 */
 #define CONFIG_OMAP3_3430SDP	1	/* working with SDP Rev2 */
 
-#define CONFIG_SDRC		1	/* The chip has SDRC controller */
+#define CONFIG_SDRC	/* The chip has SDRC controller */
 
 #include <asm/arch/cpu.h>		/* get chip and board defs */
 #include <asm/arch/omap3.h>
@@ -139,6 +139,9 @@
 #define CONFIG_SYS_I2C_BUS_SELECT	1
 #define CONFIG_DRIVER_OMAP34XX_I2C	1
 
+/* DDR - I use Infineon DDR */
+#define CONFIG_OMAP3_INFINEON_DDR	1
+
 /* OMITTED:  single 1 Gbit MT29F1G NAND flash */
 
 /*
@@ -202,7 +205,8 @@
  */
 #if defined(CONFIG_CMD_NET)
 
-#define CONFIG_DRIVER_LAN91C96
+#define CONFIG_NET_MULTI
+#define CONFIG_LAN91C96
 #define CONFIG_LAN91C96_BASE	DEBUG_BASE
 #define CONFIG_LAN91C96_EXT_PHY
 
@@ -265,12 +269,11 @@
 /*
  * Miscellaneous configurable options
  */
-#define V_PROMPT			"OMAP34XX SDP # "
 
 #define CONFIG_SYS_LONGHELP		/* undef to save memory */
 #define CONFIG_SYS_HUSH_PARSER		/* use "hush" command parser */
 #define CONFIG_SYS_PROMPT_HUSH_PS2	"> "
-#define CONFIG_SYS_PROMPT		V_PROMPT
+#define CONFIG_SYS_PROMPT		"OMAP34XX SDP # "
 #define CONFIG_SYS_CBSIZE		512	/* Console I/O Buffer Size */
 /* Print Buffer Size */
 #define CONFIG_SYS_PBSIZE		(CONFIG_SYS_CBSIZE + \
@@ -357,10 +360,14 @@
  *  - rest for filesystem
  */
 
+/*--------------------------------------------------------------------------*/
 
-/*
- * Include flash related variables
- */
-#include <asm/arch/omap3_flash.h>
+#ifndef __ASSEMBLY__
+extern unsigned int boot_flash_base;
+extern volatile unsigned int boot_flash_env_addr;
+extern unsigned int boot_flash_off;
+extern unsigned int boot_flash_sec;
+extern unsigned int boot_flash_type;
+#endif
 
 #endif				/* __CONFIG_H */

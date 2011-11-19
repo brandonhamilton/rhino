@@ -23,7 +23,7 @@
  *
  *
  * This is is a set of wrappers/stubs that allow to use certain routines from
- * U-Boot's lib_generic in the standalone app. This way way we can re-use
+ * U-Boot's lib in the standalone app. This way way we can re-use
  * existing code e.g. operations on strings and similar.
  *
  */
@@ -74,7 +74,7 @@ void putc (const char c)
 	ub_putc(c);
 }
 
-void udelay(unsigned long usec)
+void __udelay(unsigned long usec)
 {
 	ub_udelay(usec);
 }

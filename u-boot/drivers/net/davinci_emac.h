@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Sergey Kubushyn <ksi@koi8.net>
+ * Copyright (C) 2010 Texas Instruments
  *
  * Based on:
  *
@@ -30,19 +30,19 @@
 
  * Modifications:
  * ver. 1.0: Sep 2005, TI PSP Team - Created EMAC version for uBoot.
+ * ver, 1.1: May 2010, Cleanup - moved platform independent definitions to
+ *				separate driver header file(this file).
  *
  */
 
 #ifndef _DAVINCI_EMAC_H_
 #define _DAVINCI_EMAC_H_
 
-#define REG(addr)       (*(volatile unsigned int *)(addr))
-#define REG_P(addr)     ((volatile unsigned int *)(addr))
+#define REG(addr)	(*(volatile unsigned int *)(addr))
+#define REG_P(addr)	((volatile unsigned int *)(addr))
 
 typedef volatile unsigned int   dv_reg;
 typedef volatile unsigned int * dv_reg_p;
-
-/* Keep only Arch/Soc Independent definitions here */
 
 /* Ethernet Min/Max packet size */
 #define EMAC_MIN_ETHERNET_PKT_SIZE	60
@@ -73,6 +73,9 @@ typedef volatile unsigned int * dv_reg_p;
 
 /* MII Status Register */
 #define MII_STATUS_REG			1
+/* PHY Configuration register */
+#define PHY_CONF_REG			22
+#define PHY_CONF_TXCLKEN		(1 << 5)
 
 /* Number of statistics registers */
 #define EMAC_NUM_STATS			36
@@ -102,6 +105,9 @@ typedef volatile struct _emac_desc
 #define EMAC_MACCONTROL_GIGABIT_ENABLE		(1 << 7)
 #define EMAC_MACCONTROL_GIGFORCE		(1 << 17)
 #define EMAC_MACCONTROL_RMIISPEED_100		(1 << 15)
+
+#define EMAC_MAC_ADDR_MATCH		(1 << 19)
+#define EMAC_MAC_ADDR_IS_VALID		(1 << 20)
 
 #define EMAC_RXMBPENABLE_RXCAFEN_ENABLE	(0x200000)
 #define EMAC_RXMBPENABLE_RXBROADEN	(0x2000)
@@ -169,7 +175,7 @@ typedef struct  {
 	dv_reg		EMCONTROL;
 	dv_reg		FIFOCONTROL;
 	dv_reg		MACCONFIG;
-	dv_reg		SOFTRESET ;
+	dv_reg		SOFTRESET;
 	u_int8_t	RSVD5[88];
 	dv_reg		MACSRCADDRLO;
 	dv_reg		MACSRCADDRHI;
@@ -257,10 +263,40 @@ typedef struct  {
 
 /* EMAC Wrapper Registers Structure */
 typedef struct  {
-#if defined(CONFIG_SOC_DM646x) || defined(CONFIG_SOC_DM365) || (CONFIG_OMAP3_AM3517EVM) || defined(CONFIG_RHINO)
-	dv_reg		IDVER;
-	dv_reg		SOFTRST;
-	dv_reg		EMCTRL;
+#ifdef DAVINCI_EMAC_VERSION2
+	dv_reg		idver;
+	dv_reg		softrst;
+	dv_reg		emctrl;
+	dv_reg		c0rxthreshen;
+	dv_reg		c0rxen;
+	dv_reg		c0txen;
+	dv_reg		c0miscen;
+	dv_reg		c1rxthreshen;
+	dv_reg		c1rxen;
+	dv_reg		c1txen;
+	dv_reg		c1miscen;
+	dv_reg		c2rxthreshen;
+	dv_reg		c2rxen;
+	dv_reg		c2txen;
+	dv_reg		c2miscen;
+	dv_reg		c0rxthreshstat;
+	dv_reg		c0rxstat;
+	dv_reg		c0txstat;
+	dv_reg		c0miscstat;
+	dv_reg		c1rxthreshstat;
+	dv_reg		c1rxstat;
+	dv_reg		c1txstat;
+	dv_reg		c1miscstat;
+	dv_reg		c2rxthreshstat;
+	dv_reg		c2rxstat;
+	dv_reg		c2txstat;
+	dv_reg		c2miscstat;
+	dv_reg		c0rximax;
+	dv_reg		c0tximax;
+	dv_reg		c1rximax;
+	dv_reg		c1tximax;
+	dv_reg		c2rximax;
+	dv_reg		c2tximax;
 #else
 	u_int8_t	RSVD0[4100];
 	dv_reg		EWCTL;
@@ -290,6 +326,7 @@ typedef struct  {
 
 int davinci_eth_phy_read(u_int8_t phy_addr, u_int8_t reg_num, u_int16_t *data);
 int davinci_eth_phy_write(u_int8_t phy_addr, u_int8_t reg_num, u_int16_t data);
+void davinci_eth_set_mac_addr(const u_int8_t *addr);
 
 typedef struct
 {

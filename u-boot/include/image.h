@@ -46,16 +46,16 @@
 
 #include <lmb.h>
 #include <asm/u-boot.h>
+#include <command.h>
 
 #endif /* USE_HOSTCC */
-
-#include <command.h>
 
 #if defined(CONFIG_FIT)
 #include <fdt.h>
 #include <libfdt.h>
 #include <fdt_support.h>
 #define CONFIG_MD5		/* FIT images need MD5 support */
+#define CONFIG_SHA1		/* and SHA1 */
 #endif
 
 /*
@@ -100,7 +100,6 @@
 #define IH_ARCH_SPARC		10	/* Sparc	*/
 #define IH_ARCH_SPARC64		11	/* Sparc 64 Bit */
 #define IH_ARCH_M68K		12	/* M68K		*/
-#define IH_ARCH_NIOS		13	/* Nios-32	*/
 #define IH_ARCH_MICROBLAZE	14	/* MicroBlaze   */
 #define IH_ARCH_NIOS2		15	/* Nios-II	*/
 #define IH_ARCH_BLACKFIN	16	/* Blackfin	*/
@@ -156,6 +155,8 @@
 #define IH_TYPE_FILESYSTEM	7	/* Filesystem Image (any type)	*/
 #define IH_TYPE_FLATDT		8	/* Binary Flat Device Tree Blob	*/
 #define IH_TYPE_KWBIMAGE	9	/* Kirkwood Boot Image		*/
+#define IH_TYPE_IMXIMAGE	10	/* Freescale IMXBoot Image	*/
+#define IH_TYPE_TIIMAGE		11	/* Texas Instruments Boot Image	*/
 
 /*
  * Compression Types
@@ -164,6 +165,7 @@
 #define IH_COMP_GZIP		1	/* gzip	 Compression Used	*/
 #define IH_COMP_BZIP2		2	/* bzip2 Compression Used	*/
 #define IH_COMP_LZMA		3	/* lzma  Compression Used	*/
+#define IH_COMP_LZO		4	/* lzo   Compression Used	*/
 
 #define IH_MAGIC	0x27051956	/* Image Magic Number		*/
 #define IH_NMLEN		32	/* Image Name Length		*/
@@ -254,7 +256,7 @@ typedef struct bootm_headers {
 #define	BOOTM_STATE_OS_GO	(0x00000080)
 	int		state;
 
-#ifndef USE_HOSTCC
+#ifdef CONFIG_LMB
 	struct lmb	lmb;		/* for memory mgmt */
 #endif
 } bootm_headers_t;
@@ -491,8 +493,6 @@ static inline int image_check_target_arch (const image_header_t *hdr)
 	if (!image_check_arch (hdr, IH_ARCH_MICROBLAZE))
 #elif defined(__mips__)
 	if (!image_check_arch (hdr, IH_ARCH_MIPS))
-#elif defined(__nios__)
-	if (!image_check_arch (hdr, IH_ARCH_NIOS))
 #elif defined(__nios2__)
 	if (!image_check_arch (hdr, IH_ARCH_NIOS2))
 #elif defined(__PPC__)
@@ -645,8 +645,6 @@ static inline int fit_image_check_target_arch (const void *fdt, int node)
 	if (!fit_image_check_arch (fdt, node, IH_ARCH_MICROBLAZE))
 #elif defined(__mips__)
 	if (!fit_image_check_arch (fdt, node, IH_ARCH_MIPS))
-#elif defined(__nios__)
-	if (!fit_image_check_arch (fdt, node, IH_ARCH_NIOS))
 #elif defined(__nios2__)
 	if (!fit_image_check_arch (fdt, node, IH_ARCH_NIOS2))
 #elif defined(__PPC__)

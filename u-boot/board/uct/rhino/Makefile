@@ -1,7 +1,7 @@
 #
-# Author: Vaibhav Hiremath <hvaibhav@ti.com>
+# Author: Simon Scott
 #
-# Based on ti/evm/Makefile
+# Based on logicpd/am3517evm/Makefile
 #
 # Copyright (C) 2009 Texas Instruments Incorporated
 #

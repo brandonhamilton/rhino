@@ -107,6 +107,9 @@ typedef volatile unsigned char	vu_char;
 #ifdef CONFIG_BLACKFIN
 #include <asm/blackfin.h>
 #endif
+#ifdef CONFIG_SOC_DA8XX
+#include <asm/arch/hardware.h>
+#endif
 
 #include <part.h>
 #include <flash.h>
@@ -119,6 +122,11 @@ typedef volatile unsigned char	vu_char;
 #define debug(fmt,args...)
 #define debugX(level,fmt,args...)
 #endif	/* DEBUG */
+
+#define error(fmt, args...) do {					\
+		printf("ERROR: " fmt "\nat %s:%d/%s()\n",		\
+			##args, __FILE__, __LINE__, __func__);		\
+} while (0)
 
 #ifndef BUG
 #define BUG() do { \
@@ -210,7 +218,7 @@ void	hang		(void) __attribute__ ((noreturn));
 /* */
 phys_size_t initdram (int);
 int	display_options (void);
-void	print_size (phys_size_t, const char *);
+void	print_size(unsigned long long, const char *);
 int	print_buffer (ulong addr, void* data, uint width, uint count, uint linelen);
 
 /* common/main.c */
@@ -222,7 +230,7 @@ int	parse_line (char *, char *[]);
 void	init_cmd_timeout(void);
 void	reset_cmd_timeout(void);
 
-/* lib_$(ARCH)/board.c */
+/* arch/$(ARCH)/lib/board.c */
 void	board_init_f  (ulong) __attribute__ ((noreturn));
 void	board_init_r  (gd_t *, ulong) __attribute__ ((noreturn));
 int	checkboard    (void);
@@ -333,7 +341,9 @@ extern void  pic_write (uchar reg, uchar val);
 #if defined(CONFIG_SPI) || !defined(CONFIG_SYS_I2C_EEPROM_ADDR)
 # define CONFIG_SYS_DEF_EEPROM_ADDR 0
 #else
+#if !defined(CONFIG_ENV_EEPROM_IS_ON_I2C)
 # define CONFIG_SYS_DEF_EEPROM_ADDR CONFIG_SYS_I2C_EEPROM_ADDR
+#endif
 #endif /* CONFIG_SPI || !defined(CONFIG_SYS_I2C_EEPROM_ADDR) */
 
 #if defined(CONFIG_SPI)
@@ -460,7 +470,6 @@ void ft_pci_setup(void *blob, bd_t *bd);
 /* $(CPU)/serial.c */
 int	serial_init   (void);
 void	serial_exit   (void);
-void	serial_addr   (unsigned int);
 void	serial_setbrg (void);
 void	serial_putc   (const char);
 void	serial_putc_raw(const char);
@@ -495,8 +504,10 @@ int	prt_mpc8220_clks (void);
 ulong	get_OPB_freq (void);
 ulong	get_PCI_freq (void);
 #endif
-#if defined(CONFIG_S3C2400) || defined(CONFIG_S3C2410) || \
-	defined(CONFIG_LH7A40X) || defined(CONFIG_S3C6400)
+#if defined(CONFIG_S3C24X0) || \
+    defined(CONFIG_LH7A40X) || \
+    defined(CONFIG_S3C6400) || \
+    defined(CONFIG_EP93XX)
 ulong	get_FCLK (void);
 ulong	get_HCLK (void);
 ulong	get_PCLK (void);
@@ -592,27 +603,40 @@ ulong	vfd_setmem (ulong);
 /* $(CPU)/.../video.c */
 ulong	video_setmem (ulong);
 
-/* lib_$(ARCH)/cache.c */
+/* arch/$(ARCH)/lib/cache.c */
 void	flush_cache   (unsigned long, unsigned long);
 void	flush_dcache_range(unsigned long start, unsigned long stop);
 void	invalidate_dcache_range(unsigned long start, unsigned long stop);
 
 
-/* lib_$(ARCH)/ticks.S */
+/* arch/$(ARCH)/lib/ticks.S */
 unsigned long long get_ticks(void);
 void	wait_ticks    (unsigned long);
 
-/* lib_$(ARCH)/time.c */
-void	udelay	      (unsigned long);
+/* arch/$(ARCH)/lib/time.c */
+void	__udelay      (unsigned long);
 ulong	usec2ticks    (unsigned long usec);
 ulong	ticks2usec    (unsigned long ticks);
 int	init_timebase (void);
 
-/* lib_generic/vsprintf.c */
+/* lib/gunzip.c */
+int gunzip(void *, int, unsigned char *, unsigned long *);
+int zunzip(void *dst, int dstlen, unsigned char *src, unsigned long *lenp,
+						int stoponerr, int offset);
+
+/* lib/net_utils.c */
+#include <net.h>
+static inline IPaddr_t getenv_IPaddr (char *var)
+{
+	return (string_to_ip(getenv(var)));
+}
+
+/* lib/time.c */
+void	udelay        (unsigned long);
+
+/* lib/vsprintf.c */
 ulong	simple_strtoul(const char *cp,char **endp,unsigned int base);
-#ifdef CONFIG_SYS_64BIT_VSPRINTF
 unsigned long long	simple_strtoull(const char *cp,char **endp,unsigned int base);
-#endif
 long	simple_strtol(const char *cp,char **endp,unsigned int base);
 void	panic(const char *fmt, ...)
 		__attribute__ ((format (__printf__, 1, 2)));
@@ -620,10 +644,10 @@ int	sprintf(char * buf, const char *fmt, ...)
 		__attribute__ ((format (__printf__, 2, 3)));
 int	vsprintf(char *buf, const char *fmt, va_list args);
 
-/* lib_generic/strmhz.c */
+/* lib/strmhz.c */
 char *	strmhz(char *buf, long hz);
 
-/* lib_generic/crc32.c */
+/* lib/crc32.c */
 #include <u-boot/crc.h>
 
 /* common/console.c */
@@ -693,6 +717,7 @@ void show_boot_progress(int val);
 #ifdef CONFIG_MP
 int cpu_status(int nr);
 int cpu_reset(int nr);
+int cpu_disable(int nr);
 int cpu_release(int nr, int argc, char *argv[]);
 #endif
 

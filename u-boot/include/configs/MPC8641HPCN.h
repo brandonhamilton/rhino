@@ -301,10 +301,6 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
 #define CONFIG_OF_BOARD_SETUP		1
 #define CONFIG_OF_STDOUT_VIA_ALIAS	1
 
-
-#define CONFIG_SYS_64BIT_VSPRINTF	1
-#define CONFIG_SYS_64BIT_STRTOUL	1
-
 /*
  * I2C
  */
@@ -486,9 +482,7 @@ extern unsigned long get_board_sys_clk(unsigned long dummy);
  * BAT0		DDR
  */
 #define CONFIG_SYS_DBAT0L	(BATL_PP_RW | BATL_MEMCOHERENCE)
-#define CONFIG_SYS_DBAT0U	(BATU_BL_2G | BATU_VS | BATU_VP)
-#define CONFIG_SYS_IBAT0L	(BATL_PP_RW | BATL_MEMCOHERENCE )
-#define CONFIG_SYS_IBAT0U	CONFIG_SYS_DBAT0U
+#define CONFIG_SYS_IBAT0L	(BATL_PP_RW | BATL_MEMCOHERENCE)
 
 /*
  * BAT1		LBC (PIXIS/CF)

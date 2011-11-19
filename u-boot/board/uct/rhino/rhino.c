@@ -1,9 +1,9 @@
 /*
- * rhino.c - board file for UCT's Rhino board (with an AM3517 processor)
+ * rhino.c - board file for the Rhino board (with an AM3517 processor)
  *
  * Author: Simon Scott, University of Cape Town
  * 
- * Based on board/ti/am3517evm/am3517evm.c by Vaibhav Hiremath <hvaibhav@ti.com>
+ * Based on board/logicpd/am3517evm/am3517evm.c by Vaibhav Hiremath <hvaibhav@ti.com>
  *
  * Copyright (C) 2011 University of Cape Town
  * Original Copyright (C) 2009 Texas Instruments Incorporated

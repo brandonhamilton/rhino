@@ -1,5 +1,5 @@
 #
-# (C) Copyright 2000-2009
+# (C) Copyright 2000-2010
 # Wolfgang Denk, DENX Software Engineering, wd@denx.de.
 #
 # See file CREDITS for list of people who contributed to this
@@ -21,8 +21,8 @@
 # MA 02111-1307 USA
 #
 
-VERSION = 2009
-PATCHLEVEL = 11
+VERSION = 2010
+PATCHLEVEL = 06
 SUBLEVEL =
 EXTRAVERSION =
 ifneq "$(SUBLEVEL)" ""
@@ -38,9 +38,9 @@ HOSTARCH := $(shell uname -m | \
 	    -e s/sun4u/sparc64/ \
 	    -e s/arm.*/arm/ \
 	    -e s/sa110/arm/ \
-	    -e s/powerpc/ppc/ \
-	    -e s/ppc64/ppc/ \
-	    -e s/macppc/ppc/)
+	    -e s/ppc64/powerpc/ \
+	    -e s/ppc/powerpc/ \
+	    -e s/macppc/powerpc/)
 
 HOSTOS := $(shell uname -s | tr '[:upper:]' '[:lower:]' | \
 	    sed -e 's/\(cygwin\).*/cygwin/')
@@ -133,10 +133,6 @@ unexport CDPATH
 
 #########################################################################
 
-ifeq ($(ARCH),powerpc)
-ARCH = ppc
-endif
-
 # The "tools" are needed early, so put this first
 # Don't include stuff already done in $(LIBS)
 SUBDIRS	= tools \
@@ -169,33 +165,33 @@ include $(TOPDIR)/config.mk
 #########################################################################
 # U-Boot objects....order is important (i.e. start must be first)
 
-OBJS  = cpu/$(CPU)/start.o
+OBJS  = $(CPUDIR)/start.o
 ifeq ($(CPU),i386)
-OBJS += cpu/$(CPU)/start16.o
-OBJS += cpu/$(CPU)/resetvec.o
+OBJS += $(CPUDIR)/start16.o
+OBJS += $(CPUDIR)/resetvec.o
 endif
 ifeq ($(CPU),ppc4xx)
-OBJS += cpu/$(CPU)/resetvec.o
+OBJS += $(CPUDIR)/resetvec.o
 endif
 ifeq ($(CPU),mpc85xx)
-OBJS += cpu/$(CPU)/resetvec.o
+OBJS += $(CPUDIR)/resetvec.o
 endif
 
 OBJS := $(addprefix $(obj),$(OBJS))
 
-LIBS  = lib_generic/libgeneric.a
-LIBS += lib_generic/lzma/liblzma.a
-LIBS += lib_generic/lzo/liblzo.a
+LIBS  = lib/libgeneric.a
+LIBS += lib/lzma/liblzma.a
+LIBS += lib/lzo/liblzo.a
 LIBS += $(shell if [ -f board/$(VENDOR)/common/Makefile ]; then echo \
 	"board/$(VENDOR)/common/lib$(VENDOR).a"; fi)
-LIBS += cpu/$(CPU)/lib$(CPU).a
+LIBS += $(CPUDIR)/lib$(CPU).a
 ifdef SOC
-LIBS += cpu/$(CPU)/$(SOC)/lib$(SOC).a
+LIBS += $(CPUDIR)/$(SOC)/lib$(SOC).a
 endif
 ifeq ($(CPU),ixp)
-LIBS += cpu/ixp/npe/libnpe.a
+LIBS += arch/arm/cpu/ixp/npe/libnpe.a
 endif
-LIBS += lib_$(ARCH)/lib$(ARCH).a
+LIBS += arch/$(ARCH)/lib/lib$(ARCH).a
 LIBS += fs/cramfs/libcramfs.a fs/fat/libfat.a fs/fdos/libfdos.a fs/jffs2/libjffs2.a \
 	fs/reiserfs/libreiserfs.a fs/ext2/libext2fs.a fs/yaffs2/libyaffs2.a \
 	fs/ubifs/libubifs.a
@@ -218,7 +214,6 @@ LIBS += drivers/mtd/ubi/libubi.a
 LIBS += drivers/mtd/spi/libspi_flash.a
 LIBS += drivers/net/libnet.a
 LIBS += drivers/net/phy/libphy.a
-LIBS += drivers/net/sk98lin/libsk98lin.a
 LIBS += drivers/pci/libpci.a
 LIBS += drivers/pcmcia/libpcmcia.a
 LIBS += drivers/power/libpower.a
@@ -228,14 +223,12 @@ LIBS += drivers/qe/qe.a
 endif
 ifeq ($(CPU),mpc85xx)
 LIBS += drivers/qe/qe.a
-LIBS += cpu/mpc8xxx/ddr/libddr.a
-LIBS += cpu/mpc8xxx/lib8xxx.a
-TAG_SUBDIRS += cpu/mpc8xxx
+LIBS += arch/powerpc/cpu/mpc8xxx/ddr/libddr.a
+LIBS += arch/powerpc/cpu/mpc8xxx/lib8xxx.a
 endif
 ifeq ($(CPU),mpc86xx)
-LIBS += cpu/mpc8xxx/ddr/libddr.a
-LIBS += cpu/mpc8xxx/lib8xxx.a
-TAG_SUBDIRS += cpu/mpc8xxx
+LIBS += arch/powerpc/cpu/mpc8xxx/ddr/libddr.a
+LIBS += arch/powerpc/cpu/mpc8xxx/lib8xxx.a
 endif
 LIBS += drivers/rtc/librtc.a
 LIBS += drivers/serial/libserial.a
@@ -247,7 +240,7 @@ LIBS += drivers/usb/phy/libusb_phy.a
 LIBS += drivers/video/libvideo.a
 LIBS += drivers/watchdog/libwatchdog.a
 LIBS += common/libcommon.a
-LIBS += libfdt/libfdt.a
+LIBS += lib/libfdt/libfdt.a
 LIBS += api/libapi.a
 LIBS += post/libpost.a
 
@@ -260,7 +253,7 @@ LIBBOARD := $(addprefix $(obj),$(LIBBOARD))
 # Add GCC lib
 ifdef USE_PRIVATE_LIBGCC
 ifeq ("$(USE_PRIVATE_LIBGCC)", "yes")
-PLATFORM_LIBGCC = -L $(OBJTREE)/lib_$(ARCH) -lgcc
+PLATFORM_LIBGCC = -L $(OBJTREE)/arch/$(ARCH)/lib -lgcc
 else
 PLATFORM_LIBGCC = -L $(USE_PRIVATE_LIBGCC) -lgcc
 endif
@@ -310,7 +303,7 @@ $(obj)u-boot.bin:	$(obj)u-boot
 		$(OBJCOPY) ${OBJCFLAGS} -O binary $< $@
 
 $(obj)u-boot.ldr:	$(obj)u-boot
-		$(obj)tools/envcrc --binary > $(obj)env-ldr.o
+		$(CREATE_LDR_ENV)
 		$(LDR) -T $(CONFIG_BFIN_CPU) -c $@ $< $(LDR_FLAGS)
 
 $(obj)u-boot.ldr.hex:	$(obj)u-boot.ldr
@@ -320,15 +313,23 @@ $(obj)u-boot.ldr.srec:	$(obj)u-boot.ldr
 		$(OBJCOPY) ${OBJCFLAGS} -O srec $< $@ -I binary
 
 $(obj)u-boot.img:	$(obj)u-boot.bin
-		./tools/mkimage -A $(ARCH) -T firmware -C none \
+		$(obj)tools/mkimage -A $(ARCH) -T firmware -C none \
 		-a $(TEXT_BASE) -e 0 \
 		-n $(shell sed -n -e 's/.*U_BOOT_VERSION//p' $(VERSION_FILE) | \
 			sed -e 's/"[	 ]*$$/ for $(BOARD) board"/') \
 		-d $< $@
 
+$(obj)u-boot.imx:       $(obj)u-boot.bin
+		$(obj)tools/mkimage -n $(IMX_CONFIG) -T imximage \
+		-e $(TEXT_BASE) -d $< $@
+
 $(obj)u-boot.kwb:       $(obj)u-boot.bin
 		$(obj)tools/mkimage -n $(KWD_CONFIG) -T kwbimage \
 		-a $(TEXT_BASE) -e $(TEXT_BASE) -d $< $@
+
+$(obj)u-boot.ti:       $(obj)u-boot.bin
+		$(obj)tools/mkimage -T tiimage \
+		-e $(TI_LOAD_ADDR) -n $(TI_DEVICE) -d $< $(obj)$(TI_IMAGE)
 
 $(obj)u-boot.sha1:	$(obj)u-boot.bin
 		$(obj)tools/ubsha1 $(obj)u-boot.bin
@@ -353,7 +354,7 @@ ifeq ($(CONFIG_KALLSYMS),y)
 endif
 
 $(OBJS):	depend
-		$(MAKE) -C cpu/$(CPU) $(if $(REMOTE_BUILD),$@,$(notdir $@))
+		$(MAKE) -C $(CPUDIR) $(if $(REMOTE_BUILD),$@,$(notdir $@))
 
 $(LIBS):	depend $(SUBDIRS)
 		$(MAKE) -C $(dir $(subst $(obj),,$@))
@@ -388,8 +389,8 @@ $(VERSION_FILE):
 		@cmp -s $@ $@.tmp && rm -f $@.tmp || mv -f $@.tmp $@
 
 $(TIMESTAMP_FILE):
-		@date +'#define U_BOOT_DATE "%b %d %C%y"' > $@
-		@date +'#define U_BOOT_TIME "%T"' >> $@
+		@LC_ALL=C date +'#define U_BOOT_DATE "%b %d %C%y"' > $@
+		@LC_ALL=C date +'#define U_BOOT_TIME "%T"' >> $@
 
 gdbtools:
 		$(MAKE) -C tools/gdb all || exit 1
@@ -400,54 +401,25 @@ updater:
 env:
 		$(MAKE) -C tools/env all MTD_VERSION=${MTD_VERSION} || exit 1
 
+# Explicitly make _depend in subdirs containing multiple targets to prevent
+# parallel sub-makes creating .depend files simultaneously.
 depend dep:	$(TIMESTAMP_FILE) $(VERSION_FILE) $(obj)include/autoconf.mk
-		for dir in $(SUBDIRS) ; do $(MAKE) -C $$dir _depend ; done
+		for dir in $(SUBDIRS) $(CPUDIR) $(dir $(LDSCRIPT)) ; do \
+			$(MAKE) -C $$dir _depend ; done
 
+TAG_SUBDIRS = $(SUBDIRS)
+TAG_SUBDIRS += $(dir $(__LIBS))
 TAG_SUBDIRS += include
-TAG_SUBDIRS += lib_generic board/$(BOARDDIR)
-TAG_SUBDIRS += cpu/$(CPU)
-TAG_SUBDIRS += lib_$(ARCH)
-TAG_SUBDIRS += fs/cramfs
-TAG_SUBDIRS += fs/fat
-TAG_SUBDIRS += fs/fdos
-TAG_SUBDIRS += fs/jffs2
-TAG_SUBDIRS += fs/yaffs2
-TAG_SUBDIRS += net
-TAG_SUBDIRS += disk
-TAG_SUBDIRS += common
-TAG_SUBDIRS += drivers/bios_emulator
-TAG_SUBDIRS += drivers/block
-TAG_SUBDIRS += drivers/gpio
-TAG_SUBDIRS += drivers/hwmon
-TAG_SUBDIRS += drivers/i2c
-TAG_SUBDIRS += drivers/input
-TAG_SUBDIRS += drivers/misc
-TAG_SUBDIRS += drivers/mmc
-TAG_SUBDIRS += drivers/mtd
-TAG_SUBDIRS += drivers/mtd/nand
-TAG_SUBDIRS += drivers/mtd/onenand
-TAG_SUBDIRS += drivers/mtd/spi
-TAG_SUBDIRS += drivers/net
-TAG_SUBDIRS += drivers/net/sk98lin
-TAG_SUBDIRS += drivers/pci
-TAG_SUBDIRS += drivers/pcmcia
-TAG_SUBDIRS += drivers/qe
-TAG_SUBDIRS += drivers/rtc
-TAG_SUBDIRS += drivers/serial
-TAG_SUBDIRS += drivers/spi
-TAG_SUBDIRS += drivers/usb
-TAG_SUBDIRS += drivers/video
 
 tags ctags:
-		ctags -w -o $(obj)ctags `find $(SUBDIRS) $(TAG_SUBDIRS) \
-						-name '*.[ch]' -print`
+		ctags -w -o $(obj)ctags `find $(TAG_SUBDIRS) \
+						-name '*.[chS]' -print`
 
 etags:
-		etags -a -o $(obj)etags `find $(SUBDIRS) $(TAG_SUBDIRS) \
-						-name '*.[ch]' -print`
+		etags -a -o $(obj)etags `find $(TAG_SUBDIRS) \
+						-name '*.[chS]' -print`
 cscope:
-		find $(SUBDIRS) $(TAG_SUBDIRS) -name '*.[ch]' -print \
-						> cscope.files
+		find $(TAG_SUBDIRS) -name '*.[chS]' -print > cscope.files
 		cscope -b -q -k
 
 SYSTEM_MAP = \
@@ -482,10 +454,15 @@ $(obj)include/autoconf.mk: $(obj)include/config.h
 else	# !config.mk
 all $(obj)u-boot.hex $(obj)u-boot.srec $(obj)u-boot.bin \
 $(obj)u-boot.img $(obj)u-boot.dis $(obj)u-boot \
-$(SUBDIRS) $(TIMESTAMP_FILE) $(VERSION_FILE) gdbtools updater env depend \
-dep tags ctags etags cscope $(obj)System.map:
+$(filter-out tools,$(SUBDIRS)) $(TIMESTAMP_FILE) $(VERSION_FILE) gdbtools \
+updater env depend dep tags ctags etags cscope $(obj)System.map:
 	@echo "System not configured - see README" >&2
 	@ exit 1
+
+tools:
+	$(MAKE) -C tools
+tools-all:
+	$(MAKE) -C tools HOST_TOOLS_ALL=y
 endif	# config.mk
 
 .PHONY : CHANGELOG
@@ -514,29 +491,29 @@ unconfig:
 #########################################################################
 
 canmb_config:	unconfig
-	@$(MKCONFIG) -a canmb ppc mpc5xxx canmb
+	@$(MKCONFIG) -a canmb powerpc mpc5xxx canmb
 
 cmi_mpc5xx_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc5xx cmi
+	@$(MKCONFIG) $(@:_config=) powerpc mpc5xx cmi
 
 PATI_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc5xx pati mpl
+	@$(MKCONFIG) $(@:_config=) powerpc mpc5xx pati mpl
 
 #########################################################################
 ## MPC5xxx Systems
 #########################################################################
 
 aev_config: unconfig
-	@$(MKCONFIG) -a aev ppc mpc5xxx tqm5200 tqc
+	@$(MKCONFIG) -a aev powerpc mpc5xxx tqm5200 tqc
 
 BC3450_config:	unconfig
-	@$(MKCONFIG) -a BC3450 ppc mpc5xxx bc3450
+	@$(MKCONFIG) -a BC3450 powerpc mpc5xxx bc3450
 
 cm5200_config:	unconfig
-	@$(MKCONFIG) -a cm5200 ppc mpc5xxx cm5200
+	@$(MKCONFIG) -a cm5200 powerpc mpc5xxx cm5200
 
 cpci5200_config:  unconfig
-	@$(MKCONFIG) -a cpci5200  ppc mpc5xxx cpci5200 esd
+	@$(MKCONFIG) -a cpci5200  powerpc mpc5xxx cpci5200 esd
 
 digsy_mtc_config \
 digsy_mtc_LOWBOOT_config	\
@@ -552,16 +529,16 @@ digsy_mtc_RAMBOOT_config:	unconfig
 		{ echo "TEXT_BASE = 0x00100000" >$(obj)board/digsy_mtc/config.tmp ; \
 		  echo "... with RAMBOOT configuration" ; \
 		}
-	@$(MKCONFIG) -a digsy_mtc  ppc mpc5xxx digsy_mtc
+	@$(MKCONFIG) -a digsy_mtc  powerpc mpc5xxx digsy_mtc
 
 galaxy5200_LOWBOOT_config \
 galaxy5200_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_$(@:_config=) 1" >$(obj)include/config.h
-	@$(MKCONFIG) -a galaxy5200 ppc mpc5xxx galaxy5200
+	@$(MKCONFIG) -a galaxy5200 powerpc mpc5xxx galaxy5200
 
 hmi1001_config:	unconfig
-	@$(MKCONFIG) hmi1001 ppc mpc5xxx hmi1001
+	@$(MKCONFIG) hmi1001 powerpc mpc5xxx hmi1001
 
 Lite5200_config				\
 Lite5200_LOWBOOT_config			\
@@ -571,8 +548,7 @@ icecube_5200_LOWBOOT_config		\
 icecube_5200_LOWBOOT08_config		\
 icecube_5200_DDR_config			\
 icecube_5200_DDR_LOWBOOT_config		\
-icecube_5200_DDR_LOWBOOT08_config	\
-icecube_5100_config:			unconfig
+icecube_5200_DDR_LOWBOOT08_config:	unconfig
 	@mkdir -p $(obj)include
 	@mkdir -p $(obj)board/icecube
 	@[ -z "$(findstring LOWBOOT_,$@)" ] || \
@@ -591,21 +567,16 @@ icecube_5100_config:			unconfig
 		{ echo "#define CONFIG_MPC5200_DDR"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... DDR memory revision" ; \
 		}
-	@[ -z "$(findstring 5200,$@)" ] || \
-		{ echo "#define CONFIG_MPC5200"		>>$(obj)include/config.h ; \
-		  $(XECHO) "... with MPC5200 processor" ; \
-		}
-	@[ -z "$(findstring 5100,$@)" ] || \
-		{ echo "#define CONFIG_MGT5100"		>>$(obj)include/config.h ; \
-		  $(XECHO) "... with MGT5100 processor" ; \
-		}
-	@$(MKCONFIG) -a IceCube ppc mpc5xxx icecube
+	@$(MKCONFIG) -a IceCube powerpc mpc5xxx icecube
 
 jupiter_config:	unconfig
-	@$(MKCONFIG) jupiter ppc mpc5xxx jupiter
+	@$(MKCONFIG) jupiter powerpc mpc5xxx jupiter
 
 inka4x0_config:	unconfig
-	@$(MKCONFIG) inka4x0 ppc mpc5xxx inka4x0
+	@$(MKCONFIG) inka4x0 powerpc mpc5xxx inka4x0
+
+ipek01_config: unconfig
+	@$(MKCONFIG) -a ipek01 powerpc mpc5xxx ipek01
 
 lite5200b_config	\
 lite5200b_PM_config	\
@@ -614,7 +585,6 @@ lite5200b_LOWBOOT_config:	unconfig
 	@mkdir -p $(obj)board/icecube
 	@ echo "#define CONFIG_MPC5200_DDR"	>>$(obj)include/config.h
 	@ $(XECHO) "... DDR memory revision"
-	@ echo "#define CONFIG_MPC5200"		>>$(obj)include/config.h
 	@ echo "#define CONFIG_LITE5200B"	>>$(obj)include/config.h
 	@[ -z "$(findstring _PM_,$@)" ] || \
 		{ echo "#define CONFIG_LITE5200B_PM"	>>$(obj)include/config.h ; \
@@ -624,8 +594,7 @@ lite5200b_LOWBOOT_config:	unconfig
 		{ echo "TEXT_BASE = 0xFF000000" >$(obj)board/icecube/config.tmp ; \
 		  $(XECHO) "... with LOWBOOT configuration" ; \
 		}
-	@ $(XECHO) "... with MPC5200B processor"
-	@$(MKCONFIG) -a IceCube  ppc mpc5xxx icecube
+	@$(MKCONFIG) -a IceCube  powerpc mpc5xxx icecube
 
 mcc200_config	\
 mcc200_SDRAM_config	\
@@ -673,19 +642,19 @@ prs200_highboot_DDR_config:	unconfig
 	@[ -z "$(findstring prs200,$@)" ] || \
 		{ echo "#define CONFIG_PRS200"	>>$(obj)include/config.h ;\
 		}
-	@$(MKCONFIG) -n $@ -a mcc200 ppc mpc5xxx mcc200
+	@$(MKCONFIG) -n $@ -a mcc200 powerpc mpc5xxx mcc200
 
 mecp5200_config:  unconfig
-	@$(MKCONFIG) mecp5200  ppc mpc5xxx mecp5200 esd
+	@$(MKCONFIG) mecp5200  powerpc mpc5xxx mecp5200 esd
 
 motionpro_config:	unconfig
-	@$(MKCONFIG) motionpro ppc mpc5xxx motionpro
+	@$(MKCONFIG) motionpro powerpc mpc5xxx motionpro
 
 mucmc52_config:		unconfig
-	@$(MKCONFIG) mucmc52 ppc mpc5xxx mucmc52
+	@$(MKCONFIG) mucmc52 powerpc mpc5xxx mucmc52
 
 munices_config:	unconfig
-	@$(MKCONFIG) munices ppc mpc5xxx munices
+	@$(MKCONFIG) munices powerpc mpc5xxx munices
 
 MVBC_P_config: unconfig
 	@mkdir -p $(obj)include
@@ -693,10 +662,15 @@ MVBC_P_config: unconfig
 	@ >$(obj)include/config.h
 	@[ -z "$(findstring MVBC_P,$@)" ] || \
 	{   	echo "#define CONFIG_MVBC_P" 	>>$(obj)include/config.h; }
-	@$(MKCONFIG) -n $@ -a MVBC_P ppc mpc5xxx mvbc_p matrix_vision
+	@$(MKCONFIG) -n $@ -a MVBC_P powerpc mpc5xxx mvbc_p matrix_vision
+
+MVSMR_config: unconfig
+	@mkdir -p $(obj)include
+	@mkdir -p $(obj)board/matrix_vision/mvsmr
+	@$(MKCONFIG) $(@:_config=) powerpc mpc5xxx mvsmr matrix_vision
 
 o2dnt_config:	unconfig
-	@$(MKCONFIG) o2dnt ppc mpc5xxx o2dnt
+	@$(MKCONFIG) o2dnt powerpc mpc5xxx o2dnt
 
 pcm030_config \
 pcm030_LOWBOOT_config:	unconfig
@@ -706,10 +680,10 @@ pcm030_LOWBOOT_config:	unconfig
 		{ echo "TEXT_BASE = 0xFF000000"	>$(obj)board/phytec/pcm030/config.tmp ; \
 		  echo "... with LOWBOOT configuration" ; \
 		}
-	@$(MKCONFIG) -a pcm030 ppc mpc5xxx pcm030 phytec
+	@$(MKCONFIG) -a pcm030 powerpc mpc5xxx pcm030 phytec
 
 pf5200_config:	unconfig
-	@$(MKCONFIG) pf5200  ppc mpc5xxx pf5200 esd
+	@$(MKCONFIG) pf5200  powerpc mpc5xxx pf5200 esd
 
 PM520_config \
 PM520_DDR_config \
@@ -724,13 +698,13 @@ PM520_ROMBOOT_DDR_config:	unconfig
 		{ echo "#define CONFIG_BOOT_ROM" >>$(obj)include/config.h ; \
 		  $(XECHO) "... booting from 8-bit flash" ; \
 		}
-	@$(MKCONFIG) -a PM520 ppc mpc5xxx pm520
+	@$(MKCONFIG) -a PM520 powerpc mpc5xxx pm520
 
 smmaco4_config: unconfig
-	@$(MKCONFIG) -a smmaco4 ppc mpc5xxx tqm5200 tqc
+	@$(MKCONFIG) -a smmaco4 powerpc mpc5xxx tqm5200 tqc
 
 spieval_config:	unconfig
-	@$(MKCONFIG) -a spieval ppc mpc5xxx tqm5200 tqc
+	@$(MKCONFIG) -a spieval powerpc mpc5xxx tqm5200 tqc
 
 TB5200_B_config \
 TB5200_config:	unconfig
@@ -739,30 +713,21 @@ TB5200_config:	unconfig
 		{ echo "#define CONFIG_TQM5200_B"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... with MPC5200B processor" ; \
 		}
-	@$(MKCONFIG) -n $@ -a TB5200 ppc mpc5xxx tqm5200 tqc
+	@$(MKCONFIG) -n $@ -a TB5200 powerpc mpc5xxx tqm5200 tqc
 
 MINI5200_config	\
 EVAL5200_config	\
 TOP5200_config:	unconfig
 	@mkdir -p $(obj)include
 	@ echo "#define CONFIG_$(@:_config=) 1"	>$(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a TOP5200 ppc mpc5xxx top5200 emk
+	@$(MKCONFIG) -n $@ -a TOP5200 powerpc mpc5xxx top5200 emk
 
-Total5100_config		\
 Total5200_config		\
 Total5200_lowboot_config	\
 Total5200_Rev2_config		\
 Total5200_Rev2_lowboot_config:	unconfig
 	@mkdir -p $(obj)include
 	@mkdir -p $(obj)board/total5200
-	@[ -z "$(findstring 5100,$@)" ] || \
-		{ echo "#define CONFIG_MGT5100"		>>$(obj)include/config.h ; \
-		  $(XECHO) "... with MGT5100 processor" ; \
-		}
-	@[ -z "$(findstring 5200,$@)" ] || \
-		{ echo "#define CONFIG_MPC5200"		>>$(obj)include/config.h ; \
-		  $(XECHO) "... with MPC5200 processor" ; \
-		}
 	@[ -n "$(findstring Rev,$@)" ] || \
 		{ echo "#define CONFIG_TOTAL5200_REV 1"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... revision 1 board" ; \
@@ -775,7 +740,7 @@ Total5200_Rev2_lowboot_config:	unconfig
 		{ echo "TEXT_BASE = 0xFE000000" >$(obj)board/total5200/config.tmp ; \
 		  $(XECHO) "... with lowboot configuration" ; \
 		}
-	@$(MKCONFIG) -a Total5200 ppc mpc5xxx total5200
+	@$(MKCONFIG) -a Total5200 powerpc mpc5xxx total5200
 
 cam5200_config \
 cam5200_niosflash_config \
@@ -821,23 +786,23 @@ TQM5200_STK100_config:	unconfig
 	@[ -z "$(findstring HIGHBOOT,$@)" ] || \
 		{ echo "TEXT_BASE = 0xFFF00000" >$(obj)board/tqm5200/config.tmp ; \
 		}
-	@$(MKCONFIG) -n $@ -a TQM5200 ppc mpc5xxx tqm5200 tqc
+	@$(MKCONFIG) -n $@ -a TQM5200 powerpc mpc5xxx tqm5200 tqc
 
 uc101_config:		unconfig
-	@$(MKCONFIG) uc101 ppc mpc5xxx uc101
+	@$(MKCONFIG) uc101 powerpc mpc5xxx uc101
 
 v38b_config: unconfig
-	@$(MKCONFIG) -a v38b ppc mpc5xxx v38b
+	@$(MKCONFIG) -a v38b powerpc mpc5xxx v38b
 
 #########################################################################
 ## MPC512x Systems
 #########################################################################
 
 aria_config:	unconfig
-	@$(MKCONFIG) -a aria ppc mpc512x aria davedenx
+	@$(MKCONFIG) -a aria powerpc mpc512x aria davedenx
 
 mecp5123_config:	unconfig
-	@$(MKCONFIG) -a mecp5123 ppc mpc512x mecp5123 esd
+	@$(MKCONFIG) -a mecp5123 powerpc mpc512x mecp5123 esd
 
 mpc5121ads_config \
 mpc5121ads_rev2_config	\
@@ -846,7 +811,10 @@ mpc5121ads_rev2_config	\
 	@if [ "$(findstring rev2,$@)" ] ; then \
 		echo "#define CONFIG_ADS5121_REV2 1" > $(obj)include/config.h; \
 	fi
-	@$(MKCONFIG) -a mpc5121ads ppc mpc512x mpc5121ads freescale
+	@$(MKCONFIG) -a mpc5121ads powerpc mpc512x mpc5121ads freescale
+
+pdm360ng_config:	unconfig
+	@$(MKCONFIG) -a pdm360ng powerpc mpc512x pdm360ng
 
 #########################################################################
 ## MPC8xx Systems
@@ -859,10 +827,10 @@ AdderII_config	\
 	@mkdir -p $(obj)include
 	$(if $(findstring AdderII,$@), \
 	@echo "#define CONFIG_MPC852T" > $(obj)include/config.h)
-	@$(MKCONFIG) -a Adder ppc mpc8xx adder
+	@$(MKCONFIG) -a Adder powerpc mpc8xx adder
 
 AdderUSB_config:	unconfig
-	@$(MKCONFIG) -a AdderUSB ppc mpc8xx adder
+	@$(MKCONFIG) -a AdderUSB powerpc mpc8xx adder
 
 ADS860_config	  \
 FADS823_config	  \
@@ -870,34 +838,34 @@ FADS850SAR_config \
 MPC86xADS_config  \
 MPC885ADS_config  \
 FADS860T_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx fads
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx fads
 
 AMX860_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx amx860 westel
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx amx860 westel
 
 c2mon_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx c2mon
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx c2mon
 
 CCM_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx CCM siemens
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx CCM siemens
 
 cogent_mpc8xx_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx cogent
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx cogent
 
 ELPT860_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx elpt860 LEOX
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx elpt860 LEOX
 
 EP88x_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx ep88x
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx ep88x
 
 ESTEEM192E_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx esteem192e
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx esteem192e
 
 ETX094_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx etx094
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx etx094
 
 FLAGADM_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx flagadm
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx flagadm
 
 xtract_GEN860T = $(subst _SC,,$(subst _config,,$1))
 
@@ -908,22 +876,22 @@ GEN860T_config: unconfig
 		{ echo "#define CONFIG_SC" >>$(obj)include/config.h ; \
 		  $(XECHO) "With reduced H/W feature set (SC)..." ; \
 		}
-	@$(MKCONFIG) -a $(call xtract_GEN860T,$@) ppc mpc8xx gen860t
+	@$(MKCONFIG) -a $(call xtract_GEN860T,$@) powerpc mpc8xx gen860t
 
 GENIETV_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx genietv
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx genietv
 
 GTH_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx gth
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx gth
 
 hermes_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx hermes
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx hermes
 
 HMI10_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx tqm8xx tqc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx tqm8xx tqc
 
 IAD210_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx IAD210 siemens
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx IAD210 siemens
 
 xtract_ICU862 = $(subst _100MHz,,$(subst _config,,$1))
 
@@ -934,10 +902,10 @@ ICU862_config: unconfig
 		{ echo "#define CONFIG_100MHz"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... with 100MHz system clock" ; \
 		}
-	@$(MKCONFIG) -a $(call xtract_ICU862,$@) ppc mpc8xx icu862
+	@$(MKCONFIG) -a $(call xtract_ICU862,$@) powerpc mpc8xx icu862
 
 IP860_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx ip860
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx ip860
 
 IVML24_256_config \
 IVML24_128_config \
@@ -952,7 +920,7 @@ IVML24_config:	unconfig
 	@[ -z "$(findstring IVML24_256_config,$@)" ] || \
 		 { echo "#define CONFIG_IVML24_64M"	>>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a IVML24 ppc mpc8xx ivm
+	@$(MKCONFIG) -a IVML24 powerpc mpc8xx ivm
 
 IVMS8_256_config \
 IVMS8_128_config \
@@ -967,32 +935,32 @@ IVMS8_config:	unconfig
 	@[ -z "$(findstring IVMS8_256_config,$@)" ] || \
 		 { echo "#define CONFIG_IVMS8_64M"	>>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a IVMS8 ppc mpc8xx ivm
+	@$(MKCONFIG) -a IVMS8 powerpc mpc8xx ivm
 
 kmsupx4_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx km8xx keymile
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx km8xx keymile
 
 KUP4K_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx kup4k kup
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx kup4k kup
 
 KUP4X_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx kup4x kup
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx kup4x kup
 
 LANTEC_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx lantec
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx lantec
 
 lwmon_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx lwmon
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx lwmon
 
 MBX_config	\
 MBX860T_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx mbx8xx
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx mbx8xx
 
 mgsuvd_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx km8xx keymile
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx km8xx keymile
 
 MHPC_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx mhpc eltec
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx mhpc eltec
 
 xtract_NETVIA = $(subst _V2,,$(subst _config,,$1))
 
@@ -1007,7 +975,7 @@ NETVIA_config:		unconfig
 		 { echo "#define CONFIG_NETVIA_VERSION 2" >>$(obj)include/config.h ; \
 		  $(XECHO) "... Version 2" ; \
 		 }
-	@$(MKCONFIG) -a $(call xtract_NETVIA,$@) ppc mpc8xx netvia
+	@$(MKCONFIG) -a $(call xtract_NETVIA,$@) powerpc mpc8xx netvia
 
 xtract_NETPHONE = $(subst _V2,,$(subst _config,,$1))
 
@@ -1020,7 +988,7 @@ NETPHONE_config:	unconfig
 	@[ -z "$(findstring NETPHONE_V2_config,$@)" ] || \
 		 { echo "#define CONFIG_NETPHONE_VERSION 2" >>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a $(call xtract_NETPHONE,$@) ppc mpc8xx netphone
+	@$(MKCONFIG) -a $(call xtract_NETPHONE,$@) powerpc mpc8xx netphone
 
 xtract_NETTA = $(subst _SWAPHOOK,,$(subst _6412,,$(subst _ISDN,,$(subst _config,,$1))))
 
@@ -1051,7 +1019,7 @@ NETTA_config:		unconfig
 	@[ -n "$(findstring SWAPHOOK_,$@)" ] || \
 		 { echo "#undef CONFIG_NETTA_SWAPHOOK" >>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a $(call xtract_NETTA,$@) ppc mpc8xx netta
+	@$(MKCONFIG) -a $(call xtract_NETTA,$@) powerpc mpc8xx netta
 
 xtract_NETTA2 = $(subst _V2,,$(subst _config,,$1))
 
@@ -1064,7 +1032,7 @@ NETTA2_config:		unconfig
 	@[ -z "$(findstring NETTA2_V2_config,$@)" ] || \
 		 { echo "#define CONFIG_NETTA2_VERSION 2" >>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a $(call xtract_NETTA2,$@) ppc mpc8xx netta2
+	@$(MKCONFIG) -a $(call xtract_NETTA2,$@) powerpc mpc8xx netta2
 
 NC650_Rev1_config \
 NC650_Rev2_config \
@@ -1080,37 +1048,37 @@ CP850_config:	unconfig
 	@[ -z "$(findstring Rev2,$@)" ] || \
 		 { echo "#define CONFIG_IDS852_REV2 1" >>$(obj)include/config.h ; \
 		 }
-	@$(MKCONFIG) -a NC650 ppc mpc8xx nc650
+	@$(MKCONFIG) -a NC650 powerpc mpc8xx nc650
 
 NX823_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx nx823
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx nx823
 
 pcu_e_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx pcu_e siemens
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx pcu_e siemens
 
 QS850_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx qs850 snmc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx qs850 snmc
 
 QS823_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx qs850 snmc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx qs850 snmc
 
 QS860T_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx qs860t snmc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx qs860t snmc
 
 quantum_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx quantum
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx quantum
 
 R360MPI_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx r360mpi
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx r360mpi
 
 RBC823_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx rbc823
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx rbc823
 
 RPXClassic_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx RPXClassic
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx RPXClassic
 
 RPXlite_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx RPXlite
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx RPXlite
 
 RPXlite_DW_64_config		\
 RPXlite_DW_LCD_config		\
@@ -1134,41 +1102,41 @@ RPXlite_DW_config:	unconfig
 		{ echo "#define  CONFIG_ENV_IS_IN_NVRAM"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... with ENV in NVRAM ..."; \
 		}
-	@$(MKCONFIG) -a RPXlite_DW ppc mpc8xx RPXlite_dw
+	@$(MKCONFIG) -a RPXlite_DW powerpc mpc8xx RPXlite_dw
 
 rmu_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx rmu
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx rmu
 
 RRvision_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx RRvision
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx RRvision
 
 RRvision_LCD_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_LCD" >$(obj)include/config.h
 	@echo "#define CONFIG_SHARP_LQ104V7DS01" >>$(obj)include/config.h
-	@$(MKCONFIG) -a RRvision ppc mpc8xx RRvision
+	@$(MKCONFIG) -a RRvision powerpc mpc8xx RRvision
 
 SM850_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx tqm8xx tqc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx tqm8xx tqc
 
 spc1920_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx spc1920
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx spc1920
 
 SPD823TS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx spd8xx
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx spd8xx
 
 stxxtc_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx stxxtc stx
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx stxxtc stx
 
 svm_sc8xx_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx svm_sc8xx
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx svm_sc8xx
 
 SXNI855T_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx sixnet
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx sixnet
 
 # EMK MPC8xx based modules
 TOP860_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx top860 emk
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx top860 emk
 
 # Play some tricks for configuration selection
 # Only 855 and 860 boards may come with FEC
@@ -1199,28 +1167,28 @@ virtlab2_config:	unconfig
 		  echo "#define CONFIG_NEC_NL6448BC20"	>>$(obj)include/config.h ; \
 		  $(XECHO) "... with LCD display" ; \
 		}
-	@$(MKCONFIG) -a $(call xtract_8xx,$@) ppc mpc8xx tqm8xx tqc
+	@$(MKCONFIG) -a $(call xtract_8xx,$@) powerpc mpc8xx tqm8xx tqc
 
 TTTech_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_LCD" >$(obj)include/config.h
 	@echo "#define CONFIG_SHARP_LQ104V7DS01" >>$(obj)include/config.h
-	@$(MKCONFIG) -a TQM823L ppc mpc8xx tqm8xx tqc
+	@$(MKCONFIG) -a TQM823L powerpc mpc8xx tqm8xx tqc
 
 uc100_config	:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx uc100
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx uc100
 
 v37_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_LCD" >$(obj)include/config.h
 	@echo "#define CONFIG_SHARP_LQ084V1DG21" >>$(obj)include/config.h
-	@$(MKCONFIG) $(@:_config=) ppc mpc8xx v37
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8xx v37
 
 wtk_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_LCD" >$(obj)include/config.h
 	@echo "#define CONFIG_SHARP_LQ065T9DR51U" >>$(obj)include/config.h
-	@$(MKCONFIG) -a TQM823L ppc mpc8xx tqm8xx tqc
+	@$(MKCONFIG) -a TQM823L powerpc mpc8xx tqm8xx tqc
 
 #########################################################################
 ## PPC4xx Systems
@@ -1228,50 +1196,50 @@ wtk_config:	unconfig
 xtract_4xx = $(subst _25,,$(subst _33,,$(subst _BA,,$(subst _ME,,$(subst _HI,,$(subst _config,,$1))))))
 
 acadia_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx acadia amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx acadia amcc
 
 acadia_nand_config:	unconfig
 	@mkdir -p $(obj)include $(obj)board/amcc/acadia
 	@mkdir -p $(obj)nand_spl/board/amcc/acadia
 	@echo "#define CONFIG_NAND_U_BOOT" > $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a acadia ppc ppc4xx acadia amcc
+	@$(MKCONFIG) -n $@ -a acadia powerpc ppc4xx acadia amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/acadia/config.tmp
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
 ADCIOP_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx adciop esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx adciop esd
 
 alpr_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx alpr prodrive
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx alpr prodrive
 
 AP1000_config:unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ap1000 amirix
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ap1000 amirix
 
 APC405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx apc405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx apc405 esd
 
 AR405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ar405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ar405 esd
 
 ASH405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ash405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ash405 esd
 
 bamboo_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx bamboo amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx bamboo amcc
 
 bamboo_nand_config:	unconfig
 	@mkdir -p $(obj)include $(obj)board/amcc/bamboo
 	@mkdir -p $(obj)nand_spl/board/amcc/bamboo
 	@echo "#define CONFIG_NAND_U_BOOT" > $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a bamboo ppc ppc4xx bamboo amcc
+	@$(MKCONFIG) -n $@ -a bamboo powerpc ppc4xx bamboo amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/bamboo/config.tmp
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
 bubinga_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx bubinga amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx bubinga amcc
 
 CANBT_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx canbt esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx canbt esd
 
 # Arches, Canyonlands & Glacier use different U-Boot images
 arches_config \
@@ -1280,7 +1248,7 @@ glacier_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >$(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a canyonlands ppc ppc4xx canyonlands amcc
+	@$(MKCONFIG) -n $@ -a canyonlands powerpc ppc4xx canyonlands amcc
 
 canyonlands_nand_config \
 glacier_nand_config:	unconfig
@@ -1289,7 +1257,7 @@ glacier_nand_config:	unconfig
 	@echo "#define CONFIG_NAND_U_BOOT" > $(obj)include/config.h
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_nand_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >> $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a canyonlands ppc ppc4xx canyonlands amcc
+	@$(MKCONFIG) -n $@ -a canyonlands powerpc ppc4xx canyonlands amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/canyonlands/config.tmp
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
@@ -1307,56 +1275,53 @@ CATcenter_33_config:	unconfig
 		{ echo "#define CONFIG_PPCHAMELEON_CLK_33" >> $(obj)include/config.h ; \
 		  $(XECHO) "SysClk = 33MHz" ; \
 		}
-	@$(MKCONFIG) -a $(call xtract_4xx,$@) ppc ppc4xx PPChameleonEVB dave
+	@$(MKCONFIG) -a $(call xtract_4xx,$@) powerpc ppc4xx PPChameleonEVB dave
 
 CMS700_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx cms700 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx cms700 esd
 
 CPCI2DP_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx cpci2dp esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx cpci2dp esd
 
 CPCI405_config		\
 CPCI4052_config		\
 CPCI405DT_config	\
 CPCI405AB_config:	unconfig
 	@mkdir -p $(obj)board/esd/cpci405
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx cpci405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx cpci405 esd
 
 CPCIISER4_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx cpciiser4 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx cpciiser4 esd
 
 CRAYL1_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx L1 cray
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx L1 cray
 
 csb272_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx csb272
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx csb272
 
 csb472_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx csb472
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx csb472
 
 DASA_SIM_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx dasa_sim esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx dasa_sim esd
 
 dlvision_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx dlvision gdsys
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx dlvision gdsys
 
 DP405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx dp405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx dp405 esd
 
 DU405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx du405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx du405 esd
 
 DU440_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx du440 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx du440 esd
 
 ebony_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ebony amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ebony amcc
 
 ERIC_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx eric
-
-EXBITGEN_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx exbitgen
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx eric
 
 fx12mm_flash_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc405-generic
@@ -1365,7 +1330,7 @@ fx12mm_flash_config: unconfig
 		> $(obj)board/avnet/fx12mm/config.tmp
 	@echo "TEXT_BASE := 0xFFCB0000" \
 		>> $(obj)board/avnet/fx12mm/config.tmp
-	@$(MKCONFIG) fx12mm ppc ppc4xx fx12mm avnet
+	@$(MKCONFIG) fx12mm powerpc ppc4xx fx12mm avnet
 
 fx12mm_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc405-generic
@@ -1374,27 +1339,30 @@ fx12mm_config: unconfig
 		> $(obj)board/avnet/fx12mm/config.tmp
 	@echo "TEXT_BASE := 0x03000000" \
 		>> $(obj)board/avnet/fx12mm/config.tmp
-	@$(MKCONFIG) fx12mm ppc ppc4xx fx12mm avnet
+	@$(MKCONFIG) fx12mm powerpc ppc4xx fx12mm avnet
 
 G2000_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx g2000
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx g2000
 
 gdppc440etx_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx gdppc440etx gdsys
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx gdppc440etx gdsys
 
 hcu4_config:	unconfig
 	@mkdir -p $(obj)board/netstal/common
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx hcu4 netstal
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx hcu4 netstal
 
 hcu5_config:	unconfig
 	@mkdir -p $(obj)board/netstal/common
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx hcu5 netstal
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx hcu5 netstal
 
 HH405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx hh405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx hh405 esd
 
 HUB405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx hub405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx hub405 esd
+
+icon_config:	unconfig
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx icon mosaixtech
 
 # Compact-Center(codename intip) & DevCon-Center use different U-Boot images
 intip_config \
@@ -1402,64 +1370,61 @@ devconcenter_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >$(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a intip ppc ppc4xx intip gdsys
+	@$(MKCONFIG) -n $@ -a intip powerpc ppc4xx intip gdsys
 
 JSE_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx jse
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx jse
 
 KAREF_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx karef sandburst
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx karef sandburst
 
 katmai_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx katmai amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx katmai amcc
 
 # Kilauea & Haleakala images are identical (recognized via PVR)
 kilauea_config \
 haleakala_config: unconfig
-	@$(MKCONFIG) -n $@ -a kilauea ppc ppc4xx kilauea amcc
+	@$(MKCONFIG) -n $@ -a kilauea powerpc ppc4xx kilauea amcc
 
 kilauea_nand_config \
 haleakala_nand_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/amcc/kilauea
 	@mkdir -p $(obj)nand_spl/board/amcc/kilauea
 	@echo "#define CONFIG_NAND_U_BOOT" > $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a kilauea ppc ppc4xx kilauea amcc
+	@$(MKCONFIG) -n $@ -a kilauea powerpc ppc4xx kilauea amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/kilauea/config.tmp
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
 korat_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx korat
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx korat
 
 luan_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx luan amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx luan amcc
 
 lwmon5_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx lwmon5
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx lwmon5
 
 makalu_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx makalu amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx makalu amcc
 
 mcu25_config:  unconfig
 	@mkdir -p $(obj)board/netstal/common
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx mcu25 netstal
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx mcu25 netstal
 
 METROBOX_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx metrobox sandburst
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx metrobox sandburst
 
 MIP405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx mip405 mpl
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx mip405 mpl
 
 MIP405T_config:	unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_MIP405T" >$(obj)include/config.h
 	@$(XECHO) "Enable subset config for MIP405T"
-	@$(MKCONFIG) -a MIP405 ppc ppc4xx mip405 mpl
+	@$(MKCONFIG) -a MIP405 powerpc ppc4xx mip405 mpl
 
 ML2_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ml2
-
-ml300_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ml300 xilinx
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ml2
 
 ml507_flash_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1468,7 +1433,7 @@ ml507_flash_config: unconfig
 		> $(obj)board/xilinx/ml507/config.tmp
 	@echo "TEXT_BASE := 0xFE360000" \
 		>> $(obj)board/xilinx/ml507/config.tmp
-	@$(MKCONFIG) ml507 ppc ppc4xx ml507 xilinx
+	@$(MKCONFIG) ml507 powerpc ppc4xx ml507 xilinx
 
 ml507_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1477,41 +1442,41 @@ ml507_config: unconfig
 		> $(obj)board/xilinx/ml507/config.tmp
 	@echo "TEXT_BASE := 0x04000000"  \
 		>> $(obj)board/xilinx/ml507/config.tmp
-	@$(MKCONFIG) ml507 ppc ppc4xx ml507 xilinx
+	@$(MKCONFIG) ml507 powerpc ppc4xx ml507 xilinx
 
 neo_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx neo gdsys
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx neo gdsys
 
 ocotea_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ocotea amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ocotea amcc
 
 OCRTC_config		\
 ORSG_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx ocrtc esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx ocrtc esd
 
 p3p440_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx p3p440 prodrive
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx p3p440 prodrive
 
 PCI405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pci405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pci405 esd
 
 pcs440ep_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pcs440ep
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pcs440ep
 
 PIP405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pip405 mpl
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pip405 mpl
 
 PLU405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx plu405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx plu405 esd
 
 PMC405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pmc405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pmc405 esd
 
 PMC405DE_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pmc405de esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pmc405de esd
 
 PMC440_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx pmc440 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx pmc440 esd
 
 PPChameleonEVB_config		\
 PPChameleonEVB_BA_25_config	\
@@ -1541,26 +1506,26 @@ PPChameleonEVB_HI_33_config:	unconfig
 		{ echo "#define CONFIG_PPCHAMELEON_CLK_33" >>$(obj)include/config.h ; \
 		  $(XECHO) "SysClk = 33MHz" ; \
 		}
-	@$(MKCONFIG) -a $(call xtract_4xx,$@) ppc ppc4xx PPChameleonEVB dave
+	@$(MKCONFIG) -a $(call xtract_4xx,$@) powerpc ppc4xx PPChameleonEVB dave
 
 quad100hd_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx quad100hd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx quad100hd
 
 redwood_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx redwood amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx redwood amcc
 
 sbc405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx sbc405
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx sbc405
 
 sc3_config:unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx sc3
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx sc3
 
 sequoia_config \
 rainier_config: unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >$(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a sequoia ppc ppc4xx sequoia amcc
+	@$(MKCONFIG) -n $@ -a sequoia powerpc ppc4xx sequoia amcc
 
 sequoia_nand_config \
 rainier_nand_config: unconfig
@@ -1569,7 +1534,7 @@ rainier_nand_config: unconfig
 	@echo "#define CONFIG_NAND_U_BOOT" > $(obj)include/config.h
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >> $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a sequoia ppc ppc4xx sequoia amcc
+	@$(MKCONFIG) -n $@ -a sequoia powerpc ppc4xx sequoia amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/sequoia/config.tmp
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
@@ -1579,16 +1544,16 @@ rainier_ramboot_config: unconfig
 	@echo "#define CONFIG_SYS_RAMBOOT" > $(obj)include/config.h
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >> $(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a sequoia ppc ppc4xx sequoia amcc
+	@$(MKCONFIG) -n $@ -a sequoia powerpc ppc4xx sequoia amcc
 	@echo "TEXT_BASE = 0x01000000" > $(obj)board/amcc/sequoia/config.tmp
 	@echo "LDSCRIPT = board/amcc/sequoia/u-boot-ram.lds" >> \
 		$(obj)board/amcc/sequoia/config.tmp
 
 taihu_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx taihu amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx taihu amcc
 
 taishan_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx taishan amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx taishan amcc
 
 v5fx30teval_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1597,7 +1562,7 @@ v5fx30teval_config: unconfig
 		> $(obj)board/avnet/v5fx30teval/config.tmp
 	@echo "TEXT_BASE := 0x03000000" \
 		>> $(obj)board/avnet/v5fx30teval/config.tmp
-	@$(MKCONFIG) v5fx30teval ppc ppc4xx v5fx30teval avnet
+	@$(MKCONFIG) v5fx30teval powerpc ppc4xx v5fx30teval avnet
 
 v5fx30teval_flash_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1606,25 +1571,25 @@ v5fx30teval_flash_config: unconfig
 		> $(obj)board/avnet/v5fx30teval/config.tmp
 	@echo "TEXT_BASE := 0xFF1C0000" \
 		>> $(obj)board/avnet/v5fx30teval/config.tmp
-	@$(MKCONFIG) v5fx30teval ppc ppc4xx v5fx30teval avnet
+	@$(MKCONFIG) v5fx30teval powerpc ppc4xx v5fx30teval avnet
 
 VOH405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx voh405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx voh405 esd
 
 VOM405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx vom405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx vom405 esd
 
 W7OLMC_config	\
 W7OLMG_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx w7o
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx w7o
 
 # Walnut & Sycamore images are identical (recognized via PVR)
 walnut_config \
 sycamore_config: unconfig
-	@$(MKCONFIG) -n $@ -a walnut ppc ppc4xx walnut amcc
+	@$(MKCONFIG) -n $@ -a walnut powerpc ppc4xx walnut amcc
 
 WUH405_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx wuh405 esd
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx wuh405 esd
 
 xilinx-ppc405-generic_flash_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc405-generic
@@ -1632,7 +1597,7 @@ xilinx-ppc405-generic_flash_config: unconfig
 		> $(obj)board/xilinx/ppc405-generic/config.tmp
 	@echo "TEXT_BASE := 0xFE360000" \
 		>> $(obj)board/xilinx/ppc405-generic/config.tmp
-	@$(MKCONFIG) xilinx-ppc405-generic ppc ppc4xx ppc405-generic xilinx
+	@$(MKCONFIG) xilinx-ppc405-generic powerpc ppc4xx ppc405-generic xilinx
 
 xilinx-ppc405-generic_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc405-generic
@@ -1640,7 +1605,7 @@ xilinx-ppc405-generic_config: unconfig
 		> $(obj)board/xilinx/ppc405-generic/config.tmp
 	@echo "TEXT_BASE := 0x04000000" \
 		>> $(obj)board/xilinx/ppc405-generic/config.tmp
-	@$(MKCONFIG) xilinx-ppc405-generic ppc ppc4xx ppc405-generic xilinx
+	@$(MKCONFIG) xilinx-ppc405-generic powerpc ppc4xx ppc405-generic xilinx
 
 xilinx-ppc440-generic_flash_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1648,7 +1613,7 @@ xilinx-ppc440-generic_flash_config: unconfig
 		> $(obj)board/xilinx/ppc440-generic/config.tmp
 	@echo "TEXT_BASE := 0xFE360000" \
 		>> $(obj)board/xilinx/ppc440-generic/config.tmp
-	@$(MKCONFIG) xilinx-ppc440-generic ppc ppc4xx ppc440-generic xilinx
+	@$(MKCONFIG) xilinx-ppc440-generic powerpc ppc4xx ppc440-generic xilinx
 
 xilinx-ppc440-generic_config: unconfig
 	@mkdir -p $(obj)include $(obj)board/xilinx/ppc440-generic
@@ -1656,23 +1621,23 @@ xilinx-ppc440-generic_config: unconfig
 		> $(obj)board/xilinx/ppc440-generic/config.tmp
 	@echo "TEXT_BASE := 0x04000000" \
 		>> $(obj)board/xilinx/ppc440-generic/config.tmp
-	@$(MKCONFIG) xilinx-ppc440-generic ppc ppc4xx ppc440-generic xilinx
+	@$(MKCONFIG) xilinx-ppc440-generic powerpc ppc4xx ppc440-generic xilinx
 
 XPEDITE1000_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx xpedite1000 xes
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx xpedite1000 xes
 
 yosemite_config \
 yellowstone_config: unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_$$(echo $(subst ,,$(@:_config=)) | \
 		tr '[:lower:]' '[:upper:]')" >$(obj)include/config.h
-	@$(MKCONFIG) -n $@ -a yosemite ppc ppc4xx yosemite amcc
+	@$(MKCONFIG) -n $@ -a yosemite powerpc ppc4xx yosemite amcc
 
 yucca_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx yucca amcc
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx yucca amcc
 
 zeus_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc ppc4xx zeus
+	@$(MKCONFIG) $(@:_config=) powerpc ppc4xx zeus
 
 #########################################################################
 ## MPC8220 Systems
@@ -1680,10 +1645,10 @@ zeus_config:	unconfig
 
 Alaska8220_config	\
 Yukon8220_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8220 alaska
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8220 alaska
 
 sorcery_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8220 sorcery
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8220 sorcery
 
 #########################################################################
 ## MPC824x Systems
@@ -1691,17 +1656,17 @@ sorcery_config:		unconfig
 xtract_82xx = $(subst _BIGFLASH,,$(subst _ROMBOOT,,$(subst _L2,,$(subst _266MHz,,$(subst _300MHz,,$(subst _config,,$1))))))
 
 A3000_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x a3000
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x a3000
 
 barco_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x barco
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x barco
 
 BMW_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x bmw
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x bmw
 
 CPC45_config	\
 CPC45_ROMBOOT_config:	unconfig
-	@$(MKCONFIG) $(call xtract_82xx,$@) ppc mpc824x cpc45
+	@$(MKCONFIG) $(call xtract_82xx,$@) powerpc mpc824x cpc45
 	@cd $(obj)include ;				\
 	if [ "$(findstring _ROMBOOT_,$@)" ] ; then \
 		echo "CONFIG_BOOT_ROM = y" >> config.mk ; \
@@ -1713,19 +1678,19 @@ CPC45_ROMBOOT_config:	unconfig
 	echo "export CONFIG_BOOT_ROM" >> config.mk;
 
 CU824_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x cu824
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x cu824
 
 debris_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x debris etin
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x debris etin
 
 eXalion_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x eXalion
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x eXalion
 
 HIDDEN_DRAGON_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x hidden_dragon
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x hidden_dragon
 
 kvme080_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x kvme080 etin
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x kvme080 etin
 
 # HDLAN is broken ATM. Should be fixed as soon as hardware is available and as
 # time permits.
@@ -1737,51 +1702,48 @@ linkstation_HGLAN_config: unconfig
 		*HGLAN*) echo "#define CONFIG_HGLAN 1" >$(obj)include/config.h; ;; \
 		*HDLAN*) echo "#define CONFIG_HLAN 1" >$(obj)include/config.h; ;; \
 	esac
-	@$(MKCONFIG) -n $@ -a linkstation ppc mpc824x linkstation
+	@$(MKCONFIG) -n $@ -a linkstation powerpc mpc824x linkstation
 
 MOUSSE_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x mousse
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x mousse
 
 MUSENKI_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x musenki
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x musenki
 
 MVBLUE_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x mvblue
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x mvblue
 
 OXC_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x oxc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x oxc
 
 PN62_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x pn62
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x pn62
 
 Sandpoint8240_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x sandpoint
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x sandpoint
 
 Sandpoint8245_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x sandpoint
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x sandpoint
 
 sbc8240_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x sbc8240
-
-SL8245_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x sl8245
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x sbc8240
 
 utx8245_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc824x utx8245
+	@$(MKCONFIG) $(@:_config=) powerpc mpc824x utx8245
 
 #########################################################################
 ## MPC8260 Systems
 #########################################################################
 
 atc_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 atc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 atc
 
 cogent_mpc8260_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 cogent
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 cogent
 
 CPU86_config	\
 CPU86_ROMBOOT_config: unconfig
-	@$(MKCONFIG) $(call xtract_82xx,$@) ppc mpc8260 cpu86
+	@$(MKCONFIG) $(call xtract_82xx,$@) powerpc mpc8260 cpu86
 	@cd $(obj)include ;				\
 	if [ "$(findstring _ROMBOOT_,$@)" ] ; then \
 		echo "CONFIG_BOOT_ROM = y" >> config.mk ; \
@@ -1794,7 +1756,7 @@ CPU86_ROMBOOT_config: unconfig
 
 CPU87_config	\
 CPU87_ROMBOOT_config: unconfig
-	@$(MKCONFIG) $(call xtract_82xx,$@) ppc mpc8260 cpu87
+	@$(MKCONFIG) $(call xtract_82xx,$@) powerpc mpc8260 cpu87
 	@cd $(obj)include ;				\
 	if [ "$(findstring _ROMBOOT_,$@)" ] ; then \
 		echo "CONFIG_BOOT_ROM = y" >> config.mk ; \
@@ -1807,25 +1769,25 @@ CPU87_ROMBOOT_config: unconfig
 
 ep8248_config	\
 ep8248E_config	:	unconfig
-	@$(MKCONFIG) ep8248 ppc mpc8260 ep8248
+	@$(MKCONFIG) ep8248 powerpc mpc8260 ep8248
 
 ep8260_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 ep8260
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 ep8260
 
 ep82xxm_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 ep82xxm
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 ep82xxm
 
 gw8260_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 gw8260
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 gw8260
 
 hymod_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 hymod
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 hymod
 
 IDS8247_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 ids8247
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 ids8247
 
 IPHASE4539_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 iphase4539
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 iphase4539
 
 ISPAN_config		\
 ISPAN_REVB_config:	unconfig
@@ -1833,10 +1795,10 @@ ISPAN_REVB_config:	unconfig
 	@if [ "$(findstring _REVB_,$@)" ] ; then \
 		echo "#define CONFIG_SYS_REV_B" > $(obj)include/config.h ; \
 	fi
-	@$(MKCONFIG) -a ISPAN ppc mpc8260 ispan
+	@$(MKCONFIG) -a ISPAN powerpc mpc8260 ispan
 
 mgcoge_config	:	unconfig
-	@$(MKCONFIG) mgcoge ppc mpc8260 mgcoge keymile
+	@$(MKCONFIG) mgcoge powerpc mpc8260 mgcoge keymile
 
 MPC8260ADS_config	\
 MPC8260ADS_lowboot_config	\
@@ -1868,10 +1830,10 @@ PQ2FADS-ZU_66MHz_lowboot_config	\
 		{ echo "TEXT_BASE = 0xFF800000" >$(obj)board/freescale/mpc8260ads/config.tmp ; \
 		  $(XECHO) "... with lowboot configuration" ; \
 		}
-	@$(MKCONFIG) -a MPC8260ADS ppc mpc8260 mpc8260ads freescale
+	@$(MKCONFIG) -a MPC8260ADS powerpc mpc8260 mpc8260ads freescale
 
 MPC8266ADS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 mpc8266ads freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 mpc8266ads freescale
 
 muas3001_dev_config \
 muas3001_config	:	unconfig
@@ -1880,7 +1842,7 @@ muas3001_config	:	unconfig
 	@if [ "$(findstring dev,$@)" ] ; then \
 		echo "#define CONFIG_MUAS_DEV_BOARD" > $(obj)include/config.h ; \
 	fi
-	@$(MKCONFIG) -a muas3001 ppc mpc8260 muas3001
+	@$(MKCONFIG) -a muas3001 powerpc mpc8260 muas3001
 
 # PM825/PM826 default configuration:  small (= 8 MB) Flash / boot from 64-bit flash
 PM825_config	\
@@ -1916,7 +1878,7 @@ PM826_ROMBOOT_BIGFLASH_config:	unconfig
 			echo "TEXT_BASE = 0xFF000000" >$(obj)board/pm826/config.tmp ; \
 		fi; \
 	fi
-	@$(MKCONFIG) -a PM826 ppc mpc8260 pm826
+	@$(MKCONFIG) -a PM826 powerpc mpc8260 pm826
 
 PM828_config	\
 PM828_PCI_config	\
@@ -1933,32 +1895,32 @@ PM828_ROMBOOT_PCI_config:	unconfig
 		echo "#define CONFIG_BOOT_ROM" >>$(obj)include/config.h ; \
 		echo "TEXT_BASE = 0xFF800000" >$(obj)board/pm826/config.tmp ; \
 	fi
-	@$(MKCONFIG) -a PM828 ppc mpc8260 pm828
+	@$(MKCONFIG) -a PM828 powerpc mpc8260 pm828
 
 ppmc8260_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 ppmc8260
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 ppmc8260
 
 Rattler8248_config	\
 Rattler_config:		unconfig
 	@mkdir -p $(obj)include
 	$(if $(findstring 8248,$@), \
 	@echo "#define CONFIG_MPC8248" > $(obj)include/config.h)
-	@$(MKCONFIG) -a Rattler ppc mpc8260 rattler
+	@$(MKCONFIG) -a Rattler powerpc mpc8260 rattler
 
 RPXsuper_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 rpxsuper
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 rpxsuper
 
 rsdproto_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 rsdproto
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 rsdproto
 
 sacsng_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 sacsng
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 sacsng
 
 sbc8260_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 sbc8260
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 sbc8260
 
 SCM_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 SCM siemens
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 SCM siemens
 
 TQM8255_AA_config \
 TQM8260_AA_config \
@@ -2004,23 +1966,27 @@ TQM8265_AA_config:  unconfig
 		echo "#undef CONFIG_BUSMODE_60x"  >>$(obj)include/config.h ; \
 		$(XECHO) "... without 60x Bus Mode" ; \
 	fi
-	@$(MKCONFIG) -a TQM8260 ppc mpc8260 tqm8260 tqc
+	@$(MKCONFIG) -a TQM8260 powerpc mpc8260 tqm8260 tqc
 
 TQM8272_config: unconfig
-	@$(MKCONFIG) TQM8272 ppc mpc8260 tqm8272 tqc
+	@$(MKCONFIG) TQM8272 powerpc mpc8260 tqm8272 tqc
 
 VoVPN-GW_66MHz_config	\
 VoVPN-GW_100MHz_config:		unconfig
 	@mkdir -p $(obj)include
 	@echo "#define CONFIG_CLKIN_$(word 2,$(subst _, ,$@))" > $(obj)include/config.h
-	@$(MKCONFIG) -a VoVPN-GW ppc mpc8260 vovpn-gw funkwerk
+	@$(MKCONFIG) -a VoVPN-GW powerpc mpc8260 vovpn-gw funkwerk
 
 ZPC1900_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc8260 zpc1900
+	@$(MKCONFIG) $(@:_config=) powerpc mpc8260 zpc1900
 
 #########################################################################
 ## Coldfire
 #########################################################################
+
+astro_mcf5373l_config \
+astro_mcf5373l_RAM_config :	unconfig
+	@$(MKCONFIG) -t $(@:_config=) astro_mcf5373l m68k mcf532x mcf5373l astro
 
 M5208EVBE_config :		unconfig
 	@$(MKCONFIG) $(@:_config=) m68k mcf52x2 m5208evbe freescale
@@ -2089,6 +2055,9 @@ EB+MCF-EV123_internal_config :	unconfig
 	@mkdir -p $(obj)board/BuS/EB+MCF-EV123
 	@echo "TEXT_BASE = 0xF0000000"|tee $(obj)board/BuS/EB+MCF-EV123/textbase.mk
 	@$(MKCONFIG) EB+MCF-EV123 m68k mcf52x2 EB+MCF-EV123 BuS
+
+EP2500_config:			unconfig
+	@$(MKCONFIG) $(@:_config=) m68k mcf52x2 ep2500 Mercury
 
 idmr_config :			unconfig
 	@$(MKCONFIG) $(@:_config=) m68k mcf52x2 idmr
@@ -2266,7 +2235,7 @@ TASREG_config :		unconfig
 #########################################################################
 
 kmeter1_config: unconfig
-	@$(MKCONFIG) kmeter1 ppc mpc83xx kmeter1 keymile
+	@$(MKCONFIG) kmeter1 powerpc mpc83xx kmeter1 keymile
 
 MPC8313ERDB_33_config \
 MPC8313ERDB_66_config \
@@ -2287,16 +2256,17 @@ MPC8313ERDB_NAND_66_config: unconfig
 		echo "TEXT_BASE = 0x00100000" > $(obj)board/freescale/mpc8313erdb/config.tmp ; \
 		echo "#define CONFIG_NAND_U_BOOT" >>$(obj)include/config.h ; \
 	fi ;
-	@$(MKCONFIG) -a MPC8313ERDB ppc mpc83xx mpc8313erdb freescale
+	@$(MKCONFIG) -a MPC8313ERDB powerpc mpc83xx mpc8313erdb freescale
 	@if [ "$(findstring _NAND_,$@)" ] ; then \
 		echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk ; \
 	fi ;
 
+MPC8315ERDB_NAND_config \
 MPC8315ERDB_config: unconfig
-	@$(MKCONFIG) -a MPC8315ERDB ppc mpc83xx mpc8315erdb freescale
+	@$(MKCONFIG) -t $(@:_config=) MPC8315ERDB powerpc mpc83xx mpc8315erdb freescale
 
 MPC8323ERDB_config:	unconfig
-	@$(MKCONFIG) -a MPC8323ERDB ppc mpc83xx mpc8323erdb freescale
+	@$(MKCONFIG) -a MPC8323ERDB powerpc mpc83xx mpc8323erdb freescale
 
 MPC832XEMDS_config \
 MPC832XEMDS_HOST_33_config \
@@ -2328,10 +2298,10 @@ MPC832XEMDS_ATM_config:	unconfig
 		echo "#define CONFIG_PQ_MDS_PIB 1" >>$(obj)include/config.h ; \
 		echo "#define CONFIG_PQ_MDS_PIB_ATM	1" >>$(obj)include/config.h ; \
 	fi ;
-	@$(MKCONFIG) -a MPC832XEMDS ppc mpc83xx mpc832xemds freescale
+	@$(MKCONFIG) -a MPC832XEMDS powerpc mpc83xx mpc832xemds freescale
 
 MPC8349EMDS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc83xx mpc8349emds freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc83xx mpc8349emds freescale
 
 MPC8349ITX_config \
 MPC8349ITX_LOWBOOT_config \
@@ -2345,7 +2315,7 @@ MPC8349ITXGP_config:	unconfig
 	@if [ "$(findstring LOWBOOT,$@)" ] ; then \
 		echo "TEXT_BASE = 0xFE000000" >$(obj)board/freescale/mpc8349itx/config.tmp ; \
 	fi
-	@$(MKCONFIG) -a -n $(@:_config=) MPC8349ITX ppc mpc83xx mpc8349itx freescale
+	@$(MKCONFIG) -a -n $(@:_config=) MPC8349ITX powerpc mpc83xx mpc8349itx freescale
 
 MPC8360EMDS_config \
 MPC8360EMDS_HOST_33_config \
@@ -2377,7 +2347,7 @@ MPC8360EMDS_ATM_config: unconfig
 		echo "#define CONFIG_PQ_MDS_PIB 1" >>$(obj)include/config.h ; \
 		echo "#define CONFIG_PQ_MDS_PIB_ATM	1" >>$(obj)include/config.h ; \
 	fi ;
-	@$(MKCONFIG) -a MPC8360EMDS ppc mpc83xx mpc8360emds freescale
+	@$(MKCONFIG) -a MPC8360EMDS powerpc mpc83xx mpc8360emds freescale
 
 MPC8360ERDK_33_config \
 MPC8360ERDK_66_config \
@@ -2387,7 +2357,7 @@ MPC8360ERDK_config:	unconfig
 		$(XECHO) -n "... CLKIN 33MHz " ; \
 		echo "#define CONFIG_CLKIN_33MHZ" >>$(obj)include/config.h ;\
 	fi ;
-	@$(MKCONFIG) -a MPC8360ERDK ppc mpc83xx mpc8360erdk freescale
+	@$(MKCONFIG) -a MPC8360ERDK powerpc mpc83xx mpc8360erdk freescale
 
 MPC837XEMDS_config \
 MPC837XEMDS_HOST_config:	unconfig
@@ -2396,18 +2366,18 @@ MPC837XEMDS_HOST_config:	unconfig
 		$(XECHO) -n "... PCI HOST " ; \
 		echo "#define CONFIG_PCI" >>$(obj)include/config.h ; \
 	fi ;
-	@$(MKCONFIG) -a MPC837XEMDS ppc mpc83xx mpc837xemds freescale
+	@$(MKCONFIG) -a MPC837XEMDS powerpc mpc83xx mpc837xemds freescale
 
 MPC837XERDB_config:	unconfig
-	@$(MKCONFIG) -a MPC837XERDB ppc mpc83xx mpc837xerdb freescale
+	@$(MKCONFIG) -a MPC837XERDB powerpc mpc83xx mpc837xerdb freescale
 
 MVBLM7_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc83xx mvblm7 matrix_vision
+	@$(MKCONFIG) $(@:_config=) powerpc mpc83xx mvblm7 matrix_vision
 
 sbc8349_config \
 sbc8349_PCI_33_config \
 sbc8349_PCI_66_config: unconfig
-	@$(MKCONFIG) -t $(@:_config=) sbc8349 ppc mpc83xx sbc8349
+	@$(MKCONFIG) -t $(@:_config=) sbc8349 powerpc mpc83xx sbc8349
 
 SIMPC8313_LP_config \
 SIMPC8313_SP_config: unconfig
@@ -2421,31 +2391,42 @@ SIMPC8313_SP_config: unconfig
 		$(XECHO) -n "...Small Page NAND..." ; \
 		echo "#define CONFIG_NAND_SP" >> $(obj)include/config.h ; \
 	fi ;
-	@$(MKCONFIG) -a SIMPC8313 ppc mpc83xx simpc8313 sheldon
+	@$(MKCONFIG) -a SIMPC8313 powerpc mpc83xx simpc8313 sheldon
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
 TQM834x_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc83xx tqm834x tqc
+	@$(MKCONFIG) $(@:_config=) powerpc mpc83xx tqm834x tqc
 
+caddy2_config \
 vme8349_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc83xx vme8349 esd
+	@$(MKCONFIG) -t $(@:_config=) vme8349 powerpc mpc83xx vme8349 esd
+
+edb9301_config \
+edb9302_config \
+edb9302a_config \
+edb9307_config \
+edb9307a_config \
+edb9312_config \
+edb9315_config \
+edb9315a_config: unconfig
+	@$(MKCONFIG) -t $(@:_config=) edb93xx arm arm920t edb93xx NULL ep93xx
 
 #########################################################################
 ## MPC85xx Systems
 #########################################################################
 
 ATUM8548_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx atum8548
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx atum8548
 
 MPC8536DS_NAND_config \
 MPC8536DS_SDCARD_config \
 MPC8536DS_SPIFLASH_config \
 MPC8536DS_36BIT_config \
 MPC8536DS_config:       unconfig
-	@$(MKCONFIG) -t $(@:_config=) MPC8536DS ppc mpc85xx mpc8536ds freescale
+	@$(MKCONFIG) -t $(@:_config=) MPC8536DS powerpc mpc85xx mpc8536ds freescale
 
 MPC8540ADS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx mpc8540ads freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx mpc8540ads freescale
 
 MPC8540EVAL_config \
 MPC8540EVAL_33_config \
@@ -2465,10 +2446,10 @@ MPC8540EVAL_66_slave_config:	  unconfig
 	else \
 		$(XECHO) " host" ; \
 	fi
-	@$(MKCONFIG) -a MPC8540EVAL ppc mpc85xx mpc8540eval
+	@$(MKCONFIG) -a MPC8540EVAL powerpc mpc85xx mpc8540eval
 
 MPC8560ADS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx mpc8560ads freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx mpc8560ads freescale
 
 MPC8541CDS_legacy_config \
 MPC8541CDS_config:	unconfig
@@ -2477,10 +2458,10 @@ MPC8541CDS_config:	unconfig
 		echo "#define CONFIG_LEGACY" >>$(obj)include/config.h ; \
 		$(XECHO) "... legacy" ; \
 	fi
-	@$(MKCONFIG) -a MPC8541CDS ppc mpc85xx mpc8541cds freescale
+	@$(MKCONFIG) -a MPC8541CDS powerpc mpc85xx mpc8541cds freescale
 
 MPC8544DS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx mpc8544ds freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx mpc8544ds freescale
 
 MPC8548CDS_legacy_config \
 MPC8548CDS_config:	unconfig
@@ -2489,7 +2470,7 @@ MPC8548CDS_config:	unconfig
 		echo "#define CONFIG_LEGACY" >>$(obj)include/config.h ; \
 		$(XECHO) "... legacy" ; \
 	fi
-	@$(MKCONFIG) -a MPC8548CDS ppc mpc85xx mpc8548cds freescale
+	@$(MKCONFIG) -a MPC8548CDS powerpc mpc85xx mpc8548cds freescale
 
 MPC8555CDS_legacy_config \
 MPC8555CDS_config:	unconfig
@@ -2498,21 +2479,23 @@ MPC8555CDS_config:	unconfig
 		echo "#define CONFIG_LEGACY" >>$(obj)include/config.h ; \
 		$(XECHO) "... legacy" ; \
 	fi
-	@$(MKCONFIG) -a MPC8555CDS ppc mpc85xx mpc8555cds freescale
+	@$(MKCONFIG) -a MPC8555CDS powerpc mpc85xx mpc8555cds freescale
 
 MPC8568MDS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx mpc8568mds freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx mpc8568mds freescale
 
+MPC8569MDS_ATM_config \
+MPC8569MDS_NAND_config \
 MPC8569MDS_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx mpc8569mds freescale
+	@$(MKCONFIG) -t $(@:_config=) MPC8569MDS powerpc mpc85xx mpc8569mds freescale
 
 MPC8572DS_36BIT_config \
 MPC8572DS_config:       unconfig
-	@$(MKCONFIG) -t $(@:_config=) MPC8572DS ppc mpc85xx mpc8572ds freescale
+	@$(MKCONFIG) -t $(@:_config=) MPC8572DS powerpc mpc85xx mpc8572ds freescale
 
 P2020DS_36BIT_config \
 P2020DS_config:		unconfig
-	@$(MKCONFIG) -t $(@:_config=) P2020DS ppc mpc85xx p2020ds freescale
+	@$(MKCONFIG) -t $(@:_config=) P2020DS powerpc mpc85xx p2020ds freescale
 
 P1011RDB_config	\
 P1011RDB_NAND_config \
@@ -2530,36 +2513,36 @@ P2020RDB_config \
 P2020RDB_NAND_config \
 P2020RDB_SDCARD_config \
 P2020RDB_SPIFLASH_config:	unconfig
-	@$(MKCONFIG) -t $(@:_config=) P1_P2_RDB ppc mpc85xx p1_p2_rdb freescale
+	@$(MKCONFIG) -t $(@:_config=) P1_P2_RDB powerpc mpc85xx p1_p2_rdb freescale
 
 PM854_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx pm854
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx pm854
 
 PM856_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx pm856
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx pm856
 
 sbc8540_config \
 sbc8540_33_config \
 sbc8540_66_config:	unconfig
-	@$(MKCONFIG) -t $(@:_config=) SBC8540 ppc mpc85xx sbc8560
+	@$(MKCONFIG) -t $(@:_config=) SBC8540 powerpc mpc85xx sbc8560
 
 sbc8548_config \
 sbc8548_PCI_33_config \
 sbc8548_PCI_66_config \
 sbc8548_PCI_33_PCIE_config \
 sbc8548_PCI_66_PCIE_config: unconfig
-	@$(MKCONFIG) -t $(@:_config=) sbc8548 ppc mpc85xx sbc8548
+	@$(MKCONFIG) -t $(@:_config=) sbc8548 powerpc mpc85xx sbc8548
 
 sbc8560_config \
 sbc8560_33_config \
 sbc8560_66_config:	unconfig
-	@$(MKCONFIG) -t $(@:_config=) sbc8560 ppc mpc85xx sbc8560
+	@$(MKCONFIG) -t $(@:_config=) sbc8560 powerpc mpc85xx sbc8560
 
 socrates_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx socrates
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx socrates
 
 stxgp3_config:		unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx stxgp3 stx
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx stxgp3 stx
 
 stxssa_config		\
 stxssa_4M_config:	unconfig
@@ -2568,7 +2551,7 @@ stxssa_4M_config:	unconfig
 		echo "#define CONFIG_STXSSA_4M" >>$(obj)include/config.h ; \
 		$(XECHO) "... with 4 MiB flash memory" ; \
 	fi
-	@$(MKCONFIG) -a stxssa ppc mpc85xx stxssa stx
+	@$(MKCONFIG) -a stxssa powerpc mpc85xx stxssa stx
 
 TQM8540_config		\
 TQM8541_config		\
@@ -2585,21 +2568,21 @@ TQM8560_config:		unconfig
 	echo "#define CONFIG_$${BTYPE}">>$(obj)include/config.h; \
 	echo "#define CONFIG_HOSTNAME tqm$${CTYPE}">>$(obj)include/config.h; \
 	echo "#define CONFIG_BOARDNAME \"$${BTYPE}\"">>$(obj)include/config.h;
-	@$(MKCONFIG) -a TQM85xx ppc mpc85xx tqm85xx tqc
+	@$(MKCONFIG) -a TQM85xx powerpc mpc85xx tqm85xx tqc
 	@echo "CONFIG_$(@:_config=) = y">>$(obj)include/config.mk;
 
 XPEDITE5200_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx xpedite5200 xes
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx xpedite5200 xes
 
 XPEDITE5370_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc85xx xpedite5370 xes
+	@$(MKCONFIG) $(@:_config=) powerpc mpc85xx xpedite5370 xes
 
 #########################################################################
 ## MPC86xx Systems
 #########################################################################
 
 MPC8610HPCD_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc86xx mpc8610hpcd freescale
+	@$(MKCONFIG) $(@:_config=) powerpc mpc86xx mpc8610hpcd freescale
 
 MPC8641HPCN_36BIT_config \
 MPC8641HPCN_config:    unconfig
@@ -2608,45 +2591,45 @@ MPC8641HPCN_config:    unconfig
 		echo "#define CONFIG_PHYS_64BIT" >>$(obj)include/config.h ; \
 		$(XECHO) "... enabling 36-bit physical addressing." ; \
 	fi
-	@$(MKCONFIG) -a MPC8641HPCN ppc mpc86xx mpc8641hpcn freescale
+	@$(MKCONFIG) -a MPC8641HPCN powerpc mpc86xx mpc8641hpcn freescale
 
 sbc8641d_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc86xx sbc8641d
+	@$(MKCONFIG) $(@:_config=) powerpc mpc86xx sbc8641d
 
 XPEDITE5170_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc mpc86xx xpedite5170 xes
+	@$(MKCONFIG) $(@:_config=) powerpc mpc86xx xpedite5170 xes
 
 #########################################################################
 ## 74xx/7xx Systems
 #########################################################################
 
 AmigaOneG3SE_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx AmigaOneG3SE MAI
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx AmigaOneG3SE MAI
 
 BAB7xx_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx bab7xx eltec
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx bab7xx eltec
 
 CPCI750_config:	unconfig
-	@$(MKCONFIG) CPCI750 ppc 74xx_7xx cpci750 esd
+	@$(MKCONFIG) CPCI750 powerpc 74xx_7xx cpci750 esd
 
 DB64360_config:	unconfig
-	@$(MKCONFIG) DB64360 ppc 74xx_7xx db64360 Marvell
+	@$(MKCONFIG) DB64360 powerpc 74xx_7xx db64360 Marvell
 
 DB64460_config:	unconfig
-	@$(MKCONFIG) DB64460 ppc 74xx_7xx db64460 Marvell
+	@$(MKCONFIG) DB64460 powerpc 74xx_7xx db64460 Marvell
 
 ELPPC_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx elppc eltec
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx elppc eltec
 
 EVB64260_config	\
 EVB64260_750CX_config:	unconfig
-	@$(MKCONFIG) EVB64260 ppc 74xx_7xx evb64260
+	@$(MKCONFIG) EVB64260 powerpc 74xx_7xx evb64260
 
 mpc7448hpc2_config:  unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx mpc7448hpc2 freescale
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx mpc7448hpc2 freescale
 
 P3G4_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx evb64260
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx evb64260
 
 p3m750_config	\
 p3m7448_config:		unconfig
@@ -2656,17 +2639,17 @@ p3m7448_config:		unconfig
 	else \
 		echo "#define CONFIG_P3M7448" >>$(obj)include/config.h ; \
 	fi
-	@$(MKCONFIG) -a p3mx ppc 74xx_7xx p3mx prodrive
+	@$(MKCONFIG) -a p3mx powerpc 74xx_7xx p3mx prodrive
 
 PCIPPC2_config \
 PCIPPC6_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx pcippc2
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx pcippc2
 
 ppmc7xx_config: unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx ppmc7xx
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx ppmc7xx
 
 ZUMA_config:	unconfig
-	@$(MKCONFIG) $(@:_config=) ppc 74xx_7xx evb64260
+	@$(MKCONFIG) $(@:_config=) powerpc 74xx_7xx evb64260
 
 #========================================================================
 # ARM
@@ -2694,6 +2677,9 @@ shannon_config	:	unconfig
 ## ARM92xT Systems
 #########################################################################
 
+a320evb_config	:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm920t a320evb faraday a320
+
 #########################################################################
 ## Atmel AT91RM9200 Systems
 #########################################################################
@@ -2716,6 +2702,9 @@ CPUAT91_config	:	unconfig
 csb637_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm920t csb637 NULL at91rm9200
 
+eb_cpux9k2_config	:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm920t eb_cpux9k2 BuS at91
+
 kb9202_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm920t kb9202 NULL at91rm9200
 
@@ -2726,7 +2715,7 @@ mp2usb_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm920t mp2usb NULL at91rm9200
 
 #########################################################################
-## Atmel ARM926EJ-S Systems
+## ARM926EJ-S Systems
 #########################################################################
 
 afeb9260_config:	unconfig
@@ -2882,8 +2871,15 @@ at91sam9g45ekes_config	:	unconfig
 	fi;
 	@$(MKCONFIG) -a at91sam9m10g45ek arm arm926ejs at91sam9m10g45ek atmel at91
 
+otc570_config	:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs otc570 esd at91
+
 pm9263_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm926ejs pm9263 ronetix at91
+
+pm9g45_config	:	unconfig
+	@mkdir -p $(obj)include
+	@$(MKCONFIG) -a pm9g45 arm arm926ejs pm9g45 ronetix at91
 
 SBC35_A9G20_NANDFLASH_config \
 SBC35_A9G20_EEPROM_config \
@@ -2928,6 +2924,10 @@ cp922_XA10_config	\
 cp1026_config: unconfig
 	@board/armltd/integrator/split_by_variant.sh cp $@
 
+da830evm_config		\
+da850evm_config:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs da8xxevm davinci davinci
+
 davinci_dvevm_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm926ejs dvevm davinci davinci
 
@@ -2952,6 +2952,13 @@ davinci_dm365evm_config :	unconfig
 davinci_dm6467evm_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm926ejs dm6467evm davinci davinci
 
+edminiv2_config: unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs $(@:_config=) LaCie orion5x
+
+guruplug_config: unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs $(@:_config=) Marvell kirkwood
+
+magnesium_config	\
 imx27lite_config:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm926ejs imx27lite logicpd mx27
 
@@ -3048,6 +3055,17 @@ smdk2400_config	:	unconfig
 smdk2410_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm920t smdk2410 samsung s3c24x0
 
+spear300_config \
+spear310_config \
+spear320_config :	unconfig
+	@$(MKCONFIG) -n $@ -t $(@:_config=) spear3xx arm arm926ejs $(@:_config=) spear spear
+
+spear600_config :	unconfig
+	@$(MKCONFIG) -n $@ -t $(@:_config=) spear6xx arm arm926ejs $(@:_config=) spear spear
+
+suen3_config:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs km_arm keymile kirkwood
+
 SX1_stdout_serial_config \
 SX1_config:		unconfig
 	@mkdir -p $(obj)include
@@ -3087,6 +3105,10 @@ trab_old_config:	unconfig
 		  echo "TEXT_BASE = 0x0CF40000" >$(obj)board/trab/config.tmp ; \
 		}
 	@$(MKCONFIG) -a $(call xtract_trab,$@) arm arm920t trab NULL s3c24x0
+
+tx25_config	: unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm926ejs tx25 karo mx25
+	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
 
 VCMA9_config	:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm920t vcma9 mpl s3c24x0
@@ -3145,6 +3167,12 @@ SMN42_config	:	unconfig
 ## ARM CORTEX Systems
 #########################################################################
 
+am3517_evm_config :	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 am3517evm logicpd omap3
+
+rhino_config :	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 rhino uct omap3
+
 devkit8000_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 devkit8000 timll omap3
 
@@ -3156,12 +3184,6 @@ omap3_overo_config :	unconfig
 
 omap3_evm_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 evm ti omap3
-
-am3517_evm_config :	unconfig
-	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 am3517evm ti omap3
-
-rhino_config :	unconfig
-	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 rhino uct omap3
 
 omap3_pandora_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 pandora NULL omap3
@@ -3175,8 +3197,109 @@ omap3_zoom1_config :	unconfig
 omap3_zoom2_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 zoom2 logicpd omap3
 
+s5p_goni_config:	unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 goni samsung s5pc1xx
+
 smdkc100_config:	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 smdkc100 samsung s5pc1xx
+
+ti8148_evm_config	\
+ti8148_evm_config_nand	\
+ti8148_evm_config_spi	\
+ti8148_evm_min_spi	\
+ti8148_evm_min_uart	\
+ti8148_evm_min_nand	\
+ti8148_evm_min_sd:	unconfig
+	@mkdir -p $(obj)include
+	@echo "#define CONFIG_TI81XX"	>>$(obj)include/config.h
+	@echo "#define CONFIG_TI814X"	>>$(obj)include/config.h
+	@if [ "$(findstring _min_,$@)" ] ; then \
+		echo "#define CONFIG_TI814X_STACK 0x3000" >>$(obj)include/config.h;\
+		echo "TEXT_BASE = 0x80700000" >> $(obj)board/ti/ti8148/config.tmp; \
+		echo "#define CONFIG_TI814X_MIN_CONFIG"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_NO_ETH"    >>$(obj)include/config.h ; \
+		echo "Setting up TI8148 minimal build for 1st stage..." ; \
+		if [ "$(findstring nand,$@)" ] ; then \
+			echo "#define CONFIG_NAND_BOOT"	>>$(obj)include/config.h ; \
+			echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+			echo "TI_IMAGE = u-boot.min.nand" >> $(obj)board/ti/ti8148/config.tmp;\
+		elif [ "$(findstring spi,$@)" ] ; then \
+			echo "#define CONFIG_SPI_BOOT" >>$(obj)include/config.h;\
+			echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+			echo "#define CONFIG_TI81XX_SPI_BOOT"	>>$(obj)include/config.h ; \
+			echo "TI_IMAGE = u-boot.min.spi.tmp" >> $(obj)board/ti/ti8148/config.tmp;\
+		elif [ "$(findstring uart,$@)" ] ; then \
+			echo "#define CONFIG_NAND_BOOT"	>>$(obj)include/config.h ; \
+			echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+			echo "#define CONFIG_TI814X_PERIPHERAL_BOOT"	>>$(obj)include/config.h; \
+			echo "TI_IMAGE = u-boot.min.uart" >> $(obj)board/ti/ti8148/config.tmp;\
+		elif [ "$(findstring sd,$@)" ] ; then \
+			echo "#define CONFIG_SD_BOOT"    >>$(obj)include/config.h ; \
+			echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+			echo "TI_IMAGE = u-boot.min.sd" >> $(obj)board/ti/ti8148/config.tmp;\
+		else	\
+			echo "#define CONFIG_NAND_BOOT"	>>$(obj)include/config.h ; \
+			echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+			echo "TI_IMAGE = u-boot.min.nand" >> $(obj)board/ti/ti8148/config.tmp;\
+		fi;	\
+	else	\
+		echo "TEXT_BASE = 0x80700000" >> $(obj)board/ti/ti8148/config.tmp;\
+		echo "TI_IMAGE = DUMMY" >> $(obj)board/ti/ti8148/config.tmp;\
+		echo "#define CONFIG_TI_DUMMY_HEADER"	>>$(obj)include/config.h; \
+		if [ "$(findstring _nand,$@)" ] ; then \
+			echo "#define CONFIG_SYS_NO_FLASH" >> $(obj)include/config.h ; \
+			echo "#define CONFIG_NAND_ENV"    >>$(obj)include/config.h ; \
+			echo "Setting up TI8148 default build with ENV in NAND..." ; \
+		elif [ "$(findstring spi,$@)" ] ; then \
+			echo "#define CONFIG_SYS_NO_FLASH" >> $(obj)include/config.h ; \
+			echo "#define CONFIG_SPI_ENV"    >>$(obj)include/config.h ; \
+			echo "Setting up TI8148 default build with ENV in SPI..." ; \
+		else	\
+			echo "#define CONFIG_SYS_NO_FLASH" >> $(obj)include/config.h ; \
+			echo "#define CONFIG_NAND_ENV"    >>$(obj)include/config.h ; \
+			echo "Setting up TI8148 default build with ENV in NAND..." ; \
+		fi; \
+	fi;
+	@$(MKCONFIG) -a ti8148_evm arm arm_cortexa8 ti8148 ti ti81xx
+
+ti8168_evm_config	\
+ti8168_evm_config_nand	\
+ti8168_evm_config_nor	\
+ti8168_evm_config_spi	\
+ti8168_evm_min_ocmc	\
+ti8168_evm_min_sd:	unconfig
+	@mkdir -p $(obj)include
+	@echo "#define CONFIG_TI81XX"	>>$(obj)include/config.h
+	@echo "#define CONFIG_TI816X"	>>$(obj)include/config.h
+	@if [ "$(findstring _nand,$@)" ] ; then \
+		echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_NAND_ENV"    >>$(obj)include/config.h ; \
+		echo "Setting up TI8168 NAND build with ENV in NAND..." ; \
+	elif [ "$(findstring _nor,$@)" ] ; then \
+		echo "#define CONFIG_NOR"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_NOR_BOOT"	>>$(obj)include/config.h ; \
+		echo "Setting up TI8168 NOR build with ENV in NOR..." ; \
+	elif [ "$(findstring _spi,$@)" ] ; then \
+		echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_SPI_ENV"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_TI81XX_SPI_BOOT"	>>$(obj)include/config.h ; \
+		echo "Setting up TI8168 SPI build with ENV in SPI..." ; \
+	elif [ "$(findstring _sd,$@)" ] ; then \
+		echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_SD_BOOT"    >>$(obj)include/config.h ; \
+		echo "TI_IMAGE = u-boot.min.sd" >>$(obj)board/ti/ti8168/config.tmp; \
+		echo "Setting up TI8168 SD boot minimal build..." ; \
+	elif [ "$(findstring _ocmc,$@)" ] ; then \
+		echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_MINIMAL"    >>$(obj)include/config.h ; \
+		echo "TEXT_BASE = 0x40410000" >>$(obj)board/ti/ti8168/config.tmp; \
+		echo "Setting up TI8168 minimal build..." ; \
+	else	\
+		echo "#define CONFIG_SYS_NO_FLASH"    >>$(obj)include/config.h ; \
+		echo "#define CONFIG_NAND_ENV"    >>$(obj)include/config.h ; \
+		echo "Setting up TI8168 default build with NAND..." ; \
+	fi;
+	@$(MKCONFIG) -a ti8168_evm arm arm_cortexa8 ti8168 ti ti81xx
 
 #########################################################################
 ## XScale Systems
@@ -3294,6 +3417,9 @@ mx31pdk_nand_config	: unconfig
 	fi
 	@$(MKCONFIG) -a mx31pdk arm arm1136 mx31pdk freescale mx31
 
+mx51evk_config	: unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 mx51evk freescale mx51
+
 omap2420h4_config	: unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm1136 omap2420h4 ti omap24xx
 
@@ -3316,6 +3442,9 @@ smdk6400_config	:	unconfig
 		$(MKCONFIG) $(@:_noUSB_config=) arm arm1176 smdk6400 samsung s3c64xx;	\
 	fi
 	@echo "CONFIG_NAND_U_BOOT = y" >> $(obj)include/config.mk
+
+tnetv107x_evm_config: unconfig
+	@$(MKCONFIG) $(@:_config=) arm arm1176 tnetv107xevm ti tnetv107x
 
 #========================================================================
 # i386
@@ -3455,68 +3584,6 @@ purple_config :		unconfig
 #========================================================================
 # Nios
 #========================================================================
-#########################################################################
-## Nios32
-#########################################################################
-
-ADNPESC1_DNPEVA2_base_32_config	\
-ADNPESC1_base_32_config		\
-ADNPESC1_config: unconfig
-	@mkdir -p $(obj)include
-	@[ -z "$(findstring _DNPEVA2,$@)" ] || \
-		{ echo "#define CONFIG_DNPEVA2 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... DNP/EVA2 configuration" ; \
-		}
-	@[ -z "$(findstring _base_32,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_BASE_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'base_32' configuration" ; \
-		}
-	@[ -z "$(findstring ADNPESC1_config,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_BASE_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'base_32' configuration (DEFAULT)" ; \
-		}
-	@$(MKCONFIG) -a ADNPESC1 nios nios adnpesc1 ssv
-
-DK1C20_safe_32_config		\
-DK1C20_standard_32_config	\
-DK1C20_config:	unconfig
-	@mkdir -p $(obj)include
-	@[ -z "$(findstring _safe_32,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_SAFE_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'safe_32' configuration" ; \
-		}
-	@[ -z "$(findstring _standard_32,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_STANDARD_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'standard_32' configuration" ; \
-		}
-	@[ -z "$(findstring DK1C20_config,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_STANDARD_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'standard_32' configuration (DEFAULT)" ; \
-		}
-	@$(MKCONFIG) -a DK1C20 nios nios dk1c20 altera
-
-DK1S10_safe_32_config		\
-DK1S10_standard_32_config	\
-DK1S10_mtx_ldk_20_config	\
-DK1S10_config:	unconfig
-	@mkdir -p $(obj)include
-	@[ -z "$(findstring _safe_32,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_SAFE_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'safe_32' configuration" ; \
-		}
-	@[ -z "$(findstring _standard_32,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_STANDARD_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'standard_32' configuration" ; \
-		}
-	@[ -z "$(findstring _mtx_ldk_20,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_MTX_LDK_20 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'mtx_ldk_20' configuration" ; \
-		}
-	@[ -z "$(findstring DK1S10_config,$@)" ] || \
-		{ echo "#define CONFIG_NIOS_STANDARD_32 1" >>$(obj)include/config.h ; \
-		  $(XECHO) "... NIOS 'standard_32' configuration (DEFAULT)" ; \
-		}
-	@$(MKCONFIG) -a DK1S10 nios nios dk1s10 altera
 
 #########################################################################
 ## Nios-II
@@ -3537,6 +3604,12 @@ PK1C20_config : unconfig
 PCI5441_config : unconfig
 	@$(MKCONFIG)  PCI5441 nios2 nios2 pci5441 psyent
 
+# nios2 generic boards
+NIOS2_GENERIC = nios2-generic
+
+$(NIOS2_GENERIC:%=%_config) : unconfig
+	@$(MKCONFIG) $(@:_config=) nios2 nios2 nios2-generic altera
+
 #========================================================================
 ## Microblaze
 #========================================================================
@@ -3554,16 +3627,21 @@ BFIN_BOARDS = bf518f-ezbrd bf526-ezbrd bf527-ezkit bf533-ezkit bf533-stamp \
 	bf537-pnav bf537-stamp bf538f-ezkit bf548-ezkit bf561-ezkit
 
 # Bluetechnix tinyboards
-BFIN_BOARDS += cm-bf527 cm-bf533 cm-bf537e cm-bf537u cm-bf548 cm-bf561 tcm-bf537
+BFIN_BOARDS += cm-bf527 cm-bf533 cm-bf537e cm-bf537u cm-bf548 cm-bf561 \
+	tcm-bf518 tcm-bf537
 
 # Misc third party boards
-BFIN_BOARDS += bf537-minotaur bf537-srv1 blackstamp
+BFIN_BOARDS += bf537-minotaur bf537-srv1 bf561-acvilon blackstamp ip04
 
 # I-SYST Micromodule
 BFIN_BOARDS += ibf-dsp561
 
 $(BFIN_BOARDS:%=%_config)	: unconfig
 	@$(MKCONFIG) $(@:_config=) blackfin blackfin $(@:_config=)
+
+bf527-ezkit-v2_config	: unconfig
+	@$(MKCONFIG) -t BF527_EZKIT_REV_2_1 \
+		bf527-ezkit blackfin blackfin bf527-ezkit
 
 #========================================================================
 # AVR32
@@ -3737,9 +3815,9 @@ clean:
 	       $(obj)board/netstar/{eeprom,crcek,crcit,*.srec,*.bin}	  \
 	       $(obj)board/trab/trab_fkt   $(obj)board/voiceblue/eeprom   \
 	       $(obj)board/armltd/{integratorap,integratorcp}/u-boot.lds  \
-	       $(obj)lib_blackfin/u-boot.lds				  \
+	       $(obj)arch/blackfin/lib/u-boot.lds				  \
 	       $(obj)u-boot.lds						  \
-	       $(obj)cpu/blackfin/bootrom-asm-offsets.[chs]
+	       $(obj)arch/blackfin/cpu/bootrom-asm-offsets.[chs]
 	@rm -f $(obj)include/bmp_logo.h
 	@rm -f $(obj)nand_spl/{u-boot.lds,u-boot-spl,u-boot-spl.map,System.map}
 	@rm -f $(obj)onenand_ipl/onenand-{ipl,ipl.bin,ipl.map}
@@ -3760,8 +3838,10 @@ clobber:	clean
 		$(obj)cscope.* $(obj)*.*~
 	@rm -f $(obj)u-boot $(obj)u-boot.map $(obj)u-boot.hex $(ALL)
 	@rm -f $(obj)u-boot.kwb
+	@rm -f $(obj)u-boot.imx
+	@rm -f $(obj)$(TI_IMAGE)
 	@rm -f $(obj)tools/{env/crc32.c,inca-swap-bytes}
-	@rm -f $(obj)cpu/mpc824x/bedbug_603e.c
+	@rm -f $(obj)arch/powerpc/cpu/mpc824x/bedbug_603e.c
 	@rm -f $(obj)include/asm/proc $(obj)include/asm/arch $(obj)include/asm
 	@[ ! -d $(obj)nand_spl ] || find $(obj)nand_spl -name "*" -type l -print | xargs rm -f
 	@[ ! -d $(obj)onenand_ipl ] || find $(obj)onenand_ipl -name "*" -type l -print | xargs rm -f
@@ -3777,6 +3857,6 @@ endif
 
 backup:
 	F=`basename $(TOPDIR)` ; cd .. ; \
-	gtar --force-local -zcvf `date "+$$F-%Y-%m-%d-%T.tar.gz"` $$F
+	gtar --force-local -zcvf `LC_ALL=C date "+$$F-%Y-%m-%d-%T.tar.gz"` $$F
 
 #########################################################################

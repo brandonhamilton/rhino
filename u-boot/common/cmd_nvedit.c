@@ -42,6 +42,7 @@
 #include <common.h>
 #include <command.h>
 #include <environment.h>
+#include <asm/arch/emac_defs.h>
 #if defined(CONFIG_CMD_EDITENV)
 #include <malloc.h>
 #endif
@@ -262,6 +263,7 @@ int _do_setenv (int flag, int argc, char *argv[])
 			return 1;
 		}
 #endif
+
 
 		/*
 		 * Switch to new baudrate if new baudrate is supported

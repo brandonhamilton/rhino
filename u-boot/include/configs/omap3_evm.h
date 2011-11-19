@@ -44,7 +44,7 @@
 #define CONFIG_OMAP3430		1	/* which is in a 3430 */
 #define CONFIG_OMAP3_EVM	1	/* working with EVM */
 
-#define CONFIG_SDRC		1	/* The chip has SDRC controller */
+#define CONFIG_SDRC	/* The chip has SDRC controller */
 
 #include <asm/arch/cpu.h>	/* get chip and board defs */
 #include <asm/arch/omap3.h>
@@ -105,6 +105,9 @@
 #define CONFIG_OMAP3_MMC		1
 #define CONFIG_DOS_PARTITION		1
 
+/* DDR - I use Micron DDR */
+#define CONFIG_OMAP3_MICRON_DDR		1
+
 /* USB
  * Enable CONFIG_MUSB_HCD for Host functionalities MSC, keyboard
  * Enable CONFIG_MUSB_UDD for Device functionalities.
@@ -152,7 +155,6 @@
 
 #define CONFIG_CMD_I2C		/* I2C serial bus support	*/
 #define CONFIG_CMD_MMC		/* MMC support			*/
-#undef CONFIG_CMD_ONENAND	/* ONENAND support		*/
 #define CONFIG_CMD_NAND		/* NAND support			*/
 #define CONFIG_CMD_DHCP
 #define CONFIG_CMD_PING
@@ -186,8 +188,6 @@
 
 #define CONFIG_SYS_MAX_NAND_DEVICE	1		/* Max number of */
 							/* NAND devices */
-#define CONFIG_SYS_64BIT_VSPRINTF		/* needed for nand_util.c */
-
 #define CONFIG_JFFS2_NAND
 /* nand device jffs2 lives on */
 #define CONFIG_JFFS2_DEV		"nand0"
@@ -203,7 +203,7 @@
 #define CONFIG_EXTRA_ENV_SETTINGS \
 	"loadaddr=0x82000000\0" \
 	"usbtty=cdc_acm\0" \
-	"console=ttyS2,115200n8\0" \
+	"console=ttyO0,115200n8\0" \
 	"mmcargs=setenv bootargs console=${console} " \
 		"root=/dev/mmcblk0p2 rw " \
 		"rootfstype=ext3 rootwait\0" \
@@ -238,12 +238,10 @@
 /*
  * Miscellaneous configurable options
  */
-#define V_PROMPT		"OMAP3_EVM # "
-
 #define CONFIG_SYS_LONGHELP		/* undef to save memory */
 #define CONFIG_SYS_HUSH_PARSER		/* use "hush" command parser */
 #define CONFIG_SYS_PROMPT_HUSH_PS2	"> "
-#define CONFIG_SYS_PROMPT		V_PROMPT
+#define CONFIG_SYS_PROMPT		"OMAP3_EVM # "
 #define CONFIG_SYS_CBSIZE		512	/* Console I/O Buffer Size */
 /* Print Buffer Size */
 #define CONFIG_SYS_PBSIZE		(CONFIG_SYS_CBSIZE + \
@@ -315,7 +313,7 @@
 #if defined(CONFIG_CMD_NAND)
 #define CONFIG_NAND_OMAP_GPMC
 #define GPMC_NAND_ECC_LP_x16_LAYOUT	1
-#define CONFIG_ENV_IS_IN_NAND		1
+#define CONFIG_ENV_IS_IN_NAND
 #elif defined(CONFIG_CMD_ONENAND)
 #define CONFIG_ENV_IS_IN_ONENAND	1
 #endif
@@ -341,6 +339,14 @@
 #define CONFIG_SYS_JFFS2_FIRST_BANK	CONFIG_SYS_MAX_FLASH_BANKS
 #define CONFIG_SYS_JFFS2_NUM_BANKS	1
 
+#ifndef __ASSEMBLY__
+extern unsigned int boot_flash_base;
+extern volatile unsigned int boot_flash_env_addr;
+extern unsigned int boot_flash_off;
+extern unsigned int boot_flash_sec;
+extern unsigned int boot_flash_type;
+#endif
+
 /*----------------------------------------------------------------------------
  * SMSC9115 Ethernet from SMSC9118 family
  *----------------------------------------------------------------------------
@@ -362,10 +368,5 @@
 #define CONFIG_BOOTP_GATEWAY		0x00000002
 #define CONFIG_BOOTP_HOSTNAME		0x00000004
 #define CONFIG_BOOTP_BOOTPATH		0x00000010
-
-/*
- * Include flash related variables
- */
-#include <asm/arch/omap3_flash.h>
 
 #endif /* __CONFIG_H */

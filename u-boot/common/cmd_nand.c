@@ -9,18 +9,7 @@
  */
 
 #include <common.h>
-
-
-/*
- *
- * New NAND support
- *
- */
-#include <common.h>
 #include <linux/mtd/mtd.h>
-
-#if defined(CONFIG_CMD_NAND)
-
 #include <command.h>
 #include <watchdog.h>
 #include <malloc.h>
@@ -30,7 +19,7 @@
 
 #if defined(CONFIG_CMD_MTDPARTS)
 
-/* parition handling routines */
+/* partition handling routines */
 int mtdparts_init(void);
 int id_parse(const char *id, const char **ret_id, u8 *dev_type, u8 *dev_num);
 int find_dev_and_part(const char *id, struct mtd_device **dev,
@@ -338,8 +327,14 @@ int do_nand(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 			     "are sure of what you are doing!\n"
 			     "\nReally scrub this NAND flash? <y/N>\n");
 
-			if (getc() == 'y' && getc() == '\r') {
-				opts.scrub = 1;
+			if (getc() == 'y') {
+				puts("y");
+				if (getc() == '\r')
+					opts.scrub = 1;
+				else {
+					puts("scrub aborted\n");
+					return -1;
+				}
 			} else {
 				puts("scrub aborted\n");
 				return -1;
@@ -686,4 +681,3 @@ U_BOOT_CMD(nboot, 4, 1, do_nandboot,
 	"boot from NAND device",
 	"[partition] | [[[loadAddr] dev] offset]"
 );
-#endif

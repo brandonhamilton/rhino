@@ -99,9 +99,8 @@
 #define CONFIG_CMD_AUTOSCRIPT
 #define CONFIG_CMD_DHCP
 #define CONFIG_CMD_ENV
-#define CONFIG_CMD_FAT
-#define CONFIG_CMD_NAND
 #define CONFIG_CMD_MII
+#define CONFIG_CMD_NAND
 #define CONFIG_CMD_PING
 #define CONFIG_CMD_USB
 
@@ -114,7 +113,6 @@
 #define NAND_MAX_CHIPS			1
 #define CONFIG_SYS_NAND_BASE		0xD8000000	/* KW_DEFADR_NANDF */
 #define NAND_ALLOW_ERASE_ALL		1
-#define CONFIG_SYS_64BIT_VSPRINTF	/* needed for nand_util.c */
 #endif
 
 /*
@@ -209,6 +207,7 @@
 /*
  * File system
  */
+#define CONFIG_CMD_FAT
 #define CONFIG_CMD_UBI
 #define CONFIG_CMD_UBIFS
 #define CONFIG_RBTREE
