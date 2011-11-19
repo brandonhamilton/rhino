@@ -28,7 +28,25 @@
 /*
  * OMAP HSMMC register definitions
  */
-#if !defined (CONFIG_AM3517RHINO) 
+#if !defined (CONFIG_RHINO) 
+    #define OMAP_HSMMC_SYSCONFIG    (*(volatile unsigned int *) 0x4809C010)
+    #define OMAP_HSMMC_SYSSTATUS    (*(volatile unsigned int *) 0x4809C014)
+    #define OMAP_HSMMC_CON          (*(volatile unsigned int *) 0x4809C02C)
+    #define OMAP_HSMMC_BLK          (*(volatile unsigned int *) 0x4809C104)
+    #define OMAP_HSMMC_ARG          (*(volatile unsigned int *) 0x4809C108)
+    #define OMAP_HSMMC_CMD          (*(volatile unsigned int *) 0x4809C10C)
+    #define OMAP_HSMMC_RSP10        (*(volatile unsigned int *) 0x4809C110)
+    #define OMAP_HSMMC_RSP32        (*(volatile unsigned int *) 0x4809C114)
+    #define OMAP_HSMMC_RSP54        (*(volatile unsigned int *) 0x4809C118)
+    #define OMAP_HSMMC_RSP76        (*(volatile unsigned int *) 0x4809C11C)
+    #define OMAP_HSMMC_DATA         (*(volatile unsigned int *) 0x4809C120)
+    #define OMAP_HSMMC_PSTATE       (*(volatile unsigned int *) 0x4809C124)
+    #define OMAP_HSMMC_HCTL         (*(volatile unsigned int *) 0x4809C128)
+    #define OMAP_HSMMC_SYSCTL       (*(volatile unsigned int *) 0x4809C12C)
+    #define OMAP_HSMMC_STAT         (*(volatile unsigned int *) 0x4809C130)
+    #define OMAP_HSMMC_IE           (*(volatile unsigned int *) 0x4809C134)
+    #define OMAP_HSMMC_CAPA         (*(volatile unsigned int *) 0x4809C140)
+#else /* RHINO uses MMC2, and not MMC1 */
     #define OMAP_HSMMC_SYSCONFIG	(*(volatile unsigned int *) 0x4809C010)
     #define OMAP_HSMMC_SYSSTATUS	(*(volatile unsigned int *) 0x4809C014)
     #define OMAP_HSMMC_CON			(*(volatile unsigned int *) 0x4809C02C)
@@ -46,29 +64,11 @@
     #define OMAP_HSMMC_STAT			(*(volatile unsigned int *) 0x4809C130)
     #define OMAP_HSMMC_IE			(*(volatile unsigned int *) 0x4809C134)
     #define OMAP_HSMMC_CAPA			(*(volatile unsigned int *) 0x4809C140)
-#else /* AM3517RHINO uses MMC2, and not MMC1 */
-    #define OMAP_HSMMC_SYSCONFIG    (*(volatile unsigned int *) 0x480B4010)
-    #define OMAP_HSMMC_SYSSTATUS    (*(volatile unsigned int *) 0x480B4014)
-    #define OMAP_HSMMC_CON          (*(volatile unsigned int *) 0x480B402C)
-    #define OMAP_HSMMC_BLK          (*(volatile unsigned int *) 0x480B4104)
-    #define OMAP_HSMMC_ARG          (*(volatile unsigned int *) 0x480B4108)
-    #define OMAP_HSMMC_CMD          (*(volatile unsigned int *) 0x480B410C)
-    #define OMAP_HSMMC_RSP10        (*(volatile unsigned int *) 0x480B4110)
-    #define OMAP_HSMMC_RSP32        (*(volatile unsigned int *) 0x480B4114)
-    #define OMAP_HSMMC_RSP54        (*(volatile unsigned int *) 0x480B4118)
-    #define OMAP_HSMMC_RSP76        (*(volatile unsigned int *) 0x480B411C)
-    #define OMAP_HSMMC_DATA         (*(volatile unsigned int *) 0x480B4120)
-    #define OMAP_HSMMC_PSTATE       (*(volatile unsigned int *) 0x480B4124)
-    #define OMAP_HSMMC_HCTL         (*(volatile unsigned int *) 0x480B4128)
-    #define OMAP_HSMMC_SYSCTL       (*(volatile unsigned int *) 0x480B412C)
-    #define OMAP_HSMMC_STAT         (*(volatile unsigned int *) 0x480B4130)
-    #define OMAP_HSMMC_IE           (*(volatile unsigned int *) 0x480B4134)
-    #define OMAP_HSMMC_CAPA         (*(volatile unsigned int *) 0x480B4140)
 #endif
 
 /* T2 Register definitions */
 #define CONTROL_DEV_CONF0		(*(volatile unsigned int *) 0x48002274)
-#define CONTROL_DEV_CONF1		(*(volatile unsigned int *) 0x480022D8)
+#define CONTROL_DEV_CONF1       (*(volatile unsigned int *) 0x480022D8)
 #define CONTROL_PBIAS_LITE		(*(volatile unsigned int *) 0x48002520)
 
 /*

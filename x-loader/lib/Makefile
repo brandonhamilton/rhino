@@ -29,7 +29,7 @@ LIB	= lib$(ARCH).a
 
 AOBJS	= _udivsi3.o _umodsi3.o
 
-COBJS	= board.o ecc.o printf.o div0.o 
+COBJS	= board.o ecc.o omap_bch_decoder.o omap_bch.o printf.o div0.o 
 
 OBJS	= $(AOBJS) $(COBJS)
 

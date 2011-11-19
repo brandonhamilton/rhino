@@ -32,6 +32,7 @@
 
 #include <common.h>
 #include <asm/arch/mem.h>
+#include <asm/arch/sys_proto.h>
 
 extern int misc_init_r (void);
 extern u32 get_mem_type(void);
@@ -39,7 +40,7 @@ extern u32 get_mem_type(void);
 #ifdef CFG_PRINTF
 int print_info(void)
 {
-	printf("\n\nTexas Instruments X-Loader 1.46 ("
+	printf("\n\nTexas Instruments X-Loader 1.51 ("
 			__DATE__ " - " __TIME__ ")\n");
 	return 0;
 }
@@ -73,25 +74,47 @@ void start_armboot (void)
 	misc_init_r();
 	buf =  (uchar*) CFG_LOADADDR;
 
-	if ((get_mem_type() == MMC_ONENAND) || (get_mem_type() == MMC_NAND)){
+	/* Always first try mmc without checking boot pins */
+#ifndef CONFIG_OMAP3_BEAGLE
+	if ((get_mem_type() == MMC_ONENAND) || (get_mem_type() == MMC_NAND))
+#endif	/* CONFIG_OMAP3_BEAGLE */
 		buf += mmc_boot(buf);
-	}
 
-	if (get_mem_type() == GPMC_ONENAND){
-		for (i = ONENAND_START_BLOCK; i < ONENAND_END_BLOCK; i++){
-			if (!onenand_read_block(buf, i))
-				buf += ONENAND_BLOCK_SIZE;
+	if (buf == (uchar *)CFG_LOADADDR) {
+		if (get_mem_type() == GPMC_NAND){
+#ifdef CFG_PRINTF
+			printf("Booting from nand . . .\n");
+#endif
+			for (i = NAND_UBOOT_START; i < NAND_UBOOT_END; i+= NAND_BLOCK_SIZE){
+				if (!nand_read_block(buf, i))
+					buf += NAND_BLOCK_SIZE; /* advance buf ptr */
+			}
+		}
+
+		if (get_mem_type() == GPMC_ONENAND){
+#ifdef CFG_PRINTF
+			printf("Booting from onenand . . .\n");
+#endif
+			for (i = ONENAND_START_BLOCK; i < ONENAND_END_BLOCK; i++){
+				if (!onenand_read_block(buf, i))
+					buf += ONENAND_BLOCK_SIZE;
+			}
 		}
 	}
 
-	if (get_mem_type() == GPMC_NAND){
-		for (i = NAND_UBOOT_START; i < NAND_UBOOT_END; i+= NAND_BLOCK_SIZE){
-			if (!nand_read_block(buf, i))
-				buf += NAND_BLOCK_SIZE; /* advance buf ptr */
-		}
+#if defined (CONFIG_AM3517EVM)
+	/*
+	 * FIXME: Currently coping uboot image,
+	 * ideally we should leverage XIP feature here
+	 */
+	if (get_mem_type() == GPMC_NOR) {
+		int size;
+		printf("Booting from NOR Flash...\n");
+		size = nor_read_boot(buf);
+		if (size > 0)
+			buf += size;
 	}
-
-
+#endif
 
 	if (buf == (uchar *)CFG_LOADADDR)
 		hang();

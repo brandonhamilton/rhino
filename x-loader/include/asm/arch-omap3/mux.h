@@ -192,9 +192,8 @@
 #define  CONTROL_PADCONF_DSS_DATA20          0x0104       
 #define  CONTROL_PADCONF_DSS_DATA21          0x0106       
 #define  CONTROL_PADCONF_DSS_DATA22          0x0108       
-#define  CONTROL_PADCONF_DSS_DATA23          0x010A       
-/*CAMERA*/
-#ifdef CONFIG_AM3517RHINO  
+#define  CONTROL_PADCONF_DSS_DATA23          0x010A
+#ifdef CONFIG_RHINO  
     #define  CONTROL_PADCONF_CCDC_PCLK       0x01E4       
     #define  CONTROL_PADCONF_CCDC_FIELD      0x01E6       
     #define  CONTROL_PADCONF_CCDC_HD         0x01E8       
@@ -206,34 +205,35 @@
     #define  CONTROL_PADCONF_CCDC_DATA3      0x01F4       
     #define  CONTROL_PADCONF_CCDC_DATA4      0x01F6       
     #define  CONTROL_PADCONF_CCDC_DATA5      0x01F8       
-    #define  CONTROL_PADCONF_CCDC_DATA6      0x01FA     
+    #define  CONTROL_PADCONF_CCDC_DATA6      0x01FA       
     #define  CONTROL_PADCONF_CCDC_DATA7      0x01FC       
-#else
-    #define  CONTROL_PADCONF_CAM_HS          0x010C       
-    #define  CONTROL_PADCONF_CAM_VS          0x010E       
-    #define  CONTROL_PADCONF_CAM_XCLKA       0x0110       
-    #define  CONTROL_PADCONF_CAM_PCLK        0x0112       
-    #define  CONTROL_PADCONF_CAM_FLD         0x0114       
-    #define  CONTROL_PADCONF_CAM_D0          0x0116       
-    #define  CONTROL_PADCONF_CAM_D1          0x0118       
-    #define  CONTROL_PADCONF_CAM_D2          0x011A       
-    #define  CONTROL_PADCONF_CAM_D3          0x011C       
-    #define  CONTROL_PADCONF_CAM_D4          0x011E       
-    #define  CONTROL_PADCONF_CAM_D5          0x0120       
-    #define  CONTROL_PADCONF_CAM_D6          0x0122       
-    #define  CONTROL_PADCONF_CAM_D7          0x0124       
-    #define  CONTROL_PADCONF_CAM_D8          0x0126       
-    #define  CONTROL_PADCONF_CAM_D9          0x0128       
-    #define  CONTROL_PADCONF_CAM_D10         0x012A       
-    #define  CONTROL_PADCONF_CAM_D11         0x012C       
-    #define  CONTROL_PADCONF_CAM_XCLKB       0x012E       
-    #define  CONTROL_PADCONF_CAM_WEN         0x0130       
-    #define  CONTROL_PADCONF_CAM_STROBE      0x0132       
-    #define  CONTROL_PADCONF_CSI2_DX0        0x0134       
-    #define  CONTROL_PADCONF_CSI2_DY0        0x0136       
-    #define  CONTROL_PADCONF_CSI2_DX1        0x0138       
-    #define  CONTROL_PADCONF_CSI2_DY1        0x013A       
-#endif
+#else       
+    /*CAMERA*/                                 
+    #define  CONTROL_PADCONF_CAM_HS              0x010C       
+    #define  CONTROL_PADCONF_CAM_VS              0x010E       
+    #define  CONTROL_PADCONF_CAM_XCLKA           0x0110       
+    #define  CONTROL_PADCONF_CAM_PCLK            0x0112       
+    #define  CONTROL_PADCONF_CAM_FLD             0x0114       
+    #define  CONTROL_PADCONF_CAM_D0              0x0116       
+    #define  CONTROL_PADCONF_CAM_D1              0x0118       
+    #define  CONTROL_PADCONF_CAM_D2              0x011A       
+    #define  CONTROL_PADCONF_CAM_D3              0x011C       
+    #define  CONTROL_PADCONF_CAM_D4              0x011E       
+    #define  CONTROL_PADCONF_CAM_D5              0x0120       
+    #define  CONTROL_PADCONF_CAM_D6              0x0122       
+    #define  CONTROL_PADCONF_CAM_D7              0x0124       
+    #define  CONTROL_PADCONF_CAM_D8              0x0126       
+    #define  CONTROL_PADCONF_CAM_D9              0x0128       
+    #define  CONTROL_PADCONF_CAM_D10             0x012A       
+    #define  CONTROL_PADCONF_CAM_D11             0x012C       
+    #define  CONTROL_PADCONF_CAM_XCLKB           0x012E       
+    #define  CONTROL_PADCONF_CAM_WEN             0x0130       
+    #define  CONTROL_PADCONF_CAM_STROBE          0x0132       
+    #define  CONTROL_PADCONF_CSI2_DX0            0x0134       
+    #define  CONTROL_PADCONF_CSI2_DY0            0x0136       
+    #define  CONTROL_PADCONF_CSI2_DX1            0x0138       
+    #define  CONTROL_PADCONF_CSI2_DY1            0x013A       
+#endif   
 /*Audio Interface */                              
 #define  CONTROL_PADCONF_McBSP2_FSX          0x013C       
 #define  CONTROL_PADCONF_McBSP2_CLKX         0x013E       
@@ -328,13 +328,14 @@
 #define  CONTROL_PADCONF_SYS_32K             0x0A04       
 #define  CONTROL_PADCONF_SYS_CLKREQ          0x0A06       
 #define  CONTROL_PADCONF_SYS_nIRQ            0x01E0       
+#define  CONTROL_PADCONF_SYS_NRESWARM        0x0A08
 #define  CONTROL_PADCONF_SYS_BOOT0           0x0A0A       
 #define  CONTROL_PADCONF_SYS_BOOT1           0x0A0C       
 #define  CONTROL_PADCONF_SYS_BOOT2           0x0A0E       
 #define  CONTROL_PADCONF_SYS_BOOT3           0x0A10       
 #define  CONTROL_PADCONF_SYS_BOOT4           0x0A12       
 #define  CONTROL_PADCONF_SYS_BOOT5           0x0A14       
-#define  CONTROL_PADCONF_SYS_BOOT6           0x0A16
+#define  CONTROL_PADCONF_SYS_BOOT6           0x0A16       
 #define  CONTROL_PADCONF_SYS_OFF_MODE        0x0A18       
 #define  CONTROL_PADCONF_SYS_CLKOUT1         0x0A1A       
 #define  CONTROL_PADCONF_SYS_CLKOUT2         0x01E2       

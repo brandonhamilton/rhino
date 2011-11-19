@@ -1,8 +1,6 @@
 #
-# (C) Copyright 2009
-# Texas Instruments, <www.ti.com>
-# Manikandan Pillai<mani.pillai@ti.com>
-# This file is copied from board/omap3evm/Makefile
+# (C) Copyright 2000, 2001, 2002
+# Wolfgang Denk, DENX Software Engineering, wd@denx.de.
 #
 # See file CREDITS for list of people who contributed to this
 # project.
@@ -27,7 +25,7 @@ include $(TOPDIR)/config.mk
 
 LIB	= lib$(BOARD).a
 
-OBJS	:= am3517rhino.o
+OBJS	:= overo.o 
 SOBJS	:= platform.o
 
 $(LIB):	$(OBJS) $(SOBJS)

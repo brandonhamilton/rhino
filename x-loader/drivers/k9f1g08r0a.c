@@ -9,12 +9,11 @@
  *
  * See file CREDITS for list of people who contributed to this
  * project.
- *
+ * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of
  * the License, or (at your option) any later version.
- *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -42,8 +41,9 @@
  */
 #define MT29F1G_MFR		0x2c  /* Micron */
 #define MT29F1G_ID		0xa1  /* x8, 1GiB */
-#define MT29F2G_ID      0xba  /* x16, 2GiB */
-#define MT29F2G16AA_ID		0xca	/*x16, 2GiB, 3V */
+
+#define MT29F2G_ID		0xba	/* x16, 2GiB */
+#define MT29F4G_ID		0xbc	/* x16, 4GiB */
 
 #define HYNIX4GiB_MFR		0xAD  /* Hynix */
 #define HYNIX4GiB_ID		0xBC  /* x16, 4GiB */
@@ -59,9 +59,36 @@
 #define MAX_NUM_PAGES		64
 
 #define ECC_CHECK_ENABLE
+
+#ifdef ONE_BIT_ERROR_CORRECT
 #define ECC_SIZE		24
 #define ECC_STEPS		3
+#endif
 
+#ifdef FOUR_BIT_ERROR_CORRECT
+#define ECC_SIZE                28 
+#define ECC_STEPS               28 
+
+void omap_enable_hwecc_bch4(uint32_t bus_width, int32_t mode);
+int omap_correct_data_bch4(uint8_t *dat, uint8_t *read_ecc, uint8_t *calc_ecc);
+int omap_calculate_ecc_bch4(const uint8_t *dat, uint8_t *ecc_code);
+#endif
+
+#ifdef EIGHT_BIT_ERROR_CORRECT
+#define ECC_SIZE                52
+#define ECC_STEPS               52 
+
+void omap_enable_hwecc_bch8(uint32_t bus_width, int32_t mode);
+int omap_correct_data_bch8(uint8_t *dat, uint8_t *read_ecc, uint8_t *calc_ecc);
+int omap_calculate_ecc_bch8(const uint8_t *dat, uint8_t *ecc_code);
+#endif
+
+#ifndef ECC_SIZE
+#error "Must define ONE_BIT_ERROR_CORRECT, FOUR_BIT_ERROR_CORRECT, \
+or EIGHT_BIT_ERROR_CORRECT"
+#endif
+
+unsigned int is_ddr_166M;
 /*******************************************************
  * Routine: delay
  * Description: spinning delay to use before udelay works
@@ -76,13 +103,45 @@ static inline void delay (unsigned long loops)
 static int nand_read_page(u_char *buf, ulong page_addr);
 static int nand_read_oob(u_char * buf, ulong page_addr);
 
-/* JFFS2 large page layout for 3-byte ECC per 256 bytes ECC layout */
+#ifdef ECC_CHECK_ENABLE
+void omap_enable_hw_ecc(void);
+int omap_correct_data_hw_ecc(u_char *dat, u_char *read_ecc, u_char *calc_ecc);
+void omap_calculate_hw_ecc(const u_char *dat, u_char *ecc_code);
+#endif
+
+#ifdef ONE_BIT_ERROR_CORRECT
 /* This is the only SW ECC supported by u-boot. So to load u-boot
  * this should be supported */
 static u_char ecc_pos[] =
-		{40, 41, 42, 43, 44, 45, 46, 47,
-		48, 49, 50, 51, 52, 53, 54, 55,
-		56, 57, 58, 59, 60, 61, 62, 63};
+  {40, 41, 42, 
+   43, 44, 45, 46, 47, 48, 49, 
+   50, 51, 52, 53, 54, 55, 56, 
+   57, 58, 59, 60, 61, 62, 63};
+#endif
+
+#ifdef FOUR_BIT_ERROR_CORRECT
+/* This is the only SW ECC supported by u-boot. So to load u-boot
+ * this should be supported */
+static u_char ecc_pos[] =
+  {36, 37, 38, 39, 40, 41, 42, 
+   43, 44, 45, 46, 47, 48, 49, 
+   50, 51, 52, 53, 54, 55, 56, 
+   57, 58, 59, 60, 61, 62, 63};
+#endif
+
+#ifdef EIGHT_BIT_ERROR_CORRECT
+/* This is the only SW ECC supported by u-boot. So to load u-boot
+ * this should be supported */
+static u_char ecc_pos[] =
+  {12, 13, 14,
+   15, 16, 17, 18, 19, 20, 21,
+   22, 23, 24, 25, 26, 27, 28,
+   29, 30, 31, 32, 33, 34, 35,
+   36, 37, 38, 39, 40, 41, 42, 
+   43, 44, 45, 46, 47, 48, 49, 
+   50, 51, 52, 53, 54, 55, 56, 
+   57, 58, 59, 60, 61, 62, 63};
+#endif
 
 static unsigned long chipsize = (256 << 20);
 
@@ -184,20 +243,30 @@ int nand_chip()
 
 	NAND_DISABLE_CE();
 
-	if (is_cpu_family() == CPU_OMAP36XX) {
-		return (mfr != HYNIX4GiB_MFR || id != HYNIX4GiB_ID);
-	} else {
-		if (get_cpu_rev() == CPU_3430_ES2)
-#if defined (CONFIG_OMAP34XX) || defined (CONFIG_OMAP3EVM)
-			return (mfr != MT29F1G_MFR || !(id == MT29F1G_ID || id == MT29F2G_ID));
-#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB)
-			return (mfr != MT29F1G_MFR && !(id == MT29F1G_ID || id == MT29F2G_ID));
-#elif defined (CONFIG_AM3517RHINO)
-			return (mfr != MT29F1G_MFR || id != MT29F2G16AA_ID);
-#endif
-		else
-			return (mfr != K9F1G08R0A_MFR || id != K9F1G08R0A_ID);
+	switch (mfr) {
+		/* Hynix NAND Part */
+		case HYNIX4GiB_MFR:
+			is_ddr_166M = 0;
+			if (is_cpu_family() == CPU_OMAP36XX)
+				return (id != HYNIX4GiB_ID);
+			break;
+		/* Micron NAND Part */
+		case MT29F1G_MFR:
+			is_ddr_166M = 1;
+			if ((is_cpu_family() == CPU_OMAP34XX) ||
+					(is_cpu_family() == CPU_AM35XX) ||
+					(is_cpu_family() == CPU_OMAP36XX))
+				return (!((id == MT29F1G_ID) ||
+						(id == MT29F2G_ID) ||
+						(id ==MT29F4G_ID)));
+			break;
+		case K9F1G08R0A_MFR:
+		default:
+			is_ddr_166M = 1;
+			break;
 	}
+
+	return (id != K9F1G08R0A_ID);
 }
 
 /* read a block data to buf
@@ -233,8 +302,10 @@ static int count;
 static int nand_read_page(u_char *buf, ulong page_addr)
 {
 #ifdef ECC_CHECK_ENABLE
- 	u_char ecc_code[ECC_SIZE];
-	u_char ecc_calc[ECC_STEPS];
+        /* increased size of ecc_code and ecc_calc to match the OOB size, 
+           as is done in the kernel */
+ 	u_char ecc_code[OOB_SIZE];
+	u_char ecc_calc[OOB_SIZE];
 	u_char oob_buf[OOB_SIZE];
 #endif
 	u16 val;
@@ -246,7 +317,9 @@ static int nand_read_page(u_char *buf, ulong page_addr)
 #else
 	u_char *p;
 #endif
-
+#ifdef ECC_HW_ENABLE
+	omap_enable_hw_ecc();
+#endif
 	NAND_ENABLE_CE();
 	NanD_Command(NAND_CMD_READ0);
 	NanD_Address(ADDR_COLUMN_PAGE, page_addr);
@@ -255,6 +328,16 @@ static int nand_read_page(u_char *buf, ulong page_addr)
 
 	/* A delay seems to be helping here. needs more investigation */
 	delay(10000);
+
+#ifdef FOUR_BIT_ERROR_CORRECT
+	/* 0 constant means READ mode */
+	omap_enable_hwecc_bch4(bus_width, 0);
+#endif
+#ifdef EIGHT_BIT_ERROR_CORRECT
+	omap_enable_hwecc_bch8(bus_width, 0);
+#endif
+
+	/* read the page */
 	len = (bus_width == 16) ? PAGE_SIZE >> 1 : PAGE_SIZE;
 	p = (u16 *)buf;
 	for (cntr = 0; cntr < len; cntr++){
@@ -263,6 +346,16 @@ static int nand_read_page(u_char *buf, ulong page_addr)
    	}
 
 #ifdef ECC_CHECK_ENABLE
+
+#ifdef FOUR_BIT_ERROR_CORRECT
+	/* calculate ECC on the page */
+	omap_calculate_ecc_bch4(buf, &ecc_calc[0]);
+#endif
+#ifdef EIGHT_BIT_ERROR_CORRECT
+	omap_calculate_ecc_bch8(buf, &ecc_calc[0]);
+#endif
+
+	/* read the OOB area */
 	p = (u16 *)oob_buf;
         len = (bus_width == 16) ? OOB_SIZE >> 1 : OOB_SIZE;
 	for (cntr = 0; cntr < len; cntr++){
@@ -272,13 +365,30 @@ static int nand_read_page(u_char *buf, ulong page_addr)
 	count = 0;
  	NAND_DISABLE_CE();  /* set pin high */
 
+	/* Need to enable HWECC for READING */
+
  	/* Pick the ECC bytes out of the oob data */
 	for (cntr = 0; cntr < ECC_SIZE; cntr++)
 		ecc_code[cntr] =  oob_buf[ecc_pos[cntr]];
 
 	for(count = 0; count < ECC_SIZE; count += ECC_STEPS) {
- 		nand_calculate_ecc (buf, &ecc_calc[0]);
-		if (nand_correct_data (buf, &ecc_code[count], &ecc_calc[0]) == -1) {
+#ifdef ECC_HW_ENABLE
+                omap_calculate_hw_ecc(buf, &ecc_calc[0]);
+		if (omap_correct_data_hw_ecc (buf, &ecc_code[count], &ecc_calc[0]) == -1) {
+#else
+
+#ifdef ONE_BIT_ERROR_CORRECT
+	        nand_calculate_ecc (buf, &ecc_calc[0]);
+		if (nand_correct_data (buf, &ecc_code[count], &ecc_calc[0]) == -1 ) {
+#endif
+#ifdef FOUR_BIT_ERROR_CORRECT
+		if (omap_correct_data_bch4(buf, &ecc_code[count], &ecc_calc[0]) == -1) {
+#endif
+#ifdef EIGHT_BIT_ERROR_CORRECT
+                if (omap_correct_data_bch8(buf, &ecc_code[count], &ecc_calc[0]) == -1) {
+#endif
+
+#endif
  			printf ("ECC Failed, page 0x%08x\n", page_addr);
 			for (val=0; val <256; val++)
 				printf("%x ", buf[val]);

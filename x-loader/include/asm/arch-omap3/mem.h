@@ -43,8 +43,9 @@ typedef enum {
 #define GPMC_NAND           1
 #define GPMC_MDOC           2
 #define GPMC_ONENAND        3
-#define MMC_NAND			4
-#define MMC_ONENAND			5
+#define MMC_NAND            4
+#define MMC_ONENAND         5
+#define GPMC_NONE           6
 
 #endif
 
@@ -69,7 +70,8 @@ typedef enum {
 #ifdef CONFIG_3430ZEBU
 #define SDP_SDRC_MDCFG_0_DDR	(0x02582019|B_ALL) /* Infin ddr module */
 #else
-#define SDP_SDRC_MDCFG_0_DDR	(0x02584019|B_ALL) /* Infin ddr module */
+#define SDP_SDRC_MDCFG_0_DDR	(0x02584019|B_ALL)
+#define SDP_SDRC_MDCFG_0_DDR_XM	(0x03588019|B_ALL)
 #endif
 
 #define SDP_SDRC_MR_0_DDR		0x00000032
@@ -81,6 +83,7 @@ typedef enum {
 #define SDP_3430_SDRC_RFR_CTRL_100MHz   0x0002da01
 #define SDP_3430_SDRC_RFR_CTRL_133MHz   0x0003de01 /* 7.8us/7.5ns - 50=0x3de */
 #define SDP_3430_SDRC_RFR_CTRL_165MHz   0x0004e201 /* 7.8us/6ns - 50=0x4e2 */
+#define SDP_3430_SDRC_RFR_CTRL_200MHz   0x0005e601 /* 7.8us/5ns - 50=0x5e6 */
 
 #define DLL_OFFSET              0
 #define DLL_WRITEDDRCLKX2DIS    1
@@ -235,7 +238,6 @@ typedef enum {
 				(MICRON_TXP_165 << 8) | (MICRON_TWTR_165 << 16)
 
 
-
 /* Hynix part of AM/DM37xEVM (200MHz optimized)
  *   ACTIMA
  *	TDAL		= 6
@@ -276,6 +278,26 @@ typedef enum {
 #define HYNIX_SDRC_ACTIM_CTRLB_0	HYNIX_V_ACTIMB_200
 
 
+/* Micron part (200MHz optimized) 5 ns
+  */
+#define MICRON_TDAL_200   6
+#define MICRON_TDPL_200   3
+#define MICRON_TRRD_200   2
+#define MICRON_TRCD_200   3
+#define MICRON_TRP_200    3
+#define MICRON_TRAS_200   8
+#define MICRON_TRC_200   11
+#define MICRON_TRFC_200  15
+#define MICRON_V_ACTIMA_200 ((MICRON_TRFC_200 << 27) | (MICRON_TRC_200 << 22) | (MICRON_TRAS_200 << 18) \
+		| (MICRON_TRP_200 << 15) | (MICRON_TRCD_200 << 12) |(MICRON_TRRD_200 << 9) | \
+		(MICRON_TDPL_200 << 6) | (MICRON_TDAL_200))
+
+#define MICRON_TWTR_200   2
+#define MICRON_TCKE_200   1
+#define MICRON_TXP_200    2
+#define MICRON_XSR_200   23
+#define MICRON_V_ACTIMB_200 ((MICRON_TCKE_200 << 12) | (MICRON_XSR_200 << 0)) | \
+				(MICRON_TXP_200 << 8) | (MICRON_TWTR_200 << 16)
 
 /* New and compatability speed defines */
 #if defined(PRCM_CLK_CFG2_200MHZ) || defined(PRCM_CONFIG_II) || defined(PRCM_CONFIG_5B)
@@ -376,7 +398,7 @@ typedef enum {
 # define M_NAND_GPMC_CONFIG5 SMNAND_GPMC_CONFIG5
 # define M_NAND_GPMC_CONFIG6 SMNAND_GPMC_CONFIG6
 
-#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_AM3517RHINO)
+#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_RHINO)
 
 #ifdef NAND_16BIT
 # define M_NAND_GPMC_CONFIG1 0x00001800
@@ -425,7 +447,7 @@ typedef enum {
 # define M_NAND_GPMC_CONFIG6 SMNAND_GPMC_CONFIG6
 # define M_NAND_GPMC_CONFIG7 SMNAND_GPMC_CONFIG7
 
-#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_AM3517RHINO)
+#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_RHINO)
 
 #ifdef NAND_16BIT
 # define M_NAND_GPMC_CONFIG1 0x00001800
@@ -498,7 +520,7 @@ typedef enum {
 # define M_NAND_GPMC_CONFIG6 SMNAND_GPMC_CONFIG6
 # define M_NAND_GPMC_CONFIG7 SMNAND_GPMC_CONFIG7
 
-#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_AM3517RHINO)
+#elif defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517TEB) || defined (CONFIG_RHINO)
 
 #ifdef NAND_16BIT
 # define M_NAND_GPMC_CONFIG1 0x00001800

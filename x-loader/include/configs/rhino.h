@@ -1,28 +1,9 @@
 /*
- * (C) Copyright 2009
- * Texas Instruments, <www.ti.com>
- * Manikandan Pillai<mani.pillai@ti.com>
- * X-Loader Configuation settings for the AM3517EVM board.
+ * X-Loader Configuation settings for the RHINO board.
+ * Written by Simon Scott
+ * Updated by Brandon Hamilton
  *
- * Derived from /include/configs/omap3evm.h
- *
- * See file CREDITS for list of people who contributed to this
- * project.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
- * MA 02111-1307 USA
+ * Derived from /include/configs/am3517evm.h
  */
 
 #ifndef __CONFIG_H
@@ -37,8 +18,7 @@
 #define CONFIG_ARMCORTEXA8       1    /* This is an ARM V7 CPU core */
 #define CONFIG_OMAP              1    /* in a TI OMAP core */
 
-#define CONFIG_AM3517RHINO      1    /* working with AM3517 RHINO Board */
-//#define CONFIG_AM3517TEB       1    /* working with AM3517 TEB */
+#define CONFIG_RHINO             1    /* working with RHINO Board */
 
 /* Enable the below macro if MMC boot support is required */
 #define CONFIG_MMC               1
@@ -82,7 +62,7 @@
 
 /*
  * select serial console configuration
- * AM3517EVM uses UART3; RHINO uses UART1
+ * RHINO uses UART1
  */
 #define CONFIG_SERIAL1           1
 #define CONFIG_CONS_INDEX        1
@@ -112,6 +92,7 @@
 
 #define CFG_NAND_K9F1G08R0A    /* Samsung 8-bit 128MB chip large page NAND chip*/
 #define NAND_16BIT
+#define ECC_HW_ENABLE
 
 /* NAND is partitioned:
  * 0x00000000 - 0x0007FFFF  Booting Image
@@ -122,18 +103,21 @@
  */
 #define NAND_UBOOT_START         0x0080000 /* Leaving first 4 blocks for x-load */
 #define NAND_UBOOT_END           0x0240000 /* Giving a space of 2 blocks = 256KB */
-#define NAND_BLOCK_SIZE          0x20000   /*0x20000 (128KB) for the am3517evm and am3517rhino*/
+#define NAND_BLOCK_SIZE          0x20000   /*0x20000 (128KB) for the rhino*/
 
 #define GPMC_CONFIG              (OMAP34XX_GPMC_BASE+0x50)
-
-#if defined (CONFIG_AM3517EVM) || defined (CONFIG_AM3517RHINO)
 #define GPMC_NAND_COMMAND_0      (OMAP34XX_GPMC_BASE+0x7C)
 #define GPMC_NAND_ADDRESS_0      (OMAP34XX_GPMC_BASE+0x80)
 #define GPMC_NAND_DATA_0         (OMAP34XX_GPMC_BASE+0x84)
-#elif defined (CONFIG_AM3517TEB)
-#define GPMC_NAND_COMMAND_0      (OMAP34XX_GPMC_BASE+0xDC)
-#define GPMC_NAND_ADDRESS_0      (OMAP34XX_GPMC_BASE+0xE0)
-#define GPMC_NAND_DATA_0         (OMAP34XX_GPMC_BASE+0xE4)
+
+#ifdef ECC_HW_ENABLE
+/* ECC values brought over from u-boot to support hw ecc read */
+#define ECCCLEAR        (0x1 << 8)
+#define ECCRESULTREG1   (0x1 << 0)
+#define ECCSIZE512BYTE  0xFF
+#define ECCSIZE1        (ECCSIZE512BYTE << 22)
+#define ECCSIZE0        (ECCSIZE512BYTE << 12)
+#define ECCSIZE0SEL     (0x000 << 0)
 #endif
 
 #ifdef NAND_16BIT
@@ -190,7 +174,7 @@
 
 #define ONENAND_START_BLOCK      4
 #define ONENAND_END_BLOCK        18
-#define ONENAND_PAGE_SIZE        1024     /* 1KB for am3517rhino? */
+#define ONENAND_PAGE_SIZE        1024     /* 1KB for rhino */
 #define ONENAND_BLOCK_SIZE       0x20000  /* 128KB */
 
 #endif /* __CONFIG_H */

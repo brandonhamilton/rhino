@@ -36,6 +36,10 @@ ifeq ($(BOARD), omap3430labrador)
 OBJS 	+= k9f1g08r0a.o
 endif
 
+ifeq ($(BOARD), omap3beagle)
+OBJS 	+= k9f1g08r0a.o
+endif
+
 ifeq ($(BOARD), omap3evm)
 OBJS 	+= k9f1g08r0a.o
 endif
@@ -44,8 +48,12 @@ ifeq ($(BOARD), am3517evm)
 OBJS    += k9f1g08r0a.o
 endif
 
-ifeq ($(BOARD), am3517rhino)
+ifeq ($(BOARD), rhino)
 OBJS    += k9f1g08r0a.o
+endif
+
+ifeq ($(BOARD), overo)
+OBJS 	+= k9f1g08r0a.o
 endif
 
 ifeq ($(BOARD), omap2420h4)

@@ -32,7 +32,7 @@ void gpmc_init(void);
 void ether_init(void);
 void watchdog_init(void);
 void set_muxconf_regs(void);
-u32 is_cpu_family();
+u32 is_cpu_family(void);
 u32 get_cpu_type(void);
 u32 get_cpu_rev(void);
 u32 cpu_is_3410(void);
@@ -56,4 +56,5 @@ void sr32(u32 addr, u32 start_bit, u32 num_bits, u32 value);
 u32 wait_on_value(u32 read_bit_mask, u32 match_value, u32 read_addr, u32 bound);
 void sdelay(unsigned long loops);
 
+int nor_read_boot(unsigned char *buf);
 #endif

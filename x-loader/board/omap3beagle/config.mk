@@ -1,10 +1,11 @@
-# (C) Copyright 2009
+#
+# (C) Copyright 2006
 # Texas Instruments, <www.ti.com>
 #
-# OMAP3EVM board uses OMAP3430 (ARM-CortexA8) cpu
-# see http://www.ti.com/ for more information on Texas Instruments#
+# Beagle board uses TI OMAP3530 (ARM-CortexA8) cpu
+# see http://www.ti.com/ for more information on Texas Instruments
 #
-# OMAP3EVM has 1 bank of 128MB mPOP-SDRAM on CS0
+# Beagle has 1 bank of 128MB mPOP-SDRAM on CS0
 # Physical Address:
 # 8000'0000 (bank0)
 

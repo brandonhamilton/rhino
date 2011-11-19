@@ -30,6 +30,19 @@
 #define S26M		26000000
 #define S38_4M		38400000
 
+#define FCK_IVA2_ON     0x00000001
+#define FCK_CORE1_ON    0x03fffe29
+#define ICK_CORE1_ON    0x3ffffffb
+#define ICK_CORE2_ON    0x0000001f
+#define FCK_WKUP_ON     0x000000e9
+#define ICK_WKUP_ON     0x0000003f
+#define FCK_DSS_ON      0x00000005
+#define ICK_DSS_ON      0x00000001
+#define FCK_CAM_ON      0x00000001
+#define ICK_CAM_ON      0x00000001
+#define FCK_PER_ON      0x0003ffff
+#define ICK_PER_ON      0x0003ffff
+
 #include <asm/arch/clocks343x.h>
 
 #endif
