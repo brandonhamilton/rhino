@@ -130,7 +130,7 @@ unsigned char mmc_init_setup(void)
 	OMAP_HSMMC_SYSCTL |= SOFTRESETALL;
 	while ((OMAP_HSMMC_SYSCTL & SOFTRESETALL) != 0x0) ;
 
-#if defined (CONFIG_AM3517RHINO) 
+#if defined (CONFIG_RHINO) 
 	OMAP_HSMMC_HCTL = DTW_1_BITMODE | SDBP_PWROFF | SDVS_1V8;
     OMAP_HSMMC_CAPA |= VS18_1V8SUP;
 #else
