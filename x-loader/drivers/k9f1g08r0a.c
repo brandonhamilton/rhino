@@ -43,10 +43,13 @@
 #define MT29F1G_ID		0xa1  /* x8, 1GiB */
 
 #define MT29F2G_ID		0xba	/* x16, 2GiB */
+#define MT29F2G16AA_ID	0xca	/* x16, 2GiB, 3V */
 #define MT29F4G_ID		0xbc	/* x16, 4GiB */
 
 #define HYNIX4GiB_MFR		0xAD  /* Hynix */
 #define HYNIX4GiB_ID		0xBC  /* x16, 4GiB */
+
+
 
 #define ADDR_COLUMN		1
 #define ADDR_PAGE		2
@@ -257,6 +260,7 @@ int nand_chip()
 					(is_cpu_family() == CPU_AM35XX) ||
 					(is_cpu_family() == CPU_OMAP36XX))
 				return (!((id == MT29F1G_ID) ||
+						(id == MT29F2G16AA_ID) ||
 						(id == MT29F2G_ID) ||
 						(id ==MT29F4G_ID)));
 			break;
