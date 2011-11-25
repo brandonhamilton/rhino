@@ -42,3 +42,8 @@ $ cd borph
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_defconfig
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm uImage modules
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm INSTALL_MOD_PATH=<root_filesystem_dir> modules_install
+
+4. Installing onto the board
+----------------------------
+
+Follow the instructions on the wiki at https://github.com/brandonhamilton/rhino/wiki/Software-Setup
