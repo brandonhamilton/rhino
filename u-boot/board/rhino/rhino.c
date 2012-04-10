@@ -1,11 +1,11 @@
 /*
- * rhino.c - board file for the Rhino board (with an AM3517 processor)
+ * rhino.c - board file for the Rhino platform
  *
- * Author: Simon Scott, University of Cape Town
+ * Author: Simon Scott, Alan Langman
  * 
  * Based on board/logicpd/am3517evm/am3517evm.c by Vaibhav Hiremath <hvaibhav@ti.com>
  *
- * Copyright (C) 2011 University of Cape Town
+ * Copyright (C) 2011 Alan Langman
  * Original Copyright (C) 2009 Texas Instruments Incorporated
  *
  * This program is free software; you can redistribute it and/or modify
@@ -49,10 +49,15 @@
 
 
 /*
- * GPMC CS settings for the FPGA memory accesses
+ * GPMC Chip Select settings for the FPGA memory accesses
+ *   - Activates wait monitoring for read and write
+ *	 - Sets the wait monitoring time to -> "wait pin is monitored with valid data" 
+ *         (There is no distinction between read and write. We have the option to 
+ *          monitor 1 or 2 GPMC_CLK cycles prior to data value)
+ *   - Select wait pin to WAIT 1
  */
 static u32 gpmc_fpga_config[GPMC_MAX_REG] = {
-	0x2C001201,
+	0x2C611201,
 	0x00050500,
 	0x00030301,
 	0x05030503,

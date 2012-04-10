@@ -1,5 +1,5 @@
 /*
- * rhino.h - Default configuration for RHINO board.
+ * rhino.h - Default configuration for the RHINO platform.
  *
  * Author: Simon Scott
  * Author of original am3517_evm.h: Vaibhav Hiremath <hvaibhav@ti.com>

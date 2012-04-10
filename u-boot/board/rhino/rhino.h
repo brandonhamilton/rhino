@@ -1,11 +1,11 @@
 /*
- * rhino.h - Header file for UCT's Rhino board (with an AM3517 processor)
+ * rhino.h - Header file for the Rhino platform
  *
- * Author: Simon Scott, University of Cape Town
+ * Author: Simon Scott, Alan Langman
  *
  * Based on ti/evm/evm.h
  *
- * Copyright (C) 2009 University of Cape Town
+ * Copyright (C) 2011 Alan Langman
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@
 
 const omap3_sysinfo sysinfo = {
 	DDR_DISCRETE,
-	"RHINO Board",
+	"RHINO Platform",
 	"NAND",
 };
 
@@ -123,11 +123,11 @@ const omap3_sysinfo sysinfo = {
 	MUX_VAL(CP(GPMC_NCS0),		(IDIS | PTU | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NCS1),		(IDIS | PTU | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NCS2),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS3),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS4),		(IEN  | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS5),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS6),		(IEN  | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS7),		(IEN  | PTU | EN  | M0)) \
+	MUX_VAL(CP(GPMC_NCS3),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS4),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS5),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS6),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS7),		(IDIS | PTU | EN  | M0)) /* gpmc_ncs7 */\
 	MUX_VAL(CP(GPMC_CLK),		(IEN  | PTD | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NADV_ALE),	(IDIS | PTD | DIS | M0)) \
 	MUX_VAL(CP(GPMC_NOE),		(IDIS | PTD | DIS | M0)) \
@@ -447,11 +447,11 @@ const omap3_sysinfo sysinfo = {
 	MUX_VAL(CP(GPMC_NCS0),		(IDIS | PTU | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NCS1),		(IDIS | PTU | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NCS2),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS3),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS4),		(IEN  | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS5),		(IDIS | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS6),		(IEN  | PTU | EN  | M0)) \
-	MUX_VAL(CP(GPMC_NCS7),		(IEN  | PTU | EN  | M0)) \
+	MUX_VAL(CP(GPMC_NCS3),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS4),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS5),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS6),		(IEN  | PTU | EN  | M1)) /* sys_ndmareq0 */\
+	MUX_VAL(CP(GPMC_NCS7),		(IDIS | PTU | EN  | M0)) /* gpmc_ncs7 */\
 	MUX_VAL(CP(GPMC_CLK),		(IEN  | PTD | EN  | M0)) \
 	MUX_VAL(CP(GPMC_NADV_ALE),	(IDIS | PTD | DIS | M0)) \
 	MUX_VAL(CP(GPMC_NOE),		(IDIS | PTD | DIS | M0)) \
