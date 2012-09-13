@@ -74,6 +74,24 @@ void start_armboot (void)
 	misc_init_r();
 	buf =  (uchar*) CFG_LOADADDR;
 
+	/* test DRAM */
+	#define TEST_SIZE 16777216
+	printf("Testing DRAM...");
+	for(i = 0; i < TEST_SIZE; i++)
+	{
+		((int*)buf)[i] = i;
+	}
+	for(i = 0; i < TEST_SIZE; i++)
+	{
+		if(((int*)buf)[i] != i)
+		{
+			/* memory error */
+			printf("failed.\n");
+			hang();
+		}
+	}
+	printf("passed.\n");
+
 	/* Always first try mmc without checking boot pins */
 #ifndef CONFIG_OMAP3_BEAGLE
 	if ((get_mem_type() == MMC_ONENAND) || (get_mem_type() == MMC_NAND))

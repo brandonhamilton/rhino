@@ -177,7 +177,7 @@ clobber:	clean
 	rm -f $(OBJS) *.bak tags TAGS
 	rm -fr *.*~
 	rm -f x-load x-load.map $(ALL)
-	rm -f include/asm/proc include/asm/arch
+	rm -f include/asm/arch
 
 mrproper \
 distclean:	clobber unconfig
