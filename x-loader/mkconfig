@@ -27,6 +27,12 @@ echo "Configuring for $1 board..."
 cd ./include
 
 #
+# Create link to architecture specific headers
+#
+rm -f asm/arch
+ln -s arch-$3 asm/arch
+
+#
 # Create include file for Make
 #
 echo "ARCH  = $2" >  config.mk
