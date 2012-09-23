@@ -186,7 +186,7 @@ const omap3_sysinfo sysinfo = {
 	\
 	/* MMC2 */ \
 	\
-	MUX_VAL(CP(MMC2_CLK),		(IDIS | PTD | DIS | M0)) \
+	MUX_VAL(CP(MMC2_CLK),		(IEN  | PTU | EN  | M0)) \
 	MUX_VAL(CP(MMC2_CMD),		(IEN  | PTD | DIS | M0)) \
 	MUX_VAL(CP(MMC2_DAT0),		(IEN  | PTD | DIS | M0)) \
 	MUX_VAL(CP(MMC2_DAT1),		(IEN  | PTD | DIS | M0)) \
@@ -195,7 +195,7 @@ const omap3_sysinfo sysinfo = {
 	MUX_VAL(CP(MMC2_DAT4),		(IEN  | PTD | DIS | M4)) /*GPIO_136*/\
 	MUX_VAL(CP(MMC2_DAT5),		(IEN  | PTD | DIS | M4)) /*GPIO_137*/\
 	MUX_VAL(CP(MMC2_DAT6),		(IEN  | PTD | DIS | M4)) /*GPIO_138*/\
-	MUX_VAL(CP(MMC2_DAT7),		(IEN  | PTD | DIS | M4)) /*GPIO_139*/\
+	MUX_VAL(CP(MMC2_DAT7),		(IEN  | PTD | DIS | M1)) /*MMC2_CLKIN*/\
 	\
 	/* McBSP1 : Used as GPIOs*/\
 	\

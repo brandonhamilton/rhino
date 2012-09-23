@@ -44,7 +44,11 @@ typedef struct t2 {
 /*
  * OMAP HSMMC register definitions
  */
+#if !defined(CONFIG_OMAP3_USE_MMC2)
 #define OMAP_HSMMC_BASE		0x4809C000
+#else
+#define OMAP_HSMMC_BASE		0x480B4000
+#endif
 
 typedef struct hsmmc {
 	unsigned char res1[0x10];
