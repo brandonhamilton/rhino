@@ -3172,6 +3172,7 @@ am3517_evm_config :	unconfig
 
 rhino_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 rhino NULL omap3
+	@board/rhino/set_revision $(REV)
 
 devkit8000_config :	unconfig
 	@$(MKCONFIG) $(@:_config=) arm arm_cortexa8 devkit8000 timll omap3

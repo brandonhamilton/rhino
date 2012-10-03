@@ -33,7 +33,9 @@ $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm distclean
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_config
 $ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm
 
-Note: when compiling for revision 1.0 boards, the CONFIG_RHINO_REV flag must first be set to "1_0" in /u-boot/include/configs/rhino.h
+Note: If necessary, the board revision can be set with the REV environment variable, e.g.
+$ make CROSS_COMPILE=arm-none-linux-gnueabi- ARCH=arm rhino_config REV=1.0
+
 
 3. Building borph
 -----------------

@@ -1,0 +1,12 @@
+#!/bin/bash
+# Script to set 
+if [ $# -gt 0 ] ; then
+    echo "Setting RHINO board rev $1"
+    REVISION=`echo $1 | tr -d '.'`
+else
+    REVISION=11
+fi
+SCRIPT_PATH=`dirname $0`
+HEADER_FILE=$SCRIPT_PATH/../../include/configs/rhino_revision.h
+echo "/* Automatically generated - do not edit */" > $HEADER_FILE
+echo "#define CONFIG_RHINO_REV $REVISION" >> $HEADER_FILE
