@@ -64,12 +64,14 @@
 #define ECC_CHECK_ENABLE
 
 #ifdef ONE_BIT_ERROR_CORRECT
-#define ECC_SIZE		24
-#define ECC_STEPS		3
+#define ECC_SIZE		512
+#define ECC_BYTES		12
+#define ECC_STEPS		4
 #endif
 
 #ifdef FOUR_BIT_ERROR_CORRECT
-#define ECC_SIZE                28 
+#define ECC_SIZE                256 
+#define ECC_BYTES               28
 #define ECC_STEPS               28 
 
 void omap_enable_hwecc_bch4(uint32_t bus_width, int32_t mode);
@@ -78,7 +80,8 @@ int omap_calculate_ecc_bch4(const uint8_t *dat, uint8_t *ecc_code);
 #endif
 
 #ifdef EIGHT_BIT_ERROR_CORRECT
-#define ECC_SIZE                52
+#define ECC_SIZE                256
+#define ECC_BYTES               52
 #define ECC_STEPS               52 
 
 void omap_enable_hwecc_bch8(uint32_t bus_width, int32_t mode);
@@ -109,17 +112,15 @@ static int nand_read_oob(u_char * buf, ulong page_addr);
 #ifdef ECC_CHECK_ENABLE
 void omap_enable_hw_ecc(void);
 int omap_correct_data_hw_ecc(u_char *dat, u_char *read_ecc, u_char *calc_ecc);
-void omap_calculate_hw_ecc(const u_char *dat, u_char *ecc_code);
+void omap_calculate_hw_ecc(const u_char *dat, u_char *ecc_code, u_char steps);
 #endif
 
 #ifdef ONE_BIT_ERROR_CORRECT
 /* This is the only SW ECC supported by u-boot. So to load u-boot
  * this should be supported */
 static u_char ecc_pos[] =
-  {40, 41, 42, 
-   43, 44, 45, 46, 47, 48, 49, 
-   50, 51, 52, 53, 54, 55, 56, 
-   57, 58, 59, 60, 61, 62, 63};
+  { 2,  3,  4,  5,  6,
+    7,  8,  9, 10, 11, 12, 13};
 #endif
 
 #ifdef FOUR_BIT_ERROR_CORRECT
@@ -372,13 +373,16 @@ static int nand_read_page(u_char *buf, ulong page_addr)
 	/* Need to enable HWECC for READING */
 
  	/* Pick the ECC bytes out of the oob data */
-	for (cntr = 0; cntr < ECC_SIZE; cntr++)
+	for (cntr = 0; cntr < ECC_BYTES; cntr++)
 		ecc_code[cntr] =  oob_buf[ecc_pos[cntr]];
-
-	for(count = 0; count < ECC_SIZE; count += ECC_STEPS) {
+	
 #ifdef ECC_HW_ENABLE
-                omap_calculate_hw_ecc(buf, &ecc_calc[0]);
-		if (omap_correct_data_hw_ecc (buf, &ecc_code[count], &ecc_calc[0]) == -1) {
+	omap_calculate_hw_ecc(buf, &ecc_calc[0], ECC_STEPS);
+#endif
+
+	for(count = 0; count < ECC_BYTES; count += ECC_BYTES/ECC_STEPS) {
+#ifdef ECC_HW_ENABLE
+		if (omap_correct_data_hw_ecc (buf, &ecc_code[count], &ecc_calc[count]) == -1) {
 #else
 
 #ifdef ONE_BIT_ERROR_CORRECT
@@ -394,14 +398,14 @@ static int nand_read_page(u_char *buf, ulong page_addr)
 
 #endif
  			printf ("ECC Failed, page 0x%08x\n", page_addr);
-			for (val=0; val <256; val++)
+			for (val=0; val <ECC_SIZE; val++)
 				printf("%x ", buf[val]);
 			printf("\n");
 			for (;;);
   			return 1;
  		}
-		buf += 256;
-		page_addr += 256;
+		buf += ECC_SIZE;
+		page_addr += ECC_SIZE;
 	}
 #endif
 	return 0;

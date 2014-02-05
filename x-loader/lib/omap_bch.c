@@ -210,10 +210,10 @@ void omap_enable_hwecc_bch4(uint32_t bus_width, int32_t mode)
     break;
   }
 
-  __raw_writel(0x1, (GPMC_BASE + GPMC_ECC_CONTROL));
-  __raw_writel(ecc_size_conf_val, (GPMC_BASE + GPMC_ECC_SIZE_CONFIG));
-  __raw_writel(ecc_conf_val, (GPMC_BASE + GPMC_ECC_CONFIG));
-  __raw_writel(0x101, (GPMC_BASE + GPMC_ECC_CONTROL));
+  __raw_writel(0x1, (GPMC_ECC_CONTROL));
+  __raw_writel(ecc_size_conf_val, (GPMC_ECC_SIZE_CONFIG));
+  __raw_writel(ecc_conf_val, (GPMC_ECC_CONFIG));
+  __raw_writel(0x101, (GPMC_ECC_CONTROL));
 }
 
 /*
@@ -259,9 +259,9 @@ void omap_enable_hwecc_bch8(uint32_t bus_width, int32_t mode)
     break;
   }
 
-  __raw_writel(0x1, (GPMC_BASE + GPMC_ECC_CONTROL));
-  __raw_writel(ecc_size_conf_val, (GPMC_BASE + GPMC_ECC_SIZE_CONFIG));
-  __raw_writel(ecc_conf_val, (GPMC_BASE + GPMC_ECC_CONFIG));
-  __raw_writel(0x101, (GPMC_BASE + GPMC_ECC_CONTROL));
+  __raw_writel(0x1, (GPMC_ECC_CONTROL));
+  __raw_writel(ecc_size_conf_val, (GPMC_ECC_SIZE_CONFIG));
+  __raw_writel(ecc_conf_val, (GPMC_ECC_CONFIG));
+  __raw_writel(0x101, (GPMC_ECC_CONTROL));
 }
 

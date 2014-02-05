@@ -840,8 +840,8 @@ int nand_init(void)
 
 #ifdef ECC_HW_ENABLE
     if (get_mem_type() == GPMC_NAND){
-            __raw_writel( (ECCCLEAR | ECCRESULTREG1), GPMC_ECC_CONTROL + GPMC_CONFIG_CS0);
-            __raw_writel( (ECCSIZE1 | ECCSIZE0 | ECCSIZE0SEL), GPMC_ECC_SIZE_CONFIG + GPMC_CONFIG_CS0);
+            __raw_writel( (ECCCLEAR | ECCRESULTREG1), GPMC_ECC_CONTROL);
+            __raw_writel( (ECCSIZE1 | ECCSIZE0 | ECCSIZE0SEL), GPMC_ECC_SIZE_CONFIG);
     }
 #endif
 
@@ -901,17 +901,16 @@ void omap_enable_hw_ecc(void)
     dev_width = 1;
 #endif
     /* Clear the ecc result registers, select ecc reg as 1 */
-    __raw_writel(ECCCLEAR | ECCRESULTREG1, GPMC_ECC_CONTROL + GPMC_CONFIG_CS0);
+    __raw_writel(ECCCLEAR | ECCRESULTREG1, GPMC_ECC_CONTROL);
 
     /*
     * Size 0 = 0xFF, Size1 is 0xFF - both are 512 bytes
     * tell all regs to generate size0 sized regs
     * we just have a single ECC engine for all CS
     */
-    __raw_writel(ECCSIZE1 | ECCSIZE0 | ECCSIZE0SEL,
-            GPMC_ECC_SIZE_CONFIG + GPMC_CONFIG_CS0);
+    __raw_writel(ECCSIZE1 | ECCSIZE0 | ECCSIZE0SEL, GPMC_ECC_SIZE_CONFIG);
     val = (dev_width << 7) | (cs << 1) | (0x1);
-    __raw_writel(val, GPMC_ECC_CONFIG + GPMC_CONFIG_CS0);
+    __raw_writel(val, GPMC_ECC_CONFIG);
     return;
 }
 /*
@@ -991,22 +990,28 @@ int omap_correct_data_hw_ecc(u_char *dat, u_char *read_ecc, u_char *calc_ecc)
         }
         return 0;
 }
-void omap_calculate_hw_ecc(const u_char *dat, u_char *ecc_code)
+void omap_calculate_hw_ecc(const u_char *dat, u_char *ecc_code, u_char steps)
 {
         u_int32_t val;
+        u_char i;
 
         /* Start Reading from HW ECC1_Result = 0x200 */
-        val = __raw_readl(GPMC_ECC1_RESULT + GPMC_CONFIG_CS0);
+        u_int32_t ecc_addr = GPMC_ECC1_RESULT;
 
-        ecc_code[0] = val & 0xFF;
-        ecc_code[1] = (val >> 16) & 0xFF;
-        ecc_code[2] = ((val >> 8) & 0x0F) | ((val >> 20) & 0xF0);
+        for(i = 0; i < steps; i++, ecc_addr += 0x04)
+        {
+            val = __raw_readl(ecc_addr);
+
+            ecc_code[3*i + 0] = val & 0xFF;
+            ecc_code[3*i + 1] = (val >> 16) & 0xFF;
+            ecc_code[3*i + 2] = ((val >> 8) & 0x0F) | ((val >> 20) & 0xF0);
+        }
 
         /*
          * Stop reading anymore ECC vals and clear old results
          * enable will be called if more reads are required
          */
-    __raw_writel(0x000 , GPMC_ECC_CONFIG + GPMC_CONFIG_CS0);
+        __raw_writel(0x000 , GPMC_ECC_CONFIG);
 
         return;
 }
