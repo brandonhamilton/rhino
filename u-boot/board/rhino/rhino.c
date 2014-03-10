@@ -57,12 +57,12 @@
  *   - Select wait pin to WAIT 1
  */
 static u32 gpmc_fpga_config[GPMC_MAX_REG] = {
-	0x2C611201,
-	0x00050500,
-	0x00030301,
-	0x05030503,
-	0x00050608,
-	0x04030000,
+	0x2C651201,
+	0x00071900,
+	0x00030300,
+	0x07031903,
+	0x0016081A,
+	0x06030000,
 	0
 };
 
@@ -74,9 +74,17 @@ static u32 gpmc_fpga_config[GPMC_MAX_REG] = {
 int board_init(void)
 {
 	DECLARE_GLOBAL_DATA_PTR;
+	
+	struct gpmc *gpmc_cfg = (struct gpmc *)GPMC_BASE;
+	u32 config = 0;
 
 	/* Now that we are in SRAM or SDRAM, finish GPMC initialisation for NAND flash */
 	gpmc_init(); 
+	
+	/* Set WAIT1 active high */
+	config = readl(&gpmc_cfg->config);
+	config |= 0x00000200;
+	writel(config, &gpmc_cfg->config);
 	
 	/* Configure GPMC for FPGA memory accesses */
 	enable_gpmc_cs_config(gpmc_fpga_config, &gpmc_cfg->cs[1], FPGA_CS1_BASE, GPMC_SIZE_128M);
