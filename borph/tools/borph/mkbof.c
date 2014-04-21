@@ -89,6 +89,7 @@ FILE* GenerateElfFile(void)
   			cnt = fwrite(default_x86_elf_bin, DEFAULT_X86_ELF_BIN_SIZE, 1, ret);
   			break;
   		case HAC_RHINO:
+		case HAC_MOLERAD:
   			cnt = fwrite(default_arm_elf_bin, DEFAULT_ARM_ELF_BIN_SIZE, 1, ret);
   			break;
   		case HAC_ROACHV5:
@@ -176,7 +177,7 @@ void UsageExit()
     fprintf(stderr, 
 	    "  -o filename    : output file name (default is bitfile.bof)\n"
 	    "  -s filename    : symbol file name\n"
-	    "  -t hwr_typ     : 1=HAC_BEE2FPGA, 3=HAC_ROACHV5, 4=NetFPGA, 5=RHINO\n"
+	    "  -t hwr_typ     : 1=HAC_BEE2FPGA, 3=HAC_ROACHV5, 4=NetFPGA, 5=RHINO, 6=MoleRAD\n"
 	    "  -e filename    : embedded ELF file name\n"
 	    "  -v             : be verbose\n"
 	    "\n\n"
@@ -421,6 +422,8 @@ int main(int argc, char** argv)
 		bhdr.b_machine = BM_ROACH;
 	} else if (g_addrClass == HAC_RHINO) {
 		bhdr.b_machine = BM_RHINO;
+    } else if (g_addrClass == HAC_MOLERAD) {
+		bhdr.b_machine = BM_MOLERAD;
     } else {
 		bhdr.b_machine = BM_BEE2;
     }

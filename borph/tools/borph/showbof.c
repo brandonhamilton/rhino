@@ -192,6 +192,8 @@ void SprintHWRAddr(char* buf, struct hwr_addr* a)
     strcpy(cbuf, "NETFPGA");
     } else if (a->class == HAC_RHINO) {
     strcpy(cbuf, "RHINO");
+    } else if (a->class == HAC_MOLERAD) {
+    strcpy(cbuf, "MoleRAD");
     } else {
 	sprintf(cbuf, "unknown class (%d)\n", a->class);
     }
