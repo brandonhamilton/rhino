@@ -35,6 +35,7 @@ struct bofhdr {
 #define BM_ROACH	3
 #define BM_NETFPGA	4
 #define BM_RHINO	5
+#define BM_MOLERAD  6
 
 /***********************
  * header per hw region
@@ -49,6 +50,7 @@ struct hwr_addr {
 #define HAC_ROACHV5  0x3
 #define HAC_NETFPGA  0x4
 #define HAC_RHINO	 0x5
+#define HAC_MOLERAD  0x6
 
 /* hwrhdr flags */
 #define HFG_PLACED   0x1
