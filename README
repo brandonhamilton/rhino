@@ -14,7 +14,7 @@ Prerequisites
 -------------
 
 This guide assumes that a cross-compilation toolchain is available in the current path.
-The free CodeSourcery G++ LITE toolchain (ARM GNU/Linux 2009q1) can be downloaded from the following URL: http://www.codesourcery.com/sgpp/lite/arm/portal/release858
+The free CodeSourcery G++ LITE toolchain (ARM GNU/Linux 2009q1) can be downloaded from the following URL: http://www.codesourcery.com/sgpp/lite/arm/portal/package4573/public/arm-none-linux-gnueabi/arm-2009q1-203-arm-none-linux-gnueabi.bin
 
 1. Building x-loader
 --------------------
